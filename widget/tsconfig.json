@@ -12,7 +12,15 @@
     "strict": true,
     "isolatedModules": true,
     "skipLibCheck": true,
-    "sourceMap": false
+    "sourceMap": false,
+    "rootDir": "../.."
   },
-  "include": ["./src/*.ts", "./src/*.tsx"]
+  "include": [
+    "./src/*.ts",
+    "./src/*.tsx",
+    "../../../spytial-core/src/components/ErrorMessageModal/*.ts",
+    "../../../spytial-core/src/components/ErrorMessageModal/*.tsx",
+    "../../../spytial-core/src/layout/constraint-validator.ts",
+    "../../../spytial-core/src/layout/constraint-types.ts"
+  ]
 }

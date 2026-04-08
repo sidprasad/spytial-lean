@@ -2,6 +2,14 @@ import * as React from 'react';
 import { useRpcSession } from '@leanprover/infoview';
 // @ts-ignore — virtual module created by rollup from the IIFE bundle
 import spytialcore from 'spytial-core';
+// Import error components directly from spytial-core source
+// @ts-ignore — cross-project import, React types may differ
+import { ErrorMessageContainer as _ErrorMessageContainer } from '../../../spytial-core/src/components/ErrorMessageModal/ErrorMessageContainer';
+import { ErrorStateManager } from '../../../spytial-core/src/components/ErrorMessageModal/ErrorStateManager';
+import type { SystemError, SelectorErrorDetail } from '../../../spytial-core/src/components/ErrorMessageModal/ErrorStateManager';
+
+// Cast to work around React types version mismatch between projects
+const ErrorMessageContainer = _ErrorMessageContainer as any;
 
 const { JSONDataInstance, LayoutInstance, parseLayoutSpec, SGraphQueryEvaluator } = spytialcore;
 
@@ -57,64 +65,125 @@ function injectCss() {
       border-bottom: 2px solid var(--vscode-foreground);
     }
 
-    /* Error / IIS report */
-    .spytial-unsat-banner {
+    /* ErrorMessageModal styles (adapted from spytial-core for VS Code infoview) */
+    #error-message-modal {
+      border: 2px solid var(--vscode-inputValidation-warningBorder, #cca700);
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 8px;
       background: var(--vscode-inputValidation-warningBackground, #352a05);
-      border: 1px solid var(--vscode-inputValidation-warningBorder, #9d8515);
-      border-radius: 4px;
-      padding: 8px 12px;
-      margin-bottom: 4px;
+      overflow-x: auto;
       font-size: 12px;
     }
-    .spytial-unsat-title {
-      font-weight: bold;
+    #error-message-modal h4 {
       color: var(--vscode-editorWarning-foreground, #cca700);
-      margin-bottom: 6px;
+      margin: 0 0 6px 0;
+      font-size: 13px;
     }
-    .spytial-unsat-detail {
+    #error-message-modal p {
+      margin: 0 0 8px 0;
       color: var(--vscode-foreground);
-      font-size: 11px;
-      line-height: 1.5;
     }
-    .spytial-conflict-table {
+    #error-message-modal code {
+      font-family: var(--vscode-editor-font-family, monospace);
+      font-size: 11px;
+    }
+
+    /* Constraint relationship table */
+    .constraint-relationship-table {
+      width: 100%;
+      margin-bottom: 8px;
+    }
+    .constraint-relationship-table table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 11px;
-      margin-top: 6px;
     }
-    .spytial-conflict-table th {
+    .constraint-relationship-table th {
       text-align: left;
-      padding: 4px 8px;
-      border-bottom: 1px solid var(--vscode-panel-border, #333);
+      padding: 6px 8px;
+      border-bottom: 2px solid var(--vscode-panel-border, #444);
       color: var(--vscode-descriptionForeground);
+      font-size: 11px;
       font-weight: 600;
     }
-    .spytial-conflict-table td {
-      padding: 4px 8px;
-      border-bottom: 1px solid var(--vscode-panel-border, #222);
+    .constraint-relationship-table td {
+      padding: 0;
       vertical-align: top;
+      border-bottom: 1px solid var(--vscode-panel-border, #333);
     }
-    .spytial-conflict-row {
-      transition: background 0.15s;
-    }
-    .spytial-conflict-row.highlighted {
-      background: var(--vscode-editor-selectionBackground, rgba(38, 79, 120, 0.5));
-    }
-    .spytial-conflict-source {
-      color: var(--vscode-editorWarning-foreground, #cca700);
-      font-family: var(--vscode-editor-font-family, monospace);
-    }
-    .spytial-conflict-detail {
-      color: var(--vscode-foreground);
-    }
-    .spytial-selector-errors {
-      margin-top: 6px;
+    .constraint-item {
       padding: 6px 8px;
-      background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
-      border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
+      border-bottom: 1px solid var(--vscode-panel-border, #222);
+      transition: background 0.15s;
+      cursor: default;
+    }
+    .constraint-item:last-child {
+      border-bottom: none;
+    }
+    .constraint-item.highlight-source {
+      background-color: rgba(255, 193, 7, 0.25);
+      border-radius: 3px;
+    }
+    .constraint-item.highlight-diagram {
+      background-color: rgba(255, 193, 7, 0.5);
+      border-radius: 3px;
+    }
+
+    /* Error card (parse/generic/group errors) */
+    .error-card {
+      border: 1px solid var(--vscode-panel-border, #444);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .error-card .card-header {
+      padding: 6px 10px;
+      background: var(--vscode-editorWidget-background, #252526);
+      border-bottom: 1px solid var(--vscode-panel-border, #444);
+      font-size: 11px;
+    }
+    .error-card .card-body {
+      padding: 8px 10px;
+    }
+
+    /* Selector error list */
+    .error-card .list-unstyled {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    .error-card .list-unstyled li {
+      padding: 6px 8px;
+      margin-bottom: 4px;
+      background: var(--vscode-editorWidget-background, #1e1e1e);
       border-radius: 4px;
       font-size: 11px;
+    }
+    .text-danger {
       color: var(--vscode-errorForeground, #f48771);
+    }
+
+    /* Bootstrap utility classes used by ErrorMessageModal */
+    .mt-3 { margin-top: 0; }
+    .mb-0 { margin-bottom: 0; }
+    .mb-2 { margin-bottom: 8px; }
+    .p-0 { padding: 0; }
+    .p-2 { padding: 8px; }
+    .p-3 { padding: 12px; }
+    .d-flex { display: flex; }
+    .flex-column { flex-direction: column; }
+    .h-100 { height: 100%; }
+    .bg-light { background: var(--vscode-editorWidget-background, #252526); }
+    .rounded { border-radius: 4px; }
+    .border { border: 1px solid var(--vscode-panel-border, #444); }
+    .border-danger { border-color: var(--vscode-inputValidation-warningBorder, #cca700); }
+    .border-2 { border-width: 2px; }
+    .table-bordered th, .table-bordered td {
+      border: 1px solid var(--vscode-panel-border, #333);
+    }
+    #hover-instructions {
+      font-style: italic;
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
     }
   `;
   document.head.appendChild(style);
@@ -133,135 +202,17 @@ interface SpytialWidgetProps {
   cndSpec?: string;
 }
 
-interface LayoutError {
-  type: string;
-  message: string;
-  errorMessages?: {
-    conflictingConstraint?: string;
-    conflictingSourceConstraint?: string;
-    minimalConflictingConstraints?: Map<string, string[]> | Record<string, string[]>;
-  };
-  overlappingNodes?: any[];
-}
-
-interface SelectorError {
-  selector: string;
-  context: string;
-  errorMessage: string;
-}
-
-/** Render the IIS conflict table with cross-highlight on hover */
-function ConflictReport({ error, selectorErrors }: { error: LayoutError; selectorErrors: SelectorError[] }) {
-  const msgs = error.errorMessages;
-  const [hoveredRow, setHoveredRow] = React.useState<number | null>(null);
-
-  // Extract conflict entries from the Map or object
-  let conflictEntries: Array<[string, string[]]> = [];
-  if (msgs?.minimalConflictingConstraints) {
-    const mcc = msgs.minimalConflictingConstraints;
-    if (mcc instanceof Map) {
-      conflictEntries = Array.from(mcc.entries());
-    } else if (typeof mcc === 'object') {
-      conflictEntries = Object.entries(mcc);
-    }
-  }
-
-  // Build a reverse index: for each conflict string, which source rows contain it?
-  // This enables cross-highlighting — hovering a row highlights rows that share conflicts.
-  const conflictToRows = React.useMemo(() => {
-    const map = new Map<string, Set<number>>();
-    conflictEntries.forEach(([_, conflicts], rowIdx) => {
-      conflicts.forEach(c => {
-        if (!map.has(c)) map.set(c, new Set());
-        map.get(c)!.add(rowIdx);
-      });
-    });
-    return map;
-  }, [conflictEntries]);
-
-  // Which rows should be highlighted given the hovered row?
-  const highlightedRows = React.useMemo(() => {
-    if (hoveredRow === null) return new Set<number>();
-    const related = new Set<number>();
-    related.add(hoveredRow);
-    const conflicts = conflictEntries[hoveredRow]?.[1] || [];
-    conflicts.forEach(c => {
-      conflictToRows.get(c)?.forEach(r => related.add(r));
-    });
-    return related;
-  }, [hoveredRow, conflictEntries, conflictToRows]);
-
-  return (
-    <div className="spytial-unsat-banner">
-      <div className="spytial-unsat-title">
-        {error.type === 'group-overlap'
-          ? 'Group Overlap'
-          : error.type === 'hidden-node-conflict'
-          ? 'Hidden Node Conflict'
-          : 'Unsatisfiable Constraints'}
-        {' \u2014 showing counterfactual diagram (best-effort)'}
-      </div>
-
-      <div className="spytial-unsat-detail">
-        {error.message && <div dangerouslySetInnerHTML={{ __html: error.message }} />}
-
-        {conflictEntries.length > 0 && (
-          <details open={true} style={{ marginTop: 4 }}>
-            <summary style={{ cursor: 'pointer', fontWeight: 600 }}>
-              Irreducible Infeasible Subsystem ({conflictEntries.length} constraint{conflictEntries.length > 1 ? 's' : ''})
-            </summary>
-            <table className="spytial-conflict-table">
-              <thead>
-                <tr>
-                  <th>Source constraint</th>
-                  <th>Conflicts with</th>
-                </tr>
-              </thead>
-              <tbody>
-                {conflictEntries.map(([source, conflicts], i) => (
-                  <tr key={i}
-                      className={`spytial-conflict-row${highlightedRows.has(i) ? ' highlighted' : ''}`}
-                      onMouseEnter={() => setHoveredRow(i)}
-                      onMouseLeave={() => setHoveredRow(null)}>
-                    <td className="spytial-conflict-source"
-                        dangerouslySetInnerHTML={{ __html: source }} />
-                    <td className="spytial-conflict-detail">
-                      {conflicts.map((c, j) => (
-                        <div key={j} dangerouslySetInnerHTML={{ __html: c }} />
-                      ))}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </details>
-        )}
-      </div>
-
-      {selectorErrors.length > 0 && (
-        <div className="spytial-selector-errors">
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>Selector errors:</div>
-          {selectorErrors.map((se, i) => (
-            <div key={i}>
-              <code>{se.selector}</code> ({se.context}): {se.errorMessage}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 const MIN_HEIGHT = 200;
 const DEFAULT_HEIGHT = 500;
 
 export default function SpytialWidget(props: SpytialWidgetProps) {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [error, setError] = React.useState<string | null>(null);
-  const [layoutError, setLayoutError] = React.useState<LayoutError | null>(null);
-  const [selectorErrors, setSelectorErrors] = React.useState<SelectorError[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [height, setHeight] = React.useState(DEFAULT_HEIGHT);
+
+  // Single ErrorStateManager per widget instance
+  const errorManager = React.useMemo(() => new ErrorStateManager(), []);
 
   React.useEffect(() => { injectCss(); }, []);
 
@@ -284,8 +235,7 @@ export default function SpytialWidget(props: SpytialWidgetProps) {
     if (!containerRef.current) return;
     setLoading(true);
     setError(null);
-    setLayoutError(null);
-    setSelectorErrors([]);
+    errorManager.clearError();
 
     const render = async () => {
       try {
@@ -300,14 +250,20 @@ export default function SpytialWidget(props: SpytialWidgetProps) {
         const layoutInstance = new LayoutInstance(spec, evaluator, 0, true);
         const result = layoutInstance.generateLayout(instance);
 
-        // Capture errors before rendering
+        // Dispatch errors to the ErrorStateManager
         if (result.error) {
-          console.warn('Spytial layout error (showing counterfactual):', result.error);
-          setLayoutError(result.error);
-        }
-        if (result.selectorErrors && result.selectorErrors.length > 0) {
-          console.warn('Spytial selector errors:', result.selectorErrors);
-          setSelectorErrors(result.selectorErrors);
+          const err = result.error;
+          if (err.type === 'hidden-node-conflict' && err.errorMessages) {
+            errorManager.setError({ type: 'hidden-node-conflict', messages: err.errorMessages });
+          } else if (err.errorMessages) {
+            errorManager.setError({ type: 'positional-error', messages: err.errorMessages });
+          } else if (err.overlappingNodes) {
+            errorManager.setError({ type: 'group-overlap-error', message: err.message });
+          } else {
+            errorManager.setError({ type: 'general-error', message: err.message || 'Layout error' });
+          }
+        } else if (result.selectorErrors && result.selectorErrors.length > 0) {
+          errorManager.setError({ type: 'selector-error', errors: result.selectorErrors });
         }
 
         const container = containerRef.current;
@@ -317,12 +273,10 @@ export default function SpytialWidget(props: SpytialWidgetProps) {
         const graphEl = document.createElement('webcola-cnd-graph');
         container.appendChild(graphEl);
 
-        // Mark unsatisfiable so the web component shows error indicators
         if (result.error) {
           graphEl.setAttribute('unsat', '');
         }
 
-        // Render the counterfactual layout (MFS — best effort)
         await (graphEl as any).renderLayout(result.layout);
         setLoading(false);
       } catch (e: any) {
@@ -345,12 +299,7 @@ export default function SpytialWidget(props: SpytialWidgetProps) {
       <div className="ml1">
         {loading && <div className="spytial-loading">Loading diagram...</div>}
         {error && <div className="spytial-error">Error: {error}</div>}
-        {(layoutError || selectorErrors.length > 0) && (
-          <ConflictReport
-            error={layoutError || { type: '', message: '' }}
-            selectorErrors={selectorErrors}
-          />
-        )}
+        <ErrorMessageContainer errorManager={errorManager} />
         <div className="spytial-container" style={{ height }}>
           <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
           <div className="spytial-resize-handle" onMouseDown={onResizeStart} />

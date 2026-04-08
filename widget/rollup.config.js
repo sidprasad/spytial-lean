@@ -40,6 +40,19 @@ export default {
     '@leanprover/infoview',
   ],
   plugins: [
+    // Handle CSS imports from spytial-core source as no-ops
+    // (we inject equivalent styles in the widget itself)
+    {
+      name: 'css-noop',
+      resolveId(source) {
+        if (source.endsWith('.css')) return source;
+        return null;
+      },
+      load(id) {
+        if (id.endsWith('.css')) return '';
+        return null;
+      }
+    },
     virtual({
       'spytial-core': `
         // Guard against duplicate customElements.define calls —
