@@ -24,9 +24,10 @@ inductive RBNode where
 spytial_spec RBNode [
   .attribute (field := "key"),
   .attribute (field := "color"),
-  .orientation (selector := "left") (directions := [.left, .below]),
-  .orientation (selector := "right") (directions := [.right, .below]),
+  .orientation (selector := "left - RBNode->{x : RBNode | @:x = nil }") (directions := [.left, .below]),
+  .orientation (selector := "right - RBNode->{x : RBNode | @:x = nil }") (directions := [.right, .below]),
   .hideAtom (selector := "Color + Nat"),
+  .hideAtom (selector := "{x : RBNode | @:x = nil }"),
   .atomColor (selector := "{x : RBNode | @:(x.color) = red}") (value := "red"),
   .atomColor (selector := "{x : RBNode | @:(x.color) = black}") (value := "black")
 ]
