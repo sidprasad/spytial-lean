@@ -152,6 +152,11 @@ Hypothesis names and local bindings are in scope.
 -/
 
 -- Visualize a hypothesis
+
+
+-- We need to think about what visualizing somethign within a hypothesis
+-- even means. Right now, there isn't anything to
+-- "visualize"
 set_option linter.unusedVariables false in
 example (t : RBNode) : True := by
   spytial t
@@ -160,4 +165,9 @@ example (t : RBNode) : True := by
 -- Inline expression with spec override
 example : True := by
   spytial exampleRBTree
+  trivial
+
+set_option linter.unusedVariables false in
+example (t : Color) : True := by
+  spytial t
   trivial
