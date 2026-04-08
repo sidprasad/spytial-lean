@@ -55,8 +55,10 @@ spytial_spec Tree [
   .hideAtom (selector := "Nat")
 ]
 
+
 def myTree : Tree Nat :=
   .node (.leaf 1) (.node (.leaf 2) (.leaf 3))
+
 
 #spytial myTree
 

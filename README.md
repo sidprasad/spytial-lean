@@ -172,3 +172,17 @@ widget/
   src/spytialWidget.tsx  -- React component rendering the diagram
   rollup.config.js       -- Bundles spytial-core into the widget
 ```
+
+
+## TODO
+
+- Need spytial specs to inherit from supertypes and compose etc etc.
+- Error rendering (c/f report, etc etc)
+- Figure out naming, etc. Are named constructor arguments correctly ...
+```
+inductive Tree (α : Type) where
+  | leaf (value : α) : Tree α
+  | node (left : Tree α) (right : Tree α) : Tree α
+```
+
+should result in a relation named 'left'.
