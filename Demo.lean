@@ -64,9 +64,11 @@ def myTree : Tree Nat :=
 #spytial myTree with [
   .orientation (selector := "node_0") (directions := [.above]),
   .orientation (selector := "node_1") (directions := [.above]),
-  .atomColor (selector := "leaf") (value := "#0066ff"),
+  .atomColor (selector := "Tree") (value := "#0066ff"),
   .hideAtom (selector := "Nat")
 ]
+
+#spytial myTree
 
 /-! ## Structures -/
 
@@ -89,6 +91,17 @@ def myList : List Nat := [1, 2, 3, 4]
 #spytial myList with [
   .hideAtom (selector := "Nat")
 ]
+
+/-! ## Debugging -/
+
+-- See the generated YAML spec (hover over to inspect in infoview)
+#spytial.spec myTree with [
+  .orientation (selector := "node_0") (directions := [.left, .below]),
+  .hideAtom (selector := "Nat")
+]
+
+-- See the generated JSON data instance
+#spytial.datum myTree
 
 /-! ## Free layout (no spec) -/
 

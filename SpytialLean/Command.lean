@@ -105,4 +105,35 @@ def elabSpytialSpecCmd : CommandElab := fun
     liftCoreM <| setSpytialSpec declName yamlStr
   | stx => throwError "Unexpected syntax {stx}."
 
+/-! ## Debugging commands -/
+
+/-- `#spytial.spec <term> with [<ops>]` prints the generated YAML spec.
+    Useful for debugging whether the spec is what you expect. -/
+syntax (name := spytialSpecDebug) "#spytial.spec " term " with " term : command
+
+@[command_elab spytialSpecDebug]
+def elabSpytialSpecDebug : CommandElab := fun
+  | `(#spytial.spec $_t:term with $specTerm:term) => do
+    let yamlStr ← liftTermElabM do
+      let spec ← evalSpytialSpec specTerm
+      return SpytialSpec.toYaml spec
+    logInfo m!"{yamlStr}"
+  | stx => throwError "Unexpected syntax {stx}."
+
+/-- `#spytial.datum <term>` prints the generated JSON data instance.
+    Shows what atoms and relations the relationalizer produces. -/
+syntax (name := spytialDatumDebug) "#spytial.datum " term : command
+
+@[command_elab spytialDatumDebug]
+def elabSpytialDatumDebug : CommandElab := fun
+  | `(#spytial.datum $t:term) => do
+    let dataInstance ← liftTermElabM do
+      let e ← Term.elabTerm t none
+      Term.synthesizeSyntheticMVarsNoPostponing
+      let e ← instantiateMVars e
+      relationalize e
+    let json := toJson dataInstance
+    logInfo m!"{json.pretty}"
+  | stx => throwError "Unexpected syntax {stx}."
+
 end SpytialLean
