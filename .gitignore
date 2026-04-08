@@ -1,0 +1,5 @@
+.lake/
+lake-packages/
+widget/node_modules/
+widget/dist/
+widget/package-lock.json
