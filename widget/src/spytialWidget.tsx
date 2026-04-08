@@ -2,16 +2,11 @@ import * as React from 'react';
 import { useRpcSession } from '@leanprover/infoview';
 // @ts-ignore — virtual module created by rollup from the IIFE bundle
 import spytialcore from 'spytial-core';
-// Import error components directly from spytial-core source
-// @ts-ignore — cross-project import, React types may differ
-import { ErrorMessageContainer as _ErrorMessageContainer } from '../../../spytial-core/src/components/ErrorMessageModal/ErrorMessageContainer';
-import { ErrorStateManager } from '../../../spytial-core/src/components/ErrorMessageModal/ErrorStateManager';
-import type { SystemError, SelectorErrorDetail } from '../../../spytial-core/src/components/ErrorMessageModal/ErrorStateManager';
-
-// Cast to work around React types version mismatch between projects
-const ErrorMessageContainer = _ErrorMessageContainer as any;
+// @ts-ignore — virtual module for components bundle (provides mountErrorMessageModal, ErrorAPI)
+import spytialComponents from 'spytial-core-components';
 
 const { JSONDataInstance, LayoutInstance, parseLayoutSpec, SGraphQueryEvaluator } = spytialcore;
+const { CnDCore } = spytialComponents;
 
 let cssInjected = false;
 function injectCss() {
@@ -207,14 +202,25 @@ const DEFAULT_HEIGHT = 500;
 
 export default function SpytialWidget(props: SpytialWidgetProps) {
   const containerRef = React.useRef<HTMLDivElement>(null);
+  const errorMountRef = React.useRef<HTMLDivElement>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [height, setHeight] = React.useState(DEFAULT_HEIGHT);
-
-  // Single ErrorStateManager per widget instance
-  const errorManager = React.useMemo(() => new ErrorStateManager(), []);
+  const errorMountedRef = React.useRef(false);
 
   React.useEffect(() => { injectCss(); }, []);
+
+  // Mount the error modal into the DOM container (same pattern as sterling-ts / spytial-py)
+  React.useEffect(() => {
+    if (errorMountRef.current && !errorMountedRef.current) {
+      const id = 'spytial-lean-error-' + Math.random().toString(36).slice(2, 8);
+      errorMountRef.current.id = id;
+      if (CnDCore.mountErrorMessageModal) {
+        CnDCore.mountErrorMessageModal(id);
+        errorMountedRef.current = true;
+      }
+    }
+  }, []);
 
   const onResizeStart = React.useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -235,7 +241,7 @@ export default function SpytialWidget(props: SpytialWidgetProps) {
     if (!containerRef.current) return;
     setLoading(true);
     setError(null);
-    errorManager.clearError();
+    if (CnDCore.ErrorAPI) CnDCore.ErrorAPI.clearAllErrors();
 
     const render = async () => {
       try {
@@ -250,20 +256,20 @@ export default function SpytialWidget(props: SpytialWidgetProps) {
         const layoutInstance = new LayoutInstance(spec, evaluator, 0, true);
         const result = layoutInstance.generateLayout(instance);
 
-        // Dispatch errors to the ErrorStateManager
-        if (result.error) {
+        // Dispatch errors via ErrorAPI (same pattern as sterling-ts / spytial-py)
+        if (result.error && CnDCore.ErrorAPI) {
           const err = result.error;
           if (err.type === 'hidden-node-conflict' && err.errorMessages) {
-            errorManager.setError({ type: 'hidden-node-conflict', messages: err.errorMessages });
+            CnDCore.ErrorAPI.showHiddenNodeConflict(err.errorMessages);
           } else if (err.errorMessages) {
-            errorManager.setError({ type: 'positional-error', messages: err.errorMessages });
+            CnDCore.ErrorAPI.showConstraintError(err.errorMessages);
           } else if (err.overlappingNodes) {
-            errorManager.setError({ type: 'group-overlap-error', message: err.message });
+            CnDCore.ErrorAPI.showGroupOverlapError(err.message);
           } else {
-            errorManager.setError({ type: 'general-error', message: err.message || 'Layout error' });
+            CnDCore.ErrorAPI.showGeneralError(err.message || 'Layout error');
           }
-        } else if (result.selectorErrors && result.selectorErrors.length > 0) {
-          errorManager.setError({ type: 'selector-error', errors: result.selectorErrors });
+        } else if (result.selectorErrors && result.selectorErrors.length > 0 && CnDCore.ErrorAPI) {
+          CnDCore.ErrorAPI.showSelectorErrors(result.selectorErrors);
         }
 
         const container = containerRef.current;
@@ -299,7 +305,7 @@ export default function SpytialWidget(props: SpytialWidgetProps) {
       <div className="ml1">
         {loading && <div className="spytial-loading">Loading diagram...</div>}
         {error && <div className="spytial-error">Error: {error}</div>}
-        <ErrorMessageContainer errorManager={errorManager} />
+        <div ref={errorMountRef} />
         <div className="spytial-container" style={{ height }}>
           <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
           <div className="spytial-resize-handle" onMouseDown={onResizeStart} />
