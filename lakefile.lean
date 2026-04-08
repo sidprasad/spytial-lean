@@ -3,6 +3,8 @@ open Lake DSL System
 
 package spytialLean where
   preferReleaseBuild := true
+  buildArchive? := "SpytialLean.tar.gz"
+  releaseRepo := "https://github.com/sidprasad/spytial-lean"
 
 /-! ## Widget JS build targets -/
 
