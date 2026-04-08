@@ -1,6 +1,7 @@
 import Lean
 import Lean.Elab.Command
 import Lean.Elab.Term
+import Lean.Elab.Tactic
 import Lean.Widget.UserWidget
 import SpytialLean.Types
 import SpytialLean.Spec
@@ -150,5 +151,46 @@ def elabSpytialDatumDebug : CommandElab := fun
     let json := toJson dataInstance
     logInfo m!"{json.pretty}"
   | stx => throwError "Unexpected syntax {stx}."
+
+/-! ## spytial tactic -/
+
+open Tactic in
+/-- `spytial <term>` displays a spatial relational diagram in the Lean infoview
+    during tactic mode. Hypothesis names and local bindings are in scope.
+
+    Use `spytial <term> with [<ops>]` to specify layout operations, just like the
+    `#spytial` command.
+
+    ```
+    example (t : RBTree Nat) : True := by
+      spytial t
+      trivial
+    ```
+-/
+syntax (name := spytialTactic) "spytial " term (" with " term)? : tactic
+
+open Tactic in
+@[tactic spytialTactic]
+def elabSpytialTactic : Tactic := fun stx => do
+    let t := stx[1]
+    let specOpt := stx[2]
+    let e ← Term.elabTerm t none
+    Term.synthesizeSyntheticMVarsNoPostponing
+    let e ← instantiateMVars e
+    let di ← relationalize e
+    let yaml ← if specOpt.isNone then
+        lookupTypeSpec e
+      else
+        let specTerm := specOpt[1]!
+        let spec ← evalSpytialSpec specTerm
+        pure (some (SpytialSpec.toYaml spec))
+
+    let props : Json := Json.mkObj <|
+      [("dataInstance", toJson di)] ++
+      match yaml with
+      | some s => [("cndSpec", toJson s)]
+      | none => []
+
+    savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
 
 end SpytialLean
