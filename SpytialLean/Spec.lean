@@ -146,4 +146,32 @@ def SpytialSpec.toYaml (spec : SpytialSpec) : String :=
     parts ++ ["directives:"] ++ directives.map directiveToYaml
   "\n".intercalate parts
 
+/-- Extract constraint and directive lines from a YAML spec string.
+    Returns `(constraintLines, directiveLines)`. -/
+private def extractSpecLines (yaml : String) : List String × List String :=
+  let lines := yaml.splitOn "\n"
+  let rec go (lines : List String) (inConstraints : Bool)
+      (cs : List String) (ds : List String) : List String × List String :=
+    match lines with
+    | [] => (cs.reverse, ds.reverse)
+    | l :: rest =>
+      if l == "constraints:" then go rest true cs ds
+      else if l == "directives:" then go rest false cs ds
+      else if l.startsWith "  - " then
+        if inConstraints then go rest inConstraints (l :: cs) ds
+        else go rest inConstraints cs (l :: ds)
+      else go rest inConstraints cs ds
+  go lines true [] []
+
+/-- Merge multiple YAML spec strings (parent-first order) into a single YAML spec.
+    Constraints and directives from all specs are concatenated in order. -/
+def mergeSpecYamls (yamls : List String) : String :=
+  let (allCs, allDs) := yamls.foldl (fun (cs, ds) yaml =>
+    let (c, d) := extractSpecLines yaml
+    (cs ++ c, ds ++ d)) ([], [])
+  let parts : List String := []
+  let parts := if allCs.isEmpty then parts else parts ++ ["constraints:"] ++ allCs
+  let parts := if allDs.isEmpty then parts else parts ++ ["directives:"] ++ allDs
+  "\n".intercalate parts
+
 end SpytialLean

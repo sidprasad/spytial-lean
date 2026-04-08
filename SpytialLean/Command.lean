@@ -41,12 +41,27 @@ private opaque evalSpytialSpec (stx : Syntax) : TermElabM SpytialSpec
 -/
 syntax (name := spytialCmd) "#spytial " term (" with " term)? : command
 
-/-- Try to find a Spytial spec attached to the head type of an expression. -/
+/-- Try to find a Spytial spec attached to the head type of an expression.
+    For structures, walks the parent chain and composes specs (parent-first). -/
 private def lookupTypeSpec (e : Expr) : MetaM (Option String) := do
   let ty ← inferType e
   let tyHead := (← whnf ty).getAppFn
   match tyHead with
-  | .const n _ => return getSpytialSpec? (← getEnv) n
+  | .const n _ => do
+    let env ← getEnv
+    if isStructure env n then
+      -- Walk the structure parent chain (C3 linearization, nearest-first)
+      let parents ← getAllParentStructures n
+      -- Root-first order, self last
+      let allNames := parents.reverse.toList ++ [n]
+      let yamls := allNames.filterMap (getSpytialSpec? env ·)
+      match yamls with
+      | []    => return none
+      | [one] => return some one
+      | _     => return some (mergeSpecYamls yamls)
+    else
+      -- Plain inductive — direct lookup
+      return getSpytialSpec? env n
   | _ => return none
 
 @[command_elab spytialCmd]
