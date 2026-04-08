@@ -104,18 +104,31 @@ partial def walkExpr (e : Expr) : StateT WalkState MetaM String := do
       if let some (.ctorInfo ci) := env.find? fnName then
         let ctorShortName := shortName fnName
         modify fun s => s.addAtom { id := atomId, type := typeName, label := ctorShortName }
+        -- Extract binder names from the constructor type (skip type params)
+        let mut binderNames : Array Name := #[]
+        let mut ctorTy := ci.type
+        let mut paramIdx := 0
+        while ctorTy.isForall do
+          if paramIdx >= ci.numParams then
+            binderNames := binderNames.push ctorTy.bindingName!
+          paramIdx := paramIdx + 1
+          ctorTy := ctorTy.bindingBody!
         -- Process data arguments (skip type and proof parameters)
         let args := e.getAppArgs
         let numParams := ci.numParams
-        -- Arguments after the type parameters are the data fields
         let dataArgs := args.extract numParams args.size
         for i in [:dataArgs.size] do
           let arg := dataArgs[i]!
           let isProof ← isProofArg arg
           unless isProof do
             let childId ← walkExpr arg
-            -- Determine field name from constructor parameter names if available
-            let fieldName := s!"{ctorShortName}_{i}"
+            -- Use the binder name if available, otherwise fall back to index
+            let fieldName :=
+              if h : i < binderNames.size then
+                let n := binderNames[i]
+                if n.isAnonymous then s!"{ctorShortName}_{i}"
+                else toString n
+              else s!"{ctorShortName}_{i}"
             modify fun s => s.addTuple fieldName #[typeName, typeName]
               { atoms := #[atomId, childId], types := #[typeName, typeName] }
         return atomId

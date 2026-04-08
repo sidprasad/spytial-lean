@@ -18,17 +18,17 @@ inductive Color where
 
 inductive RBNode where
   | nil : RBNode
-  | node : Color → Nat → RBNode → RBNode → RBNode
+  | node (color : Color) (key : Nat) (left : RBNode) (right : RBNode) : RBNode
   deriving Repr
 
 spytial_spec RBNode [
-  .attribute (field := "node_1"),
-  .attribute (field := "node_0"),
-  .orientation (selector := "node_2") (directions := [.left, .below]),
-  .orientation (selector := "node_3") (directions := [.right, .below]),
+  .attribute (field := "key"),
+  .attribute (field := "color"),
+  .orientation (selector := "left") (directions := [.left, .below]),
+  .orientation (selector := "right") (directions := [.right, .below]),
   .hideAtom (selector := "Color + Nat"),
-  .atomColor (selector := "{x : RBNode | @:(x.node_0) = red}") (value := "red"),
-  .atomColor (selector := "{x : RBNode | @:(x.node_0) = black}") (value := "black")
+  .atomColor (selector := "{x : RBNode | @:(x.color) = red}") (value := "red"),
+  .atomColor (selector := "{x : RBNode | @:(x.color) = black}") (value := "black")
 ]
 
 def exampleRBTree : RBNode :=
@@ -46,31 +46,27 @@ def exampleRBTree : RBNode :=
 /-! ## Binary Tree -/
 
 inductive Tree (α : Type) where
-  | leaf : α → Tree α
-  | node : Tree α → Tree α → Tree α
+  | leaf (value : α) : Tree α
+  | node (left : Tree α) (right : Tree α) : Tree α
 
 spytial_spec Tree [
-  .orientation (selector := "node_0") (directions := [.left, .below]),
-  .orientation (selector := "node_1") (directions := [.right, .below]),
+  .orientation (selector := "left") (directions := [.left, .below]),
+  .orientation (selector := "right") (directions := [.right, .below]),
   .hideAtom (selector := "Nat")
 ]
 
-
 def myTree : Tree Nat :=
   .node (.leaf 1) (.node (.leaf 2) (.leaf 3))
-
 
 #spytial myTree
 
 -- Override with inline spec
 #spytial myTree with [
-  .orientation (selector := "node_0") (directions := [.above]),
-  .orientation (selector := "node_1") (directions := [.above]),
+  .orientation (selector := "left") (directions := [.above]),
+  .orientation (selector := "right") (directions := [.above]),
   .atomColor (selector := "Tree") (value := "#0066ff"),
   .hideAtom (selector := "Nat")
 ]
-
-#spytial myTree
 
 /-! ## Structures -/
 
@@ -96,13 +92,13 @@ def myList : List Nat := [1, 2, 3, 4]
 
 /-! ## Debugging -/
 
--- See the generated YAML spec (hover over to inspect in infoview)
+-- See the generated YAML spec (hover to inspect in infoview)
 #spytial.spec myTree with [
-  .orientation (selector := "node_0") (directions := [.left, .below]),
+  .orientation (selector := "left") (directions := [.left, .below]),
   .hideAtom (selector := "Nat")
 ]
 
--- See the generated JSON data instance
+-- See the generated JSON data instance (shows relation names)
 #spytial.datum myTree
 
 /-! ## Free layout (no spec) -/

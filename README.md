@@ -12,7 +12,6 @@ Spytial integration for Lean 4. Visualize Lean data structures as spatial diagra
 ## Quick start
 
 ```sh
-# Clone and build
 cd spytial-lean
 lake update
 lake build
@@ -45,17 +44,19 @@ Pass a `with [...]` block to control how the diagram is laid out:
 
 ```lean
 inductive Tree (α : Type) where
-  | leaf : α → Tree α
-  | node : Tree α → Tree α → Tree α
+  | leaf (value : α) : Tree α
+  | node (left : Tree α) (right : Tree α) : Tree α
 
 def t := Tree.node (.leaf 1) (.node (.leaf 2) (.leaf 3))
 
 #spytial t with [
-  .orientation (selector := "node_0") (directions := [.left, .below]),
-  .orientation (selector := "node_1") (directions := [.right, .below]),
+  .orientation (selector := "left") (directions := [.left, .below]),
+  .orientation (selector := "right") (directions := [.right, .below]),
   .hideAtom (selector := "Nat")
 ]
 ```
+
+Selectors use the **constructor parameter names** you define. Named arguments like `(left : Tree α)` produce a relation called `"left"`. Structure fields also use their declared names.
 
 ### Attaching specs to types
 
@@ -63,8 +64,8 @@ Use `spytial_spec` to attach a default layout to a type. Any `#spytial` call on 
 
 ```lean
 spytial_spec Tree [
-  .orientation (selector := "node_0") (directions := [.left, .below]),
-  .orientation (selector := "node_1") (directions := [.right, .below]),
+  .orientation (selector := "left") (directions := [.left, .below]),
+  .orientation (selector := "right") (directions := [.right, .below]),
   .hideAtom (selector := "Nat")
 ]
 
@@ -84,16 +85,16 @@ inductive Color where
 
 inductive RBNode where
   | nil : RBNode
-  | node : Color → Nat → RBNode → RBNode → RBNode
+  | node (color : Color) (key : Nat) (left : RBNode) (right : RBNode) : RBNode
 
 spytial_spec RBNode [
-  .attribute (field := "node_1"),
-  .attribute (field := "node_0"),
-  .orientation (selector := "node_2") (directions := [.left, .below]),
-  .orientation (selector := "node_3") (directions := [.right, .below]),
+  .attribute (field := "key"),
+  .attribute (field := "color"),
+  .orientation (selector := "left") (directions := [.left, .below]),
+  .orientation (selector := "right") (directions := [.right, .below]),
   .hideAtom (selector := "Color + Nat"),
-  .atomColor (selector := "{x : RBNode | @:(x.node_0) = red}") (value := "red"),
-  .atomColor (selector := "{x : RBNode | @:(x.node_0) = black}") (value := "black")
+  .atomColor (selector := "{x : RBNode | @:(x.color) = red}") (value := "red"),
+  .atomColor (selector := "{x : RBNode | @:(x.color) = black}") (value := "black")
 ]
 
 def myRBTree : RBNode :=
@@ -106,6 +107,20 @@ def myRBTree : RBNode :=
       (.node .black 20 .nil .nil))
 
 #spytial myRBTree
+```
+
+### Debugging
+
+Use `#spytial.datum` and `#spytial.spec` to inspect what the relationalizer and spec serializer produce:
+
+```lean
+-- See the JSON data instance (atoms + relations with their names)
+#spytial.datum myTree
+
+-- See the generated YAML spec
+#spytial.spec myTree with [
+  .orientation (selector := "left") (directions := [.left, .below])
+]
 ```
 
 ## Available operations
@@ -154,9 +169,29 @@ Operations are constructors of `SpytialOp`. Pass them as a list to `with [...]` 
 
 3. **Widget** (`widget/src/spytialWidget.tsx`) — A ProofWidgets4 widget module that loads spytial-core, generates a layout from the relational data + spec, and renders via the `webcola-cnd-graph` web component.
 
-### Selector field names
+### Relation naming
 
-The relationalizer names relations after constructor arguments by index: `node_0`, `node_1`, etc. For example, `RBNode.node : Color → Nat → RBNode → RBNode → RBNode` produces relations `node_0` (Color), `node_1` (Nat), `node_2` (left child), `node_3` (right child). Structure fields use their actual field names.
+Relations are named after the constructor parameter names you define:
+
+```lean
+inductive Tree (α : Type) where
+  | leaf (value : α) : Tree α
+  | node (left : Tree α) (right : Tree α) : Tree α
+```
+
+This produces relations named `value`, `left`, `right`. Use `#spytial.datum` to see the exact names. Structure fields use their declared field names directly.
+
+If constructor arguments are unnamed (positional style `| node : Tree α → Tree α → Tree α`), the relationalizer falls back to `ctorName_index` (e.g., `node_0`, `node_1`).
+
+### Error handling
+
+When constraints are unsatisfiable, the widget:
+- Renders a **counterfactual diagram** using the Maximal Feasible Subset (MFS)
+- Shows the **Irreducible Infeasible Subsystem (IIS)** — the minimal set of conflicting constraints
+- Highlights related constraints on hover (bidirectional source/diagram cross-highlighting)
+- Reports selector evaluation errors separately
+
+This uses spytial-core's `ErrorMessageModal` component directly.
 
 ## Project structure
 
@@ -173,16 +208,9 @@ widget/
   rollup.config.js       -- Bundles spytial-core into the widget
 ```
 
+See [DEVGUIDE.md](DEVGUIDE.md) for build details and development workflow.
 
 ## TODO
 
-- Need spytial specs to inherit from supertypes and compose etc etc.
-- Error rendering (c/f report, etc etc)
-- Figure out naming, etc. Are named constructor arguments correctly ...
-```
-inductive Tree (α : Type) where
-  | leaf (value : α) : Tree α
-  | node (left : Tree α) (right : Tree α) : Tree α
-```
-
-should result in a relation named 'left'.
+- Spytial specs should inherit from supertypes and compose
+- Better integration with Lean's tactic mode (`spytial` tactic, panel widgets)
