@@ -252,7 +252,7 @@ spytial_spec ElectricCar [
 ]
 
 -- Effective spec = Vehicle's ops ++ ElectricCar's ops
-#spytial myTesla
+#spytial myEV
 ```
 
 An explicit `with [...]` still fully overrides the inherited spec.

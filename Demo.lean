@@ -104,7 +104,7 @@ structure Car extends Vehicle where
   doors : Nat
 
 -- Car inherits Vehicle's spec automatically (no spytial_spec needed)
-def myCar : Car := { make := "Toyota", year := 2024, doors := 4 }
+def myCar : Car := { make := "Sedan", year := 2024, doors := 4 }
 
 #spytial myCar
 
@@ -118,9 +118,9 @@ spytial_spec ElectricCar [
 ]
 
 -- ElectricCar's effective spec = Vehicle's ops ++ ElectricCar's ops
-def myTesla : ElectricCar := { make := "Tesla", year := 2025, doors := 4, range := 300 }
+def myEV : ElectricCar := { make := "Volt", year := 2025, doors := 4, range := 300 }
 
-#spytial myTesla
+#spytial myEV
 
 /-! ## Lists -/
 
