@@ -11,7 +11,8 @@
   "dependencies": {
     "@leanprover/infoview": "~0.8.3",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "spytial-core": "file:../../spytial-core"
   },
   "devDependencies": {
     "@rollup/plugin-commonjs": "^28.0.1",

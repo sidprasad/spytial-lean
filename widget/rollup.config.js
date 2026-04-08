@@ -12,12 +12,21 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Load the pre-built spytial-core IIFE bundle and re-export as ES module.
 // The IIFE assigns to `var spytialcore = (function() { ... })()`,
 // which becomes a module-scoped variable that we then export.
-const spytialCorePath = path.resolve(__dirname, '../../spytial-core/dist/browser/spytial-core-complete.global.js');
+const spytialCorePath = path.resolve(__dirname, 'node_modules/spytial-core/dist/browser/spytial-core-complete.global.js');
 let spytialCoreBundle = '';
 try {
   spytialCoreBundle = fs.readFileSync(spytialCorePath, 'utf-8');
 } catch (e) {
   console.warn(`Warning: spytial-core bundle not found at ${spytialCorePath}. Build spytial-core first.`);
+}
+
+// Load the components bundle (provides mountErrorMessageModal, ErrorAPI, globalErrorManager)
+const componentsPath = path.resolve(__dirname, 'node_modules/spytial-core/dist/components/react-component-integration.global.js');
+let componentsBundle = '';
+try {
+  componentsBundle = fs.readFileSync(componentsPath, 'utf-8');
+} catch (e) {
+  console.warn(`Warning: spytial-core components bundle not found at ${componentsPath}. Build spytial-core first.`);
 }
 
 const isProduction = process.env.NODE_ENV === 'production';
@@ -69,6 +78,10 @@ export default {
           customElements.define = _origDefine;
         }
         export default typeof spytialcore !== 'undefined' ? spytialcore : {};
+      `,
+      'spytial-core-components': `
+        ${componentsBundle}
+        export default typeof IntegratedDemo !== 'undefined' ? IntegratedDemo : {};
       `
     }),
     nodeResolve({ browser: true }),
