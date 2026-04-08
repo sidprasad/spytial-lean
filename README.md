@@ -2,22 +2,40 @@
 
 Spytial integration for Lean 4. Visualize Lean data structures as spatial diagrams directly in the VS Code infoview.
 
-## Prerequisites
+## Installation
+
+Add to your `lakefile.lean`:
+
+```lean
+require spytialLean from
+  git "https://github.com/sidprasad/spytial-lean" @ "v0.1.0"
+```
+
+Then run:
+
+```sh
+lake update
+lake build
+```
+
+Pre-built artifacts are downloaded automatically from GitHub Releases. **Node.js is NOT required.**
+
+### Prerequisites
 
 - [Lean 4](https://leanprover.github.io/lean4/doc/setup.html) (v4.24.0)
 - [VS Code](https://code.visualstudio.com/) with the [Lean 4 extension](https://marketplace.visualstudio.com/items?itemName=leanprover.lean4)
-- [Node.js](https://nodejs.org/) (for building the widget JS)
-- spytial-core built (`cd ../spytial-core && npm run build:browser`)
 
-## Quick start
+### Building from source
+
+If you want to build from source (e.g., for development), you will also need:
+
+- [Node.js](https://nodejs.org/) (for building the widget JS)
 
 ```sh
+git clone https://github.com/sidprasad/spytial-lean.git
 cd spytial-lean
 lake update
 lake build
-
-# Open in VS Code
-code .
 ```
 
 Open `Demo.lean` and place your cursor on a `#spytial` line. The infoview panel will show the diagram.
