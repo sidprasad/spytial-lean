@@ -171,7 +171,7 @@ function ConflictReport({ error, selectorErrors }: { error: LayoutError; selecto
       </div>
 
       <div className="spytial-unsat-detail">
-        {error.message && <div>{error.message}</div>}
+        {error.message && <div dangerouslySetInnerHTML={{ __html: error.message }} />}
 
         {conflictEntries.length > 0 && (
           <details open={true} style={{ marginTop: 4 }}>
@@ -188,10 +188,11 @@ function ConflictReport({ error, selectorErrors }: { error: LayoutError; selecto
               <tbody>
                 {conflictEntries.map(([source, conflicts], i) => (
                   <tr key={i}>
-                    <td className="spytial-conflict-source">{source}</td>
+                    <td className="spytial-conflict-source"
+                        dangerouslySetInnerHTML={{ __html: source }} />
                     <td className="spytial-conflict-detail">
                       {conflicts.map((c, j) => (
-                        <div key={j}>{c}</div>
+                        <div key={j} dangerouslySetInnerHTML={{ __html: c }} />
                       ))}
                     </td>
                   </tr>
