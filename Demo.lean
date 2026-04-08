@@ -144,3 +144,20 @@ def myList : List Nat := [1, 2, 3, 4]
 /-! ## Free layout (no spec) -/
 
 #spytial myTree
+
+/-! ## Tactic mode
+
+Use `spytial` as a tactic to visualize data structures mid-proof.
+Hypothesis names and local bindings are in scope.
+-/
+
+-- Visualize a hypothesis
+set_option linter.unusedVariables false in
+example (t : RBNode) : True := by
+  spytial t
+  trivial
+
+-- Inline expression with spec override
+example : True := by
+  spytial exampleRBTree
+  trivial
