@@ -210,7 +210,35 @@ widget/
 
 See [DEVGUIDE.md](DEVGUIDE.md) for build details and development workflow.
 
+### Spec inheritance
+
+Specs compose across Lean's structure hierarchy. If type `B extends A`, and `A` has a `spytial_spec`, then `B` inherits it automatically. If `B` also has its own `spytial_spec`, the two are composed — parent ops first, child ops appended:
+
+```lean
+structure Vehicle where
+  make : String
+  year : Nat
+
+spytial_spec Vehicle [
+  .attribute (field := "make"),
+  .attribute (field := "year"),
+  .hideAtom (selector := "String + Nat")
+]
+
+structure ElectricCar extends Vehicle where
+  range : Nat
+
+spytial_spec ElectricCar [
+  .attribute (field := "range"),
+  .atomColor (selector := "ElectricCar") (value := "#2196F3")
+]
+
+-- Effective spec = Vehicle's ops ++ ElectricCar's ops
+#spytial myTesla
+```
+
+An explicit `with [...]` still fully overrides the inherited spec.
+
 ## TODO
 
-- Spytial specs should inherit from supertypes and compose
 - Better integration with Lean's tactic mode (`spytial` tactic, panel widgets)

@@ -83,6 +83,45 @@ def alice : Person := { name := "Alice", age := 30 }
   .atomColor (selector := "Person") (value := "#4CAF50")
 ]
 
+/-! ## Spec Inheritance (Structure extends)
+
+Specs compose across the structure parent chain.
+Parent ops come first; child ops extend or override them.
+-/
+
+structure Vehicle where
+  make : String
+  year : Nat
+
+spytial_spec Vehicle [
+  .attribute (field := "make"),
+  .attribute (field := "year"),
+  .atomColor (selector := "Vehicle") (value := "#4CAF50"),
+  .hideAtom (selector := "String + Nat")
+]
+
+structure Car extends Vehicle where
+  doors : Nat
+
+-- Car inherits Vehicle's spec automatically (no spytial_spec needed)
+def myCar : Car := { make := "Toyota", year := 2024, doors := 4 }
+
+#spytial myCar
+
+structure ElectricCar extends Car where
+  range : Nat
+
+spytial_spec ElectricCar [
+  .attribute (field := "range"),
+  .attribute (field := "doors"),
+  .atomColor (selector := "ElectricCar") (value := "#2196F3")
+]
+
+-- ElectricCar's effective spec = Vehicle's ops ++ ElectricCar's ops
+def myTesla : ElectricCar := { make := "Tesla", year := 2025, doors := 4, range := 300 }
+
+#spytial myTesla
+
 /-! ## Lists -/
 
 def myList : List Nat := [1, 2, 3, 4]
