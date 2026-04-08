@@ -94,6 +94,12 @@ function injectCss() {
       border-bottom: 1px solid var(--vscode-panel-border, #222);
       vertical-align: top;
     }
+    .spytial-conflict-row {
+      transition: background 0.15s;
+    }
+    .spytial-conflict-row.highlighted {
+      background: var(--vscode-editor-selectionBackground, rgba(38, 79, 120, 0.5));
+    }
     .spytial-conflict-source {
       color: var(--vscode-editorWarning-foreground, #cca700);
       font-family: var(--vscode-editor-font-family, monospace);
@@ -144,9 +150,10 @@ interface SelectorError {
   errorMessage: string;
 }
 
-/** Render the IIS conflict table from errorMessages */
+/** Render the IIS conflict table with cross-highlight on hover */
 function ConflictReport({ error, selectorErrors }: { error: LayoutError; selectorErrors: SelectorError[] }) {
   const msgs = error.errorMessages;
+  const [hoveredRow, setHoveredRow] = React.useState<number | null>(null);
 
   // Extract conflict entries from the Map or object
   let conflictEntries: Array<[string, string[]]> = [];
@@ -158,6 +165,31 @@ function ConflictReport({ error, selectorErrors }: { error: LayoutError; selecto
       conflictEntries = Object.entries(mcc);
     }
   }
+
+  // Build a reverse index: for each conflict string, which source rows contain it?
+  // This enables cross-highlighting — hovering a row highlights rows that share conflicts.
+  const conflictToRows = React.useMemo(() => {
+    const map = new Map<string, Set<number>>();
+    conflictEntries.forEach(([_, conflicts], rowIdx) => {
+      conflicts.forEach(c => {
+        if (!map.has(c)) map.set(c, new Set());
+        map.get(c)!.add(rowIdx);
+      });
+    });
+    return map;
+  }, [conflictEntries]);
+
+  // Which rows should be highlighted given the hovered row?
+  const highlightedRows = React.useMemo(() => {
+    if (hoveredRow === null) return new Set<number>();
+    const related = new Set<number>();
+    related.add(hoveredRow);
+    const conflicts = conflictEntries[hoveredRow]?.[1] || [];
+    conflicts.forEach(c => {
+      conflictToRows.get(c)?.forEach(r => related.add(r));
+    });
+    return related;
+  }, [hoveredRow, conflictEntries, conflictToRows]);
 
   return (
     <div className="spytial-unsat-banner">
@@ -187,7 +219,10 @@ function ConflictReport({ error, selectorErrors }: { error: LayoutError; selecto
               </thead>
               <tbody>
                 {conflictEntries.map(([source, conflicts], i) => (
-                  <tr key={i}>
+                  <tr key={i}
+                      className={`spytial-conflict-row${highlightedRows.has(i) ? ' highlighted' : ''}`}
+                      onMouseEnter={() => setHoveredRow(i)}
+                      onMouseLeave={() => setHoveredRow(null)}>
                     <td className="spytial-conflict-source"
                         dangerouslySetInnerHTML={{ __html: source }} />
                     <td className="spytial-conflict-detail">
