@@ -2,7 +2,7 @@ import SpytialLean
 
 open SpytialLean
 
-/-! # Demo 5 — Filtering proof/Prop fields from structures (Issue #5)
+/-! # Proof Field Filtering
 
 Structures carrying proof obligations (common in algebra) should only
 visualize their *data* fields. Proof fields are filtered by `isProofArg`.

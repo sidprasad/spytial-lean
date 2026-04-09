@@ -2,7 +2,7 @@ import SpytialLean
 
 open SpytialLean
 
-/-! # Demo 7 — Type class instance visualization (Issue #7)
+/-! # Type Class Instances
 
 Exploring how type class instances render with `#spytial`.
 Type classes are structures under the hood — do they decompose?
