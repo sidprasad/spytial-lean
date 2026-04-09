@@ -69,7 +69,9 @@ target widgetJsAll pkg : Unit := do
 lean_lib SpytialLean where
   needs := #[widgetJsAll]
 
-lean_lib Demo where
+lean_lib Demos where
+  srcDir := "demos"
+  roots := #[`Demo, `Demo5]
   needs := #[widgetJsAll]
 
 require proofwidgets from

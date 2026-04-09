@@ -146,11 +146,13 @@ partial def walkExpr (e : Expr) : StateT WalkState MetaM String := do
         modify fun s => s.addAtom { id := atomId, type := typeName, label := typeName }
         for fieldName in fields do
           let proj ← Meta.mkProjection e fieldName
-          let projReduced ← Meta.whnf proj
-          let childId ← walkExpr projReduced
-          let fn := toString fieldName
-          modify fun s => s.addTuple fn #[typeName, typeName]
-            { atoms := #[atomId, childId], types := #[typeName, typeName] }
+          let isProof ← isProofArg proj
+          unless isProof do
+            let projReduced ← Meta.whnf proj
+            let childId ← walkExpr projReduced
+            let fn := toString fieldName
+            modify fun s => s.addTuple fn #[typeName, typeName]
+              { atoms := #[atomId, childId], types := #[typeName, typeName] }
         return atomId
       else do
         -- Generic function application or unknown — leaf atom
