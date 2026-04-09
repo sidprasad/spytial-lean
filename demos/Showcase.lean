@@ -2,7 +2,7 @@ import SpytialLean
 
 open SpytialLean
 
-/-! # Spytial Demo
+/-! # Showcase
 
 Examples of using `#spytial` to visualize Lean data structures.
 -/

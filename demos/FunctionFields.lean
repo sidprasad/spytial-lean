@@ -2,7 +2,7 @@ import SpytialLean
 
 open SpytialLean
 
-/-! # Demo 6 — Function-valued fields (Issue #6)
+/-! # Function Fields
 
 Structures with function-valued fields should decompose into mapping
 graphs rather than rendering as opaque lambda blobs.
