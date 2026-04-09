@@ -56,11 +56,55 @@ def ppLabel (e : Expr) : MetaM String := do
   let fmt ← ppExpr e
   return toString fmt
 
+/-- Try to enumerate all elements of a finite type.
+    Returns `some [(label, expr)]` for finite types, `none` otherwise. -/
+def tryEnumerateDomain (ty : Expr) : MetaM (Option (Array (String × Expr))) := do
+  let ty ← Meta.whnf ty
+  match ty.getAppFn with
+  | .const ``Fin _ =>
+    let args := ty.getAppArgs
+    if h : args.size = 1 then
+      let nExpr ← Meta.whnf args[0]
+      match nExpr with
+      | .lit (.natVal n) =>
+        if n ≤ 20 then
+          let mut result : Array (String × Expr) := #[]
+          for i in [:n] do
+            -- Use OfNat instance to construct Fin element
+            let iExpr := mkNatLit i
+            let finExpr ← Meta.mkAppOptM ``OfNat.ofNat #[some ty, some iExpr, none]
+            result := result.push (toString i, finExpr)
+          return some result
+        else return none
+      | _ => return none
+    else return none
+  | .const ``Bool _ =>
+    return some #[("false", mkConst ``Bool.false), ("true", mkConst ``Bool.true)]
+  | .const indName _ =>
+    -- Check for zero-arity enumerative inductives
+    let env ← getEnv
+    if let some (.inductInfo ii) := env.find? indName then
+      if ii.numIndices == 0 && ii.numParams == 0 then
+        let allZeroArity := ii.ctors.all fun ctorName =>
+          match env.find? ctorName with
+          | some (.ctorInfo ci) => ci.numFields == 0
+          | _ => false
+        if allZeroArity then
+          let result := ii.ctors.toArray.map fun ctorName =>
+            (shortName ctorName, mkConst ctorName)
+          return some result
+        else return none
+      else return none
+    else return none
+  | _ => return none
+
 /-- Walk a Lean expression and produce atoms + relations.
     Returns the atom ID assigned to this expression. -/
-partial def walkExpr (e : Expr) : StateT WalkState MetaM String := do
+partial def walkExpr (eOrig : Expr) : StateT WalkState MetaM String := do
+  -- Save original name before WHNF unfolds it
+  let origName := eOrig.getAppFn.constName?
   -- WHNF reduce to expose constructors
-  let e ← Meta.whnf e
+  let e ← Meta.whnf eOrig
 
   -- Check for cycles
   let hash := e.hash
@@ -86,6 +130,29 @@ partial def walkExpr (e : Expr) : StateT WalkState MetaM String := do
   -- String literal
   | .lit (.strVal str) =>
     modify fun s => s.addAtom { id := atomId, type := "String", label := s!"\"{str}\"" }
+    return atomId
+
+  -- Lambda — try to enumerate finite domain, otherwise labeled node
+  | .lam binderName binderType _body _bi => do
+    let typeName ← do
+      let tyWhnf ← Meta.whnf ty
+      match tyWhnf.getAppFn with
+      | .const n _ => pure (shortName n)
+      | _ => pure (← ppLabel ty)
+    let label := match origName with
+      | some n => shortName n
+      | none => s!"λ {binderName}"
+    modify fun s => s.addAtom { id := atomId, type := typeName, label := label }
+    -- Try finite enumeration of the domain
+    let domainElems ← tryEnumerateDomain binderType
+    match domainElems with
+    | some elems =>
+      for (elemLabel, elemExpr) in elems do
+        let result ← Meta.whnf (Expr.app e elemExpr)
+        let childId ← walkExpr result
+        modify fun s => s.addTuple elemLabel #[typeName, typeName]
+          { atoms := #[atomId, childId], types := #[typeName, typeName] }
+    | none => pure ()  -- non-finite domain, just a labeled node
     return atomId
 
   | _ => do
