@@ -181,6 +181,59 @@ def elabSpytialDatumDebug : CommandElab := fun
     logInfo m!"{json.pretty}"
   | stx => throwError "Unexpected syntax {stx}."
 
+/-! ## Proof visualization -/
+
+/-- `#spytial.proof <term>` visualizes a proof term without filtering Prop-typed fields.
+    Unlike `#spytial` (data mode), this shows the full proof structure — sub-proofs,
+    premises, and witnesses are all included as nodes and edges.
+
+    Use `with [...]` to specify layout operations.
+-/
+syntax (name := spytialProofCmd) "#spytial.proof " term (" with " term)? : command
+
+@[command_elab spytialProofCmd]
+def elabSpytialProofCmd : CommandElab := fun
+  | stx@`(#spytial.proof $t:term $[with $spec?]?) => do
+    let (dataInstance, specYaml) ← liftTermElabM do
+      let e ← Term.elabTerm t none
+      Term.synthesizeSyntheticMVarsNoPostponing
+      let e ← instantiateMVars e
+      let di ← relationalize e { filterProofs := false }
+      let yaml ← match spec? with
+        | some specTerm => do
+          let spec ← evalSpytialSpec specTerm
+          pure (some (SpytialSpec.toYaml spec))
+        | none => lookupTypeSpec e
+      return (di, yaml)
+
+    let props : Json := Json.mkObj <|
+      [("dataInstance", toJson dataInstance)] ++
+      match specYaml with
+      | some s => [("cndSpec", toJson s)]
+      | none => []
+
+    liftCoreM <| savePanelWidgetInfo
+      SpytialWidget.javascriptHash
+      (return props)
+      stx
+
+  | stx => throwError "Unexpected syntax {stx}."
+
+/-- `#spytial.proof.datum <term>` prints the JSON data instance in proof mode. -/
+syntax (name := spytialProofDatumDebug) "#spytial.proof.datum " term : command
+
+@[command_elab spytialProofDatumDebug]
+def elabSpytialProofDatumDebug : CommandElab := fun
+  | `(#spytial.proof.datum $t:term) => do
+    let dataInstance ← liftTermElabM do
+      let e ← Term.elabTerm t none
+      Term.synthesizeSyntheticMVarsNoPostponing
+      let e ← instantiateMVars e
+      relationalize e { filterProofs := false }
+    let json := toJson dataInstance
+    logInfo m!"{json.pretty}"
+  | stx => throwError "Unexpected syntax {stx}."
+
 /-! ## spytial tactic -/
 
 open Tactic in
@@ -207,6 +260,37 @@ def elabSpytialTactic : Tactic := fun stx => do
     Term.synthesizeSyntheticMVarsNoPostponing
     let e ← instantiateMVars e
     let di ← relationalize e
+    let yaml ← if specOpt.isNone then
+        lookupTypeSpec e
+      else
+        let specTerm := specOpt[1]!
+        let spec ← evalSpytialSpec specTerm
+        pure (some (SpytialSpec.toYaml spec))
+
+    let props : Json := Json.mkObj <|
+      [("dataInstance", toJson di)] ++
+      match yaml with
+      | some s => [("cndSpec", toJson s)]
+      | none => []
+
+    savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
+
+/-! ## Proof tactic -/
+
+open Tactic in
+/-- `spytial.proof <term>` visualizes a proof term in tactic mode,
+    showing the full proof structure without filtering Prop-typed fields. -/
+syntax (name := spytialProofTactic) "spytial.proof " term (" with " term)? : tactic
+
+open Tactic in
+@[tactic spytialProofTactic]
+def elabSpytialProofTactic : Tactic := fun stx => do
+    let t := stx[1]
+    let specOpt := stx[2]
+    let e ← Term.elabTerm t none
+    Term.synthesizeSyntheticMVarsNoPostponing
+    let e ← instantiateMVars e
+    let di ← relationalize e { filterProofs := false }
     let yaml ← if specOpt.isNone then
         lookupTypeSpec e
       else
