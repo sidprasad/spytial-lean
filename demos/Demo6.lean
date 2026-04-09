@@ -48,6 +48,10 @@ def myFunctor : SimpleFunctor threeStruct twoStruct :=
 structure Transform where
   f : Bool → Nat
 
+
+-- TODO: I wonder if we can do something better about
+-- the relationalization here. Like should it be , here's the body
+-- of the transform with an "if" etc etc. Like an AST kind of thing?
 def myTransform : Transform :=
   { f := fun b => if b then 42 else 0 }
 

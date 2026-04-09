@@ -39,10 +39,12 @@ def WalkState.toDataInstance (s : WalkState) : JsonDataInstance :=
     { id := name, name := name, types := types, tuples := tuples : JsonRelation }
   { atoms := s.atoms, relations := relations }
 
-/-- Check if a type is a proposition (erased at runtime). -/
+/-- Check if an expression is a proof or type (erased at runtime). -/
 def isProofArg (e : Expr) : MetaM Bool := do
   let ty ← inferType e
-  return ty.isProp || ty.isSort
+  -- Use Meta.isProp for proper sort-level check (handles ∀-typed proofs)
+  let isProp ← Meta.isProp ty
+  return isProp || ty.isSort
 
 /-- Get the short name from a fully qualified Lean name. -/
 def shortName (n : Name) : String :=
