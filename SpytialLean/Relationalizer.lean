@@ -39,6 +39,11 @@ def WalkState.toDataInstance (s : WalkState) : JsonDataInstance :=
     { id := name, name := name, types := types, tuples := tuples : JsonRelation }
   { atoms := s.atoms, relations := relations }
 
+/-- Configuration for the expression walker. -/
+structure WalkConfig where
+  /-- When true, skip Prop-typed fields (data mode). When false, show them (proof mode). -/
+  filterProofs : Bool := true
+
 /-- Check if an expression is a proof or type (erased at runtime). -/
 def isProofArg (e : Expr) : MetaM Bool := do
   let ty ← inferType e
@@ -120,7 +125,7 @@ def tryEnumerateDomain (ty : Expr) : MetaM (Option (Array (String × Expr))) := 
 
 /-- Walk a Lean expression and produce atoms + relations.
     Returns the atom ID assigned to this expression. -/
-partial def walkExpr (eOrig : Expr) : StateT WalkState MetaM String := do
+partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : StateT WalkState MetaM String := do
   -- Save original name before WHNF unfolds it
   let origName := eOrig.getAppFn.constName?
   -- WHNF reduce to expose constructors
@@ -144,7 +149,7 @@ partial def walkExpr (eOrig : Expr) : StateT WalkState MetaM String := do
   let tyWhnfForLookup ← Meta.whnf ty
   if let .const typeConstName _ := tyWhnfForLookup.getAppFn then
     if let some relFn ← getSpytialRelationalizer? typeConstName then
-      return ← relFn eOrig walkExpr
+      return ← relFn eOrig (walkExpr cfg)
 
   -- Dispatch by expression form
   match e with
@@ -175,7 +180,7 @@ partial def walkExpr (eOrig : Expr) : StateT WalkState MetaM String := do
     | some elems =>
       for (elemLabel, elemExpr) in elems do
         let result ← Meta.whnf (Expr.app e elemExpr)
-        let childId ← walkExpr result
+        let childId ← walkExpr cfg result
         modify fun s => s.addTuple elemLabel #[typeName, typeName]
           { atoms := #[atomId, childId], types := #[typeName, typeName] }
     | none => pure ()  -- non-finite domain, just a labeled node
@@ -212,9 +217,9 @@ partial def walkExpr (eOrig : Expr) : StateT WalkState MetaM String := do
         let dataArgs := args.extract numParams args.size
         for i in [:dataArgs.size] do
           let arg := dataArgs[i]!
-          let isProof ← isProofArg arg
+          let isProof ← if cfg.filterProofs then isProofArg arg else pure false
           unless isProof do
-            let childId ← walkExpr arg
+            let childId ← walkExpr cfg arg
             -- Use the binder name if available, otherwise fall back to index
             let fieldName :=
               if h : i < binderNames.size then
@@ -239,10 +244,10 @@ partial def walkExpr (eOrig : Expr) : StateT WalkState MetaM String := do
         modify fun s => s.addAtom { id := atomId, type := typeName, label := typeName }
         for fieldName in fields do
           let proj ← Meta.mkProjection e fieldName
-          let isProof ← isProofArg proj
+          let isProof ← if cfg.filterProofs then isProofArg proj else pure false
           unless isProof do
             let projReduced ← Meta.whnf proj
-            let childId ← walkExpr projReduced
+            let childId ← walkExpr cfg projReduced
             let fn := toString fieldName
             modify fun s => s.addTuple fn #[typeName, typeName]
               { atoms := #[atomId, childId], types := #[typeName, typeName] }
@@ -259,8 +264,8 @@ partial def walkExpr (eOrig : Expr) : StateT WalkState MetaM String := do
       return atomId
 
 /-- Walk an expression and produce a complete JsonDataInstance. -/
-def relationalize (e : Expr) : MetaM JsonDataInstance := do
-  let (_, state) ← walkExpr e |>.run {}
+def relationalize (e : Expr) (cfg : WalkConfig := {}) : MetaM JsonDataInstance := do
+  let (_, state) ← walkExpr cfg e |>.run {}
   return state.toDataInstance
 
 end SpytialLean
