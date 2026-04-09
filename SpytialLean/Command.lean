@@ -121,6 +121,35 @@ def elabSpytialSpecCmd : CommandElab := fun
     liftCoreM <| setSpytialSpec declName yamlStr
   | stx => throwError "Unexpected syntax {stx}."
 
+/-! ## spytial_relationalizer command -/
+
+/-- `spytial_relationalizer <TypeName> <defName>` registers a custom relationalizer
+    for a type. The def must have type `CustomRelationalizer`.
+
+    ```
+    def myRelationalizer : CustomRelationalizer := fun e walkExpr => do ...
+
+    spytial_relationalizer MyType myRelationalizer
+    ```
+-/
+syntax (name := spytialRelationalizerCmd) "spytial_relationalizer " ident ident : command
+
+@[command_elab spytialRelationalizerCmd]
+unsafe def elabSpytialRelationalizerCmd : CommandElab := fun
+  | `(spytial_relationalizer $typeId:ident $defId:ident) => do
+    let typeName := typeId.getId
+    let defName := defId.getId
+    let env ← getEnv
+    unless env.contains typeName do
+      throwError s!"unknown type '{typeName}'"
+    unless env.contains defName do
+      throwError s!"unknown definition '{defName}'"
+    let fn ← liftTermElabM do
+      Meta.evalExpr CustomRelationalizer
+        (Lean.mkConst ``CustomRelationalizer) (Lean.mkConst defName)
+    registerSpytialRelationalizer typeName fn
+  | stx => throwError "Unexpected syntax {stx}."
+
 /-! ## Debugging commands -/
 
 /-- `#spytial.spec <term> with [<ops>]` prints the generated YAML spec.

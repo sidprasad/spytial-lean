@@ -5,6 +5,8 @@ namespace SpytialLean
 
 open Lean
 
+/-! ## Spytial spec extension -/
+
 /-- Environment extension storing Spytial specs attached to type declarations.
     Maps declaration name → YAML string. -/
 initialize spytialSpecExt : SimplePersistentEnvExtension (Name × String) (Std.HashMap Name String) ←

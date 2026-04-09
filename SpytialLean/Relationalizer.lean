@@ -58,6 +58,24 @@ def ppLabel (e : Expr) : MetaM String := do
   let fmt ← ppExpr e
   return toString fmt
 
+/-- A custom relationalizer function.
+    Receives the expression to decompose and the default walker for recursion. -/
+def CustomRelationalizer :=
+  Expr → (Expr → StateT WalkState MetaM String) → StateT WalkState MetaM String
+
+/-- Runtime registry of custom relationalizers, keyed by type name. -/
+initialize spytialRelationalizerRegistry :
+    IO.Ref (Std.HashMap Name CustomRelationalizer) ← IO.mkRef {}
+
+/-- Look up a custom relationalizer for a type name. -/
+def getSpytialRelationalizer? (typeName : Name) : IO (Option CustomRelationalizer) := do
+  let map ← spytialRelationalizerRegistry.get
+  return map.get? typeName
+
+/-- Register a custom relationalizer for a type. -/
+def registerSpytialRelationalizer (typeName : Name) (fn : CustomRelationalizer) : IO Unit :=
+  spytialRelationalizerRegistry.modify fun m => m.insert typeName fn
+
 /-- Try to enumerate all elements of a finite type.
     Returns `some [(label, expr)]` for finite types, `none` otherwise. -/
 def tryEnumerateDomain (ty : Expr) : MetaM (Option (Array (String × Expr))) := do
@@ -121,6 +139,12 @@ partial def walkExpr (eOrig : Expr) : StateT WalkState MetaM String := do
   let (atomId, s) := s.freshId
   let s := s.markSeen hash atomId
   set s
+
+  -- Check for custom relationalizer before default dispatch
+  let tyWhnfForLookup ← Meta.whnf ty
+  if let .const typeConstName _ := tyWhnfForLookup.getAppFn then
+    if let some relFn ← getSpytialRelationalizer? typeConstName then
+      return ← relFn eOrig walkExpr
 
   -- Dispatch by expression form
   match e with
