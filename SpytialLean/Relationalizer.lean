@@ -134,17 +134,17 @@ partial def walkExpr (eOrig : Expr) : StateT WalkState MetaM String := do
 
   let ty ← Meta.inferType e
 
-  -- Check for custom relationalizer before default dispatch
-  let tyWhnfForLookup ← Meta.whnf ty
-  if let .const typeConstName _ := tyWhnfForLookup.getAppFn then
-    if let some relFn ← getSpytialRelationalizer? typeConstName then
-      return ← relFn eOrig walkExpr
-
   -- Allocate a fresh ID and mark as seen immediately (before recursing)
   let s ← get
   let (atomId, s) := s.freshId
   let s := s.markSeen hash atomId
   set s
+
+  -- Check for custom relationalizer before default dispatch
+  let tyWhnfForLookup ← Meta.whnf ty
+  if let .const typeConstName _ := tyWhnfForLookup.getAppFn then
+    if let some relFn ← getSpytialRelationalizer? typeConstName then
+      return ← relFn eOrig walkExpr
 
   -- Dispatch by expression form
   match e with
