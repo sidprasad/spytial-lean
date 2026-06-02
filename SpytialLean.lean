@@ -1,5 +1,6 @@
 import SpytialLean.Types
 import SpytialLean.Spec
+import SpytialLean.TypeShape
 import SpytialLean.Relationalizer
 import SpytialLean.Widget
 import SpytialLean.Attr

@@ -1,5 +1,6 @@
 import Lean
 import SpytialLean.Types
+import SpytialLean.TypeShape
 
 namespace SpytialLean
 
@@ -50,18 +51,6 @@ def isProofArg (e : Expr) : MetaM Bool := do
   -- Use Meta.isProp for proper sort-level check (handles ∀-typed proofs)
   let isProp ← Meta.isProp ty
   return isProp || ty.isSort
-
-/-- Get the short name from a fully qualified Lean name. -/
-def shortName (n : Name) : String :=
-  match n with
-  | .str _ s => s
-  | .num _ n => toString n
-  | .anonymous => "_"
-
-/-- Pretty-print an expression concisely for use as a label. -/
-def ppLabel (e : Expr) : MetaM String := do
-  let fmt ← ppExpr e
-  return toString fmt
 
 /-- A custom relationalizer function.
     Receives the expression to decompose and the default walker for recursion. -/
@@ -165,11 +154,7 @@ partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : StateT WalkState 
 
   -- Lambda — try to enumerate finite domain, otherwise labeled node
   | .lam binderName binderType _body _bi => do
-    let typeName ← do
-      let tyWhnf ← Meta.whnf ty
-      match tyWhnf.getAppFn with
-      | .const n _ => pure (shortName n)
-      | _ => pure (← ppLabel ty)
+    let typeName ← sigOfType ty
     let label := match origName with
       | some n => shortName n
       | none => s!"λ {binderName}"
@@ -188,11 +173,7 @@ partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : StateT WalkState 
 
   | _ => do
     -- Try to get the type name
-    let typeName ← do
-      let tyWhnf ← Meta.whnf ty
-      match tyWhnf.getAppFn with
-      | .const n _ => pure (shortName n)
-      | _ => pure (← ppLabel ty)
+    let typeName ← sigOfType ty
 
     -- Check if it's an application of a constructor
     match e.getAppFn with
@@ -202,44 +183,23 @@ partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : StateT WalkState 
       if let some (.ctorInfo ci) := env.find? fnName then
         let ctorShortName := shortName fnName
         modify fun s => s.addAtom { id := atomId, type := typeName, label := ctorShortName }
-        -- Extract binder names from the constructor type (skip type params)
-        let mut binderNames : Array Name := #[]
-        let mut ctorTy := ci.type
-        let mut paramIdx := 0
-        while ctorTy.isForall do
-          if paramIdx >= ci.numParams then
-            binderNames := binderNames.push ctorTy.bindingName!
-          paramIdx := paramIdx + 1
-          ctorTy := ctorTy.bindingBody!
+        let binderNames := ctorDataBinderNames ci
         -- Process data arguments (skip type and proof parameters)
         let args := e.getAppArgs
-        let numParams := ci.numParams
-        let dataArgs := args.extract numParams args.size
+        let dataArgs := args.extract ci.numParams args.size
         for i in [:dataArgs.size] do
           let arg := dataArgs[i]!
           let isProof ← if cfg.filterProofs then isProofArg arg else pure false
           unless isProof do
             let childId ← walkExpr cfg arg
-            -- Use the binder name if available, otherwise fall back to index
-            let fieldName :=
-              if h : i < binderNames.size then
-                let n := binderNames[i]
-                if n.isAnonymous then s!"{ctorShortName}_{i}"
-                else toString n
-              else s!"{ctorShortName}_{i}"
+            let fieldName := fieldRelName ctorShortName binderNames i
             modify fun s => s.addTuple fieldName #[typeName, typeName]
               { atoms := #[atomId, childId], types := #[typeName, typeName] }
         return atomId
       -- Is it a structure projection?
-      else if isStructure env (← do
-            let tyFn := (← Meta.whnf ty).getAppFn
-            match tyFn with
-            | .const n _ => pure n
-            | _ => pure .anonymous) then
+      else if (← typeHead? ty).any (isStructure env ·) then
         -- Walk all structure fields
-        let tyConst := match (← Meta.whnf ty).getAppFn with
-          | .const n _ => n
-          | _ => .anonymous
+        let tyConst := (← typeHead? ty).getD .anonymous
         let fields := getStructureFields env tyConst
         modify fun s => s.addAtom { id := atomId, type := typeName, label := typeName }
         for fieldName in fields do
