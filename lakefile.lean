@@ -80,4 +80,4 @@ lean_lib SpytialTests where
   roots := #[`TypeShapeTest]
 
 require proofwidgets from
-  git "https://github.com/leanprover-community/ProofWidgets4" @ "v0.0.75"
+  git "https://github.com/leanprover-community/ProofWidgets4" @ "v0.0.105"

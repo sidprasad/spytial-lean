@@ -3,3 +3,6 @@ lake-packages/
 widget/node_modules/
 widget/dist/
 widget/package-lock.json
+package-lock.json.trace
+.direnv
+.envrc

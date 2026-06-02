@@ -40,6 +40,10 @@ lake build
 
 Open `Demo.lean` and place your cursor on a `#spytial` line. The infoview panel will show the diagram.
 
+### Nix dev shell
+
+A [flake](flake.nix) provides a dev shell (elan + Node) — run `nix develop`. To opt into [direnv](https://direnv.net/): `ln -s nix/envrc .envrc && direnv allow`.
+
 ## Usage
 
 ### Basic visualization
