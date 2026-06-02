@@ -1,32 +1,34 @@
-import Lean
+module
+
+public import Lean
 
 namespace SpytialLean
 
 /-- Relative positioning directions for orientation constraints. -/
-inductive Direction where
+public meta inductive Direction where
   | above | below | left | right
   | directlyAbove | directlyBelow | directlyLeft | directlyRight
   deriving Repr, DecidableEq, Inhabited
 
 /-- Alignment direction. -/
-inductive AlignDir where
+public meta inductive AlignDir where
   | horizontal | vertical
   deriving Repr, DecidableEq, Inhabited
 
 /-- Rotation direction for cyclic constraints. -/
-inductive RotationDir where
+public meta inductive RotationDir where
   | clockwise | counterclockwise
   deriving Repr, DecidableEq, Inhabited
 
 /-- Edge line style. -/
-inductive EdgeStyle where
+public meta inductive EdgeStyle where
   | solid | dashed | dotted
   deriving Repr, DecidableEq, Inhabited
 
 /-- A single Spytial operation — either a constraint (layout geometry) or a
     directive (visual styling). This matches the flat decorator lists used
     by spytial-py and caraspace (Rust). -/
-inductive SpytialOp where
+public meta inductive SpytialOp where
   -- Layout constraints
   | orientation (selector : String) (directions : List Direction)
   | align (selector : String) (direction : AlignDir)
@@ -47,7 +49,7 @@ inductive SpytialOp where
   deriving Repr, Inhabited
 
 /-- A list of Spytial operations forming a complete layout specification. -/
-abbrev SpytialSpec := List SpytialOp
+public meta abbrev SpytialSpec := List SpytialOp
 
 /-! ## YAML serialization
 
@@ -61,7 +63,7 @@ directives:
 We partition `SpytialOp`s into constraints vs directives and emit this format.
 -/
 
-private def Direction.toYaml : Direction → String
+private meta def Direction.toYaml : Direction → String
   | .above => "above"
   | .below => "below"
   | .left => "left"
@@ -71,30 +73,30 @@ private def Direction.toYaml : Direction → String
   | .directlyLeft => "directlyLeft"
   | .directlyRight => "directlyRight"
 
-private def AlignDir.toYaml : AlignDir → String
+private meta def AlignDir.toYaml : AlignDir → String
   | .horizontal => "horizontal"
   | .vertical => "vertical"
 
-private def RotationDir.toYaml : RotationDir → String
+private meta def RotationDir.toYaml : RotationDir → String
   | .clockwise => "clockwise"
   | .counterclockwise => "counterclockwise"
 
-private def EdgeStyle.toYaml : EdgeStyle → String
+private meta def EdgeStyle.toYaml : EdgeStyle → String
   | .solid => "solid"
   | .dashed => "dashed"
   | .dotted => "dotted"
 
-private def directionsToYaml (ds : List Direction) : String :=
+private meta def directionsToYaml (ds : List Direction) : String :=
   "[" ++ ", ".intercalate (ds.map Direction.toYaml) ++ "]"
 
 /-- Is this op a constraint (affects layout geometry)? -/
-private def SpytialOp.isConstraint : SpytialOp → Bool
+private meta def SpytialOp.isConstraint : SpytialOp → Bool
   | .orientation .. | .align .. | .cyclic .. | .group .. => true
   | .hideAtom .. | .size .. => true
   | _ => false
 
 /-- Render a single constraint op as a YAML list item. -/
-private def constraintToYaml : SpytialOp → String
+private meta def constraintToYaml : SpytialOp → String
   | .orientation sel dirs =>
     s!"  - orientation: \{selector: \"{sel}\", directions: {directionsToYaml dirs}}"
   | .align sel dir =>
@@ -111,7 +113,7 @@ private def constraintToYaml : SpytialOp → String
   | _ => ""
 
 /-- Render a single directive op as a YAML list item. -/
-private def directiveToYaml : SpytialOp → String
+private meta def directiveToYaml : SpytialOp → String
   | .atomColor sel val =>
     s!"  - atomColor: \{selector: \"{sel}\", value: \"{val}\"}"
   | .edgeColor field val style =>
@@ -136,7 +138,7 @@ private def directiveToYaml : SpytialOp → String
   | _ => ""
 
 /-- Convert a `SpytialSpec` to a YAML string consumable by `parseLayoutSpec`. -/
-def SpytialSpec.toYaml (spec : SpytialSpec) : String :=
+public meta def SpytialSpec.toYaml (spec : SpytialSpec) : String :=
   let constraints := spec.filter SpytialOp.isConstraint
   let directives := spec.filter (! SpytialOp.isConstraint ·)
   let parts : List String := []
@@ -148,7 +150,7 @@ def SpytialSpec.toYaml (spec : SpytialSpec) : String :=
 
 /-- Extract constraint and directive lines from a YAML spec string.
     Returns `(constraintLines, directiveLines)`. -/
-private def extractSpecLines (yaml : String) : List String × List String :=
+private meta def extractSpecLines (yaml : String) : List String × List String :=
   let lines := yaml.splitOn "\n"
   let rec go (lines : List String) (inConstraints : Bool)
       (cs : List String) (ds : List String) : List String × List String :=
@@ -165,7 +167,7 @@ private def extractSpecLines (yaml : String) : List String × List String :=
 
 /-- Merge multiple YAML spec strings (parent-first order) into a single YAML spec.
     Constraints and directives from all specs are concatenated in order. -/
-def mergeSpecYamls (yamls : List String) : String :=
+public meta def mergeSpecYamls (yamls : List String) : String :=
   let (allCs, allDs) := yamls.foldl (fun (cs, ds) yaml =>
     let (c, d) := extractSpecLines yaml
     (cs ++ c, ds ++ d)) ([], [])

@@ -1,8 +1,10 @@
-import SpytialLean.TypeShape
+module
+
+meta import SpytialLean.TypeShape
 
 open SpytialLean Lean Meta
 
-private def assertEq {α} [BEq α] [Repr α] (label : String) (got expected : Array α) :
+private meta def assertEq {α} [BEq α] [Repr α] (label : String) (got expected : Array α) :
     MetaM Unit := do
   unless got == expected do
     throwError "{label}: got {toString (repr got)}, expected {toString (repr expected)}"
@@ -18,14 +20,14 @@ private def assertEq {α} [BEq α] [Repr α] (label : String) (got expected : Ar
   assertEq "rel.anon"   #[fieldRelName "mk" #[Name.anonymous] 0] #["mk_0"]
   assertEq "rel.empty"  #[fieldRelName "mk" #[] 5] #["mk_5"]
 
-inductive Tree (α : Type) where
+public inductive Tree (α : Type) where
   | leaf (value : α)
   | node (left right : Tree α)
 
-inductive Pos where
+public inductive Pos where
   | mk : Nat → Nat → Pos          -- positional (anonymous) fields → fallback names
 
-structure Demo where
+public structure Demo where
   val : Nat
   ok : val = val                  -- a Prop field, filtered from data relations
 

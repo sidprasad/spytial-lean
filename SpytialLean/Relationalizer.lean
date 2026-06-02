@@ -1,13 +1,15 @@
-import Lean
-import SpytialLean.Types
-import SpytialLean.TypeShape
+module
+
+public import Lean
+public meta import SpytialLean.Types
+public meta import SpytialLean.TypeShape
 
 namespace SpytialLean
 
 open Lean Meta
 
 /-- State maintained while walking an expression tree. -/
-structure WalkState where
+public meta structure WalkState where
   atoms : Array JsonAtom := #[]
   /-- Map from relation name to accumulated tuples. -/
   relations : Std.HashMap String (Array String × Array JsonTuple) := {}
@@ -16,37 +18,37 @@ structure WalkState where
   nextId : Nat := 0
 
 /-- Generate a fresh atom ID. -/
-def WalkState.freshId (s : WalkState) : String × WalkState :=
+public meta def WalkState.freshId (s : WalkState) : String × WalkState :=
   let id := s!"atom_{s.nextId}"
   (id, { s with nextId := s.nextId + 1 })
 
 /-- Register an atom in the state. -/
-def WalkState.addAtom (s : WalkState) (atom : JsonAtom) : WalkState :=
+public meta def WalkState.addAtom (s : WalkState) (atom : JsonAtom) : WalkState :=
   { s with atoms := s.atoms.push atom }
 
 /-- Add a tuple to a relation, creating the relation if needed. -/
-def WalkState.addTuple (s : WalkState) (relName : String) (types : Array String)
+public meta def WalkState.addTuple (s : WalkState) (relName : String) (types : Array String)
     (tuple : JsonTuple) : WalkState :=
   let existing := s.relations.getD relName (types, #[])
   { s with relations := s.relations.insert relName (existing.1, existing.2.push tuple) }
 
 /-- Mark an expression as seen with the given atom ID. -/
-def WalkState.markSeen (s : WalkState) (hash : UInt64) (atomId : String) : WalkState :=
+public meta def WalkState.markSeen (s : WalkState) (hash : UInt64) (atomId : String) : WalkState :=
   { s with seen := s.seen.insert hash atomId }
 
 /-- Convert accumulated state to a JsonDataInstance. -/
-def WalkState.toDataInstance (s : WalkState) : JsonDataInstance :=
+public meta def WalkState.toDataInstance (s : WalkState) : JsonDataInstance :=
   let relations := s.relations.toArray.map fun (name, types, tuples) =>
     { id := name, name := name, types := types, tuples := tuples : JsonRelation }
   { atoms := s.atoms, relations := relations }
 
 /-- Configuration for the expression walker. -/
-structure WalkConfig where
+public meta structure WalkConfig where
   /-- When true, skip Prop-typed fields (data mode). When false, show them (proof mode). -/
   filterProofs : Bool := true
 
 /-- Check if an expression is a proof or type (erased at runtime). -/
-def isProofArg (e : Expr) : MetaM Bool := do
+public meta def isProofArg (e : Expr) : MetaM Bool := do
   let ty ← inferType e
   -- Use Meta.isProp for proper sort-level check (handles ∀-typed proofs)
   let isProp ← Meta.isProp ty
@@ -54,25 +56,25 @@ def isProofArg (e : Expr) : MetaM Bool := do
 
 /-- A custom relationalizer function.
     Receives the expression to decompose and the default walker for recursion. -/
-def CustomRelationalizer :=
+@[expose] public meta def CustomRelationalizer :=
   Expr → (Expr → StateT WalkState MetaM String) → StateT WalkState MetaM String
 
 /-- Runtime registry of custom relationalizers, keyed by type name. -/
-initialize spytialRelationalizerRegistry :
+public meta initialize spytialRelationalizerRegistry :
     IO.Ref (Std.HashMap Name CustomRelationalizer) ← IO.mkRef {}
 
 /-- Look up a custom relationalizer for a type name. -/
-def getSpytialRelationalizer? (typeName : Name) : IO (Option CustomRelationalizer) := do
+public meta def getSpytialRelationalizer? (typeName : Name) : IO (Option CustomRelationalizer) := do
   let map ← spytialRelationalizerRegistry.get
   return map.get? typeName
 
 /-- Register a custom relationalizer for a type. -/
-def registerSpytialRelationalizer (typeName : Name) (fn : CustomRelationalizer) : IO Unit :=
+public meta def registerSpytialRelationalizer (typeName : Name) (fn : CustomRelationalizer) : IO Unit :=
   spytialRelationalizerRegistry.modify fun m => m.insert typeName fn
 
 /-- Try to enumerate all elements of a finite type.
     Returns `some [(label, expr)]` for finite types, `none` otherwise. -/
-def tryEnumerateDomain (ty : Expr) : MetaM (Option (Array (String × Expr))) := do
+public meta def tryEnumerateDomain (ty : Expr) : MetaM (Option (Array (String × Expr))) := do
   let ty ← Meta.whnf ty
   match ty.getAppFn with
   | .const ``Fin _ =>
@@ -114,7 +116,7 @@ def tryEnumerateDomain (ty : Expr) : MetaM (Option (Array (String × Expr))) := 
 
 /-- Walk a Lean expression and produce atoms + relations.
     Returns the atom ID assigned to this expression. -/
-partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : StateT WalkState MetaM String := do
+public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : StateT WalkState MetaM String := do
   -- Save original name before WHNF unfolds it
   let origName := eOrig.getAppFn.constName?
   -- WHNF reduce to expose constructors
@@ -224,7 +226,7 @@ partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : StateT WalkState 
       return atomId
 
 /-- Walk an expression and produce a complete JsonDataInstance. -/
-def relationalize (e : Expr) (cfg : WalkConfig := {}) : MetaM JsonDataInstance := do
+public meta def relationalize (e : Expr) (cfg : WalkConfig := {}) : MetaM JsonDataInstance := do
   let (_, state) ← walkExpr cfg e |>.run {}
   return state.toDataInstance
 

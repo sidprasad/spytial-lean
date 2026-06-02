@@ -1,29 +1,33 @@
-import Lean
-import Lean.Elab.Command
-import Lean.Elab.Term
-import Lean.Elab.Tactic
-import Lean.Widget.UserWidget
-import SpytialLean.Types
-import SpytialLean.Spec
-import SpytialLean.Relationalizer
-import SpytialLean.Widget
-import SpytialLean.Attr
+module
+
+public import Lean
+public import Lean.Elab.Command
+public import Lean.Elab.Term
+public import Lean.Elab.Tactic
+public import Lean.Widget.UserWidget
+public meta import SpytialLean.Types
+public meta import SpytialLean.Spec
+public meta import SpytialLean.Relationalizer
+public meta import SpytialLean.Widget
+public meta import SpytialLean.Attr
 
 namespace SpytialLean
 
 open Lean Elab Command Term Meta Widget
 
+public section
+
 /-! ## Evaluating SpytialSpec from syntax -/
 
 /-- Evaluate a `SpytialSpec` term to a value at elaboration time. -/
-private unsafe def evalSpytialSpecUnsafe (stx : Syntax) : TermElabM SpytialSpec := do
+private meta unsafe def evalSpytialSpecUnsafe (stx : Syntax) : TermElabM SpytialSpec := do
   let e ← Term.elabTerm stx (some (mkConst ``SpytialSpec))
   Term.synthesizeSyntheticMVarsNoPostponing
   let e ← instantiateMVars e
   evalExpr SpytialSpec (mkConst ``SpytialSpec) e
 
 @[implemented_by evalSpytialSpecUnsafe]
-private opaque evalSpytialSpec (stx : Syntax) : TermElabM SpytialSpec
+private meta opaque evalSpytialSpec (stx : Syntax) : TermElabM SpytialSpec
 
 /-! ## #spytial command -/
 
@@ -44,7 +48,7 @@ syntax (name := spytialCmd) "#spytial " term (" with " term)? : command
 
 /-- Try to find a Spytial spec attached to the head type of an expression.
     For structures, walks the parent chain and composes specs (parent-first). -/
-private def lookupTypeSpec (e : Expr) : MetaM (Option String) := do
+private meta def lookupTypeSpec (e : Expr) : MetaM (Option String) := do
   let ty ← inferType e
   let tyHead := (← whnf ty).getAppFn
   match tyHead with
@@ -66,7 +70,7 @@ private def lookupTypeSpec (e : Expr) : MetaM (Option String) := do
   | _ => return none
 
 @[command_elab spytialCmd]
-def elabSpytialCmd : CommandElab := fun
+meta def elabSpytialCmd : CommandElab := fun
   | stx@`(#spytial $t:term $[with $spec?]?) => do
     let (dataInstance, specYaml) ← liftTermElabM do
       let e ← Term.elabTerm t none
@@ -109,7 +113,7 @@ def elabSpytialCmd : CommandElab := fun
 syntax (name := spytialSpecCmd) "spytial_spec " ident term : command
 
 @[command_elab spytialSpecCmd]
-def elabSpytialSpecCmd : CommandElab := fun
+meta def elabSpytialSpecCmd : CommandElab := fun
   | `(spytial_spec $id:ident $specTerm:term) => do
     let declName := id.getId
     let env ← getEnv
@@ -135,7 +139,7 @@ def elabSpytialSpecCmd : CommandElab := fun
 syntax (name := spytialRelationalizerCmd) "spytial_relationalizer " ident ident : command
 
 @[command_elab spytialRelationalizerCmd]
-unsafe def elabSpytialRelationalizerCmd : CommandElab := fun
+meta unsafe def elabSpytialRelationalizerCmd : CommandElab := fun
   | `(spytial_relationalizer $typeId:ident $defId:ident) => do
     let typeName := typeId.getId
     let defName := defId.getId
@@ -157,7 +161,7 @@ unsafe def elabSpytialRelationalizerCmd : CommandElab := fun
 syntax (name := spytialSpecDebug) "#spytial.spec " term " with " term : command
 
 @[command_elab spytialSpecDebug]
-def elabSpytialSpecDebug : CommandElab := fun
+meta def elabSpytialSpecDebug : CommandElab := fun
   | `(#spytial.spec $_t:term with $specTerm:term) => do
     let yamlStr ← liftTermElabM do
       let spec ← evalSpytialSpec specTerm
@@ -170,7 +174,7 @@ def elabSpytialSpecDebug : CommandElab := fun
 syntax (name := spytialDatumDebug) "#spytial.datum " term : command
 
 @[command_elab spytialDatumDebug]
-def elabSpytialDatumDebug : CommandElab := fun
+meta def elabSpytialDatumDebug : CommandElab := fun
   | `(#spytial.datum $t:term) => do
     let dataInstance ← liftTermElabM do
       let e ← Term.elabTerm t none
@@ -192,7 +196,7 @@ def elabSpytialDatumDebug : CommandElab := fun
 syntax (name := spytialProofCmd) "#spytial.proof " term (" with " term)? : command
 
 @[command_elab spytialProofCmd]
-def elabSpytialProofCmd : CommandElab := fun
+meta def elabSpytialProofCmd : CommandElab := fun
   | stx@`(#spytial.proof $t:term $[with $spec?]?) => do
     let (dataInstance, specYaml) ← liftTermElabM do
       let e ← Term.elabTerm t none
@@ -223,7 +227,7 @@ def elabSpytialProofCmd : CommandElab := fun
 syntax (name := spytialProofDatumDebug) "#spytial.proof.datum " term : command
 
 @[command_elab spytialProofDatumDebug]
-def elabSpytialProofDatumDebug : CommandElab := fun
+meta def elabSpytialProofDatumDebug : CommandElab := fun
   | `(#spytial.proof.datum $t:term) => do
     let dataInstance ← liftTermElabM do
       let e ← Term.elabTerm t none
@@ -253,7 +257,7 @@ syntax (name := spytialTactic) "spytial " term (" with " term)? : tactic
 
 open Tactic in
 @[tactic spytialTactic]
-def elabSpytialTactic : Tactic := fun stx => do
+meta def elabSpytialTactic : Tactic := fun stx => do
     let t := stx[1]
     let specOpt := stx[2]
     let e ← Term.elabTerm t none
@@ -284,7 +288,7 @@ syntax (name := spytialProofTactic) "spytial.proof " term (" with " term)? : tac
 
 open Tactic in
 @[tactic spytialProofTactic]
-def elabSpytialProofTactic : Tactic := fun stx => do
+meta def elabSpytialProofTactic : Tactic := fun stx => do
     let t := stx[1]
     let specOpt := stx[2]
     let e ← Term.elabTerm t none
@@ -305,5 +309,7 @@ def elabSpytialProofTactic : Tactic := fun stx => do
       | none => []
 
     savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
+
+end
 
 end SpytialLean

@@ -1,4 +1,6 @@
-import Lean
+module
+
+public import Lean
 
 namespace SpytialLean
 
@@ -7,26 +9,26 @@ open Lean Meta
 /-! Single source of truth for the relationalizer's naming, so static checkers
 predict the same names the runtime walker emits. -/
 
-def shortName (n : Name) : String :=
+public meta def shortName (n : Name) : String :=
   match n with
   | .str _ s => s
   | .num _ n => toString n
   | .anonymous => "_"
 
-def ppLabel (e : Expr) : MetaM String := do
+public meta def ppLabel (e : Expr) : MetaM String := do
   return toString (← Meta.ppExpr e)
 
-def typeHead? (ty : Expr) : MetaM (Option Name) := do
+public meta def typeHead? (ty : Expr) : MetaM (Option Name) := do
   match (← Meta.whnf ty).getAppFn with
   | .const n _ => return some n
   | _          => return none
 
-def sigOfType (ty : Expr) : MetaM String := do
+public meta def sigOfType (ty : Expr) : MetaM String := do
   match ← typeHead? ty with
   | some n => return shortName n
   | none   => ppLabel ty
 
-def ctorDataBinderNames (ci : ConstructorVal) : Array Name := Id.run do
+public meta def ctorDataBinderNames (ci : ConstructorVal) : Array Name := Id.run do
   let mut binderNames : Array Name := #[]
   let mut ctorTy := ci.type
   let mut paramIdx := 0
@@ -39,32 +41,32 @@ def ctorDataBinderNames (ci : ConstructorVal) : Array Name := Id.run do
 
 /-- Positional ctor args carry inaccessible hygienic binder names (`a✝`), not
     `.anonymous`, so macro-scoped names take the `ctor_i` fallback. -/
-def fieldRelName (ctorShort : String) (binderNames : Array Name) (i : Nat) : String :=
+public meta def fieldRelName (ctorShort : String) (binderNames : Array Name) (i : Nat) : String :=
   if h : i < binderNames.size then
     let n := binderNames[i]
     if n.isAnonymous || n.hasMacroScopes then s!"{ctorShort}_{i}" else toString n
   else
     s!"{ctorShort}_{i}"
 
-structure FieldShape where
+public meta structure FieldShape where
   relName : String
   typeSig : Option String
   isProp : Bool
   deriving Repr, Inhabited
 
-structure CtorShape where
+public meta structure CtorShape where
   ctorName : Name
   ctorShort : String
   fields : Array FieldShape
   deriving Repr, Inhabited
 
-structure TypeShape where
+public meta structure TypeShape where
   typeName : Name
   sig : String
   ctors : Array CtorShape
   deriving Repr, Inhabited
 
-def TypeShape.ofInductive (typeName : Name) : MetaM (Option TypeShape) := do
+public meta def TypeShape.ofInductive (typeName : Name) : MetaM (Option TypeShape) := do
   let env ← getEnv
   let some (.inductInfo ii) := env.find? typeName | return none
   let mut ctors : Array CtorShape := #[]
@@ -87,7 +89,7 @@ def TypeShape.ofInductive (typeName : Name) : MetaM (Option TypeShape) := do
     ctors := ctors.push { ctorName, ctorShort, fields }
   return some { typeName, sig := shortName typeName, ctors }
 
-def TypeShape.dataRelNames (ts : TypeShape) : Array String := Id.run do
+public meta def TypeShape.dataRelNames (ts : TypeShape) : Array String := Id.run do
   let mut out : Array String := #[]
   for c in ts.ctors do
     for f in c.fields do
