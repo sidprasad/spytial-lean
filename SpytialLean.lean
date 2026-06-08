@@ -4,3 +4,4 @@ import SpytialLean.Relationalizer
 import SpytialLean.Widget
 import SpytialLean.Attr
 import SpytialLean.Command
+import SpytialLean.Fidelity
