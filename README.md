@@ -141,6 +141,56 @@ Use `#spytial.datum` and `#spytial.spec` to inspect what the relationalizer and 
 ]
 ```
 
+## Performance and limits
+
+`walkExpr` is recursive and unbounded by depth; its cost scales with the number
+of atoms produced — roughly the number of constructor nodes after WHNF, minus
+shared subterms (structurally identical subterms are deduplicated into a single
+atom via the `seen` cache).
+
+Indicative timings, measured on a dev laptop (relationalize only — these are not
+rigorous benchmarks, and the widget's own layout step is separate and slower):
+
+| Input | Atoms | `relationalize` time |
+|-------|-------|----------------------|
+| `List.range 10` | 21 | < 5 ms |
+| `List.range 100` | 201 | ~ 3 ms |
+| `List.range 1000` | 2001 | ~ 40 ms |
+| Balanced binary tree, depth 5 (31 nodes, distinct leaves) | 47 | < 1 ms |
+| `Nat.add_comm 100 200` (proof mode, `filterProofs := false`) | 1 | < 1 ms |
+
+Relationalization itself stays fast into the low thousands of atoms. In practice
+the limit you hit first is legibility: under a few hundred atoms the diagram
+renders comfortably, but into the thousands the layout step inside the widget
+becomes the bottleneck and the picture is rarely readable anyway.
+
+### The `maxAtoms` guard
+
+`WalkConfig.maxAtoms` (default `5000`) caps the total number of atoms a single
+walk may produce. When a walk would exceed it, the relationalizer throws rather
+than building a runaway diagram (or hanging the editor):
+
+```
+spytial: relationalize produced over 5000 atoms (the WalkConfig.maxAtoms limit
+was hit); the term is too large to visualize usefully. Increase the limit via
+WalkConfig.maxAtoms, or visualize a smaller sub-term.
+```
+
+This guard bounds the **relationalizer**; the widget's own layout cost is a
+separate concern and is not affected by it. The default of 5000 is far above
+anything that renders usefully, so ordinary use never trips it — raise it
+deliberately if you genuinely need a larger diagram.
+
+### A note on unfolding
+
+`#spytial` decomposes a term *after* `Meta.whnf`, so definitions unfold before
+they are walked. A small-looking term can therefore expand a lot: `List.range
+1000` is three tokens but relationalizes to 2001 atoms. Proof terms are the
+surprising case in the other direction — a theorem like `Nat.add_comm 100 200`
+stays a single atom even in proof mode, because `whnf` does not unfold a
+theorem's body (proofs are opaque to it). So a proof that *looks* large may
+collapse to one node, while a tiny data definition may explode.
+
 ## Available operations
 
 Operations are constructors of `SpytialOp`. Pass them as a list to `with [...]` or `spytial_spec`.
