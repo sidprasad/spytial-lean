@@ -53,6 +53,13 @@ structure WalkConfig where
       from `.notationLabel` spec ops (see `SpytialSpec.collapseTypes`). E.g.
       `["List"]` renders `[1, 2, 3]` as one atom rather than a cons chain. -/
   collapseTypes : List String := []
+  /-- Hard upper bound on the number of atoms a single walk may produce.
+      Relationalizing a very large term (a long `List`, a deeply unfolded proof)
+      can generate thousands of atoms, which hangs the widget's layout step and
+      is rarely legible anyway. When the count would exceed this limit the walker
+      throws a clear error instead of running away. Default 5000 is far above any
+      term that renders usefully; raise it deliberately if you really need to. -/
+  maxAtoms : Nat := 5000
 
 /-- Check if an expression is a proof or type (erased at runtime). -/
 def isProofArg (e : Expr) : MetaM Bool := do
@@ -155,16 +162,33 @@ structure CasesOnInfo where
   numIndices : Nat
   ctors : Array Name
 
+/-- Allocate a fresh atom id, enforcing `cfg.maxAtoms`.
+
+    Every atom-producing path runs through one of the `freshId` call sites, so
+    routing them all through this helper makes `maxAtoms` a hard cap on the total
+    atom count regardless of which walker (value, function body, matcher, …)
+    produced them. When the next id would push the count over the limit it throws
+    an actionable error instead of building a runaway diagram. The error text is
+    deterministic (it does not depend on hash ordering). -/
+def freshAtomId (cfg : WalkConfig) : StateT WalkState MetaM String := do
+  let s ← get
+  let (atomId, s) := s.freshId
+  if s.nextId > cfg.maxAtoms then
+    throwError "spytial: relationalize produced over {cfg.maxAtoms} atoms \
+      (the WalkConfig.maxAtoms limit was hit); the term is too large to \
+      visualize usefully. Increase the limit via WalkConfig.maxAtoms, or \
+      visualize a smaller sub-term."
+  set s
+  return atomId
+
 /-- Emit a single leaf atom for an already-reduced expression and return its id.
 
     Pretty-prints `e` *as given* (no further reduction). The structural walker
     uses this for leaves of a function body so that arithmetic on the bound
     variable keeps its surface form (`n * 2`) instead of being unfolded by the
     full `whnf` that `walkExpr` would apply at its entry. -/
-def emitLeaf (e : Expr) : StateT WalkState MetaM String := do
-  let s ← get
-  let (atomId, s) := s.freshId
-  set s
+def emitLeaf (cfg : WalkConfig := {}) (e : Expr) : StateT WalkState MetaM String := do
+  let atomId ← freshAtomId cfg
   let typeName ← typeShortName (← Meta.inferType e)
   let label ← ppLabel e
   modify fun s => s.addAtom { id := atomId, type := typeName, label := label }
@@ -204,11 +228,12 @@ partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : StateT WalkState 
 
   let ty ← Meta.inferType e
 
-  -- Allocate a fresh ID and mark as seen immediately (before recursing)
-  let s ← get
-  let (atomId, s) := s.freshId
-  let s := s.markSeen hash atomId
-  set s
+  -- Allocate a fresh ID (enforcing `maxAtoms`) and mark as seen immediately
+  -- (before recursing). This is the single chokepoint every `walkExpr`-entry
+  -- atom flows through; `emitLeaf` and the structural walkers below allocate
+  -- via `freshAtomId` too, so the cap bounds the total regardless of path.
+  let atomId ← freshAtomId cfg
+  modify fun s => s.markSeen hash atomId
 
   -- Notation collapse: if this value's type-head short name was opted in via a
   -- `.notationLabel` spec op, emit ONE atom labeled with the surface notation of
@@ -436,9 +461,7 @@ partial def walkBody (cfg : WalkConfig := {}) (e : Expr) :
       let isDite := fnName == ``dite
       let ty ← Meta.inferType e
       let typeName ← typeShortName ty
-      let s ← get
-      let (atomId, s) := s.freshId
-      set s
+      let atomId ← freshAtomId cfg
       modify fun s => s.addAtom { id := atomId, type := typeName, label := "if" }
       let condId ← walkBody cfg args[1]!
       modify fun s => s.addTuple "condition" #[typeName, typeName]
@@ -469,15 +492,13 @@ partial def walkBody (cfg : WalkConfig := {}) (e : Expr) :
       -- a recursive call): emit a leaf from the surface form. Going through
       -- `walkExpr` here would full-`whnf` and unfold e.g. `n * 2` into
       -- `(n.mul 1).add n`; `emitLeaf` keeps the readable `n * 2`.
-      emitLeaf e
+      emitLeaf cfg e
   | .letE declName declType value body _nonDep =>
     -- Surface a `let`: walk the bound value, then the body with the let
     -- variable in scope as a local decl.
     let ty ← Meta.inferType e
     let typeName ← typeShortName ty
-    let s ← get
-    let (atomId, s) := s.freshId
-    set s
+    let atomId ← freshAtomId cfg
     modify fun s => s.addAtom { id := atomId, type := typeName, label := s!"let {declName}" }
     let valId ← walkBody cfg value
     modify fun s => s.addTuple "let_value" #[typeName, typeName]
@@ -500,7 +521,7 @@ partial def walkBody (cfg : WalkConfig := {}) (e : Expr) :
   | _ =>
     -- Bound variable, projection, or any other non-application head: emit a
     -- leaf from the surface form (e.g. the binder name `n`, or `n.fst`).
-    emitLeaf e
+    emitLeaf cfg e
 
 /-- Decompose a branch lambda: peel its binders (constructor fields, or a
     `dite` decidability proof), introducing a fresh local for each, then walk
@@ -525,9 +546,7 @@ partial def walkMatch (cfg : WalkConfig := {}) (e : Expr)
     StateT WalkState MetaM String := do
   let ty ← Meta.inferType e
   let typeName ← typeShortName ty
-  let s ← get
-  let (atomId, s) := s.freshId
-  set s
+  let atomId ← freshAtomId cfg
   modify fun s => s.addAtom { id := atomId, type := typeName, label := "match" }
   -- Discriminants sit right after the motive (one motive slot, then numDiscrs).
   let discrStart := mi.numParams + 1
@@ -540,14 +559,18 @@ partial def walkMatch (cfg : WalkConfig := {}) (e : Expr)
     modify fun s => s.addTuple "match" #[typeName, typeName]
       { atoms := #[atomId, discrId], types := #[typeName, typeName] }
   -- Constructor order for branch labels comes from the discriminant's
-  -- inductive (single-discriminant matches are the common case).
+  -- inductive (single-discriminant matches are the common case). Guard on the
+  -- actual array: an under-applied matcher reached as a function body can leave
+  -- `discrs` empty even when `numDiscrs == 1`, and indexing would panic — the
+  -- branch loop already falls back to `case_{i}` labels when `ctorNames` is empty.
   if mi.numDiscrs == 1 then
-    let dty ← Meta.inferType discrs[0]!
-    match (← Meta.whnf dty).getAppFn with
-    | .const indName _ =>
-      if let some (.inductInfo iv) := (← getEnv).find? indName then
-        ctorNames := iv.ctors.toArray.map shortName
-    | _ => pure ()
+    if let some discr0 := discrs[0]? then
+      let dty ← Meta.inferType discr0
+      match (← Meta.whnf dty).getAppFn with
+      | .const indName _ =>
+        if let some (.inductInfo iv) := (← getEnv).find? indName then
+          ctorNames := iv.ctors.toArray.map shortName
+      | _ => pure ()
   -- One edge per alternative; the branch body is a lambda over its ctor fields.
   let alts := args.extract altStart args.size
   for h : i in [:alts.size] do
@@ -565,9 +588,7 @@ partial def walkCasesOn (cfg : WalkConfig := {}) (e : Expr)
     StateT WalkState MetaM String := do
   let ty ← Meta.inferType e
   let typeName ← typeShortName ty
-  let s ← get
-  let (atomId, s) := s.freshId
-  set s
+  let atomId ← freshAtomId cfg
   modify fun s => s.addAtom { id := atomId, type := typeName, label := "match" }
   -- Major (the scrutinee) sits after params, motive, and indices.
   let majorPos := info.numParams + 1 + info.numIndices

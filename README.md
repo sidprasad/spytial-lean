@@ -141,6 +141,96 @@ Use `#spytial.datum` and `#spytial.spec` to inspect what the relationalizer and 
 ]
 ```
 
+## Commands and tactics
+
+Beyond `#spytial <term>` and the `spytial <term>` tactic, the library provides:
+
+| Form | Purpose |
+|------|---------|
+| `#spytial <term> with [...]` | Visualize a value (the core command). |
+| `#spytial.proof <term>` | Visualize a proof term — shows `Prop`-typed sub-proofs that `#spytial` filters out. |
+| `#spytial.enumerate <Type>` | Visualize **all** inhabitants of a finite type in one diagram. Enumerable types: `Bool`, `Fin n` (`n ≤ 20`), and inductive types whose constructors all take no arguments. No `Fintype` instance required. |
+| `spytial <term>` / `spytial.proof <term>` | The same, in tactic mode (hypotheses in scope). |
+| `spytial_goals` | **Experimental.** Render the current proof state — hypotheses and goals — as one relational diagram. First-order `Prop` hypotheses `R a b` become relation edges; goal relations are prefixed `⊢ `. See [issue #10](https://github.com/sidprasad/spytial-lean/issues/10). |
+
+Each command has a `.datum` debugging counterpart that prints JSON instead of
+opening the widget: `#spytial.datum`, `#spytial.proof.datum`,
+`#spytial.enumerate.datum`, and the `spytial_goals_datum` tactic.
+`#spytial.typespec <term>` prints the spec YAML resolved for a term's type
+(including inherited specs).
+
+```lean
+inductive Direction | north | south | east | west
+#spytial.enumerate Direction   -- four atoms, one per constructor
+
+-- A finite function is already enumerated by #spytial (no #spytial.map needed):
+def turn : Direction → Direction
+  | .north => .east | .east => .south | .south => .west | .west => .north
+#spytial turn                  -- the full mapping as edges
+```
+
+Notation-aware labels collapse the underlying constructor chain back to surface
+syntax:
+
+```lean
+#spytial ([1, 2, 3] : List Nat) with [.notationLabel (selector := "List")]
+-- one atom labeled `[1, 2, 3]` instead of a four-atom cons/nil chain
+```
+
+See the [`demos/`](demos/) directory for runnable examples of every feature,
+including DAG sharing, quotient types, indexed families (`Vec n`), and
+structural decomposition of function bodies.
+
+## Performance and limits
+
+`walkExpr` is recursive and unbounded by depth; its cost scales with the number
+of atoms produced — roughly the number of constructor nodes after WHNF, minus
+shared subterms (structurally identical subterms are deduplicated into a single
+atom via the `seen` cache).
+
+Indicative timings, measured on a dev laptop (relationalize only — these are not
+rigorous benchmarks, and the widget's own layout step is separate and slower):
+
+| Input | Atoms | `relationalize` time |
+|-------|-------|----------------------|
+| `List.range 10` | 21 | < 5 ms |
+| `List.range 100` | 201 | ~ 3 ms |
+| `List.range 1000` | 2001 | ~ 40 ms |
+| Balanced binary tree, depth 5 (31 nodes, distinct leaves) | 47 | < 1 ms |
+| `Nat.add_comm 100 200` (proof mode, `filterProofs := false`) | 1 | < 1 ms |
+
+Relationalization itself stays fast into the low thousands of atoms. In practice
+the limit you hit first is legibility: under a few hundred atoms the diagram
+renders comfortably, but into the thousands the layout step inside the widget
+becomes the bottleneck and the picture is rarely readable anyway.
+
+### The `maxAtoms` guard
+
+`WalkConfig.maxAtoms` (default `5000`) caps the total number of atoms a single
+walk may produce. When a walk would exceed it, the relationalizer throws rather
+than building a runaway diagram (or hanging the editor):
+
+```
+spytial: relationalize produced over 5000 atoms (the WalkConfig.maxAtoms limit
+was hit); the term is too large to visualize usefully. Increase the limit via
+WalkConfig.maxAtoms, or visualize a smaller sub-term.
+```
+
+This guard bounds the **relationalizer**; the widget's own layout cost is a
+separate concern and is not affected by it. The default of 5000 is far above
+anything that renders usefully, so ordinary use never trips it — raise it
+deliberately if you genuinely need a larger diagram.
+
+### A note on unfolding
+
+`#spytial` decomposes a term *after* `Meta.whnf`, so definitions unfold before
+they are walked. A small-looking term can therefore expand a lot: `List.range
+1000` is three tokens but relationalizes to 2001 atoms. Proof terms are the
+surprising case in the other direction — a theorem like `Nat.add_comm 100 200`
+stays a single atom even in proof mode, because `whnf` does not unfold a
+theorem's body (proofs are opaque to it). So a proof that *looks* large may
+collapse to one node, while a tiny data definition may explode.
+
 ## Available operations
 
 Operations are constructors of `SpytialOp`. Pass them as a list to `with [...]` or `spytial_spec`.
@@ -168,6 +258,16 @@ Operations are constructors of `SpytialOp`. Pass them as a list to `with [...]` 
 | `.tag (toTag) (name) (value)` | Add computed attributes to nodes |
 | `.inferredEdge (name) (selector)` | Add edges that don't exist in the data |
 | `.flag (name)` | Set a boolean flag (e.g., `hideDisconnected`) |
+
+### Relationalizer ops
+
+These configure the *walk* rather than the widget, so they never appear in the
+emitted YAML. They are only valid in a `with [...]` block (not in a type-attached
+`spytial_spec`).
+
+| Operation | Description |
+|-----------|-------------|
+| `.notationLabel (selector)` | Collapse values whose type-head matches the selector into a single atom labeled with their surface notation — e.g. `.notationLabel (selector := "List")` renders `[1, 2, 3]` as one atom instead of a `cons` chain. Selectors use the type **head** name (`List`, `Prod`), not the applied type. |
 
 ### Direction values
 
