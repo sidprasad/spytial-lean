@@ -628,10 +628,11 @@ def elabSpytialGoalsTactic : Tactic := fun stx => do
         let decomposed ← walkPropApp cfg "⊢ " goalTy
         unless decomposed do
           -- Not a decomposable Prop application: a single `Goal`-typed atom.
+          -- Allocate through `freshAtomId` so it respects `maxAtoms` like every
+          -- other atom-producing path.
           let label ← ppLabel goalTy
-          modify fun s =>
-            let (atomId, s) := s.freshId
-            s.addAtom { id := atomId, type := "Goal", label := label }
+          let atomId ← freshAtomId cfg
+          modify fun s => s.addAtom { id := atomId, type := "Goal", label := label }
         return skipped
     return skipped
 
@@ -681,9 +682,8 @@ def elabSpytialGoalsDatumTactic : Tactic := fun _stx => do
         let decomposed ← walkPropApp ({ : WalkConfig }) "⊢ " goalTy
         unless decomposed do
           let label ← ppLabel goalTy
-          modify fun s =>
-            let (atomId, s) := s.freshId
-            s.addAtom { id := atomId, type := "Goal", label := label }
+          let atomId ← freshAtomId ({ : WalkConfig })
+          modify fun s => s.addAtom { id := atomId, type := "Goal", label := label }
   let (_, state) ← walk.run {}
   let json := toJson state.toDataInstance
   logInfo m!"{json.pretty}"

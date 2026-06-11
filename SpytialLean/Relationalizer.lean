@@ -559,14 +559,18 @@ partial def walkMatch (cfg : WalkConfig := {}) (e : Expr)
     modify fun s => s.addTuple "match" #[typeName, typeName]
       { atoms := #[atomId, discrId], types := #[typeName, typeName] }
   -- Constructor order for branch labels comes from the discriminant's
-  -- inductive (single-discriminant matches are the common case).
+  -- inductive (single-discriminant matches are the common case). Guard on the
+  -- actual array: an under-applied matcher reached as a function body can leave
+  -- `discrs` empty even when `numDiscrs == 1`, and indexing would panic — the
+  -- branch loop already falls back to `case_{i}` labels when `ctorNames` is empty.
   if mi.numDiscrs == 1 then
-    let dty ← Meta.inferType discrs[0]!
-    match (← Meta.whnf dty).getAppFn with
-    | .const indName _ =>
-      if let some (.inductInfo iv) := (← getEnv).find? indName then
-        ctorNames := iv.ctors.toArray.map shortName
-    | _ => pure ()
+    if let some discr0 := discrs[0]? then
+      let dty ← Meta.inferType discr0
+      match (← Meta.whnf dty).getAppFn with
+      | .const indName _ =>
+        if let some (.inductInfo iv) := (← getEnv).find? indName then
+          ctorNames := iv.ctors.toArray.map shortName
+      | _ => pure ()
   -- One edge per alternative; the branch body is a lambda over its ctor fields.
   let alts := args.extract altStart args.size
   for h : i in [:alts.size] do
