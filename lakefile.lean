@@ -71,7 +71,8 @@ lean_lib SpytialLean where
 
 lean_lib Demos where
   srcDir := "demos"
-  roots := #[`Showcase, `ProofFieldFiltering, `FunctionFields, `TypeClassInstances, `CustomRelationalizer]
+  roots := #[`Showcase, `ProofFieldFiltering, `FunctionFields, `TypeClassInstances, `CustomRelationalizer,
+             `Sharing, `Quotients, `IndexedFamilies]
   needs := #[widgetJsAll]
 
 require proofwidgets from

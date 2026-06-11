@@ -4,11 +4,18 @@ namespace SpytialLean
 
 open Lean
 
-/-- A single atom (node) in the relational data instance. -/
+/-- A single atom (node) in the relational data instance.
+
+    `shared` is set when this atom is a subterm reached from more than one
+    parent (a DAG-shared node). The relationalizer deduplicates structurally
+    identical subterms by `Expr.hash`; the *second and later* visits flip this
+    flag on the already-emitted atom. spytial-core ignores the field today, so
+    it is purely informational (e.g. for distinct styling). -/
 structure JsonAtom where
   id : String
   type : String
   label : String
+  shared : Bool := false
   deriving ToJson, FromJson, Inhabited
 
 /-- A tuple in a relation — an ordered list of atom IDs with their types. -/
