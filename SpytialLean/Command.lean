@@ -234,6 +234,101 @@ def elabSpytialProofDatumDebug : CommandElab := fun
     logInfo m!"{json.pretty}"
   | stx => throwError "Unexpected syntax {stx}."
 
+/-! ## Enumeration -/
+
+/-- Elaborate `t` and check that it denotes a *type* (its inferred type is a
+    sort). Returns the elaborated type expression. Errors clearly if the user
+    passed a value instead of a type. -/
+private def elabAsType (t : Syntax) : TermElabM Expr := do
+  let e ← Term.elabTerm t none
+  Term.synthesizeSyntheticMVarsNoPostponing
+  let e ← instantiateMVars e
+  let eTy ← Meta.inferType e
+  unless (← Meta.whnf eTy).isSort do
+    throwError "#spytial.enumerate expects a type, but '{e}' is a value of type '{eTy}'. \
+      Pass a type such as `Bool`, `Fin 5`, or a zero-arity enum inductive."
+  return e
+
+/-- Look up a Spytial spec attached to a type *by the type itself* (not by the
+    type of a value). Used by `#spytial.enumerate`, whose argument is already a
+    type expression. -/
+private def lookupSpecForType (ty : Expr) : MetaM (Option String) := do
+  match (← whnf ty).getAppFn with
+  | .const n _ => return getSpytialSpec? (← getEnv) n
+  | _ => return none
+
+/-- Enumerate all inhabitants of `ty` (via `tryEnumerateDomain`) and walk them
+    into a single shared `JsonDataInstance`. Throws a clear error naming the type
+    if it is not enumerable. -/
+private def enumerateType (ty : Expr) : MetaM JsonDataInstance := do
+  match ← tryEnumerateDomain ty with
+  | some elems => relationalizeAll (elems.map (·.2))
+  | none =>
+    throwError "#spytial.enumerate cannot enumerate '{ty}'. Enumerable types are: \
+      Bool, Fin n (n ≤ 20), and inductive types whose constructors all take no arguments."
+
+/-- `#spytial.enumerate <Type>` enumerates ALL inhabitants of a finite type and
+    renders the entire population in a single spatial diagram.
+
+    Enumerable types are `Bool`, `Fin n` (for `n ≤ 20`), and inductive types
+    whose constructors all take no arguments. Every inhabitant is walked into one
+    shared diagram, so references between them (e.g. a function field pointing at
+    an enumerated element) unify.
+
+    ```
+    inductive Color | red | green | blue
+    #spytial.enumerate Color
+    #spytial.enumerate Bool
+    #spytial.enumerate (Fin 5)
+    ```
+
+    Use `with [...]` to specify layout operations. If the enumerated type has an
+    attached spec (via `spytial_spec`), it is used as the default.
+-/
+syntax (name := spytialEnumerateCmd) "#spytial.enumerate " term (" with " term)? : command
+
+@[command_elab spytialEnumerateCmd]
+def elabSpytialEnumerateCmd : CommandElab := fun
+  | stx@`(#spytial.enumerate $t:term $[with $spec?]?) => do
+    let (dataInstance, specYaml) ← liftTermElabM do
+      let ty ← elabAsType t
+      let di ← enumerateType ty
+      -- Determine spec: explicit `with [...]` > spec attached to the type > none
+      let yaml ← match spec? with
+        | some specTerm => do
+          let spec ← evalSpytialSpec specTerm
+          pure (some (SpytialSpec.toYaml spec))
+        | none => lookupSpecForType ty
+      return (di, yaml)
+
+    let props : Json := Json.mkObj <|
+      [("dataInstance", toJson dataInstance)] ++
+      match specYaml with
+      | some s => [("cndSpec", toJson s)]
+      | none => []
+
+    liftCoreM <| savePanelWidgetInfo
+      SpytialWidget.javascriptHash
+      (return props)
+      stx
+
+  | stx => throwError "Unexpected syntax {stx}."
+
+/-- `#spytial.enumerate.datum <Type>` prints the JSON data instance produced by
+    enumerating all inhabitants of a finite type. The debugging counterpart of
+    `#spytial.enumerate`, mirroring `#spytial.datum`. -/
+syntax (name := spytialEnumerateDatumDebug) "#spytial.enumerate.datum " term : command
+
+@[command_elab spytialEnumerateDatumDebug]
+def elabSpytialEnumerateDatumDebug : CommandElab := fun
+  | `(#spytial.enumerate.datum $t:term) => do
+    let dataInstance ← liftTermElabM do
+      let ty ← elabAsType t
+      enumerateType ty
+    let json := toJson dataInstance
+    logInfo m!"{json.pretty}"
+  | stx => throwError "Unexpected syntax {stx}."
+
 /-! ## spytial tactic -/
 
 open Tactic in

@@ -574,4 +574,20 @@ def relationalize (e : Expr) (cfg : WalkConfig := {}) : MetaM JsonDataInstance :
   let (_, state) ← walkExpr cfg e |>.run {}
   return state.toDataInstance
 
+/-- Walk every expression in `es` through a *single shared* `WalkState`, then
+    produce one combined `JsonDataInstance`.
+
+    Folding `walkExpr` over a single state (rather than relationalizing each
+    expression independently and merging) means the per-expr `seen` cache is
+    shared: structurally identical subterms across the whole population collapse
+    to the same atom id, so e.g. a function field pointing at an enumerated
+    element unifies with that element. Used by `#spytial.enumerate` to render all
+    inhabitants of a finite type in one diagram. -/
+def relationalizeAll (es : Array Expr) (cfg : WalkConfig := {}) : MetaM JsonDataInstance := do
+  let walkAll : StateT WalkState MetaM Unit := do
+    for e in es do
+      let _ ← walkExpr cfg e
+  let (_, state) ← walkAll.run {}
+  return state.toDataInstance
+
 end SpytialLean
