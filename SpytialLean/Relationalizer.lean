@@ -48,6 +48,11 @@ def WalkState.toDataInstance (s : WalkState) : JsonDataInstance :=
 structure WalkConfig where
   /-- When true, skip Prop-typed fields (data mode). When false, show them (proof mode). -/
   filterProofs : Bool := true
+  /-- Type-head short names whose values should be collapsed to a single atom
+      labeled with their surface notation, instead of being decomposed. Populated
+      from `.notationLabel` spec ops (see `SpytialSpec.collapseTypes`). E.g.
+      `["List"]` renders `[1, 2, 3]` as one atom rather than a cons chain. -/
+  collapseTypes : List String := []
 
 /-- Check if an expression is a proof or type (erased at runtime). -/
 def isProofArg (e : Expr) : MetaM Bool := do
@@ -205,8 +210,22 @@ partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : StateT WalkState 
   let s := s.markSeen hash atomId
   set s
 
-  -- Check for custom relationalizer before default dispatch
+  -- Notation collapse: if this value's type-head short name was opted in via a
+  -- `.notationLabel` spec op, emit ONE atom labeled with the surface notation of
+  -- the *original* (pre-whnf) expression and stop. `eOrig` is what the delaborator
+  -- resugars (so `[1, 2, 3]` survives instead of the cons chain). This runs before
+  -- the custom-relationalizer dispatch and the main match so neither decomposes it.
   let tyWhnfForLookup ← Meta.whnf ty
+  let typeHeadShortName : Option String := match tyWhnfForLookup.getAppFn with
+    | .const n _ => some (shortName n)
+    | _ => none
+  if let some tn := typeHeadShortName then
+    if cfg.collapseTypes.contains tn then
+      let label ← ppLabel eOrig
+      modify fun s => s.addAtom { id := atomId, type := tn, label := label }
+      return atomId
+
+  -- Check for custom relationalizer before default dispatch
   if let .const typeConstName _ := tyWhnfForLookup.getAppFn then
     if let some relFn ← getSpytialRelationalizer? typeConstName then
       return ← relFn eOrig (walkExpr cfg)
@@ -572,6 +591,22 @@ end
 /-- Walk an expression and produce a complete JsonDataInstance. -/
 def relationalize (e : Expr) (cfg : WalkConfig := {}) : MetaM JsonDataInstance := do
   let (_, state) ← walkExpr cfg e |>.run {}
+  return state.toDataInstance
+
+/-- Walk every expression in `es` through a *single shared* `WalkState`, then
+    produce one combined `JsonDataInstance`.
+
+    Folding `walkExpr` over a single state (rather than relationalizing each
+    expression independently and merging) means the per-expr `seen` cache is
+    shared: structurally identical subterms across the whole population collapse
+    to the same atom id, so e.g. a function field pointing at an enumerated
+    element unifies with that element. Used by `#spytial.enumerate` to render all
+    inhabitants of a finite type in one diagram. -/
+def relationalizeAll (es : Array Expr) (cfg : WalkConfig := {}) : MetaM JsonDataInstance := do
+  let walkAll : StateT WalkState MetaM Unit := do
+    for e in es do
+      let _ ← walkExpr cfg e
+  let (_, state) ← walkAll.run {}
   return state.toDataInstance
 
 end SpytialLean
