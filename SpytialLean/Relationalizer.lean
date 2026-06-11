@@ -48,6 +48,11 @@ def WalkState.toDataInstance (s : WalkState) : JsonDataInstance :=
 structure WalkConfig where
   /-- When true, skip Prop-typed fields (data mode). When false, show them (proof mode). -/
   filterProofs : Bool := true
+  /-- Type-head short names whose values should be collapsed to a single atom
+      labeled with their surface notation, instead of being decomposed. Populated
+      from `.notationLabel` spec ops (see `SpytialSpec.collapseTypes`). E.g.
+      `["List"]` renders `[1, 2, 3]` as one atom rather than a cons chain. -/
+  collapseTypes : List String := []
 
 /-- Check if an expression is a proof or type (erased at runtime). -/
 def isProofArg (e : Expr) : MetaM Bool := do
@@ -205,8 +210,22 @@ partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : StateT WalkState 
   let s := s.markSeen hash atomId
   set s
 
-  -- Check for custom relationalizer before default dispatch
+  -- Notation collapse: if this value's type-head short name was opted in via a
+  -- `.notationLabel` spec op, emit ONE atom labeled with the surface notation of
+  -- the *original* (pre-whnf) expression and stop. `eOrig` is what the delaborator
+  -- resugars (so `[1, 2, 3]` survives instead of the cons chain). This runs before
+  -- the custom-relationalizer dispatch and the main match so neither decomposes it.
   let tyWhnfForLookup ← Meta.whnf ty
+  let typeHeadShortName : Option String := match tyWhnfForLookup.getAppFn with
+    | .const n _ => some (shortName n)
+    | _ => none
+  if let some tn := typeHeadShortName then
+    if cfg.collapseTypes.contains tn then
+      let label ← ppLabel eOrig
+      modify fun s => s.addAtom { id := atomId, type := tn, label := label }
+      return atomId
+
+  -- Check for custom relationalizer before default dispatch
   if let .const typeConstName _ := tyWhnfForLookup.getAppFn then
     if let some relFn ← getSpytialRelationalizer? typeConstName then
       return ← relFn eOrig (walkExpr cfg)

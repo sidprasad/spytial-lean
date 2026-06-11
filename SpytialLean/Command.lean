@@ -72,13 +72,18 @@ def elabSpytialCmd : CommandElab := fun
       let e ← Term.elabTerm t none
       Term.synthesizeSyntheticMVarsNoPostponing
       let e ← instantiateMVars e
-      let di ← relationalize e
-      -- Determine spec: explicit `with [...]` > type attribute > none
-      let yaml ← match spec? with
+      -- Evaluate the spec FIRST: relationalizer-side ops (`.notationLabel`) must
+      -- influence the walk, so they are partitioned into `WalkConfig.collapseTypes`
+      -- while the remaining (widget) ops become the YAML.
+      let (cfg, yaml) ← match spec? with
         | some specTerm => do
           let spec ← evalSpytialSpec specTerm
-          pure (some (SpytialSpec.toYaml spec))
-        | none => lookupTypeSpec e
+          pure ({ collapseTypes := spec.collapseTypes : WalkConfig },
+                some (SpytialSpec.toYaml spec.withoutRelationalizerOps))
+        | none => do
+          -- Type-attached specs are stored as YAML and cannot carry `.notationLabel`.
+          pure ({ : WalkConfig }, ← lookupTypeSpec e)
+      let di ← relationalize e cfg
       return (di, yaml)
 
     let props : Json := Json.mkObj <|
@@ -117,6 +122,12 @@ def elabSpytialSpecCmd : CommandElab := fun
       throwError s!"unknown declaration '{declName}'"
     let yamlStr ← liftTermElabM do
       let spec ← evalSpytialSpec specTerm
+      -- Type-attached specs are stored as YAML in the environment extension, so
+      -- relationalizer-side ops (`.notationLabel`) cannot round-trip through them
+      -- (PLAN.md #24). Rather than silently drop them, reject them clearly.
+      unless spec.collapseTypes.isEmpty do
+        throwError "'.notationLabel' is not supported in type-attached specs yet; \
+          use it in a `with [...]` block"
       return SpytialSpec.toYaml spec
     liftCoreM <| setSpytialSpec declName yamlStr
   | stx => throwError "Unexpected syntax {stx}."
@@ -153,7 +164,12 @@ unsafe def elabSpytialRelationalizerCmd : CommandElab := fun
 /-! ## Debugging commands -/
 
 /-- `#spytial.spec <term> with [<ops>]` prints the generated YAML spec.
-    Useful for debugging whether the spec is what you expect. -/
+    Useful for debugging whether the spec is what you expect.
+
+    Relationalizer-side ops (e.g. `.notationLabel`) are NOT YAML — they configure
+    the walk, not the widget — so they are stripped before printing (just as the
+    `#spytial` elaborator strips them before sending YAML to spytial-core). Their
+    effect shows up in `#spytial.datum`/the diagram, not here. -/
 syntax (name := spytialSpecDebug) "#spytial.spec " term " with " term : command
 
 @[command_elab spytialSpecDebug]
@@ -161,7 +177,7 @@ def elabSpytialSpecDebug : CommandElab := fun
   | `(#spytial.spec $_t:term with $specTerm:term) => do
     let yamlStr ← liftTermElabM do
       let spec ← evalSpytialSpec specTerm
-      return SpytialSpec.toYaml spec
+      return SpytialSpec.toYaml spec.withoutRelationalizerOps
     logInfo m!"{yamlStr}"
   | stx => throwError "Unexpected syntax {stx}."
 
@@ -198,12 +214,15 @@ def elabSpytialProofCmd : CommandElab := fun
       let e ← Term.elabTerm t none
       Term.synthesizeSyntheticMVarsNoPostponing
       let e ← instantiateMVars e
-      let di ← relationalize e { filterProofs := false }
-      let yaml ← match spec? with
+      -- Evaluate the spec first so `.notationLabel` ops can configure the walk
+      -- (collapsed types) while proof mode keeps `filterProofs := false`.
+      let (cfg, yaml) ← match spec? with
         | some specTerm => do
           let spec ← evalSpytialSpec specTerm
-          pure (some (SpytialSpec.toYaml spec))
-        | none => lookupTypeSpec e
+          pure ({ filterProofs := false, collapseTypes := spec.collapseTypes : WalkConfig },
+                some (SpytialSpec.toYaml spec.withoutRelationalizerOps))
+        | none => pure ({ filterProofs := false : WalkConfig }, ← lookupTypeSpec e)
+      let di ← relationalize e cfg
       return (di, yaml)
 
     let props : Json := Json.mkObj <|
@@ -259,10 +278,11 @@ private def lookupSpecForType (ty : Expr) : MetaM (Option String) := do
 
 /-- Enumerate all inhabitants of `ty` (via `tryEnumerateDomain`) and walk them
     into a single shared `JsonDataInstance`. Throws a clear error naming the type
-    if it is not enumerable. -/
-private def enumerateType (ty : Expr) : MetaM JsonDataInstance := do
+    if it is not enumerable. `cfg` forwards walker configuration (e.g. the
+    `.notationLabel` collapse set) to `relationalizeAll`. -/
+private def enumerateType (ty : Expr) (cfg : WalkConfig := {}) : MetaM JsonDataInstance := do
   match ← tryEnumerateDomain ty with
-  | some elems => relationalizeAll (elems.map (·.2))
+  | some elems => relationalizeAll (elems.map (·.2)) cfg
   | none =>
     throwError "#spytial.enumerate cannot enumerate '{ty}'. Enumerable types are: \
       Bool, Fin n (n ≤ 20), and inductive types whose constructors all take no arguments."
@@ -292,13 +312,15 @@ def elabSpytialEnumerateCmd : CommandElab := fun
   | stx@`(#spytial.enumerate $t:term $[with $spec?]?) => do
     let (dataInstance, specYaml) ← liftTermElabM do
       let ty ← elabAsType t
-      let di ← enumerateType ty
-      -- Determine spec: explicit `with [...]` > spec attached to the type > none
-      let yaml ← match spec? with
+      -- Evaluate the spec first so `.notationLabel` ops configure the enumeration
+      -- walk (collapsed types) while the remaining ops become the YAML.
+      let (cfg, yaml) ← match spec? with
         | some specTerm => do
           let spec ← evalSpytialSpec specTerm
-          pure (some (SpytialSpec.toYaml spec))
-        | none => lookupSpecForType ty
+          pure ({ collapseTypes := spec.collapseTypes : WalkConfig },
+                some (SpytialSpec.toYaml spec.withoutRelationalizerOps))
+        | none => pure ({ : WalkConfig }, ← lookupSpecForType ty)
+      let di ← enumerateType ty cfg
       return (di, yaml)
 
     let props : Json := Json.mkObj <|
@@ -354,13 +376,15 @@ def elabSpytialTactic : Tactic := fun stx => do
     let e ← Term.elabTerm t none
     Term.synthesizeSyntheticMVarsNoPostponing
     let e ← instantiateMVars e
-    let di ← relationalize e
-    let yaml ← if specOpt.isNone then
-        lookupTypeSpec e
-      else
+    -- Evaluate the spec first so `.notationLabel` ops configure the walk.
+    let (cfg, yaml) ← if specOpt.isNone then
+        pure ({ : WalkConfig }, ← lookupTypeSpec e)
+      else do
         let specTerm := specOpt[1]!
         let spec ← evalSpytialSpec specTerm
-        pure (some (SpytialSpec.toYaml spec))
+        pure ({ collapseTypes := spec.collapseTypes : WalkConfig },
+              some (SpytialSpec.toYaml spec.withoutRelationalizerOps))
+    let di ← relationalize e cfg
 
     let props : Json := Json.mkObj <|
       [("dataInstance", toJson di)] ++
@@ -385,13 +409,16 @@ def elabSpytialProofTactic : Tactic := fun stx => do
     let e ← Term.elabTerm t none
     Term.synthesizeSyntheticMVarsNoPostponing
     let e ← instantiateMVars e
-    let di ← relationalize e { filterProofs := false }
-    let yaml ← if specOpt.isNone then
-        lookupTypeSpec e
-      else
+    -- Evaluate the spec first so `.notationLabel` ops configure the walk;
+    -- proof mode keeps `filterProofs := false`.
+    let (cfg, yaml) ← if specOpt.isNone then
+        pure ({ filterProofs := false : WalkConfig }, ← lookupTypeSpec e)
+      else do
         let specTerm := specOpt[1]!
         let spec ← evalSpytialSpec specTerm
-        pure (some (SpytialSpec.toYaml spec))
+        pure ({ filterProofs := false, collapseTypes := spec.collapseTypes : WalkConfig },
+              some (SpytialSpec.toYaml spec.withoutRelationalizerOps))
+    let di ← relationalize e cfg
 
     let props : Json := Json.mkObj <|
       [("dataInstance", toJson di)] ++

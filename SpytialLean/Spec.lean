@@ -44,6 +44,8 @@ inductive SpytialOp where
   | inferredEdge (name : String) (selector : String)
       (color : String := "#000000") (style : EdgeStyle := .solid)
   | flag (name : String)
+  -- Relationalizer-side ops (NOT widget directives, NOT constraints; see below)
+  | notationLabel (selector : String)
   deriving Repr, Inhabited
 
 /-- A list of Spytial operations forming a complete layout specification. -/
@@ -135,16 +137,54 @@ private def directiveToYaml : SpytialOp → String
     s!"  - size: \{selector: \"{sel}\", width: {w}, height: {h}}"
   | _ => ""
 
-/-- Convert a `SpytialSpec` to a YAML string consumable by `parseLayoutSpec`. -/
+/-- Convert a `SpytialSpec` to a YAML string consumable by `parseLayoutSpec`.
+
+    Relationalizer-side ops (e.g. `.notationLabel`) are not widget directives and
+    are not constraints; their `*ToYaml` arms return `""`. Those empty strings are
+    filtered out before joining, so a relationalizer-only op (or any unhandled op
+    reaching a no-match arm) cannot inject a blank YAML list entry. Such ops should
+    be stripped via `SpytialSpec.withoutRelationalizerOps` before calling this; the
+    filter is a defensive backstop only. -/
 def SpytialSpec.toYaml (spec : SpytialSpec) : String :=
   let constraints := spec.filter SpytialOp.isConstraint
   let directives := spec.filter (! SpytialOp.isConstraint ·)
   let parts : List String := []
   let parts := if constraints.isEmpty then parts else
-    parts ++ ["constraints:"] ++ constraints.map constraintToYaml
+    parts ++ ["constraints:"] ++ (constraints.map constraintToYaml).filter (· != "")
   let parts := if directives.isEmpty then parts else
-    parts ++ ["directives:"] ++ directives.map directiveToYaml
+    parts ++ ["directives:"] ++ (directives.map directiveToYaml).filter (· != "")
   "\n".intercalate parts
+
+/-! ## Relationalizer-side ops
+
+Some ops configure the *relationalizer* (how Lean terms are walked into atoms and
+relations) rather than the *widget* (how the resulting data instance is laid out).
+`.notationLabel` is the first such op: it tells the walker to collapse values of a
+given type to a single atom labeled with their surface notation. These ops are
+neither constraints nor directives — they must never reach the YAML, which is what
+spytial-core's `parseLayoutSpec` consumes. The command elaborators partition them
+out of the spec (`collapseTypes` feeds `WalkConfig`; `withoutRelationalizerOps`
+yields the remainder for `toYaml`). -/
+
+/-- Is this a relationalizer-side op (configures the walk, not the widget)? -/
+def SpytialOp.isRelationalizerOp : SpytialOp → Bool
+  | .notationLabel .. => true
+  | _ => false
+
+/-- The selectors of all `.notationLabel` ops in `spec` — type-head short names
+    whose values should be collapsed to a single notation-labeled atom. These
+    configure the *relationalizer* (fed into `WalkConfig.collapseTypes`), not the
+    widget; they never appear in the YAML. -/
+def SpytialSpec.collapseTypes (spec : SpytialSpec) : List String :=
+  spec.filterMap fun
+    | .notationLabel sel => some sel
+    | _ => none
+
+/-- Drop all relationalizer-side ops (e.g. `.notationLabel`) from `spec`, leaving
+    only the constraint/directive ops that belong in the YAML. The elaborators call
+    this before `toYaml` so relationalizer-only ops never reach spytial-core. -/
+def SpytialSpec.withoutRelationalizerOps (spec : SpytialSpec) : SpytialSpec :=
+  spec.filter (! SpytialOp.isRelationalizerOp ·)
 
 /-- Extract constraint and directive lines from a YAML spec string.
     Returns `(constraintLines, directiveLines)`. -/
