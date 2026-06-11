@@ -181,6 +181,30 @@ def elabSpytialSpecDebug : CommandElab := fun
     logInfo m!"{yamlStr}"
   | stx => throwError "Unexpected syntax {stx}."
 
+/-- `#spytial.typespec <term>` prints the YAML spec that `lookupTypeSpec` resolves
+    for the term's head type (via `spytial_spec`), or `none` if no spec applies.
+
+    This is the spec lookup itself — the same lookup `#spytial` performs when no
+    explicit `with [...]` block is given. For structures and type classes (which
+    *are* structures in Lean 4) it walks the parent chain and composes specs
+    root-first, so a child inherits a parent's `spytial_spec` (PLAN.md #2). Use it
+    to confirm that a parent spec is found and merged for a child value — the
+    YAML it prints contains the lines from every spec in the chain. -/
+syntax (name := spytialTypeSpecDebug) "#spytial.typespec " term : command
+
+@[command_elab spytialTypeSpecDebug]
+def elabSpytialTypeSpecDebug : CommandElab := fun
+  | `(#spytial.typespec $t:term) => do
+    let result ← liftTermElabM do
+      let e ← Term.elabTerm t none
+      Term.synthesizeSyntheticMVarsNoPostponing
+      let e ← instantiateMVars e
+      lookupTypeSpec e
+    match result with
+    | some yaml => logInfo m!"{yaml}"
+    | none      => logInfo m!"none"
+  | stx => throwError "Unexpected syntax {stx}."
+
 /-- `#spytial.datum <term>` prints the generated JSON data instance.
     Shows what atoms and relations the relationalizer produces. -/
 syntax (name := spytialDatumDebug) "#spytial.datum " term : command
