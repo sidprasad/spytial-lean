@@ -2,7 +2,25 @@
 
 This document records the design decisions for the open issue backlog and tracks
 implementation status. It is maintained in-repo so decisions survive the PRs that
-implement them. Last updated: 2026-06-10.
+implement them. Last updated: 2026-06-11.
+
+## Status at a glance
+
+| Issue | Feature | Status |
+|-------|---------|--------|
+| #22 | DAG-shared subterm flag | ✅ done |
+| #9 | Quotient type visualization | ✅ done |
+| #21 | Indexed-family index labels | ✅ done |
+| #13 | Structural function-body decomposition | ✅ done |
+| #8 | `#spytial.enumerate` finite types | ✅ done |
+| #24 | `.notationLabel` surface-syntax collapse | ✅ done |
+| #2 | Type-class spec inheritance | ✅ verified; rest deferred |
+| #23 | `maxAtoms` guard + benchmarks | ✅ done |
+| #10 | `spytial_goals` proof-state tactic | ✅ done (experimental) |
+| #20 | Mathlib smoke-test demo | 🔵 deferred (separate project) |
+
+Each landed feature ships with a demo under `demos/` registered in the `Demos`
+lib roots, and was verified with `lake build` + `lake build Demos`.
 
 ## Guiding principles
 

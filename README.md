@@ -141,6 +141,46 @@ Use `#spytial.datum` and `#spytial.spec` to inspect what the relationalizer and 
 ]
 ```
 
+## Commands and tactics
+
+Beyond `#spytial <term>` and the `spytial <term>` tactic, the library provides:
+
+| Form | Purpose |
+|------|---------|
+| `#spytial <term> with [...]` | Visualize a value (the core command). |
+| `#spytial.proof <term>` | Visualize a proof term — shows `Prop`-typed sub-proofs that `#spytial` filters out. |
+| `#spytial.enumerate <Type>` | Visualize **all** inhabitants of a finite type in one diagram. Enumerable types: `Bool`, `Fin n` (`n ≤ 20`), and inductive types whose constructors all take no arguments. No `Fintype` instance required. |
+| `spytial <term>` / `spytial.proof <term>` | The same, in tactic mode (hypotheses in scope). |
+| `spytial_goals` | **Experimental.** Render the current proof state — hypotheses and goals — as one relational diagram. First-order `Prop` hypotheses `R a b` become relation edges; goal relations are prefixed `⊢ `. See [issue #10](https://github.com/sidprasad/spytial-lean/issues/10). |
+
+Each command has a `.datum` debugging counterpart that prints JSON instead of
+opening the widget: `#spytial.datum`, `#spytial.proof.datum`,
+`#spytial.enumerate.datum`, and the `spytial_goals_datum` tactic.
+`#spytial.typespec <term>` prints the spec YAML resolved for a term's type
+(including inherited specs).
+
+```lean
+inductive Direction | north | south | east | west
+#spytial.enumerate Direction   -- four atoms, one per constructor
+
+-- A finite function is already enumerated by #spytial (no #spytial.map needed):
+def turn : Direction → Direction
+  | .north => .east | .east => .south | .south => .west | .west => .north
+#spytial turn                  -- the full mapping as edges
+```
+
+Notation-aware labels collapse the underlying constructor chain back to surface
+syntax:
+
+```lean
+#spytial ([1, 2, 3] : List Nat) with [.notationLabel (selector := "List")]
+-- one atom labeled `[1, 2, 3]` instead of a four-atom cons/nil chain
+```
+
+See the [`demos/`](demos/) directory for runnable examples of every feature,
+including DAG sharing, quotient types, indexed families (`Vec n`), and
+structural decomposition of function bodies.
+
 ## Performance and limits
 
 `walkExpr` is recursive and unbounded by depth; its cost scales with the number
@@ -218,6 +258,16 @@ Operations are constructors of `SpytialOp`. Pass them as a list to `with [...]` 
 | `.tag (toTag) (name) (value)` | Add computed attributes to nodes |
 | `.inferredEdge (name) (selector)` | Add edges that don't exist in the data |
 | `.flag (name)` | Set a boolean flag (e.g., `hideDisconnected`) |
+
+### Relationalizer ops
+
+These configure the *walk* rather than the widget, so they never appear in the
+emitted YAML. They are only valid in a `with [...]` block (not in a type-attached
+`spytial_spec`).
+
+| Operation | Description |
+|-----------|-------------|
+| `.notationLabel (selector)` | Collapse values whose type-head matches the selector into a single atom labeled with their surface notation — e.g. `.notationLabel (selector := "List")` renders `[1, 2, 3]` as one atom instead of a `cons` chain. Selectors use the type **head** name (`List`, `Prod`), not the applied type. |
 
 ### Direction values
 
