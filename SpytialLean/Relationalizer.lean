@@ -33,6 +33,11 @@ def WalkState.addTuple (s : WalkState) (relName : String) (types : Array String)
 def WalkState.markSeen (s : WalkState) (hash : UInt64) (atomId : String) : WalkState :=
   { s with seen := s.seen.insert hash atomId }
 
+/-- Mark an already-emitted atom as DAG-shared (visited from more than one
+    parent). Finds the atom by id in `atoms` and sets its `shared` flag. -/
+def WalkState.markShared (s : WalkState) (atomId : String) : WalkState :=
+  { s with atoms := s.atoms.map fun a => if a.id == atomId then { a with shared := true } else a }
+
 /-- Convert accumulated state to a JsonDataInstance. -/
 def WalkState.toDataInstance (s : WalkState) : JsonDataInstance :=
   let relations := s.relations.toArray.map fun (name, types, tuples) =>
@@ -131,10 +136,13 @@ partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : StateT WalkState 
   -- WHNF reduce to expose constructors
   let e ← Meta.whnf eOrig
 
-  -- Check for cycles
+  -- Check for cycles / DAG sharing
   let hash := e.hash
   let s ← get
   if let some existingId := s.seen[hash]? then
+    -- Revisiting a structurally identical subterm: mark the already-emitted
+    -- atom as shared so downstream consumers can style it distinctly.
+    modify fun s => s.markShared existingId
     return existingId
 
   let ty ← Meta.inferType e
@@ -187,9 +195,9 @@ partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : StateT WalkState 
     return atomId
 
   | _ => do
-    -- Try to get the type name
+    -- Try to get the type name (keep the whnf'd type around for index reading)
+    let tyWhnf ← Meta.whnf ty
     let typeName ← do
-      let tyWhnf ← Meta.whnf ty
       match tyWhnf.getAppFn with
       | .const n _ => pure (shortName n)
       | _ => pure (← ppLabel ty)
@@ -198,10 +206,51 @@ partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : StateT WalkState 
     match e.getAppFn with
     | .const fnName _ => do
       let env ← getEnv
+      -- Quotient values: `Quot.mk r repr` is kernel-primitive (`.quotInfo`,
+      -- not `.ctorInfo`), so it misses the constructor check below and would
+      -- otherwise become an opaque leaf. We special-case it: emit a `⟦·⟧`
+      -- atom and walk the representative (the last argument) via a `repr` edge.
+      -- `Quotient.mk` / `Quotient.mk'` usually reduce to `Quot.mk` under whnf,
+      -- but we match those const heads too in case whnf stopped early.
+      if fnName == ``Quot.mk || fnName == ``Quotient.mk || fnName == ``Quotient.mk' then
+        let args := e.getAppArgs
+        modify fun s => s.addAtom { id := atomId, type := typeName, label := "⟦·⟧" }
+        -- A full application has ≥ 3 args; the representative is the last one.
+        if args.size ≥ 3 then
+          let repr := args[args.size - 1]!
+          let childId ← walkExpr cfg repr
+          modify fun s => s.addTuple "repr" #[typeName, typeName]
+            { atoms := #[atomId, childId], types := #[typeName, typeName] }
+        return atomId
       -- Is it a constructor?
-      if let some (.ctorInfo ci) := env.find? fnName then
+      else if let some (.ctorInfo ci) := env.find? fnName then
         let ctorShortName := shortName fnName
-        modify fun s => s.addAtom { id := atomId, type := typeName, label := ctorShortName }
+        -- Indexed inductive families: surface the index expressions in the
+        -- label (e.g. `cons : Vec 2`) so atoms at different indices are
+        -- distinguishable. The `type` field stays the head const short name —
+        -- selectors depend on it, so only the *label* changes, and only when
+        -- the family actually has indices.
+        let label ← do
+          let indVal? := env.find? ci.induct
+          match indVal? with
+          | some (.inductInfo iv) =>
+            if iv.numIndices > 0 then
+              -- The value's type is `T params… indices…`; read the trailing
+              -- `numIndices` arguments off the (already whnf'd) type.
+              let tyArgs := tyWhnf.getAppArgs
+              let indexExprs := tyArgs.extract (tyArgs.size - iv.numIndices) tyArgs.size
+              let mut indexStrs : Array String := #[]
+              for ix in indexExprs do
+                -- Reduce the index to a normal form so e.g. `n + 1` with a
+                -- literal `n` prints as `2`, not `1 + 1`.
+                let ixR ← Meta.whnf ix
+                indexStrs := indexStrs.push (← ppLabel ixR)
+              let joined := String.intercalate " " indexStrs.toList
+              pure s!"{ctorShortName} : {typeName} {joined}"
+            else
+              pure ctorShortName
+          | _ => pure ctorShortName
+        modify fun s => s.addAtom { id := atomId, type := typeName, label := label }
         -- Extract binder names from the constructor type (skip type params)
         let mut binderNames : Array Name := #[]
         let mut ctorTy := ci.type
