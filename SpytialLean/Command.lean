@@ -452,4 +452,240 @@ def elabSpytialProofTactic : Tactic := fun stx => do
 
     savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
 
+/-! ## Proof-state tactic -/
+
+/-- Resolve a human-readable relation name from the head of a Prop application,
+    or `none` if the head is not something we name a relation after.
+
+    - A `.const R` head yields `R`'s short name (e.g. `LT.lt` → `lt`).
+    - A `.fvar` head yields the local declaration's user-facing name. This is the
+      common case for proof-state goals: a relation introduced by `variable (R :
+      α → α → Prop)` or a binder is a *free variable*, NOT a constant, so without
+      this branch `R x y` would never become a relation. The fvar must be in the
+      ambient local context (this runs inside `mvarId.withContext`).
+    - Anything else (a `∀`/`→`/`∧` whose head is not an application of a named
+      symbol) yields `none`, so the caller falls back to skipping / a `Goal`
+      atom. -/
+private def relNameOfHead? (head : Expr) : MetaM (Option String) := do
+  match head with
+  | .const n _ => return some (shortName n)
+  | .fvar fvarId =>
+    match (← getLCtx).find? fvarId with
+    | some decl => return some (shortName decl.userName)
+    | none      => return none
+  | _ => return none
+
+/-- Walk a Prop application `R a₁ … aₙ` (headed by a constant or a local free
+    variable) as a relation tuple.
+
+    Given an expression `ty` (a hypothesis or goal *type*), this:
+
+    - returns `false` (decomposed nothing) unless `ty` is `Meta.isProp` and its
+      head is a constant or local fvar `R` (see `relNameOfHead?` — local
+      relations from `variable (R : …)` are fvars, so both are accepted);
+    - filters the arguments to the non-proof, non-type *data* args (reusing the
+      same `isProofArg` predicate the value walker uses);
+    - if ≥ 2 data args survive, walks each as an atom via `walkExpr` and adds ONE
+      tuple to a relation named `{prefix}{R}` connecting them in order, returning
+      `true`;
+    - if exactly 1 data arg survives, walks it as a lone atom (it appears in the
+      diagram but carries no edge — a unary relation has no endpoints) and
+      returns `true`;
+    - if 0 data args survive, emits nothing and returns `false`.
+
+    `pfx` is prepended to the relation name: hypotheses pass `""`, goals pass
+    `"⊢ "`, so specs can style goal edges differently from hypothesis edges. The
+    relation name is R's short name, NOT the hypothesis binder name — the
+    relation carries the meaning, and the binder name is intentionally dropped
+    for now (a deliberate simplification; see the `spytial_goals` docstring). -/
+private def walkPropApp (cfg : WalkConfig) (pfx : String) (ty : Expr) :
+    StateT WalkState MetaM Bool := do
+  -- Only const-/fvar-headed Prop applications become relations.
+  unless ← Meta.isProp ty do return false
+  let some rName ← relNameOfHead? ty.getAppFn | return false
+  let relName := pfx ++ rName
+  -- Keep only the genuine data arguments. Drop proofs and types (as the value
+  -- walker does), AND drop instance arguments: a notation-class application like
+  -- `a < b` desugars to `@LT.lt Nat instLTNat a b`, and the `instLTNat` instance
+  -- is `Type`-valued (not a proof or sort) so it survives `isProofArg`. Walking
+  -- it would inject a spurious `LT.mk` node and make `lt` a 3-ary `[inst, a, b]`
+  -- relation instead of the intended binary `a → b`.
+  let args := ty.getAppArgs
+  let mut dataArgs : Array Expr := #[]
+  for a in args do
+    if ← isProofArg a then continue
+    -- Skip instances (arguments whose type is a type class).
+    if (← Meta.isClass? (← Meta.inferType a)).isSome then continue
+    dataArgs := dataArgs.push a
+  if dataArgs.size == 0 then
+    -- Nothing to anchor a relation on (e.g. `R` is a 0-ary or all-proof prop).
+    return false
+  -- Walk every surviving data arg into the shared diagram.
+  let mut ids : Array String := #[]
+  for a in dataArgs do
+    let id ← walkExpr cfg a
+    ids := ids.push id
+  if dataArgs.size == 1 then
+    -- A single data arg can't form an edge; its atom is already in the diagram.
+    return true
+  -- ≥ 2 data args: connect them in order with one tuple.
+  let types := Array.replicate ids.size relName
+  modify fun s => s.addTuple relName types { atoms := ids, types := types }
+  return true
+
+open Tactic in
+/-- `spytial_goals` renders the CURRENT proof state — all goals and their local
+    hypotheses — as a single spatial relational diagram in the Lean infoview.
+
+    For each goal (and inside each goal's own context, so hypotheses resolve):
+
+    - A hypothesis whose **type is a Prop application** `R a b …` headed by a
+      named symbol — a constant (`LT.lt a b` from `a < b`) OR a *local* free
+      variable (a relation from `variable (R : …)` or a binder; these are fvars,
+      not constants) — becomes a tuple in a relation named after `R` (the
+      hypothesis binder name, e.g. `h`, is *not* rendered — the relation name
+      carries the meaning). Only the data arguments are walked as atoms; proofs,
+      types, AND instance arguments (e.g. the `LT Nat` instance inside `a < b`)
+      are dropped. With ≥ 2 data args they are connected by one tuple; with
+      exactly 1, the lone atom appears with no edge; with 0, the hypothesis is
+      skipped.
+    - A **data hypothesis** (type is not a Prop, e.g. `t : Tree`) is
+      relationalized through the normal walker. An abstract hypothesis variable
+      (no definition) has no structure to descend into and renders as a single
+      atom typed by its type's head.
+    - A Prop hypothesis that is **not** a named-symbol application (e.g.
+      `∀ x, P x`, `A ∧ B`, `A → B`) is skipped; a one-line `logInfo` note reports
+      how many such hypotheses were skipped so they aren't silently missing.
+    - Each **goal** target gets the same Prop-application treatment, but its
+      relation name is prefixed `⊢ ` (so `.atomColor`/edge specs can distinguish
+      goal structure from hypotheses). A goal that is not a decomposable Prop
+      application becomes a single atom whose `type` field is `"Goal"` (so
+      `.atomColor (selector := "Goal")` works) and whose label is the
+      pretty-printed goal type.
+
+    Everything is walked into ONE shared diagram, so a hypothesis and a goal that
+    mention the same term point at the same atom.
+
+    Use `spytial_goals with [<ops>]` to attach layout operations, just like the
+    `spytial` tactic. There is no single subject type, so no `spytial_spec`
+    fallback applies; without a `with` block, no spec YAML is sent.
+
+    ```
+    example {α : Type} (R : α → α → Prop) (x y : α)
+        (h : R x y) (hsymm : ∀ a b, R a b → R b a) : R y x := by
+      spytial_goals
+      exact hsymm x y h
+    ```
+
+    The diagram shows relation `R` with the tuple `x → y` (from `h`), the goal
+    relation `⊢ R` with the tuple `y → x`, and a note that `hsymm` (a `∀`) was
+    skipped.
+
+    **Experimental.** This tactic is new and its output shape may change. Stretch
+    goals from the issue — tactic diff (before/after a step), dependency
+    highlighting, and interactive selection — are not yet implemented. -/
+syntax (name := spytialGoalsTactic) "spytial_goals" (" with " term)? : tactic
+
+open Tactic in
+@[tactic spytialGoalsTactic]
+def elabSpytialGoalsTactic : Tactic := fun stx => do
+  let specOpt := stx[1]
+  -- Spec partitioning mirrors the other tactics: `.notationLabel` ops configure
+  -- the walk (collapsed types); the rest become YAML. There is no subject type,
+  -- so no type-attached spec fallback — without `with`, no YAML.
+  let (cfg, yaml) ← if specOpt.isNone then
+      pure ({ : WalkConfig }, none)
+    else do
+      let specTerm := specOpt[1]!
+      let spec ← evalSpytialSpec specTerm
+      pure ({ collapseTypes := spec.collapseTypes : WalkConfig },
+            some (SpytialSpec.toYaml spec.withoutRelationalizerOps))
+
+  -- `getGoals` lives in `TacticM`; snapshot the goal list here, then walk it all
+  -- inside one shared `StateT WalkState MetaM` so the diagram is shared.
+  let goals ← getGoals
+  let walk : StateT WalkState MetaM Nat := do
+    let mut skipped : Nat := 0
+    for mvarId in goals do
+      skipped ← mvarId.withContext do
+        let mut skipped := skipped
+        -- Hypotheses (skip implementation-detail decls).
+        for decl in ← getLCtx do
+          if decl.isImplementationDetail then continue
+          let hypTy ← instantiateMVars decl.type
+          if ← Meta.isProp hypTy then
+            -- Prop hypothesis: relation if it is a named-symbol (const/fvar)
+            -- application, else skip and count it for the note.
+            let decomposed ← walkPropApp cfg "" hypTy
+            unless decomposed do
+              skipped := skipped + 1
+          else
+            -- Data hypothesis: relationalize its fvar structurally.
+            let fv ← instantiateMVars decl.toExpr
+            let _ ← walkExpr cfg fv
+        -- Goal target.
+        let goalTy ← instantiateMVars (← mvarId.getType)
+        let decomposed ← walkPropApp cfg "⊢ " goalTy
+        unless decomposed do
+          -- Not a decomposable Prop application: a single `Goal`-typed atom.
+          let label ← ppLabel goalTy
+          modify fun s =>
+            let (atomId, s) := s.freshId
+            s.addAtom { id := atomId, type := "Goal", label := label }
+        return skipped
+    return skipped
+
+  let (skipped, state) ← walk.run {}
+  let di := state.toDataInstance
+
+  if skipped > 0 then
+    logInfo m!"spytial_goals: skipped {skipped} hypothesis(es) that are not \
+      relation applications (e.g. `∀`, `∧`, `→`)."
+
+  let props : Json := Json.mkObj <|
+    [("dataInstance", toJson di)] ++
+    match yaml with
+    | some s => [("cndSpec", toJson s)]
+    | none => []
+
+  savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
+
+/-- `spytial_goals_datum` prints the JSON data instance for the current proof
+    state (the debugging counterpart of `spytial_goals`, mirroring the `.datum`
+    debug commands). It walks the same hypotheses and goals but `logInfo`s the
+    JSON instead of opening the widget, so the structure is visible in the build
+    log.
+
+    The keyword is `spytial_goals_datum` (underscore), not `spytial_goals.datum`:
+    in tactic position a trailing `.datum` lexes as a field projection rather than
+    part of the keyword, so the dotted form does not parse. The `#spytial.datum`
+    *command* can use a dot because `#`-prefixed command tokens are lexed whole. -/
+syntax (name := spytialGoalsDatumTactic) "spytial_goals_datum" : tactic
+
+open Tactic in
+@[tactic spytialGoalsDatumTactic]
+def elabSpytialGoalsDatumTactic : Tactic := fun _stx => do
+  let goals ← getGoals
+  let walk : StateT WalkState MetaM Unit := do
+    for mvarId in goals do
+      mvarId.withContext do
+        for decl in ← getLCtx do
+          if decl.isImplementationDetail then continue
+          let hypTy ← instantiateMVars decl.type
+          if ← Meta.isProp hypTy then
+            let _ ← walkPropApp ({ : WalkConfig }) "" hypTy
+          else
+            let fv ← instantiateMVars decl.toExpr
+            let _ ← walkExpr ({ : WalkConfig }) fv
+        let goalTy ← instantiateMVars (← mvarId.getType)
+        let decomposed ← walkPropApp ({ : WalkConfig }) "⊢ " goalTy
+        unless decomposed do
+          let label ← ppLabel goalTy
+          modify fun s =>
+            let (atomId, s) := s.freshId
+            s.addAtom { id := atomId, type := "Goal", label := label }
+  let (_, state) ← walk.run {}
+  let json := toJson state.toDataInstance
+  logInfo m!"{json.pretty}"
+
 end SpytialLean
