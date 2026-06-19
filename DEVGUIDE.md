@@ -38,8 +38,8 @@ The first build also fetches the Lean dependencies (ProofWidgets4) pinned in
 
 ### Tests
 
-Run the headless relationalizer-naming tests (TypeShape) with `just test`, or
-directly with lake:
+Run the headless unit tests (relationalizer naming, coverage checking) with
+`just test`, or directly with lake:
 
 ```sh
 lake build SpytialTests

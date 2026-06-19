@@ -82,10 +82,10 @@ lean_lib Demos where
   roots := #[`Showcase, `ProofFieldFiltering, `FunctionFields, `TypeClassInstances, `CustomRelationalizer]
   needs := #[widgetJsAll]
 
-/-- Headless unit tests for the pure relationalization logic: `lake build SpytialTests`. -/
+/-- Headless unit tests: `lake build SpytialTests`. -/
 lean_lib SpytialTests where
   srcDir := "tests"
-  roots := #[`TypeShapeTest]
+  roots := #[`TypeShapeTest, `CoverageTest]
 
 require proofwidgets from
   git "https://github.com/leanprover-community/ProofWidgets4" @ "v0.0.105"

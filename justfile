@@ -4,7 +4,7 @@ default:
 build:
     lake build
 
-# relationalizer naming unit tests (TypeShape)
+# headless unit tests
 test:
     lake build SpytialTests
 

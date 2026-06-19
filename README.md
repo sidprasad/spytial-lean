@@ -145,6 +145,22 @@ Use `#spytial.datum` and `#spytial.spec` to inspect what the relationalizer and 
 ]
 ```
 
+## Coverage checking
+
+`#spytial.coverage` enumerates the data types (`Type`-valued inductives and
+structures) under a namespace and warns on any that have no attached
+`spytial_spec`, no custom relationalizer, and no explicit waiver:
+
+```lean
+spytial_opt_out Tree.Internal "not worth diagramming"
+
+#spytial.coverage Tree
+```
+
+`#spytial.coverage!` errors instead of warning — place it in a module that
+`lake build` elaborates, and the build fails whenever the library grows a
+type nobody has visualized yet.
+
 ## Available operations
 
 Operations are constructors of `SpytialOp`. Pass them as a list to `with [...]` or `spytial_spec`.
