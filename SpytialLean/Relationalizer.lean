@@ -59,18 +59,47 @@ public meta def isProofArg (e : Expr) : MetaM Bool := do
 @[expose] public meta def CustomRelationalizer :=
   Expr → (Expr → StateT WalkState MetaM String) → StateT WalkState MetaM String
 
-/-- Runtime registry of custom relationalizers, keyed by type name. -/
-public meta initialize spytialRelationalizerRegistry :
+/-- Maps a type name to the name of the `CustomRelationalizer` def registered for it.
+    An env extension is serialized into the `.olean`, so registrations made in one
+    module are visible wherever it is imported; storing the def's *name* rather than
+    its value is what keeps the entries serializable. -/
+public meta initialize spytialRelationalizerExt :
+    SimplePersistentEnvExtension (Name × Name) (Std.HashMap Name Name) ←
+  registerSimplePersistentEnvExtension {
+    addEntryFn := fun m (t, d) => m.insert t d
+    addImportedFn := fun arrays =>
+      arrays.foldl (fun m arr => arr.foldl (fun m (t, d) => m.insert t d) m) {}
+  }
+
+/-- The name of the `CustomRelationalizer` def registered for `typeName`, if any. -/
+public meta def getSpytialRelationalizerName? (env : Environment) (typeName : Name) : Option Name :=
+  spytialRelationalizerExt.getState env |>.get? typeName
+
+/-- Register `declName` (which must have type `CustomRelationalizer`) as the
+    relationalizer for `typeName`. -/
+public meta def setSpytialRelationalizer (typeName declName : Name) : CoreM Unit :=
+  modifyEnv fun env => spytialRelationalizerExt.addEntry env (typeName, declName)
+
+/-- Session-local cache of *compiled* relationalizer functions keyed by def name, so a
+    registered def is evaluated at most once per process. The persistent extension is
+    the source of truth; this only memoizes the `evalExpr`. -/
+public meta initialize spytialRelationalizerCache :
     IO.Ref (Std.HashMap Name CustomRelationalizer) ← IO.mkRef {}
 
-/-- Look up a custom relationalizer for a type name. -/
-public meta def getSpytialRelationalizer? (typeName : Name) : IO (Option CustomRelationalizer) := do
-  let map ← spytialRelationalizerRegistry.get
-  return map.get? typeName
+/-- Compile (with memoization) the custom relationalizer registered for `typeName`. -/
+public meta unsafe def getSpytialRelationalizerImpl (typeName : Name) :
+    MetaM (Option CustomRelationalizer) := do
+  let some declName := getSpytialRelationalizerName? (← getEnv) typeName | return none
+  if let some fn := (← spytialRelationalizerCache.get).get? declName then
+    return some fn
+  let fn ← Meta.evalExpr CustomRelationalizer (mkConst ``CustomRelationalizer) (mkConst declName)
+  spytialRelationalizerCache.modify (·.insert declName fn)
+  return some fn
 
-/-- Register a custom relationalizer for a type. -/
-public meta def registerSpytialRelationalizer (typeName : Name) (fn : CustomRelationalizer) : IO Unit :=
-  spytialRelationalizerRegistry.modify fun m => m.insert typeName fn
+/-- Look up the custom relationalizer registered for a type name, if any. Reads the
+    persistent name registry, then evaluates the named def (memoized per process). -/
+@[implemented_by getSpytialRelationalizerImpl]
+public meta opaque getSpytialRelationalizer? (typeName : Name) : MetaM (Option CustomRelationalizer)
 
 /-- Try to enumerate all elements of a finite type.
     Returns `some [(label, expr)]` for finite types, `none` otherwise. -/

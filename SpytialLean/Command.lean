@@ -139,7 +139,7 @@ meta def elabSpytialSpecCmd : CommandElab := fun
 syntax (name := spytialRelationalizerCmd) "spytial_relationalizer " ident ident : command
 
 @[command_elab spytialRelationalizerCmd]
-meta unsafe def elabSpytialRelationalizerCmd : CommandElab := fun
+meta def elabSpytialRelationalizerCmd : CommandElab := fun
   | `(spytial_relationalizer $typeId:ident $defId:ident) => do
     let typeName := typeId.getId
     let defName := defId.getId
@@ -148,10 +148,12 @@ meta unsafe def elabSpytialRelationalizerCmd : CommandElab := fun
       throwError s!"unknown type '{typeName}'"
     unless env.contains defName do
       throwError s!"unknown definition '{defName}'"
-    let fn ← liftTermElabM do
-      Meta.evalExpr CustomRelationalizer
-        (Lean.mkConst ``CustomRelationalizer) (Lean.mkConst defName)
-    registerSpytialRelationalizer typeName fn
+    -- fail mistyped registrations here, not opaquely at dispatch
+    liftTermElabM do
+      let declType := (← getConstInfo defName).type
+      unless (← Meta.isDefEq declType (Lean.mkConst ``CustomRelationalizer)) do
+        throwError s!"'{defName}' must have type `CustomRelationalizer`"
+    liftCoreM <| setSpytialRelationalizer typeName defName
   | stx => throwError "Unexpected syntax {stx}."
 
 /-! ## Debugging commands -/
