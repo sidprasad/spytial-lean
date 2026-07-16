@@ -168,6 +168,24 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : State
   let s := s.markSeen hash atomId
   set s
 
+  -- Open-value holes: an unassigned metavariable or an opaque hypothesis has no
+  -- structure to decompose, so it renders as a leaf that keeps its structural atom
+  -- type (a `Tree`-shaped hole still occupies a `Tree` slot, so `Tree` specs apply).
+  -- These must short-circuit *before* custom-relationalizer dispatch — a value
+  -- decomposer must never be handed a bare hole of its target type.
+  match e with
+  | .mvar mvarId =>
+    let typeName ← sigOfType ty
+    let userName := (← mvarId.getDecl).userName
+    modify fun s => s.addAtom { id := atomId, type := typeName, label := holeLabel userName }
+    return atomId
+  | .fvar fvarId =>
+    let typeName ← sigOfType ty
+    let userName ← fvarId.getUserName
+    modify fun s => s.addAtom { id := atomId, type := typeName, label := hypLabel userName }
+    return atomId
+  | _ => pure ()
+
   -- Check for custom relationalizer before default dispatch
   let tyWhnfForLookup ← Meta.whnf ty
   if let .const typeConstName _ := tyWhnfForLookup.getAppFn then
@@ -236,6 +254,29 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : State
             modify fun s => s.addTuple fieldName #[typeName, typeName]
               { atoms := #[atomId, childId], types := #[typeName, typeName] }
         return atomId
+      -- Is it a stuck match? (whnf left a matcher application in place because the
+      -- discriminant is a hole or hypothesis, so iota could not fire.) Render a
+      -- `match` node with edges into the discriminants — the parts that carry data —
+      -- instead of one opaque pretty-printed blob. Motive and alternatives are
+      -- elaboration plumbing and are skipped.
+      else if let some minfo := getMatcherInfoCore? env fnName then
+        let args := e.getAppArgs
+        if args.size == minfo.arity then
+          modify fun s => s.addAtom { id := atomId, type := typeName, label := "match" }
+          for i in [:minfo.numDiscrs] do
+            let discr := args[minfo.getFirstDiscrPos + i]!
+            let isProof ← if cfg.filterProofs then isProofArg discr else pure false
+            unless isProof do
+              let childId ← walkExpr cfg discr
+              let relName := if minfo.numDiscrs == 1 then "scrutinee" else s!"scrutinee_{i}"
+              modify fun s => s.addTuple relName #[typeName, typeName]
+                { atoms := #[atomId, childId], types := #[typeName, typeName] }
+          return atomId
+        else
+          -- Partially applied (or over-applied) matcher — keep the generic-leaf path.
+          let label ← ppLabel e
+          modify fun s => s.addAtom { id := atomId, type := typeName, label := label }
+          return atomId
       -- Is it a structure projection?
       else if (← typeHead? ty).any (isStructure env ·) then
         -- Walk all structure fields

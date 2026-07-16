@@ -58,6 +58,20 @@ public meta def fieldRelName (ctorShort : String) (binderNames : Array Name) (i 
   else
     s!"{ctorShort}_{i}"
 
+/-- The label the relationalizer assigns to a hole (an unassigned metavariable):
+    `?` when anonymous, `?name` for a user-named hole. Macro-scoped names count as
+    anonymous — they are synthetic, not something the user wrote. -/
+public meta def holeLabel (userName : Name) : String :=
+  if userName.isAnonymous || userName.hasMacroScopes then "?"
+  else s!"?{userName}"
+
+/-- The label the relationalizer assigns to a hypothesis (`fvar`) leaf: its user name
+    with macro scopes erased (so inaccessible names render without the dagger),
+    falling back to `?` for genuinely anonymous binders. -/
+public meta def hypLabel (userName : Name) : String :=
+  let n := userName.eraseMacroScopes
+  if n.isAnonymous then "?" else toString n
+
 /-- Whether the walker erases a value of this type — proofs (`Prop`) and types
     (`Sort`) — and so drops fields of it. The one predicate the walker
     (`isProofArg`) and the static checker share. -/

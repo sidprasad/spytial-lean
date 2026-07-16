@@ -110,7 +110,8 @@ lean_lib SpytialLean where
 lean_lib Demos where
   srcDir := "demos"
   roots := #[`Showcase, `ProofFieldFiltering, `FunctionFields, `TypeClassInstances,
-             `CustomRelationalizer, `HoareLogic, `OperationalSemantics, `ProofTerms]
+             `CustomRelationalizer, `HoareLogic, `OperationalSemantics, `ProofTerms,
+             `PartialTerms]
   needs := #[widgetJsAll]
 
 /-- Headless unit tests: `lake build SpytialTests`. -/
