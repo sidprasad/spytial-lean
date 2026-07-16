@@ -165,6 +165,21 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : State
   let s := s.markSeen hash atomId
   set s
 
+  -- a hole keeps its structural atom type (so specs apply) and short-circuits
+  -- relationalizer dispatch: never hand a value decomposer a bare hole
+  match e with
+  | .mvar mvarId =>
+    let typeName ← sigOfType ty
+    let userName := (← mvarId.getDecl).userName
+    modify fun s => s.addAtom { id := atomId, type := typeName, label := holeLabel userName }
+    return atomId
+  | .fvar fvarId =>
+    let typeName ← sigOfType ty
+    let userName ← fvarId.getUserName
+    modify fun s => s.addAtom { id := atomId, type := typeName, label := hypLabel userName }
+    return atomId
+  | _ => pure ()
+
   -- Check for custom relationalizer before default dispatch
   let tyWhnfForLookup ← Meta.whnf ty
   if let .const typeConstName _ := tyWhnfForLookup.getAppFn then
@@ -231,6 +246,26 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : State
             modify fun s => s.addTuple fieldName #[typeName, typeName]
               { atoms := #[atomId, childId], types := #[typeName, typeName] }
         return atomId
+      -- stuck match (iota can't fire on a hole/hypothesis discriminant): edges
+      -- into the discriminants only; motive and alternatives are plumbing
+      else if let some minfo := getMatcherInfoCore? env fnName then
+        let args := e.getAppArgs
+        if args.size == minfo.arity then
+          modify fun s => s.addAtom { id := atomId, type := typeName, label := "match" }
+          for i in [:minfo.numDiscrs] do
+            let discr := args[minfo.getFirstDiscrPos + i]!
+            let isProof ← if cfg.filterProofs then isProofArg discr else pure false
+            unless isProof do
+              let childId ← walkExpr cfg discr
+              let relName := if minfo.numDiscrs == 1 then "scrutinee" else s!"scrutinee_{i}"
+              modify fun s => s.addTuple relName #[typeName, typeName]
+                { atoms := #[atomId, childId], types := #[typeName, typeName] }
+          return atomId
+        else
+          -- partially/over-applied matcher: generic leaf
+          let label ← ppLabel e
+          modify fun s => s.addAtom { id := atomId, type := typeName, label := label }
+          return atomId
       -- Is it a structure projection?
       else if (← typeHead? ty).any (isStructure env ·) then
         -- Walk all structure fields
