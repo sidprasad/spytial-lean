@@ -1,6 +1,7 @@
 module
 
 meta import SpytialLean.TypeShape
+meta import SpytialLean.Relationalizer
 
 open SpytialLean Lean Meta
 
@@ -67,3 +68,58 @@ public structure Bundle where
 #eval show MetaM Unit from do
   let r ← TypeShape.ofInductive ``Nat.add
   unless r.isNone do throwError "expected none for a non-inductive"
+
+/-! ## Hole labels -/
+
+#eval show MetaM Unit from do
+  assertEq "hole.anon"  #[holeLabel Name.anonymous] #["?"]
+  assertEq "hole.named" #[holeLabel `subtree] #["?subtree"]
+  assertEq "hyp.named"  #[hypLabel `t] #["t"]
+  assertEq "hyp.anon"   #[hypLabel Name.anonymous] #["?"]
+  let hygienic ← Lean.Core.mkFreshUserName `x
+  assertEq "hole.scoped" #[holeLabel hygienic] #["?"]
+  assertEq "hyp.scoped"  #[hypLabel hygienic] #["x"]
+
+/-! ## Walker: open values (holes and hypotheses) -/
+
+#eval show MetaM Unit from do
+  let treeNat := mkApp (mkConst ``Tree) (mkConst ``Nat)
+  let hole ← mkFreshExprMVar (some treeNat)
+  let di ← relationalize hole
+  assertEq "mvar.labels" (di.atoms.map (·.label)) #["?"]
+  assertEq "mvar.types"  (di.atoms.map (·.type))  #["Tree"]
+  let named ← mkFreshExprMVar (some treeNat) (userName := `subtree)
+  let di ← relationalize named
+  assertEq "mvar.named.labels" (di.atoms.map (·.label)) #["?subtree"]
+  withLocalDeclD `t treeNat fun t => do
+    let di ← relationalize t
+    assertEq "fvar.labels" (di.atoms.map (·.label)) #["t"]
+    assertEq "fvar.types"  (di.atoms.map (·.type))  #["Tree"]
+
+#eval show MetaM Unit from do
+  let treeNat := mkApp (mkConst ``Tree) (mkConst ``Nat)
+  let leaf1 := mkApp2 (mkConst ``Tree.leaf) (mkConst ``Nat) (mkRawNatLit 1)
+  let hole ← mkFreshExprMVar (some treeNat)
+  let di ← relationalize (mkApp3 (mkConst ``Tree.node) (mkConst ``Nat) leaf1 hole)
+  assertEq "partial.labels" (di.atoms.map (·.label)) #["node", "leaf", "1", "?"]
+  assertEq "partial.rels"   ((di.relations.map (·.name)).qsort (· < ·)) #["left", "right", "value"]
+  -- the *same* hole twice is one atom: filling it fills both slots
+  let di ← relationalize (mkApp3 (mkConst ``Tree.node) (mkConst ``Nat) hole hole)
+  assertEq "shared-hole.labels" (di.atoms.map (·.label)) #["node", "?"]
+
+/-! ## Walker: stuck match
+
+Elaborated here exactly as a synthesized term containing `match` would be. -/
+
+#eval show Lean.Elab.TermElabM Unit from do
+  let treeNat := mkApp (mkConst ``Tree) (mkConst ``Nat)
+  withLocalDeclD `t treeNat fun t => do
+    let tStx ← Lean.Elab.Term.exprToSyntax t
+    let stx ← `(match $tStx:term with | .leaf v => v | .node _ _ => 0)
+    let e ← Lean.Elab.Term.elabTermEnsuringType stx (some (mkConst ``Nat))
+    Lean.Elab.Term.synthesizeSyntheticMVarsNoPostponing
+    let e ← instantiateMVars e
+    let di ← relationalize e
+    assertEq "match.labels" (di.atoms.map (·.label)) #["match", "t"]
+    assertEq "match.types"  (di.atoms.map (·.type))  #["Nat", "Tree"]
+    assertEq "match.rels"   (di.relations.map (·.name)) #["scrutinee"]
