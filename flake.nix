@@ -22,6 +22,7 @@
           buildInputs = with pkgs; [
             elan
             nodejs
+            just
           ];
         };
       });

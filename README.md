@@ -42,7 +42,7 @@ Open `Demo.lean` and place your cursor on a `#spytial` line. The infoview panel 
 
 ### Nix dev shell
 
-A [flake](flake.nix) provides a dev shell (elan + Node) — run `nix develop`. To opt into [direnv](https://direnv.net/): `ln -s nix/envrc .envrc && direnv allow`.
+A [flake](flake.nix) provides a dev shell (elan + Node + just) — run `nix develop`. To opt into [direnv](https://direnv.net/): `ln -s nix/envrc .envrc && direnv allow`.
 
 ## Usage
 

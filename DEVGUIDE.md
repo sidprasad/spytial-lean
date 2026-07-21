@@ -11,67 +11,68 @@ The Lean build depends on the widget JS build through the `widgetJsAll` lake tar
 
 ## Prerequisites
 
-- Lean 4 v4.24.0 (installed via [elan](https://github.com/leanprover/elan))
+- Lean 4 (pinned by `lean-toolchain`, installed via [elan](https://github.com/leanprover/elan))
 - Node.js (v16+)
 - spytial-core browser bundle built: `cd ../spytial-core && npm run build:browser`
+- [just](https://github.com/casey/just) (optional)
 
-## Full build from scratch
+The nix dev shell (`flake.nix`) provides the toolchain; see the
+[README](README.md#nix-dev-shell) for direnv setup.
 
-```sh
-cd spytial-lean
+## Tasks
 
-# 1. Fetch Lean dependencies (ProofWidgets4, batteries)
-lake update
+### Build
 
-# 2. Build everything (widget JS + Lean)
-lake build
-```
-
-`lake build` automatically runs `npm clean-install` and `npm run build` in the `widget/` directory before compiling Lean.
-
-## Rebuilding after changes
-
-### Changed Lean files only
+Build the widget JS and Lean library with `just build`, or directly with lake:
 
 ```sh
 lake build
 ```
 
-### Changed widget TypeScript
+The first build also fetches the Lean dependencies (ProofWidgets4) pinned in
+`lake-manifest.json`. Under the hood `just build` runs `npm clean-install` and
+`npm run build` in `widget/` before compiling Lean.
 
-The widget needs to be recompiled, and then Widget.lean needs to be recompiled (because `include_str` embeds the JS at compile time):
+### Tests
+
+Run the headless relationalizer-naming tests (TypeShape) with `just test`, or
+directly with lake:
 
 ```sh
-# Rebuild the widget JS
-cd widget
-npx tsc && npx rollup --environment NODE_ENV:production --config
-cd ..
-
-# Force Widget.lean to recompile with new JS
-rm -f .lake/build/lib/lean/SpytialLean/Widget.*
-lake build
+lake build SpytialTests
 ```
 
-Then in VS Code: **Cmd+Shift+P → "Lean 4: Restart Server"** to pick up the new widget.
+### Demos
+
+Elaborate every demo — each `#spytial` site typechecks and its spec elaborates —
+with `just demos`, or directly with lake:
+
+```sh
+lake build Demos
+```
+
+### Widget reload
+
+Lake tracks the widget sources and configs, so `just build` picks up changes to
+them. What it can't see is the spytial-core bundle, which rollup reads straight
+from `../../spytial-core/dist/browser/` — after rebuilding that, force the
+re-embed with:
+
+```sh
+just widget-reload
+```
+
+Either way, restart the Lean server (VS Code: **Cmd+Shift+P → "Lean 4: Restart
+Server"**) to pick up the new widget.
 
 ### Changed spytial-core
 
-If you modify spytial-core itself:
+To pick up changes to spytial-core itself, rebuild its browser bundle and reload
+the widget:
 
 ```sh
-# Rebuild spytial-core's browser bundle
-cd ../spytial-core
-npm run build:browser
-cd ../spytial-lean
-
-# Rebuild widget (picks up new IIFE bundle)
-cd widget
-npx tsc && npx rollup --environment NODE_ENV:production --config
-cd ..
-
-# Force recompile
-rm -f .lake/build/lib/lean/SpytialLean/Widget.*
-lake build
+cd ../spytial-core && npm run build:browser && cd ../spytial-lean
+just widget-reload
 ```
 
 ## Widget build details
