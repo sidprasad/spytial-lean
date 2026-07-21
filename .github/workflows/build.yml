@@ -30,6 +30,8 @@ jobs:
         with:
           version: 11
 
+      - uses: extractions/setup-just@v4
+
       - name: Cache Lake packages
         uses: actions/cache@v4
         with:
@@ -38,8 +40,8 @@ jobs:
             .lake/packages
           key: lake-${{ hashFiles('lean-toolchain') }}-${{ hashFiles('lake-manifest.json') }}
 
-      - name: Build package
-        run: lake build SpytialLean
+      - name: Build, test, demos
+        run: just build test demos
 
       - name: Create GitHub Release
         if: github.ref_type == 'tag'
