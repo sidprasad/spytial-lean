@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "npx tsc && rollup --environment NODE_ENV:production --config",
-    "build-dev": "npx tsc && rollup --config",
+    "build": "tsc && rollup --environment NODE_ENV:production --config",
+    "build-dev": "tsc && rollup --config",
     "watch": "rollup --config --watch"
   },
   "dependencies": {

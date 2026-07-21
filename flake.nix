@@ -18,10 +18,11 @@
       devShells = eachPkgs (pkgs: {
         default = pkgs.mkShell {
           # elan provisions the Lean toolchain wrapped for NixOS;
-          # nodejs/npm are needed by `lake build` to bundle the widget JS.
+          # node + pnpm are needed by `lake build` to bundle the widget JS.
           buildInputs = with pkgs; [
             elan
-            nodejs
+            nodejs_24
+            pnpm
             just
           ];
         };

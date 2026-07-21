@@ -14,6 +14,6 @@ demos:
 
 # rebuild widget JS and force the include_str re-embed
 widget-reload:
-    cd widget && npm run build
+    cd widget && pnpm run build
     rm -f .lake/build/lib/lean/SpytialLean/Widget.*
     lake build

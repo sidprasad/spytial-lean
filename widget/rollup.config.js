@@ -2,32 +2,7 @@ import { nodeResolve } from '@rollup/plugin-node-resolve';
 import commonjs from '@rollup/plugin-commonjs';
 import replace from '@rollup/plugin-replace';
 import terser from '@rollup/plugin-terser';
-import virtual from '@rollup/plugin-virtual';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-// Load the pre-built spytial-core IIFE bundle and re-export as ES module.
-// The IIFE assigns to `var spytialcore = (function() { ... })()`,
-// which becomes a module-scoped variable that we then export.
-const spytialCorePath = path.resolve(__dirname, 'node_modules/spytial-core/dist/browser/spytial-core-complete.global.js');
-let spytialCoreBundle = '';
-try {
-  spytialCoreBundle = fs.readFileSync(spytialCorePath, 'utf-8');
-} catch (e) {
-  console.warn(`Warning: spytial-core bundle not found at ${spytialCorePath}. Build spytial-core first.`);
-}
-
-// Load the components bundle (provides mountErrorMessageModal, ErrorAPI, globalErrorManager)
-const componentsPath = path.resolve(__dirname, 'node_modules/spytial-core/dist/components/react-component-integration.global.js');
-let componentsBundle = '';
-try {
-  componentsBundle = fs.readFileSync(componentsPath, 'utf-8');
-} catch (e) {
-  console.warn(`Warning: spytial-core components bundle not found at ${componentsPath}. Build spytial-core first.`);
-}
+import { cssNoop, spytialCoreVirtualModules } from './rollup.virtual.mjs';
 
 const isProduction = process.env.NODE_ENV === 'production';
 
@@ -49,41 +24,8 @@ export default {
     '@leanprover/infoview',
   ],
   plugins: [
-    // Handle CSS imports from spytial-core source as no-ops
-    // (we inject equivalent styles in the widget itself)
-    {
-      name: 'css-noop',
-      resolveId(source) {
-        if (source.endsWith('.css')) return source;
-        return null;
-      },
-      load(id) {
-        if (id.endsWith('.css')) return '';
-        return null;
-      }
-    },
-    virtual({
-      'spytial-core': `
-        // Guard against duplicate customElements.define calls —
-        // the IIFE bundle registers webcola-cnd-graph on load, and
-        // if the module is re-evaluated we get a fatal error.
-        var _origDefine = typeof customElements !== 'undefined' ? customElements.define.bind(customElements) : undefined;
-        if (typeof customElements !== 'undefined') {
-          customElements.define = function(name, ctor, opts) {
-            if (!customElements.get(name)) _origDefine(name, ctor, opts);
-          };
-        }
-        ${spytialCoreBundle}
-        if (typeof customElements !== 'undefined' && _origDefine) {
-          customElements.define = _origDefine;
-        }
-        export default typeof spytialcore !== 'undefined' ? spytialcore : {};
-      `,
-      'spytial-core-components': `
-        ${componentsBundle}
-        export default typeof IntegratedDemo !== 'undefined' ? IntegratedDemo : {};
-      `
-    }),
+    cssNoop(),
+    spytialCoreVirtualModules(),
     nodeResolve({ browser: true }),
     replace({
       'typeof window': JSON.stringify('object'),
