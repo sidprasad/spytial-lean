@@ -11,12 +11,9 @@ const widgetDir = path.dirname(fileURLToPath(import.meta.url));
 
 function readBundle(rel) {
   const p = path.resolve(widgetDir, rel);
-  try {
-    return fs.readFileSync(p, 'utf-8');
-  } catch (e) {
-    console.warn(`Warning: bundle not found at ${p}. Build spytial-core first.`);
-    return '';
-  }
+  if (!fs.existsSync(p))
+    throw new Error(`${p} not found — build spytial-core first`);
+  return fs.readFileSync(p, 'utf-8');
 }
 
 /** Handle CSS imports from spytial-core source as no-ops
