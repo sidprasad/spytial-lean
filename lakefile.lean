@@ -70,6 +70,8 @@ target widgetJsAll pkg : Unit := do
     buildUnlessUpToDate traceFile (← getTrace) traceFile do
       pkg.runPnpmCommand #["install", "--frozen-lockfile"]
       pkg.runPnpmCommand #["run", "build"]
+    -- the job's trace is the built JS itself, so out-of-band rebuilds re-embed
+    setTrace (← computeTrace (pkg.buildDir / "js" / "spytialWidget.js"))
 
 @[default_target]
 lean_lib SpytialLean where

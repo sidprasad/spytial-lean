@@ -56,10 +56,10 @@ lake build Demos
 
 ### Widget reload
 
-Lake tracks the widget inputs (sources, rollup configs, `package.json`,
-`pnpm-lock.yaml`), so `just build` picks up changes to them. What it can't see
-is the built JS changing with no tracked input — after rebuilding a local
-spytial-core checkout (below), force the re-embed with:
+The built JS's hash is part of the `widgetJsAll` trace, so `just build`
+re-embeds it whenever its bytes change. Lake still only reruns the widget build
+when a tracked input changes — after rebuilding a local spytial-core checkout
+(below), rebuild and re-embed with:
 
 ```sh
 just widget-reload

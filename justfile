@@ -12,8 +12,7 @@ test:
 demos:
     lake build Demos
 
-# rebuild widget JS and force the include_str re-embed
+# rebuild widget JS and re-embed it
 widget-reload:
     cd widget && pnpm run build
-    rm -f .lake/build/lib/lean/SpytialLean/Widget.*
     lake build
