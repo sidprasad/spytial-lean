@@ -3,7 +3,7 @@ import Showcase
 
 /-! # Render-test case dumper
 
-`#spytial_snapshot "<name>" <term> (with <ops>)?` writes `cases/<name>/props.json`
+`#spytial_snapshot "<name>" <term> (with [...])?` writes `cases/<name>/props.json`
 for `render.spec.mjs` to screenshot and diff. The props come from
 `spytialPayloadProps`, so a case cannot drift from what the infoview receives.
 
@@ -14,7 +14,7 @@ so it can use the library's meta surface without module-system ceremony.
 open Lean Elab Command SpytialLean
 
 syntax (name := snapshotCmd)
-  "#spytial_snapshot " str ppSpace term (" with " term)? : command
+  "#spytial_snapshot " str ppSpace term (" with " "[" spytial_op,* "]")? : command
 
 /-- `cases/` beside this source file, so the dump location doesn't depend on cwd. -/
 private def casesDir : CommandElabM System.FilePath := do
@@ -30,15 +30,20 @@ private def instanceStats (props : Json) : String :=
     pure s!"{atoms.size} atoms, {rels.size} relations") : Except String String)
   |>.toOption.getD "unreadable props"
 
+private def dumpSnapshot (name : TSyntax `str) (t : Term)
+    (ops? : Option (Array (TSyntax `spytial_op))) : CommandElabM Unit := do
+  let props ← liftTermElabM <| spytialPayloadProps t ops?
+  let dir := (← casesDir) / name.getString
+  IO.FS.createDirAll dir
+  IO.FS.writeFile (dir / "props.json") (props.pretty ++ "\n")
+  logInfo m!"snapshot case '{name.getString}': {instanceStats props}"
+
 @[command_elab snapshotCmd]
 def elabSnapshot : CommandElab := fun
-  | `(#spytial_snapshot $name:str $t:term $[with $spec?]?) => do
-    let props ← liftTermElabM <| spytialPayloadProps t (spec?.map (·.raw))
-    let dir := (← casesDir) / name.getString
-    IO.FS.createDirAll dir
-    IO.FS.writeFile (dir / "props.json") (props.pretty ++ "\n")
-    logInfo m!"snapshot case '{name.getString}': {instanceStats props}"
-  | stx => throwError "Unexpected syntax {stx}."
+  | `(#spytial_snapshot $name:str $t:term) => dumpSnapshot name t none
+  | `(#spytial_snapshot $name:str $t:term with [$ops,*]) =>
+    dumpSnapshot name t (some ops.getElems)
+  | _ => throwUnsupportedSyntax
 
 /-! ## Cases
 
@@ -54,17 +59,17 @@ snapshots track what a user of the demo files actually sees.
 
 -- Inline `with` override of an attached spec.
 #spytial_snapshot "tree-inline" myTree with [
-  .orientation (selector := "left") (directions := [.above]),
-  .orientation (selector := "right") (directions := [.above]),
-  .atomColor (selector := "Tree") (value := "#0066ff"),
-  .hideAtom (selector := "Nat")
+  orientation left above,
+  orientation right above,
+  atomColor Tree "#0066ff",
+  hideAtom Nat
 ]
 
 -- Structure with attribute ops only (no constraints).
 #spytial_snapshot "person" alice with [
-  .attribute (field := "name"),
-  .attribute (field := "age"),
-  .atomColor (selector := "Person") (value := "#4CAF50")
+  attribute name,
+  attribute age,
+  atomColor Person "#4CAF50"
 ]
 
 -- Spec inheritance: Vehicle ops ++ ElectricCar ops.
@@ -72,7 +77,7 @@ snapshots track what a user of the demo files actually sees.
 
 -- Plain list, scalar atoms hidden.
 #spytial_snapshot "list" myList with [
-  .hideAtom (selector := "Nat")
+  hideAtom Nat
 ]
 
 -- No spec at all (Person has none attached): the `cndSpec` prop is absent,

@@ -47,12 +47,10 @@ public meta structure WalkConfig where
   /-- When true, skip Prop-typed fields (data mode). When false, show them (proof mode). -/
   filterProofs : Bool := true
 
-/-- Check if an expression is a proof or type (erased at runtime). -/
+/-- Whether an argument is erased at runtime — a proof or a type. Delegates to
+    the shared `isProofLikeType`, so the walker and the static checker agree. -/
 public meta def isProofArg (e : Expr) : MetaM Bool := do
-  let ty ← inferType e
-  -- Use Meta.isProp for proper sort-level check (handles ∀-typed proofs)
-  let isProp ← Meta.isProp ty
-  return isProp || ty.isSort
+  isProofLikeType (← inferType e)
 
 /-- A custom relationalizer function.
     Receives the expression to decompose and the default walker for recursion. -/

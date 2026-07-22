@@ -60,7 +60,7 @@ means re-blessing all of them.
 Add a line to `Cases.lean`:
 
 ```lean
-#spytial_snapshot "my-case" myValue with [.hideAtom (selector := "Nat")]
+#spytial_snapshot "my-case" myValue with [hideAtom Nat]
 ```
 
 then `just render-update` and commit the new `baseline/my-case.png` — after

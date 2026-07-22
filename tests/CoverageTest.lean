@@ -38,7 +38,7 @@ meta def ropeRel : CustomRelationalizer := fun _ _ => do
 -- the enumeration produces
 namespace CoverageFixture
 
-spytial_spec Graph [.hideAtom (selector := "Nat")]
+spytial_spec Graph [hideAtom Nat]
 spytial_relationalizer Rope ropeRel
 spytial_opt_out Waived "structural noise, not domain data"
 

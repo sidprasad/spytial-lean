@@ -1,6 +1,7 @@
 module
 
 public import Lean
+public meta import SpytialLean.Selector
 
 namespace SpytialLean
 
@@ -26,24 +27,25 @@ public meta inductive EdgeStyle where
   deriving Repr, DecidableEq, Inhabited
 
 /-- A single Spytial operation — either a constraint (layout geometry) or a
-    directive (visual styling). This matches the flat decorator lists used
-    by spytial-py and caraspace (Rust). -/
+    directive (visual styling). Selector positions carry checked `Sel` ASTs;
+    `field` positions carry relation names validated against the target type's
+    vocabulary at elaboration time. -/
 public meta inductive SpytialOp where
   -- Layout constraints
-  | orientation (selector : String) (directions : List Direction)
-  | align (selector : String) (direction : AlignDir)
-  | cyclic (selector : String) (direction : RotationDir := .clockwise)
-  | group (selector : String) (name : String) (addEdge : Bool := false)
-  | hideAtom (selector : String)
-  | size (selector : String) (width : Nat := 100) (height : Nat := 60)
+  | orientation (selector : Sel) (directions : List Direction)
+  | align (selector : Sel) (direction : AlignDir)
+  | cyclic (selector : Sel) (direction : RotationDir := .clockwise)
+  | group (selector : Sel) (name : String) (addEdge : Bool := false)
+  | hideAtom (selector : Sel)
+  | size (selector : Sel) (width : Nat := 100) (height : Nat := 60)
   -- Visual directives
-  | atomColor (selector : String) (value : String)
+  | atomColor (selector : Sel) (value : String)
   | edgeColor (field : String) (value : String) (style : EdgeStyle := .solid)
   | hideField (field : String)
   | attribute (field : String)
-  | icon (selector : String) (path : String) (showLabels : Bool := false)
-  | tag (toTag : String) (name : String) (value : String)
-  | inferredEdge (name : String) (selector : String)
+  | icon (selector : Sel) (path : String) (showLabels : Bool := false)
+  | tag (toTag : Sel) (name : String) (value : String)
+  | inferredEdge (name : String) (selector : Sel)
       (color : String := "#000000") (style : EdgeStyle := .solid)
   | flag (name : String)
   deriving Repr, Inhabited
@@ -62,7 +64,9 @@ optional top-level keys:
  "directives":  [{"atomColor": {"selector": "…", "value": "#ff0000"}}]}
 ```
 `SpytialOp`s partition into constraints vs directives; each lowers to a single
-`{opName: …}` object.
+`{opName: …}` object. Selectors lower through `Sel.toSGQ` here — the
+environment stores the structured spec, and the wire string exists only in the
+widget payload.
 -/
 
 open Lean (Json)
@@ -99,26 +103,27 @@ private meta def SpytialOp.isConstraint : SpytialOp → Bool
 /-- Lower one op to its `{opName: …}` JSON object. Optional fields (`addEdge`,
     `showLabels`) are emitted only when set. -/
 private meta def SpytialOp.toJson (op : SpytialOp) : Json :=
+  let sel (s : Sel) : Json := Json.str s.toSGQ
   match op with
   | .orientation s dirs =>
     Json.mkObj [("orientation", Json.mkObj
-      [("selector", Json.str s),
+      [("selector", sel s),
        ("directions", Json.arr (dirs.map (fun d => Json.str d.toStr)).toArray)])]
   | .align s dir =>
-    Json.mkObj [("align", Json.mkObj [("selector", Json.str s), ("direction", Json.str dir.toStr)])]
+    Json.mkObj [("align", Json.mkObj [("selector", sel s), ("direction", Json.str dir.toStr)])]
   | .cyclic s dir =>
-    Json.mkObj [("cyclic", Json.mkObj [("selector", Json.str s), ("direction", Json.str dir.toStr)])]
+    Json.mkObj [("cyclic", Json.mkObj [("selector", sel s), ("direction", Json.str dir.toStr)])]
   | .group s name addEdge =>
     Json.mkObj [("group", Json.mkObj <|
-      [("selector", Json.str s), ("name", Json.str name)] ++
+      [("selector", sel s), ("name", Json.str name)] ++
       (if addEdge then [("addEdge", Json.bool true)] else []))]
   | .hideAtom s =>
-    Json.mkObj [("hideAtom", Json.mkObj [("selector", Json.str s)])]
+    Json.mkObj [("hideAtom", Json.mkObj [("selector", sel s)])]
   | .size s w h =>
     Json.mkObj [("size", Json.mkObj
-      [("selector", Json.str s), ("width", Json.num (.fromNat w)), ("height", Json.num (.fromNat h))])]
+      [("selector", sel s), ("width", Json.num (.fromNat w)), ("height", Json.num (.fromNat h))])]
   | .atomColor s val =>
-    Json.mkObj [("atomColor", Json.mkObj [("selector", Json.str s), ("value", Json.str val)])]
+    Json.mkObj [("atomColor", Json.mkObj [("selector", sel s), ("value", Json.str val)])]
   | .edgeColor field val style =>
     Json.mkObj [("edgeColor", Json.mkObj
       [("field", Json.str field), ("value", Json.str val), ("style", Json.str style.toStr)])]
@@ -128,14 +133,14 @@ private meta def SpytialOp.toJson (op : SpytialOp) : Json :=
     Json.mkObj [("attribute", Json.mkObj [("field", Json.str field)])]
   | .icon s path showLabels =>
     Json.mkObj [("icon", Json.mkObj <|
-      [("selector", Json.str s), ("path", Json.str path)] ++
+      [("selector", sel s), ("path", Json.str path)] ++
       (if showLabels then [("showLabels", Json.bool true)] else []))]
   | .tag toTag name value =>
     Json.mkObj [("tag", Json.mkObj
-      [("toTag", Json.str toTag), ("name", Json.str name), ("value", Json.str value)])]
+      [("toTag", sel toTag), ("name", Json.str name), ("value", Json.str value)])]
   | .inferredEdge name s color style =>
     Json.mkObj [("inferredEdge", Json.mkObj
-      [("name", Json.str name), ("selector", Json.str s), ("color", Json.str color),
+      [("name", Json.str name), ("selector", sel s), ("color", Json.str color),
        ("style", Json.str style.toStr)])]
   | .flag name =>
     Json.mkObj [("flag", Json.str name)]

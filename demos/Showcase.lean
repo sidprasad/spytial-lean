@@ -22,14 +22,14 @@ inductive RBNode where
   deriving Repr
 
 spytial_spec RBNode [
-  .attribute (field := "key"),
-  .attribute (field := "color"),
-  .orientation (selector := "left - RBNode->{x : RBNode | @:x = nil }") (directions := [.left, .below]),
-  .orientation (selector := "right - RBNode->{x : RBNode | @:x = nil }") (directions := [.right, .below]),
-  .hideAtom (selector := "Color + Nat"),
-  .hideAtom (selector := "{x : RBNode | @:x = nil }"),
-  .atomColor (selector := "{x : RBNode | @:(x.color) = red}") (value := "red"),
-  .atomColor (selector := "{x : RBNode | @:(x.color) = black}") (value := "black")
+  attribute key,
+  attribute color,
+  orientation left - RBNode->{x : RBNode | @:x = nil} left below,
+  orientation right - RBNode->{x : RBNode | @:x = nil} right below,
+  hideAtom Color + Nat,
+  hideAtom {x : RBNode | @:x = nil},
+  atomColor {x : RBNode | @:(x.color) = red} "red",
+  atomColor {x : RBNode | @:(x.color) = black} "black"
 ]
 
 def exampleRBTree : RBNode :=
@@ -51,9 +51,9 @@ inductive Tree (α : Type) where
   | node (left : Tree α) (right : Tree α) : Tree α
 
 spytial_spec Tree [
-  .orientation (selector := "left") (directions := [.left, .below]),
-  .orientation (selector := "right") (directions := [.right, .below]),
-  .hideAtom (selector := "Nat")
+  orientation left left below,
+  orientation right right below,
+  hideAtom Nat
 ]
 
 def myTree : Tree Nat :=
@@ -63,10 +63,10 @@ def myTree : Tree Nat :=
 
 -- Override with inline spec
 #spytial myTree with [
-  .orientation (selector := "left") (directions := [.above]),
-  .orientation (selector := "right") (directions := [.above]),
-  .atomColor (selector := "Tree") (value := "#0066ff"),
-  .hideAtom (selector := "Nat")
+  orientation left above,
+  orientation right above,
+  atomColor Tree "#0066ff",
+  hideAtom Nat
 ]
 
 /-! ## Structures -/
@@ -78,9 +78,9 @@ structure Person where
 def alice : Person := { name := "Alice", age := 30 }
 
 #spytial alice with [
-  .attribute (field := "name"),
-  .attribute (field := "age"),
-  .atomColor (selector := "Person") (value := "#4CAF50")
+  attribute name,
+  attribute age,
+  atomColor Person "#4CAF50"
 ]
 
 /-! ## Spec Inheritance (Structure extends)
@@ -94,10 +94,10 @@ structure Vehicle where
   year : Nat
 
 spytial_spec Vehicle [
-  .attribute (field := "make"),
-  .attribute (field := "year"),
-  .atomColor (selector := "Vehicle") (value := "#4CAF50"),
-  .hideAtom (selector := "String + Nat")
+  attribute make,
+  attribute year,
+  atomColor Vehicle "#4CAF50",
+  hideAtom String + Nat
 ]
 
 structure Car extends Vehicle where
@@ -112,9 +112,9 @@ structure ElectricCar extends Car where
   range : Nat
 
 spytial_spec ElectricCar [
-  .attribute (field := "range"),
-  .attribute (field := "doors"),
-  .atomColor (selector := "ElectricCar") (value := "#2196F3")
+  attribute range,
+  attribute doors,
+  atomColor ElectricCar "#2196F3"
 ]
 
 -- ElectricCar's effective spec = Vehicle's ops ++ ElectricCar's ops
@@ -127,15 +127,15 @@ def myEV : ElectricCar := { make := "Volt", year := 2025, doors := 4, range := 3
 def myList : List Nat := [1, 2, 3, 4]
 
 #spytial myList with [
-  .hideAtom (selector := "Nat")
+  hideAtom Nat
 ]
 
 /-! ## Debugging -/
 
--- See the generated YAML spec (hover to inspect in infoview)
+-- See the generated spec (hover to inspect in infoview)
 #spytial.spec myTree with [
-  .orientation (selector := "left") (directions := [.left, .below]),
-  .hideAtom (selector := "Nat")
+  orientation left left below,
+  hideAtom Nat
 ]
 
 -- See the generated JSON data instance (shows relation names)
