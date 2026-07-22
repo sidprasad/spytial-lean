@@ -35,7 +35,7 @@ private opaque evalSpec (stx : Syntax) : TermElabM SpytialSpec
 
 /-- The spec attached to the head type of `e`, if any. For structures, walks the
     parent chain and composes specs (parent-first). -/
-private def lookupSpec (e : Expr) : MetaM (Option String) := do
+private def lookupSpec (e : Expr) : MetaM (Option SpytialSpec) := do
   let ty ← inferType e
   match (← whnf ty).getAppFn with
   | .const n _ => do
@@ -43,10 +43,8 @@ private def lookupSpec (e : Expr) : MetaM (Option String) := do
     if isStructure env n then
       let parents ← getAllParentStructures n
       let allNames := parents.reverse.toList ++ [n]
-      match allNames.filterMap (getSpytialSpec? env ·) with
-      | []    => return none
-      | [one] => return some one
-      | yamls => return some (mergeSpecYamls yamls)
+      let specs := allNames.filterMap (getSpytialSpec? env ·)
+      return if specs.isEmpty then none else some specs.flatten
     else
       return getSpytialSpec? env n
   | _ => return none
@@ -58,15 +56,13 @@ private def snapshotProps (t : Syntax) (spec? : Option Syntax) : TermElabM Json 
   Term.synthesizeSyntheticMVarsNoPostponing
   let e ← instantiateMVars e
   let di ← relationalize e
-  let yaml? ← match spec? with
-    | some specTerm => do
-      let spec ← evalSpec specTerm
-      pure (some (SpytialSpec.toYaml spec))
+  let spec? ← match spec? with
+    | some specTerm => some <$> evalSpec specTerm
     | none => lookupSpec e
   return Json.mkObj <|
     [("dataInstance", toJson di)] ++
-    match yaml? with
-    | some s => [("cndSpec", toJson s)]
+    match spec? with
+    | some s => [("cndSpec", toJson s.toYaml)]
     | none => []
 
 /-- Atom/relation counts for the dump log, read back out of the props JSON. -/

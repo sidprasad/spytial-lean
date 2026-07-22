@@ -48,7 +48,7 @@ syntax (name := spytialCmd) "#spytial " term (" with " term)? : command
 
 /-- Try to find a Spytial spec attached to the head type of an expression.
     For structures, walks the parent chain and composes specs (parent-first). -/
-private meta def lookupTypeSpec (e : Expr) : MetaM (Option String) := do
+private meta def lookupTypeSpec (e : Expr) : MetaM (Option SpytialSpec) := do
   let ty ← inferType e
   let tyHead := (← whnf ty).getAppFn
   match tyHead with
@@ -59,11 +59,8 @@ private meta def lookupTypeSpec (e : Expr) : MetaM (Option String) := do
       let parents ← getAllParentStructures n
       -- Root-first order, self last
       let allNames := parents.reverse.toList ++ [n]
-      let yamls := allNames.filterMap (getSpytialSpec? env ·)
-      match yamls with
-      | []    => return none
-      | [one] => return some one
-      | _     => return some (mergeSpecYamls yamls)
+      let specs := allNames.filterMap (getSpytialSpec? env ·)
+      return if specs.isEmpty then none else some specs.flatten
     else
       -- Plain inductive — direct lookup
       return getSpytialSpec? env n
@@ -72,23 +69,21 @@ private meta def lookupTypeSpec (e : Expr) : MetaM (Option String) := do
 @[command_elab spytialCmd]
 meta def elabSpytialCmd : CommandElab := fun
   | stx@`(#spytial $t:term $[with $spec?]?) => do
-    let (dataInstance, specYaml) ← liftTermElabM do
+    let (dataInstance, spec) ← liftTermElabM do
       let e ← Term.elabTerm t none
       Term.synthesizeSyntheticMVarsNoPostponing
       let e ← instantiateMVars e
       let di ← relationalize e
       -- Determine spec: explicit `with [...]` > type attribute > none
-      let yaml ← match spec? with
-        | some specTerm => do
-          let spec ← evalSpytialSpec specTerm
-          pure (some (SpytialSpec.toYaml spec))
+      let spec ← match spec? with
+        | some specTerm => some <$> evalSpytialSpec specTerm
         | none => lookupTypeSpec e
-      return (di, yaml)
+      return (di, spec)
 
     let props : Json := Json.mkObj <|
       [("dataInstance", toJson dataInstance)] ++
-      match specYaml with
-      | some s => [("cndSpec", toJson s)]
+      match spec with
+      | some s => [("cndSpec", toJson s.toYaml)]
       | none => []
 
     liftCoreM <| savePanelWidgetInfo
@@ -116,10 +111,8 @@ syntax (name := spytialSpecCmd) "spytial_spec " ident term : command
 meta def elabSpytialSpecCmd : CommandElab := fun
   | `(spytial_spec $id:ident $specTerm:term) => do
     let declName ← resolveGlobalConstNoOverload id
-    let yamlStr ← liftTermElabM do
-      let spec ← evalSpytialSpec specTerm
-      return SpytialSpec.toYaml spec
-    liftCoreM <| setSpytialSpec declName yamlStr
+    let spec ← liftTermElabM <| evalSpytialSpec specTerm
+    liftCoreM <| setSpytialSpec declName spec
   | stx => throwError "Unexpected syntax {stx}."
 
 /-! ## spytial_relationalizer command -/
@@ -192,22 +185,20 @@ syntax (name := spytialProofCmd) "#spytial.proof " term (" with " term)? : comma
 @[command_elab spytialProofCmd]
 meta def elabSpytialProofCmd : CommandElab := fun
   | stx@`(#spytial.proof $t:term $[with $spec?]?) => do
-    let (dataInstance, specYaml) ← liftTermElabM do
+    let (dataInstance, spec) ← liftTermElabM do
       let e ← Term.elabTerm t none
       Term.synthesizeSyntheticMVarsNoPostponing
       let e ← instantiateMVars e
       let di ← relationalize e { filterProofs := false }
-      let yaml ← match spec? with
-        | some specTerm => do
-          let spec ← evalSpytialSpec specTerm
-          pure (some (SpytialSpec.toYaml spec))
+      let spec ← match spec? with
+        | some specTerm => some <$> evalSpytialSpec specTerm
         | none => lookupTypeSpec e
-      return (di, yaml)
+      return (di, spec)
 
     let props : Json := Json.mkObj <|
       [("dataInstance", toJson dataInstance)] ++
-      match specYaml with
-      | some s => [("cndSpec", toJson s)]
+      match spec with
+      | some s => [("cndSpec", toJson s.toYaml)]
       | none => []
 
     liftCoreM <| savePanelWidgetInfo
@@ -258,17 +249,15 @@ meta def elabSpytialTactic : Tactic := fun stx => do
     Term.synthesizeSyntheticMVarsNoPostponing
     let e ← instantiateMVars e
     let di ← relationalize e
-    let yaml ← if specOpt.isNone then
+    let spec ← if specOpt.isNone then
         lookupTypeSpec e
       else
-        let specTerm := specOpt[1]!
-        let spec ← evalSpytialSpec specTerm
-        pure (some (SpytialSpec.toYaml spec))
+        some <$> evalSpytialSpec specOpt[1]!
 
     let props : Json := Json.mkObj <|
       [("dataInstance", toJson di)] ++
-      match yaml with
-      | some s => [("cndSpec", toJson s)]
+      match spec with
+      | some s => [("cndSpec", toJson s.toYaml)]
       | none => []
 
     savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
@@ -289,17 +278,15 @@ meta def elabSpytialProofTactic : Tactic := fun stx => do
     Term.synthesizeSyntheticMVarsNoPostponing
     let e ← instantiateMVars e
     let di ← relationalize e { filterProofs := false }
-    let yaml ← if specOpt.isNone then
+    let spec ← if specOpt.isNone then
         lookupTypeSpec e
       else
-        let specTerm := specOpt[1]!
-        let spec ← evalSpytialSpec specTerm
-        pure (some (SpytialSpec.toYaml spec))
+        some <$> evalSpytialSpec specOpt[1]!
 
     let props : Json := Json.mkObj <|
       [("dataInstance", toJson di)] ++
-      match yaml with
-      | some s => [("cndSpec", toJson s)]
+      match spec with
+      | some s => [("cndSpec", toJson s.toYaml)]
       | none => []
 
     savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
