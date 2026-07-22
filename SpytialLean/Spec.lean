@@ -1,6 +1,7 @@
 module
 
 public import Lean
+public meta import SpytialLean.Selector
 
 namespace SpytialLean
 
@@ -26,24 +27,25 @@ public meta inductive EdgeStyle where
   deriving Repr, DecidableEq, Inhabited
 
 /-- A single Spytial operation — either a constraint (layout geometry) or a
-    directive (visual styling). This matches the flat decorator lists used
-    by spytial-py and caraspace (Rust). -/
+    directive (visual styling). Selector positions carry checked `Sel` ASTs;
+    `field` positions carry relation names validated against the target type's
+    vocabulary at elaboration time. -/
 public meta inductive SpytialOp where
   -- Layout constraints
-  | orientation (selector : String) (directions : List Direction)
-  | align (selector : String) (direction : AlignDir)
-  | cyclic (selector : String) (direction : RotationDir := .clockwise)
-  | group (selector : String) (name : String) (addEdge : Bool := false)
-  | hideAtom (selector : String)
-  | size (selector : String) (width : Nat := 100) (height : Nat := 60)
+  | orientation (selector : Sel) (directions : List Direction)
+  | align (selector : Sel) (direction : AlignDir)
+  | cyclic (selector : Sel) (direction : RotationDir := .clockwise)
+  | group (selector : Sel) (name : String) (addEdge : Bool := false)
+  | hideAtom (selector : Sel)
+  | size (selector : Sel) (width : Nat := 100) (height : Nat := 60)
   -- Visual directives
-  | atomColor (selector : String) (value : String)
+  | atomColor (selector : Sel) (value : String)
   | edgeColor (field : String) (value : String) (style : EdgeStyle := .solid)
   | hideField (field : String)
   | attribute (field : String)
-  | icon (selector : String) (path : String) (showLabels : Bool := false)
-  | tag (toTag : String) (name : String) (value : String)
-  | inferredEdge (name : String) (selector : String)
+  | icon (selector : Sel) (path : String) (showLabels : Bool := false)
+  | tag (toTag : Sel) (name : String) (value : String)
+  | inferredEdge (name : String) (selector : Sel)
       (color : String := "#000000") (style : EdgeStyle := .solid)
   | flag (name : String)
   deriving Repr, Inhabited
@@ -61,6 +63,8 @@ directives:
   - atomColor: { selector: "...", value: "#ff0000" }
 ```
 We partition `SpytialOp`s into constraints vs directives and emit this format.
+Selectors lower through `Sel.toSGQ` at emission time — the environment stores
+the structured spec, and YAML exists only in the widget payload.
 -/
 
 private meta def Direction.toYaml : Direction → String
@@ -86,6 +90,18 @@ private meta def EdgeStyle.toYaml : EdgeStyle → String
   | .dashed => "dashed"
   | .dotted => "dotted"
 
+/-- Double-quote a string for YAML, escaping quotes and backslashes (selector
+    strings can contain both, e.g. `@:x = "lit"`). -/
+private meta def q (s : String) : String :=
+  let escaped := s.foldl (init := "") fun acc c =>
+    match c with
+    | '"' => acc ++ "\\\""
+    | '\\' => acc ++ "\\\\"
+    | c => acc.push c
+  s!"\"{escaped}\""
+
+private meta def qSel (sel : Sel) : String := q sel.toSGQ
+
 private meta def directionsToYaml (ds : List Direction) : String :=
   "[" ++ ", ".intercalate (ds.map Direction.toYaml) ++ "]"
 
@@ -98,43 +114,39 @@ private meta def SpytialOp.isConstraint : SpytialOp → Bool
 /-- Render a single constraint op as a YAML list item. -/
 private meta def constraintToYaml : SpytialOp → String
   | .orientation sel dirs =>
-    s!"  - orientation: \{selector: \"{sel}\", directions: {directionsToYaml dirs}}"
+    s!"  - orientation: \{selector: {qSel sel}, directions: {directionsToYaml dirs}}"
   | .align sel dir =>
-    s!"  - align: \{selector: \"{sel}\", direction: {dir.toYaml}}"
+    s!"  - align: \{selector: {qSel sel}, direction: {dir.toYaml}}"
   | .cyclic sel dir =>
-    s!"  - cyclic: \{selector: \"{sel}\", direction: {dir.toYaml}}"
+    s!"  - cyclic: \{selector: {qSel sel}, direction: {dir.toYaml}}"
   | .group sel name addEdge =>
     let ae := if addEdge then ", addEdge: true" else ""
-    s!"  - group: \{selector: \"{sel}\", name: \"{name}\"{ae}}"
+    s!"  - group: \{selector: {qSel sel}, name: {q name}{ae}}"
   | .hideAtom sel =>
-    s!"  - hideAtom: \{selector: \"{sel}\"}"
+    s!"  - hideAtom: \{selector: {qSel sel}}"
   | .size sel w h =>
-    s!"  - size: \{selector: \"{sel}\", width: {w}, height: {h}}"
+    s!"  - size: \{selector: {qSel sel}, width: {w}, height: {h}}"
   | _ => ""
 
 /-- Render a single directive op as a YAML list item. -/
 private meta def directiveToYaml : SpytialOp → String
   | .atomColor sel val =>
-    s!"  - atomColor: \{selector: \"{sel}\", value: \"{val}\"}"
+    s!"  - atomColor: \{selector: {qSel sel}, value: {q val}}"
   | .edgeColor field val style =>
-    s!"  - edgeColor: \{field: \"{field}\", value: \"{val}\", style: {style.toYaml}}"
+    s!"  - edgeColor: \{field: {q field}, value: {q val}, style: {style.toYaml}}"
   | .hideField field =>
-    s!"  - hideField: \{field: \"{field}\"}"
+    s!"  - hideField: \{field: {q field}}"
   | .attribute field =>
-    s!"  - attribute: \{field: \"{field}\"}"
+    s!"  - attribute: \{field: {q field}}"
   | .icon sel path showLabels =>
     let sl := if showLabels then ", showLabels: true" else ""
-    s!"  - icon: \{selector: \"{sel}\", path: \"{path}\"{sl}}"
+    s!"  - icon: \{selector: {qSel sel}, path: {q path}{sl}}"
   | .tag toTag name value =>
-    s!"  - tag: \{toTag: \"{toTag}\", name: \"{name}\", value: \"{value}\"}"
+    s!"  - tag: \{toTag: {qSel toTag}, name: {q name}, value: {q value}}"
   | .inferredEdge name sel color style =>
-    s!"  - inferredEdge: \{name: \"{name}\", selector: \"{sel}\", color: \"{color}\", style: {style.toYaml}}"
+    s!"  - inferredEdge: \{name: {q name}, selector: {qSel sel}, color: {q color}, style: {style.toYaml}}"
   | .flag name =>
     s!"  - flag: {name}"
-  | .hideAtom sel =>
-    s!"  - hideAtom: \{selector: \"{sel}\"}"
-  | .size sel w h =>
-    s!"  - size: \{selector: \"{sel}\", width: {w}, height: {h}}"
   | _ => ""
 
 /-- Convert a `SpytialSpec` to a YAML string consumable by `parseLayoutSpec`. -/

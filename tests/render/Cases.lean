@@ -3,7 +3,7 @@ import Showcase
 
 /-! # Render-test case dumper
 
-`#spytial_snapshot "<name>" <term> (with <ops>)?` writes
+`#spytial_snapshot "<name>" <term> (with [...])?` writes
 `tests/render/cases/<name>/props.json` — byte-identical to the props object the
 infoview widget receives from `#spytial` — for the headless render harness
 (`tests/render/render.spec.mjs`) to screenshot and diff.
@@ -12,8 +12,8 @@ Run from the repo root: `lake env lean tests/render/Cases.lean`.
 This file is deliberately a plain (non-`module`) file, like the demos, so it
 can use the library's meta surface without module-system ceremony.
 
-The payload assembly below duplicates `#spytial`'s, because the pieces it needs
-(`evalSpytialSpec`, `lookupTypeSpec`) are private to `SpytialLean.Command` and
+The payload assembly below duplicates `#spytial`'s, because the last step
+(`elabSpytialPayload`, `spytialProps`) is private to `SpytialLean.Command` and
 there is no public payload entry point yet. It converges onto one as the
 library grows it.
 -/
@@ -21,44 +21,19 @@ library grows it.
 open Lean Elab Command Term Meta SpytialLean
 
 syntax (name := snapshotCmd)
-  "#spytial_snapshot " str ppSpace term (" with " term)? : command
-
-/-- Evaluate a `SpytialSpec` term to a value at elaboration time. -/
-private unsafe def evalSpecUnsafe (stx : Syntax) : TermElabM SpytialSpec := do
-  let e ← Term.elabTerm stx (some (mkConst ``SpytialSpec))
-  Term.synthesizeSyntheticMVarsNoPostponing
-  let e ← instantiateMVars e
-  evalExpr SpytialSpec (mkConst ``SpytialSpec) e
-
-@[implemented_by evalSpecUnsafe]
-private opaque evalSpec (stx : Syntax) : TermElabM SpytialSpec
-
-/-- The spec attached to the head type of `e`, if any. For structures, walks the
-    parent chain and composes specs (parent-first). -/
-private def lookupSpec (e : Expr) : MetaM (Option SpytialSpec) := do
-  let ty ← inferType e
-  match (← whnf ty).getAppFn with
-  | .const n _ => do
-    let env ← getEnv
-    if isStructure env n then
-      let parents ← getAllParentStructures n
-      let allNames := parents.reverse.toList ++ [n]
-      let specs := allNames.filterMap (getSpytialSpec? env ·)
-      return if specs.isEmpty then none else some specs.flatten
-    else
-      return getSpytialSpec? env n
-  | _ => return none
+  "#spytial_snapshot " str ppSpace term (" with " "[" spytial_op,* "]")? : command
 
 /-- The widget props for a term plus optional inline ops, exactly as `#spytial`
     builds them: explicit ops override an attached spec. -/
-private def snapshotProps (t : Syntax) (spec? : Option Syntax) : TermElabM Json := do
+private def snapshotProps (t : Syntax) (ops? : Option (Array (TSyntax `spytial_op))) :
+    TermElabM Json := do
   let e ← Term.elabTerm t none
   Term.synthesizeSyntheticMVarsNoPostponing
   let e ← instantiateMVars e
   let di ← relationalize e
-  let spec? ← match spec? with
-    | some specTerm => some <$> evalSpec specTerm
-    | none => lookupSpec e
+  let spec? ← match ops? with
+    | some ops => some <$> elabSpytialOps (← scopeForExpr e) ops
+    | none => lookupTypeSpec e
   return Json.mkObj <|
     [("dataInstance", toJson di)] ++
     match spec? with
@@ -77,8 +52,10 @@ private def instanceStats (props : Json) : String :=
 @[command_elab snapshotCmd]
 def elabSnapshot : CommandElab := fun stx => do
   let some name := stx[1].isStrLit? | throwErrorAt stx[1] "expected string literal"
-  let spec? : Option Syntax := if stx[3].getNumArgs == 0 then none else some stx[3][1]
-  let props ← liftTermElabM <| snapshotProps stx[2] spec?
+  let ops? : Option (Array (TSyntax `spytial_op)) :=
+    if stx[3].getNumArgs == 0 then none
+    else some (stx[3][2].getSepArgs.map (⟨·⟩))
+  let props ← liftTermElabM <| snapshotProps stx[2] ops?
   let dir := System.FilePath.mk "tests/render/cases" / name
   IO.FS.createDirAll dir
   IO.FS.writeFile (dir / "props.json") (props.pretty ++ "\n")
@@ -101,17 +78,17 @@ the demo and its collapse machinery aren't in this series yet.
 
 -- Inline `with` override of an attached spec.
 #spytial_snapshot "tree-inline" myTree with [
-  .orientation (selector := "left") (directions := [.above]),
-  .orientation (selector := "right") (directions := [.above]),
-  .atomColor (selector := "Tree") (value := "#0066ff"),
-  .hideAtom (selector := "Nat")
+  orientation left above,
+  orientation right above,
+  atomColor Tree "#0066ff",
+  hideAtom Nat
 ]
 
 -- Structure with attribute ops only (no constraints).
 #spytial_snapshot "person" alice with [
-  .attribute (field := "name"),
-  .attribute (field := "age"),
-  .atomColor (selector := "Person") (value := "#4CAF50")
+  attribute name,
+  attribute age,
+  atomColor Person "#4CAF50"
 ]
 
 -- Spec inheritance: Vehicle ops ++ ElectricCar ops.
@@ -119,7 +96,7 @@ the demo and its collapse machinery aren't in this series yet.
 
 -- Plain list, scalar atoms hidden.
 #spytial_snapshot "list" myList with [
-  .hideAtom (selector := "Nat")
+  hideAtom Nat
 ]
 
 -- No spec at all (Person has none attached): the `cndSpec` prop is absent,
