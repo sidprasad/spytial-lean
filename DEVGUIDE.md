@@ -45,6 +45,13 @@ checking) with `just test`, or directly with lake:
 lake build SpytialTests
 ```
 
+`tests/SelectorTest.lean` is the behavioral contract for the selector DSL: it
+pins the SGQ lowering (compiled YAML) of every surface form — the Forge
+precedence battery, word/symbolic connectives, quantifiers and `let`, the
+integer layer, box join, negated comparisons — plus one diagnostic per checker
+error class and a warning golden for each engine-bug form (`none`, `ni`, `<:`,
+`:>`, `++`, arrow-multiplicity, backquote, `sum[e]`).
+
 ### Demos
 
 Elaborate every demo — each `#spytial` site typechecks and its spec elaborates —

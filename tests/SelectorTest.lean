@@ -291,3 +291,263 @@ public def sCarrier : SCarrier := { carrier := Nat, tag := 0 }
 /-- error: unknown name 'carrier' (did you mean 'SCarrier'?) -/
 #guard_msgs in
 #spytial.spec sCarrier with [hideAtom carrier]
+
+/-! ## Precedence battery — the Forge re-tier
+
+`implies` binds tighter than `or`/`iff` and is the only right-associative
+connective; multiplicity applies to a whole union; difference is left-associative. -/
+
+/--
+info: constraints:
+  - hideAtom: {selector: "{x : SBDD | some x.lo or some x.hi implies no x.lo}"}
+  - hideAtom: {selector: "{x : SBDD | some x.lo implies some x.hi implies no x.lo}"}
+  - hideAtom: {selector: "{x : SBDD | some x.lo implies some x.hi else no x.lo}"}
+  - hideAtom: {selector: "{x : SBDD | some SBDD + String}"}
+  - hideAtom: {selector: "{x : SBDD | #x.lo = 1}"}
+  - orientation: {selector: "~lo", directions: [below]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [
+  hideAtom {x : SBDD | some x.lo || some x.hi => no x.lo},
+  hideAtom {x : SBDD | some x.lo => some x.hi => no x.lo},
+  hideAtom {x : SBDD | some x.lo => some x.hi else no x.lo},
+  hideAtom {x : SBDD | some SBDD + String},
+  hideAtom {x : SBDD | #x.lo = 1},
+  orientation ~lo below
+]
+
+/-- info: constraints:
+  - hideAtom: {selector: "SColor - Nat - SRB"}
+-/
+#guard_msgs in
+#spytial.spec sRB with [hideAtom SColor - Nat - SRB]
+
+/-! ## Word connectives (both spellings lower the same), xor / iff / ite / not -/
+
+/--
+info: constraints:
+  - hideAtom: {selector: "{x : SBDD | some x.lo and no x.hi or one x.lo}"}
+  - hideAtom: {selector: "{x : SBDD | some x.lo xor no x.hi}"}
+  - hideAtom: {selector: "{x : SBDD | some x.lo iff no x.hi}"}
+  - hideAtom: {selector: "{x : SBDD | some x.lo implies no x.hi else one x.lo}"}
+  - hideAtom: {selector: "{x : SBDD | not some x.lo}"}
+-/
+#guard_msgs in
+#spytial.spec sExample with [
+  hideAtom {x : SBDD | some x.lo and no x.hi or one x.lo},
+  hideAtom {x : SBDD | some x.lo xor no x.hi},
+  hideAtom {x : SBDD | some x.lo iff no x.hi},
+  hideAtom {x : SBDD | some x.lo implies no x.hi else one x.lo},
+  hideAtom {x : SBDD | not some x.lo}
+]
+
+/-! ## Quantifiers (leading `disj`, comma name-groups, typed groups) and `let` -/
+
+/--
+info: constraints:
+  - hideAtom: {selector: "{x : SBDD | all y : SBDD | some y.lo}"}
+  - hideAtom: {selector: "{x : SBDD | some disj y, z : SBDD | y != z}"}
+  - hideAtom: {selector: "{x : SBDD | no y : SBDD, w : String | @:y = tt}"}
+-/
+#guard_msgs in
+#spytial.spec sExample with [
+  hideAtom {x : SBDD | all y : SBDD | some y.lo},
+  hideAtom {x : SBDD | some disj y, z : SBDD | y != z},
+  hideAtom {x : SBDD | no y : SBDD, w : String | @:y = tt}
+]
+
+-- `let` desugars by substitution; a later binder shadows it (`a` below is the
+-- `all`-bound `a`, not `lo`).
+/--
+info: constraints:
+  - hideAtom: {selector: "{x : SBDD | some x.lo and no x.hi}"}
+  - hideAtom: {selector: "{x : SBDD | all a : SBDD | some a}"}
+-/
+#guard_msgs in
+#spytial.spec sExample with [
+  hideAtom {x : SBDD | let a = x.lo, b = x.hi | some a and no b},
+  hideAtom {x : SBDD | let a = lo | all a : SBDD | some a}
+]
+
+/-! ## Integer layer — `#`, `@num:`, builtins, aggregators, box join, counting -/
+
+/--
+info: directives:
+  - atomColor: {selector: "{x : SRB | @num:(x.key) < 5}", value: "red"}
+  - atomColor: {selector: "{x : SRB | add[@num:(x.key), 1] > 2}", value: "red"}
+  - atomColor: {selector: "{x : SRB | abs[@num:(x.key)] >= 1}", value: "red"}
+  - atomColor: {selector: "{x : SRB | min[SRB.key] <= 3}", value: "red"}
+-/
+#guard_msgs in
+#spytial.spec sRB with [
+  atomColor {x : SRB | @num:(x.key) < 5} "red",
+  atomColor {x : SRB | add[@num:(x.key), 1] > 2} "red",
+  atomColor {x : SRB | abs[@num:(x.key)] >= 1} "red",
+  atomColor {x : SRB | min[SRB.key] <= 3} "red"
+]
+
+-- Counting idiom and relational box join (`a[b] ≡ b.a`).
+/--
+info: constraints:
+  - hideAtom: {selector: "{x : SBDD | #{y : SBDD | some y.lo} = 2}"}
+  - hideAtom: {selector: "SBDD.lo"}
+-/
+#guard_msgs in
+#spytial.spec sExample with [
+  hideAtom {x : SBDD | #{y : SBDD | some y.lo} = 2},
+  hideAtom lo[SBDD]
+]
+
+/-! ## Negated comparisons (`!in`, `not in` — both lower to `!in`) -/
+
+/--
+info: constraints:
+  - hideAtom: {selector: "{x : SBDD | x.lo !in x.hi}"}
+  - hideAtom: {selector: "{x : SBDD | x.lo !in x.hi}"}
+-/
+#guard_msgs in
+#spytial.spec sExample with [
+  hideAtom {x : SBDD | x.lo !in x.hi},
+  hideAtom {x : SBDD | x.lo not in x.hi}
+]
+
+/-! ## Engine-bug forms — accepted, lowered verbatim, warned (upstream SGQ issues) -/
+
+/--
+warning: the SGQ engine evaluates `none` to the string "none", not the empty set — use `no e` for emptiness tests (upstream bug)
+---
+info: constraints:
+  - hideAtom: {selector: "{x : SBDD | no none}"}
+-/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom {x : SBDD | no none}]
+
+/--
+warning: the SGQ engine evaluates `a ni b` as ¬(a in b); Forge defines `a ni b ≡ b in a` — the two differ, so this constraint may evaluate opposite to its intent (upstream bug)
+---
+info: constraints:
+  - hideAtom: {selector: "{x : SBDD | x.lo ni x.hi}"}
+-/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom {x : SBDD | x.lo ni x.hi}]
+
+/--
+warning: the SGQ engine currently throws on `<:` (domain restriction) at render — in a constraint position this kills the render (upstream bug)
+---
+info: constraints:
+  - orientation: {selector: "SBDD <: lo", directions: [below]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [orientation SBDD <: lo below]
+
+/--
+warning: the SGQ engine currently throws on `:>` (range restriction) at render — in a constraint position this kills the render (upstream bug)
+---
+info: constraints:
+  - orientation: {selector: "lo :> SBDD", directions: [below]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [orientation lo :> SBDD below]
+
+/--
+warning: the SGQ engine currently throws on `++` (override) at render — in a constraint position this kills the render (upstream bug)
+---
+info: constraints:
+  - orientation: {selector: "lo ++ hi", directions: [below]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [orientation lo ++ hi below]
+
+/--
+warning: the SGQ engine silently drops arrow-multiplicity annotations — `A one -> lone B` evaluates as the plain product `A -> B` (upstream bug)
+---
+info: constraints:
+  - orientation: {selector: "SBDD one -> lone SBDD", directions: [below]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [orientation SBDD one -> lone SBDD below]
+
+/--
+warning: the SGQ engine does not evaluate backquote atom literals — it renders an `UNIMPLEMENTED` placeholder (upstream bug)
+---
+info: constraints:
+  - hideAtom: {selector: "{x : SBDD | x = `a0}"}
+-/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom {x : SBDD | x = `a0}]
+
+/--
+warning: the SGQ engine evaluates `sum[e]` to the empty set rather than summing its atoms (upstream bug)
+---
+info: directives:
+  - atomColor: {selector: "{x : SRB | sum[SRB.key] > 2}", value: "red"}
+-/
+#guard_msgs in
+#spytial.spec sRB with [atomColor {x : SRB | sum[SRB.key] > 2} "red"]
+
+/-! ## Integer-layer type errors — one per class -/
+
+/-- error: this position expects a relational expression, but the selector is an integer (`#`, a numeral, `@num:`, or an int builtin) -/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom {x : SBDD | some #x.lo}]
+
+/-- error: this position expects a relational expression, but the selector is an integer (`#`, a numeral, `@num:`, or an int builtin) -/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom #lo + hi]
+
+/-- error: this position expects an integer expression (`#e`, a numeral, `@num:e`, or an int builtin) -/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom {x : SBDD | #x.lo = lo}]
+
+/-! ## Step-0 pin — a relation literally named `some` stays usable
+
+`SWeird.mk` has fields `some` and `one`; `.both` on the formula category keeps
+the multiplicity keyword and the bare relation distinguishable by longest-match. -/
+
+public inductive SWeird where
+  | mk (some one : SWeird)
+  | leaf
+
+public def sWeird : SWeird := .leaf
+
+/-- info: constraints:
+  - hideAtom: {selector: "{x : SWeird | some some and one one}"}
+-/
+#guard_msgs in
+#spytial.spec sWeird with [hideAtom {x : SWeird | some some and one one}]
+
+/-! ## Products chain left; quantifiers keep their parens under a connective -/
+
+/--
+warning: arity-3 selector in a pair position: only the first and last columns of each tuple are used
+---
+info: constraints:
+  - orientation: {selector: "SBDD->SBDD->SBDD", directions: [below]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [orientation SBDD -> SBDD -> SBDD below]
+
+/--
+info: constraints:
+  - hideAtom: {selector: "{x : SBDD | (all y : SBDD | some y.lo) and some x.hi}"}
+-/
+#guard_msgs in
+#spytial.spec sExample with [
+  hideAtom {x : SBDD | (all y : SBDD | some y.lo) && some x.hi}
+]
+
+/-- error: cannot use let-bound 'e' here: it refers to 'x', which a nearer binder shadows — the substitution would be captured; rename the inner binder -/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom {x : SBDD | let e = x.lo | all x : SBDD | some e}]
+
+/-! ## Token-table hygiene — the DSL must not reserve words or steal prefixes
+
+These fail to *compile* if a selector rule leaks into the global token table
+(`ni` as a keyword; a `"!in"` atom stealing the prefix of `!i…` negations). -/
+
+def hygieneNi : Nat := 5
+def hygieneNotIn (input : Bool) : Bool := !input
+def hygieneNotInBounds (inBounds : Bool) : Bool := !inBounds
+example : Nat := let and := 5; and
+example : Nat := let ni := hygieneNi; ni
+example : Option Nat := some 3
