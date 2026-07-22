@@ -29,13 +29,20 @@ public class Widget (α : Type) where
 
 end CoverageFixture
 
-public meta def ropeRel : CustomRelationalizer := fun _ _ => do
+-- deliberately non-public: registration must resolve the private-mangled name
+meta def ropeRel : CustomRelationalizer := fun _ _ => do
   modify fun s : WalkState => s.addAtom { id := "rope", type := "Rope", label := "rope" }
   return "rope"
 
-spytial_spec CoverageFixture.Graph [.hideAtom (selector := "Nat")]
-spytial_relationalizer CoverageFixture.Rope ropeRel
-spytial_opt_out CoverageFixture.Waived "structural noise, not domain data"
+-- deliberately relative names: registration must resolve them to the FQNs
+-- the enumeration produces
+namespace CoverageFixture
+
+spytial_spec Graph [.hideAtom (selector := "Nat")]
+spytial_relationalizer Rope ropeRel
+spytial_opt_out Waived "structural noise, not domain data"
+
+end CoverageFixture
 
 /--
 warning: Spytial coverage for 'CoverageFixture': 3/4 covered, 1 uncovered:
@@ -62,7 +69,7 @@ info: Spytial coverage: 4/4 data types in 'CoverageFixture' covered.
 #spytial.coverage CoverageFixture
 
 /--
-error: unknown declaration 'CoverageFixture.DoesNotExist'
+error: Unknown constant `CoverageFixture.DoesNotExist`
 -/
 #guard_msgs in
 spytial_opt_out CoverageFixture.DoesNotExist "x"

@@ -115,10 +115,7 @@ syntax (name := spytialSpecCmd) "spytial_spec " ident term : command
 @[command_elab spytialSpecCmd]
 meta def elabSpytialSpecCmd : CommandElab := fun
   | `(spytial_spec $id:ident $specTerm:term) => do
-    let declName := id.getId
-    let env ← getEnv
-    unless env.contains declName do
-      throwError s!"unknown declaration '{declName}'"
+    let declName ← resolveGlobalConstNoOverload id
     let yamlStr ← liftTermElabM do
       let spec ← evalSpytialSpec specTerm
       return SpytialSpec.toYaml spec
@@ -141,13 +138,8 @@ syntax (name := spytialRelationalizerCmd) "spytial_relationalizer " ident ident 
 @[command_elab spytialRelationalizerCmd]
 meta def elabSpytialRelationalizerCmd : CommandElab := fun
   | `(spytial_relationalizer $typeId:ident $defId:ident) => do
-    let typeName := typeId.getId
-    let defName := defId.getId
-    let env ← getEnv
-    unless env.contains typeName do
-      throwError s!"unknown type '{typeName}'"
-    unless env.contains defName do
-      throwError s!"unknown definition '{defName}'"
+    let typeName ← resolveGlobalConstNoOverload typeId
+    let defName ← resolveGlobalConstNoOverload defId
     -- fail mistyped registrations here, not opaquely at dispatch
     liftTermElabM do
       let declType := (← getConstInfo defName).type

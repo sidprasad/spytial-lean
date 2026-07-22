@@ -23,8 +23,9 @@ the build.
 proofs, which are a separate `#spytial.proof` concern, not data diagrams. Type
 classes are likewise excluded — interfaces to implement, not data to diagram.
 
-Names are matched verbatim, so specs and opt-outs must reference the type by its
-fully-qualified name (e.g. `Cslib.SKI`) — the same form the enumeration produces. -/
+Registration names resolve like ordinary identifiers (relative to the current
+namespace and any `open`s), and entries are keyed by the resolved fully-qualified
+name — the same form the enumeration produces. -/
 
 public section
 
@@ -58,17 +59,13 @@ meta def coverageReport (root : Name) : MetaM (Array (Name × Bool)) := do
 /-! ## spytial_opt_out command -/
 
 /-- `spytial_opt_out <Decl> ["reason"]` waives a type from the Spytial coverage
-    check, so it counts as covered despite having no spec. Reference the type by its
-    fully-qualified name. -/
+    check, so it counts as covered despite having no spec. -/
 syntax (name := spytialOptOutCmd) "spytial_opt_out " ident (str)? : command
 
 @[command_elab spytialOptOutCmd]
 meta def elabSpytialOptOutCmd : CommandElab := fun
   | `(spytial_opt_out $id:ident $[$reason?:str]?) => do
-    let declName := id.getId
-    let env ← getEnv
-    unless env.contains declName do
-      throwError s!"unknown declaration '{declName}'"
+    let declName ← resolveGlobalConstNoOverload id
     let reason := (reason?.map (·.getString)).getD ""
     liftCoreM <| setSpytialOptOut declName reason
   | stx => throwError "Unexpected syntax {stx}."
