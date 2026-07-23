@@ -374,6 +374,17 @@ private meta def spytialProps (di : JsonDataInstance) (yaml? : Option String) : 
     | some s => [("cndSpec", toJson s)]
     | none => []
 
+/-- Public entry point for external document frontends (e.g. spytial-verso):
+    the `#spytial` widget props — the data instance plus, optionally, a rendered
+    layout spec — for a term with optional inline ops, exactly as `#spytial`
+    builds them. Callers embedding the result in HTML are responsible for
+    escaping (`<`, etc.). -/
+public meta def spytialPayloadProps (t : Syntax)
+    (ops? : Option (Array (TSyntax `spytial_op)) := none) (cfg : WalkConfig := {}) :
+    TermElabM Json := do
+  let (di, cndSpec?) ← elabSpytialPayload t ops? cfg
+  return spytialProps di cndSpec?
+
 /-- Decompose an optional `(" with " "[" spytial_op,* "]")?` node into its ops. -/
 private meta def optionalOps (stx : Syntax) : Option (Array (TSyntax `spytial_op)) :=
   if stx.getNumArgs == 0 then none
