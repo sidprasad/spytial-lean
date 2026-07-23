@@ -5,6 +5,10 @@ package spytialLean where
   preferReleaseBuild := true
   buildArchive? := "SpytialLean.tar.gz"
   releaseRepo := "https://github.com/sidprasad/spytial-lean"
+  -- The include_str'd widget bundle is minified JS; silence the cosmetic C
+  -- warnings its size and stray bidi chars trigger when Widget.c is compiled
+  -- (no effect on the infoview, which reads the string from oleans, not C).
+  moreLeancArgs := #["-Wno-bidi-chars", "-Wno-overlength-strings"]
 
 /-! ## Widget JS build targets -/
 
