@@ -219,15 +219,14 @@ Longest-match separates the quantifier `some x : A | φ` from the multiplicity
 never sees a `let`. A later binder shadows the `let`. A substitution that an
 inner binder would capture is a compile error.
 
-**Integer layer.** `#e` (cardinality), integer literals (with `-`), `@num:e`
-(numeric projection), the builtins `add subtract multiply divide remainder abs
-sign` and aggregators `sum[e] min[e] max[e]` (arity-1 int column, applied
-through box join, lowered through `@num:` — the engine aggregates numeric
-labels, not atom ids), and the int comparisons form a small typed
-sub-language: integer-typed positions accept exactly these, and tuple
-positions reject them with a type error — so counting selectors like
-`#{x : T | φ} = 2` and `@num:(x.key) < 5` work, while `some #e` is a compile
-error rather than a silent falsehood.
+**Integer layer.** The integer forms are: `#e` (cardinality), integer
+literals, `@num:e` (numeric projection), the builtins `add subtract multiply
+divide remainder abs sign`, the aggregators `sum[e]`, `min[e]`, and `max[e]`
+(lowered through `@num:` — the engine aggregates numeric labels, not atom
+ids), the `sum x : A | ie` aggregation quantifier, and the int comparisons.
+These form a typed sub-language. Integer positions accept exactly these forms;
+tuple positions reject them. Counting selectors like `#{x : T | φ} = 2` and
+`@num:(x.key) < 5` work, and `some #e` is a compile error.
 
 Label comparisons accept nullary constructors (`@:x = nil`), string literals,
 another projection (`@:vr = @:(y.v)`), or, opposite a `@bool:` projection, the
