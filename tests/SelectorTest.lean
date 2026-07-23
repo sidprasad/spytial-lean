@@ -62,20 +62,23 @@ public meta def elabSpecYaml : CommandElab := fun
 
 /--
 info: {"directives":
- [{"edgeColor": {"value": "orange", "style": "dashed", "field": "lo"}},
-  {"atomColor": {"value": "red", "selector": "{x : SBDD | @:x = ff}"}},
+ [{"edgeStyle":
+   {"lineStyle": {"pattern": "dashed", "color": "orange"}, "field": "lo"}},
+  {"atomStyle":
+   {"selector": "{x : SBDD | @:x = ff}", "borderStyle": {"color": "red"}}},
   {"attribute": {"field": "v"}},
   {"inferredEdge":
-   {"style": "dotted",
-    "selector": "lo.hi",
+   {"selector": "lo.hi",
     "name": "shortcut",
-    "color": "#123456"}},
+    "lineStyle": {"pattern": "dotted", "color": "#123456"}}},
   {"icon":
    {"showLabels": true, "selector": "{x : SBDD | @:x = tt}", "path": "tt.png"}},
   {"tag": {"value": "bdd", "toTag": "SBDD", "name": "kind"}},
   {"flag": "hideDisconnected"},
   {"hideField": {"field": "hi"}},
-  {"atomColor": {"value": "green", "selector": "raw & unchecked \"quoted\""}}],
+  {"atomStyle":
+   {"selector": "raw & unchecked \"quoted\"",
+    "borderStyle": {"color": "green"}}}],
  "constraints":
  [{"orientation":
    {"selector": "{x, y : SBDD | x->y in lo + hi}", "directions": ["below"]}},
@@ -126,7 +129,9 @@ spytial_spec SRB [
 
 /--
 info: {"directives":
- [{"atomColor": {"value": "red", "selector": "{x : SRB | @:(x.color) = red}"}},
+ [{"atomStyle":
+   {"selector": "{x : SRB | @:(x.color) = red}",
+    "borderStyle": {"color": "red"}}},
   {"attribute": {"field": "key"}}],
  "constraints":
  [{"orientation":
@@ -254,8 +259,11 @@ error: unknown Spytial op 'orientate'; known ops: align, atomColor, attribute, c
 /--
 info: {"directives":
  [{"inferredEdge":
-   {"style": "solid", "selector": "lo.hi", "name": "hop", "color": "#000000"}},
-  {"edgeColor": {"value": "purple", "style": "solid", "field": "hop"}}],
+   {"selector": "lo.hi",
+    "name": "hop",
+    "lineStyle": {"pattern": "solid", "color": "#000000"}}},
+  {"edgeStyle":
+   {"lineStyle": {"pattern": "solid", "color": "purple"}, "field": "hop"}}],
  "constraints": [{"group": {"selector": "SBDD", "name": "cluster"}}]}
 -/
 #guard_msgs in
@@ -329,7 +337,9 @@ info: {"constraints":
 
 /--
 info: {"directives":
- [{"atomColor": {"value": "red", "selector": "{x : SRB | @num:(x.key) = 1}"}}]}
+ [{"atomStyle":
+   {"selector": "{x : SRB | @num:(x.key) = 1}",
+    "borderStyle": {"color": "red"}}}]}
 -/
 #guard_msgs in
 #spytial.spec sRB with [
@@ -435,12 +445,18 @@ info: {"constraints":
 
 /--
 info: {"directives":
- [{"atomColor": {"value": "red", "selector": "{x : SRB | @num:(x.key) < 5}"}},
-  {"atomColor":
-   {"value": "red", "selector": "{x : SRB | add[@num:(x.key), 1] > 2}"}},
-  {"atomColor":
-   {"value": "red", "selector": "{x : SRB | abs[@num:(x.key)] >= 1}"}},
-  {"atomColor": {"value": "red", "selector": "{x : SRB | min[SRB.key] <= 3}"}}]}
+ [{"atomStyle":
+   {"selector": "{x : SRB | @num:(x.key) < 5}",
+    "borderStyle": {"color": "red"}}},
+  {"atomStyle":
+   {"selector": "{x : SRB | add[@num:(x.key), 1] > 2}",
+    "borderStyle": {"color": "red"}}},
+  {"atomStyle":
+   {"selector": "{x : SRB | abs[@num:(x.key)] >= 1}",
+    "borderStyle": {"color": "red"}}},
+  {"atomStyle":
+   {"selector": "{x : SRB | min[SRB.key] <= 3}",
+    "borderStyle": {"color": "red"}}}]}
 -/
 #guard_msgs in
 #spytial.spec sRB with [
@@ -471,9 +487,9 @@ right, so `(sum …) > 2` needs the parens the surface omits. -/
 
 /--
 info: {"directives":
- [{"atomColor":
-   {"value": "red",
-    "selector": "{x : SRB | (sum y : SRB | @num:(y.key)) > 2}"}}]}
+ [{"atomStyle":
+   {"selector": "{x : SRB | (sum y : SRB | @num:(y.key)) > 2}",
+    "borderStyle": {"color": "red"}}}]}
 -/
 #guard_msgs in
 #spytial.spec sRB with [
@@ -575,7 +591,9 @@ info: {"constraints": [{"hideAtom": {"selector": "{x : SBDD | x = `a0}"}}]}
 warning: the SGQ engine evaluates `sum[e]` to the empty set rather than summing its atoms (upstream bug)
 ---
 info: {"directives":
- [{"atomColor": {"value": "red", "selector": "{x : SRB | sum[SRB.key] > 2}"}}]}
+ [{"atomStyle":
+   {"selector": "{x : SRB | sum[SRB.key] > 2}",
+    "borderStyle": {"color": "red"}}}]}
 -/
 #guard_msgs in
 #spytial.spec sRB with [atomColor {x : SRB | sum[SRB.key] > 2} "red"]
@@ -608,8 +626,9 @@ info: {"directives":
 -- because Bool cannot occur in SBDD.
 /--
 info: {"directives":
- [{"atomColor":
-   {"value": "red", "selector": "{x : SBDD | @bool:(x.v) = true}"}}]}
+ [{"atomStyle":
+   {"selector": "{x : SBDD | @bool:(x.v) = true}",
+    "borderStyle": {"color": "red"}}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [atomColor {x : SBDD | @bool:(x.v) = true} "red"]
