@@ -44,7 +44,7 @@ public def sTree : STree Nat := .node (.leaf 1) (.leaf 2)
 
 public section
 
-/-- Dump the stored spec of a type as YAML (tests attach + storage + lowering). -/
+/-- Dump the stored spec of a type (tests attach + storage + lowering). -/
 syntax (name := specYamlCmd) "#spec_yaml " ident : command
 
 end
@@ -54,31 +54,45 @@ public meta def elabSpecYaml : CommandElab := fun
   | `(#spec_yaml $id:ident) => do
     let n ← liftTermElabM (realizeGlobalConstNoOverloadWithInfo id)
     match getSpytialSpec? (← getEnv) n with
-    | some spec => logInfo spec.toYaml
+    | some spec => logInfo spec.render
     | none => throwError "no spec attached to '{n}'"
   | _ => throwUnsupportedSyntax
 
 /-! ## Golden lowering — the full BDD-shaped op battery -/
 
 /--
-info: constraints:
-  - orientation: {selector: "{x, y : SBDD | x->y in lo + hi}", directions: [below]}
-  - orientation: {selector: "lo - SBDD->{b : SBDD | @:b = tt} - SBDD->{b : SBDD | @:b = ff}", directions: [left]}
-  - align: {selector: "{x, y : SBDD | x != y and x.v = y.v}", direction: horizontal}
-  - group: {selector: "{vr : String, y : SBDD | @:vr = @:(y.v)}", name: "nodes"}
-  - hideAtom: {selector: "String"}
-  - size: {selector: "SBDD", width: 120, height: 80}
-  - cyclic: {selector: "{x, y : SBDD | x->y in lo}", direction: counterclockwise}
-directives:
-  - edgeColor: {field: "lo", value: "orange", style: dashed}
-  - atomColor: {selector: "{x : SBDD | @:x = ff}", value: "red"}
-  - attribute: {field: "v"}
-  - inferredEdge: {name: "shortcut", selector: "lo.hi", color: "#123456", style: dotted}
-  - icon: {selector: "{x : SBDD | @:x = tt}", path: "tt.png", showLabels: true}
-  - tag: {toTag: "SBDD", name: "kind", value: "bdd"}
-  - flag: hideDisconnected
-  - hideField: {field: "hi"}
-  - atomColor: {selector: "raw & unchecked \"quoted\"", value: "green"}
+info: {"directives":
+ [{"edgeColor": {"value": "orange", "style": "dashed", "field": "lo"}},
+  {"atomColor": {"value": "red", "selector": "{x : SBDD | @:x = ff}"}},
+  {"attribute": {"field": "v"}},
+  {"inferredEdge":
+   {"style": "dotted",
+    "selector": "lo.hi",
+    "name": "shortcut",
+    "color": "#123456"}},
+  {"icon":
+   {"showLabels": true, "selector": "{x : SBDD | @:x = tt}", "path": "tt.png"}},
+  {"tag": {"value": "bdd", "toTag": "SBDD", "name": "kind"}},
+  {"flag": "hideDisconnected"},
+  {"hideField": {"field": "hi"}},
+  {"atomColor": {"value": "green", "selector": "raw & unchecked \"quoted\""}}],
+ "constraints":
+ [{"orientation":
+   {"selector": "{x, y : SBDD | x->y in lo + hi}", "directions": ["below"]}},
+  {"orientation":
+   {"selector":
+    "lo - SBDD->{b : SBDD | @:b = tt} - SBDD->{b : SBDD | @:b = ff}",
+    "directions": ["left"]}},
+  {"align":
+   {"selector": "{x, y : SBDD | x != y and x.v = y.v}",
+    "direction": "horizontal"}},
+  {"group":
+   {"selector": "{vr : String, y : SBDD | @:vr = @:(y.v)}", "name": "nodes"}},
+  {"hideAtom": {"selector": "String"}},
+  {"size": {"width": 120, "selector": "SBDD", "height": 80}},
+  {"cyclic":
+   {"selector": "{x, y : SBDD | x->y in lo}",
+    "direction": "counterclockwise"}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [
@@ -111,13 +125,17 @@ spytial_spec SRB [
 ]
 
 /--
-info: constraints:
-  - orientation: {selector: "left - SRB->{x : SRB | @:x = nil}", directions: [left, below]}
-  - orientation: {selector: "right - SRB->{x : SRB | @:x = nil}", directions: [right, below]}
-  - hideAtom: {selector: "SColor + Nat"}
-directives:
-  - atomColor: {selector: "{x : SRB | @:(x.color) = red}", value: "red"}
-  - attribute: {field: "key"}
+info: {"directives":
+ [{"atomColor": {"value": "red", "selector": "{x : SRB | @:(x.color) = red}"}},
+  {"attribute": {"field": "key"}}],
+ "constraints":
+ [{"orientation":
+   {"selector": "left - SRB->{x : SRB | @:x = nil}",
+    "directions": ["left", "below"]}},
+  {"orientation":
+   {"selector": "right - SRB->{x : SRB | @:x = nil}",
+    "directions": ["right", "below"]}},
+  {"hideAtom": {"selector": "SColor + Nat"}}]}
 -/
 #guard_msgs in
 #spec_yaml SRB
@@ -125,11 +143,11 @@ directives:
 /-! ## Closure operators and joins -/
 
 /--
-info: constraints:
-  - orientation: {selector: "^lo", directions: [below]}
-  - orientation: {selector: "~hi", directions: [above]}
-  - orientation: {selector: "lo & iden", directions: [below]}
-  - hideAtom: {selector: "SBDD.lo"}
+info: {"constraints":
+ [{"orientation": {"selector": "^lo", "directions": ["below"]}},
+  {"orientation": {"selector": "~hi", "directions": ["above"]}},
+  {"orientation": {"selector": "lo & iden", "directions": ["below"]}},
+  {"hideAtom": {"selector": "SBDD.lo"}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [
@@ -143,9 +161,9 @@ info: constraints:
     unresolvable names warn and pass through -/
 
 /--
-info: constraints:
-  - orientation: {selector: "left", directions: [left, below]}
-  - hideAtom: {selector: "Nat"}
+info: {"constraints":
+ [{"orientation": {"selector": "left", "directions": ["left", "below"]}},
+  {"hideAtom": {"selector": "Nat"}}]}
 -/
 #guard_msgs in
 #spytial.spec sTree with [
@@ -156,8 +174,7 @@ info: constraints:
 /--
 warning: unknown name 'lft' (did you mean 'left'?) — the vocabulary of 'STree' is open (a custom relationalizer, type parameter, or function field makes it unpredictable), so the name passes through unchecked
 ---
-info: constraints:
-  - orientation: {selector: "lft", directions: [below]}
+info: {"constraints": [{"orientation": {"selector": "lft", "directions": ["below"]}}]}
 -/
 #guard_msgs in
 #spytial.spec sTree with [
@@ -235,11 +252,11 @@ error: unknown Spytial op 'orientate'; known ops: align, atomColor, attribute, c
 /-! ## Spec-introduced names are in scope for later ops -/
 
 /--
-info: constraints:
-  - group: {selector: "SBDD", name: "cluster"}
-directives:
-  - inferredEdge: {name: "hop", selector: "lo.hi", color: "#000000", style: solid}
-  - edgeColor: {field: "hop", value: "purple", style: solid}
+info: {"directives":
+ [{"inferredEdge":
+   {"style": "solid", "selector": "lo.hi", "name": "hop", "color": "#000000"}},
+  {"edgeColor": {"value": "purple", "style": "solid", "field": "hop"}}],
+ "constraints": [{"group": {"selector": "SBDD", "name": "cluster"}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [
@@ -248,13 +265,54 @@ directives:
   edgeColor hop "purple"
 ]
 
+/-! ## Dotted-selector resolution (findings 3, 4)
+
+A glued dotted join scores each component at its real arity (finding 3), so a
+join through a spec-introduced arity-1 group is rejected exactly like the spaced
+spelling. A qualified type name resolves by longest prefix (finding 4): leading
+components name the type, trailing ones fold as joins. -/
+
+-- finding 3: glued `SBDD.cluster` and spaced `SBDD . cluster` now agree — a join
+-- of the arity-1 sig and the arity-1 group has no columns left.
+/-- error: join of arity 1 and arity 1 has no columns left -/
+#guard_msgs in
+#spytial.spec sExample with [group SBDD cluster, hideAtom SBDD.cluster]
+
+/-- error: join of arity 1 and arity 1 has no columns left -/
+#guard_msgs in
+#spytial.spec sExample with [group SBDD cluster, hideAtom SBDD . cluster]
+
+namespace SelQual
+public structure Inner where
+  someField : Nat
+public structure Outer where
+  inner : Inner
+end SelQual
+
+public def selQualOuter : SelQual.Outer := { inner := { someField := 0 } }
+
+-- finding 4: a qualified, un-opened type name resolves (the whole name is the type).
+/--
+info: {"constraints": [{"hideAtom": {"selector": "Inner"}}]}
+-/
+#guard_msgs in
+#spytial.spec selQualOuter with [hideAtom SelQual.Inner]
+
+-- finding 4: a glued join through a qualified type — leading `SelQual.Inner` is
+-- the type, trailing `someField` folds as a join.
+/--
+info: {"constraints": [{"hideAtom": {"selector": "Inner.someField"}}]}
+-/
+#guard_msgs in
+#spytial.spec selQualOuter with [hideAtom SelQual.Inner.someField]
+
 /-! ## Multiplicity formulas -/
 
 /--
-info: constraints:
-  - hideAtom: {selector: "{x : SBDD | some x.lo and no x.hi}"}
-  - hideAtom: {selector: "{x : SBDD | lone x.lo or one x.hi}"}
-  - hideAtom: {selector: "{x : SBDD | some lo}"}
+info: {"constraints":
+ [{"hideAtom": {"selector": "{x : SBDD | some x.lo and no x.hi}"}},
+  {"hideAtom": {"selector": "{x : SBDD | lone x.lo or one x.hi}"}},
+  {"hideAtom": {"selector": "{x : SBDD | some lo}"}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [
@@ -270,8 +328,8 @@ info: constraints:
 /-! ## `@num:` label projection -/
 
 /--
-info: directives:
-  - atomColor: {selector: "{x : SRB | @num:(x.key) = 1}", value: "red"}
+info: {"directives":
+ [{"atomColor": {"value": "red", "selector": "{x : SRB | @num:(x.key) = 1}"}}]}
 -/
 #guard_msgs in
 #spytial.spec sRB with [
@@ -298,13 +356,16 @@ public def sCarrier : SCarrier := { carrier := Nat, tag := 0 }
 connective; multiplicity applies to a whole union; difference is left-associative. -/
 
 /--
-info: constraints:
-  - hideAtom: {selector: "{x : SBDD | some x.lo or some x.hi implies no x.lo}"}
-  - hideAtom: {selector: "{x : SBDD | some x.lo implies some x.hi implies no x.lo}"}
-  - hideAtom: {selector: "{x : SBDD | some x.lo implies some x.hi else no x.lo}"}
-  - hideAtom: {selector: "{x : SBDD | some SBDD + String}"}
-  - hideAtom: {selector: "{x : SBDD | #x.lo = 1}"}
-  - orientation: {selector: "~lo", directions: [below]}
+info: {"constraints":
+ [{"hideAtom":
+   {"selector": "{x : SBDD | some x.lo or some x.hi implies no x.lo}"}},
+  {"hideAtom":
+   {"selector": "{x : SBDD | some x.lo implies some x.hi implies no x.lo}"}},
+  {"hideAtom":
+   {"selector": "{x : SBDD | some x.lo implies some x.hi else no x.lo}"}},
+  {"hideAtom": {"selector": "{x : SBDD | some SBDD + String}"}},
+  {"hideAtom": {"selector": "{x : SBDD | #x.lo = 1}"}},
+  {"orientation": {"selector": "~lo", "directions": ["below"]}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [
@@ -316,8 +377,7 @@ info: constraints:
   orientation ~lo below
 ]
 
-/-- info: constraints:
-  - hideAtom: {selector: "SColor - Nat - SRB"}
+/-- info: {"constraints": [{"hideAtom": {"selector": "SColor - Nat - SRB"}}]}
 -/
 #guard_msgs in
 #spytial.spec sRB with [hideAtom SColor - Nat - SRB]
@@ -325,12 +385,13 @@ info: constraints:
 /-! ## Word connectives (both spellings lower the same), xor / iff / ite / not -/
 
 /--
-info: constraints:
-  - hideAtom: {selector: "{x : SBDD | some x.lo and no x.hi or one x.lo}"}
-  - hideAtom: {selector: "{x : SBDD | some x.lo xor no x.hi}"}
-  - hideAtom: {selector: "{x : SBDD | some x.lo iff no x.hi}"}
-  - hideAtom: {selector: "{x : SBDD | some x.lo implies no x.hi else one x.lo}"}
-  - hideAtom: {selector: "{x : SBDD | not some x.lo}"}
+info: {"constraints":
+ [{"hideAtom": {"selector": "{x : SBDD | some x.lo and no x.hi or one x.lo}"}},
+  {"hideAtom": {"selector": "{x : SBDD | some x.lo xor no x.hi}"}},
+  {"hideAtom": {"selector": "{x : SBDD | some x.lo iff no x.hi}"}},
+  {"hideAtom":
+   {"selector": "{x : SBDD | some x.lo implies no x.hi else one x.lo}"}},
+  {"hideAtom": {"selector": "{x : SBDD | not some x.lo}"}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [
@@ -344,10 +405,11 @@ info: constraints:
 /-! ## Quantifiers (leading `disj`, comma name-groups, typed groups) and `let` -/
 
 /--
-info: constraints:
-  - hideAtom: {selector: "{x : SBDD | all y : SBDD | some y.lo}"}
-  - hideAtom: {selector: "{x : SBDD | some disj y, z : SBDD | y != z}"}
-  - hideAtom: {selector: "{x : SBDD | no y : SBDD, w : String | @:y = tt}"}
+info: {"constraints":
+ [{"hideAtom": {"selector": "{x : SBDD | all y : SBDD | some y.lo}"}},
+  {"hideAtom": {"selector": "{x : SBDD | some disj y, z : SBDD | y != z}"}},
+  {"hideAtom":
+   {"selector": "{x : SBDD | no y : SBDD, w : String | @:y = tt}"}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [
@@ -359,9 +421,9 @@ info: constraints:
 -- `let` desugars by substitution; a later binder shadows it (`a` below is the
 -- `all`-bound `a`, not `lo`).
 /--
-info: constraints:
-  - hideAtom: {selector: "{x : SBDD | some x.lo and no x.hi}"}
-  - hideAtom: {selector: "{x : SBDD | all a : SBDD | some a}"}
+info: {"constraints":
+ [{"hideAtom": {"selector": "{x : SBDD | some x.lo and no x.hi}"}},
+  {"hideAtom": {"selector": "{x : SBDD | all a : SBDD | some a}"}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [
@@ -372,11 +434,13 @@ info: constraints:
 /-! ## Integer layer — `#`, `@num:`, builtins, aggregators, box join, counting -/
 
 /--
-info: directives:
-  - atomColor: {selector: "{x : SRB | @num:(x.key) < 5}", value: "red"}
-  - atomColor: {selector: "{x : SRB | add[@num:(x.key), 1] > 2}", value: "red"}
-  - atomColor: {selector: "{x : SRB | abs[@num:(x.key)] >= 1}", value: "red"}
-  - atomColor: {selector: "{x : SRB | min[SRB.key] <= 3}", value: "red"}
+info: {"directives":
+ [{"atomColor": {"value": "red", "selector": "{x : SRB | @num:(x.key) < 5}"}},
+  {"atomColor":
+   {"value": "red", "selector": "{x : SRB | add[@num:(x.key), 1] > 2}"}},
+  {"atomColor":
+   {"value": "red", "selector": "{x : SRB | abs[@num:(x.key)] >= 1}"}},
+  {"atomColor": {"value": "red", "selector": "{x : SRB | min[SRB.key] <= 3}"}}]}
 -/
 #guard_msgs in
 #spytial.spec sRB with [
@@ -388,9 +452,9 @@ info: directives:
 
 -- Counting idiom and relational box join (`a[b] ≡ b.a`).
 /--
-info: constraints:
-  - hideAtom: {selector: "{x : SBDD | #{y : SBDD | some y.lo} = 2}"}
-  - hideAtom: {selector: "SBDD.lo"}
+info: {"constraints":
+ [{"hideAtom": {"selector": "{x : SBDD | #{y : SBDD | some y.lo} = 2}"}},
+  {"hideAtom": {"selector": "SBDD.lo"}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [
@@ -401,9 +465,9 @@ info: constraints:
 /-! ## Negated comparisons (`!in`, `not in` — both lower to `!in`) -/
 
 /--
-info: constraints:
-  - hideAtom: {selector: "{x : SBDD | x.lo !in x.hi}"}
-  - hideAtom: {selector: "{x : SBDD | x.lo !in x.hi}"}
+info: {"constraints":
+ [{"hideAtom": {"selector": "{x : SBDD | x.lo !in x.hi}"}},
+  {"hideAtom": {"selector": "{x : SBDD | x.lo !in x.hi}"}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [
@@ -411,31 +475,39 @@ info: constraints:
   hideAtom {x : SBDD | x.lo not in x.hi}
 ]
 
+/-! ## `ni` desugars to a flipped subset (finding 14)
+
+Forge's `a ni b ≡ b in a`, so `ni` lowers to a real subset with operands
+swapped (no warning); the negated `a !ni b` / `a not ni b` are `b !in a`. -/
+
+/--
+info: {"constraints":
+ [{"hideAtom": {"selector": "{x : SBDD | x.hi in x.lo}"}},
+  {"hideAtom": {"selector": "{x : SBDD | x.hi !in x.lo}"}},
+  {"hideAtom": {"selector": "{x : SBDD | x.hi !in x.lo}"}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [
+  hideAtom {x : SBDD | x.lo ni x.hi},
+  hideAtom {x : SBDD | x.lo !ni x.hi},
+  hideAtom {x : SBDD | x.lo not ni x.hi}
+]
+
 /-! ## Engine-bug forms — accepted, lowered verbatim, warned (upstream SGQ issues) -/
 
 /--
 warning: the SGQ engine evaluates `none` to the string "none", not the empty set — use `no e` for emptiness tests (upstream bug)
 ---
-info: constraints:
-  - hideAtom: {selector: "{x : SBDD | no none}"}
+info: {"constraints": [{"hideAtom": {"selector": "{x : SBDD | no none}"}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [hideAtom {x : SBDD | no none}]
 
 /--
-warning: the SGQ engine evaluates `a ni b` as ¬(a in b); Forge defines `a ni b ≡ b in a` — the two differ, so this constraint may evaluate opposite to its intent (upstream bug)
----
-info: constraints:
-  - hideAtom: {selector: "{x : SBDD | x.lo ni x.hi}"}
--/
-#guard_msgs in
-#spytial.spec sExample with [hideAtom {x : SBDD | x.lo ni x.hi}]
-
-/--
 warning: the SGQ engine currently throws on `<:` (domain restriction) at render — in a constraint position this kills the render (upstream bug)
 ---
-info: constraints:
-  - orientation: {selector: "SBDD <: lo", directions: [below]}
+info: {"constraints":
+ [{"orientation": {"selector": "SBDD <: lo", "directions": ["below"]}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [orientation SBDD <: lo below]
@@ -443,8 +515,8 @@ info: constraints:
 /--
 warning: the SGQ engine currently throws on `:>` (range restriction) at render — in a constraint position this kills the render (upstream bug)
 ---
-info: constraints:
-  - orientation: {selector: "lo :> SBDD", directions: [below]}
+info: {"constraints":
+ [{"orientation": {"selector": "lo :> SBDD", "directions": ["below"]}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [orientation lo :> SBDD below]
@@ -452,8 +524,8 @@ info: constraints:
 /--
 warning: the SGQ engine currently throws on `++` (override) at render — in a constraint position this kills the render (upstream bug)
 ---
-info: constraints:
-  - orientation: {selector: "lo ++ hi", directions: [below]}
+info: {"constraints":
+ [{"orientation": {"selector": "lo ++ hi", "directions": ["below"]}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [orientation lo ++ hi below]
@@ -461,8 +533,9 @@ info: constraints:
 /--
 warning: the SGQ engine silently drops arrow-multiplicity annotations — `A one -> lone B` evaluates as the plain product `A -> B` (upstream bug)
 ---
-info: constraints:
-  - orientation: {selector: "SBDD one -> lone SBDD", directions: [below]}
+info: {"constraints":
+ [{"orientation":
+   {"selector": "SBDD one -> lone SBDD", "directions": ["below"]}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [orientation SBDD one -> lone SBDD below]
@@ -470,8 +543,7 @@ info: constraints:
 /--
 warning: the SGQ engine does not evaluate backquote atom literals — it renders an `UNIMPLEMENTED` placeholder (upstream bug)
 ---
-info: constraints:
-  - hideAtom: {selector: "{x : SBDD | x = `a0}"}
+info: {"constraints": [{"hideAtom": {"selector": "{x : SBDD | x = `a0}"}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [hideAtom {x : SBDD | x = `a0}]
@@ -479,8 +551,8 @@ info: constraints:
 /--
 warning: the SGQ engine evaluates `sum[e]` to the empty set rather than summing its atoms (upstream bug)
 ---
-info: directives:
-  - atomColor: {selector: "{x : SRB | sum[SRB.key] > 2}", value: "red"}
+info: {"directives":
+ [{"atomColor": {"value": "red", "selector": "{x : SRB | sum[SRB.key] > 2}"}}]}
 -/
 #guard_msgs in
 #spytial.spec sRB with [atomColor {x : SRB | sum[SRB.key] > 2} "red"]
@@ -499,6 +571,40 @@ info: directives:
 #guard_msgs in
 #spytial.spec sExample with [hideAtom {x : SBDD | #x.lo = lo}]
 
+/-! ## Selector-semantics polish (findings 15, 16, 17) -/
+
+-- finding 15: an empty box join is an error, not a silent no-op (`e[]` ≡ `e`).
+/-- error: box join needs at least one argument (`a[b]` means `b.a`) -/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom lo[]]
+
+-- finding 16: a `@bool:` projection compares against a bare `true`/`false`
+-- literal (SGQ evaluates it directly). Bool is not in SBDD's scope, so this
+-- works only via the boolean-literal wiring — contrast `@:x = true` below, which
+-- stays a constructor-label reading: `true` resolves to `Bool.true`, rejected
+-- because Bool cannot occur in SBDD.
+/--
+info: {"directives":
+ [{"atomColor":
+   {"value": "red", "selector": "{x : SBDD | @bool:(x.v) = true}"}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [atomColor {x : SBDD | @bool:(x.v) = true} "red"]
+
+/-- error: constructor 'Bool.true' belongs to 'Bool', which cannot occur in values of 'SBDD' -/
+#guard_msgs in
+#spytial.spec sExample with [atomColor {x : SBDD | @:x = true} "red"]
+
+-- finding 17a: a label value opposite an integer literal points at `@num:`.
+/-- error: cannot compare a label value with this operand; a label value compares against a nullary constructor or a string literal — for a numeric label, project with `@num:` -/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom {x : SBDD | @:x = 5}]
+
+-- finding 17b: a quantifier binder domain says "quantifier", not "comprehension".
+/-- error: a quantifier binder domain must have arity 1, got 2 -/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom {x : SBDD | all y : lo | some y}]
+
 /-! ## Step-0 pin — a relation literally named `some` stays usable
 
 `SWeird.mk` has fields `some` and `one`; `.both` on the formula category keeps
@@ -510,8 +616,8 @@ public inductive SWeird where
 
 public def sWeird : SWeird := .leaf
 
-/-- info: constraints:
-  - hideAtom: {selector: "{x : SWeird | some some and one one}"}
+/-- info: {"constraints":
+ [{"hideAtom": {"selector": "{x : SWeird | some some and one one}"}}]}
 -/
 #guard_msgs in
 #spytial.spec sWeird with [hideAtom {x : SWeird | some some and one one}]
@@ -521,15 +627,16 @@ public def sWeird : SWeird := .leaf
 /--
 warning: arity-3 selector in a pair position: only the first and last columns of each tuple are used
 ---
-info: constraints:
-  - orientation: {selector: "SBDD->SBDD->SBDD", directions: [below]}
+info: {"constraints":
+ [{"orientation": {"selector": "SBDD->SBDD->SBDD", "directions": ["below"]}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [orientation SBDD -> SBDD -> SBDD below]
 
 /--
-info: constraints:
-  - hideAtom: {selector: "{x : SBDD | (all y : SBDD | some y.lo) and some x.hi}"}
+info: {"constraints":
+ [{"hideAtom":
+   {"selector": "{x : SBDD | (all y : SBDD | some y.lo) and some x.hi}"}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [

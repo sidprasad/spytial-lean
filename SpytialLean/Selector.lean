@@ -22,7 +22,7 @@ here alongside the strings the relationalizer actually emits. Lowering back to
 the concrete SGQ string consumed by spytial-core is `Sel.toSGQ`.
 
 The surface grammar mirrors Forge; a few forms Forge parses are currently
-*mislowered by the SGQ engine* (`none`, `ni`, `<:`, `:>`, `++`, `->`-multiplicity
+*mislowered by the SGQ engine* (`none`, `<:`, `:>`, `++`, `->`-multiplicity
 annotations). We reify and emit them faithfully (Forge semantics) so a corpus
 author can write them, and the elaborator attaches a warning naming the upstream
 engine bug and its interim workaround — see the `FIXME(sgq …)` markers below.
@@ -132,9 +132,6 @@ public meta inductive SelForm where
   | subset (a b : Sel)
   /-- `a !in b` / `a not in b`. -/
   | notSubset (a b : Sel)
-  /-- `a ni b`. `FIXME(sgq ni)`: SGQ implements `ni` as ¬subset, but Forge
-      defines `a ni b ≡ b in a`. Emitted verbatim; the elaborator warns. -/
-  | ni (a b : Sel)
   | eq (a b : Sel)
   | neq (a b : Sel)
   | veq (a b : SelVal)
@@ -269,7 +266,6 @@ public meta partial def SelVal.toSGQ : SelVal → String
 public meta partial def SelForm.toSGQCtx (ctx : Nat) : SelForm → String
   | .subset a b => s!"{a.toSGQCtx 0} in {b.toSGQCtx 0}"
   | .notSubset a b => s!"{a.toSGQCtx 0} !in {b.toSGQCtx 0}"
-  | .ni a b => s!"{a.toSGQCtx 0} ni {b.toSGQCtx 0}"
   | .eq a b => s!"{a.toSGQCtx 0} = {b.toSGQCtx 0}"
   | .neq a b => s!"{a.toSGQCtx 0} != {b.toSGQCtx 0}"
   | .veq a b => s!"{a.toSGQ} = {b.toSGQ}"
@@ -322,7 +318,7 @@ public meta partial def SelInt.freeVars : SelInt → Array Name
   | .builtin _ args => args.foldl (· ++ ·.freeVars) #[]
 
 public meta partial def SelForm.freeVars : SelForm → Array Name
-  | .subset a b | .notSubset a b | .ni a b | .eq a b | .neq a b =>
+  | .subset a b | .notSubset a b | .eq a b | .neq a b =>
     a.freeVars ++ b.freeVars
   | .veq a b | .vneq a b => a.freeVars ++ b.freeVars
   | .icmp _ a b => a.freeVars ++ b.freeVars

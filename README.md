@@ -29,7 +29,9 @@ Pre-built artifacts are downloaded automatically from GitHub Releases. **Node.js
 
 If you want to build from source (e.g., for development), you will also need:
 
-- [Node.js](https://nodejs.org/) (for building the widget JS)
+- [Node.js](https://nodejs.org/) with [pnpm](https://pnpm.io/) — for building the
+  widget JS. `lake build` shells `pnpm install`; Node does not put `pnpm` on
+  `PATH`, so enable it with `corepack enable` (the Nix dev shell already has it).
 
 ```sh
 git clone https://github.com/sidprasad/spytial-lean.git
@@ -42,7 +44,7 @@ Open a file in `demos/` and place your cursor on a `#spytial` line. The infoview
 
 ### Nix dev shell
 
-A [flake](flake.nix) provides a dev shell (elan + Node + just) — run `nix develop`. To opt into [direnv](https://direnv.net/): `ln -s nix/envrc .envrc && direnv allow`.
+A [flake](flake.nix) provides a dev shell (elan + Node + pnpm + just) — run `nix develop`. To opt into [direnv](https://direnv.net/): `ln -s nix/envrc .envrc && direnv allow`.
 
 ## Usage
 
@@ -204,7 +206,7 @@ and a word spelling; both lower identically:
 | implication (+ `else`) | `=>` / `implies` |
 | conjunction | `&&` / `and` |
 | negation | `!` / `not` |
-| comparison | `in`, `=`, `!=`, `!in`, `not in`, `ni`; int-only `< > <= >= =<` |
+| comparison | `in`, `=`, `!=`, `!in`, `not in`, `ni`, `!ni`, `not ni`; int-only `< > <= >= =<` |
 | multiplicity | `some`/`no`/`lone`/`one <sel>` |
 
 Note the **Forge precedence**: implication binds *tighter* than `or`/`iff` (so
@@ -229,17 +231,20 @@ error — so counting selectors like `#{x : T | φ} = 2` and `@num:(x.key) < 5`
 work, while `some #e` is a compile error rather than a silent falsehood.
 
 Label comparisons accept nullary constructors (`@:x = nil`), string/numeric
-literals, or another projection (`@:vr = @:(y.v)`).
+literals, another projection (`@:vr = @:(y.v)`), or — opposite a `@bool:`
+projection — the boolean literals `true`/`false`. `ni` and its negations desugar
+to Forge's flipped subset (`a ni b ≡ b in a`, `a !ni b ≡ b !in a`), so they lower
+to ordinary subset constraints.
 
 ### Accepted, but currently warns (upstream engine issues)
 
 A few forms Forge parses are mislowered by the current spytial-core (SGQ)
 evaluator. They are accepted and emitted with the Forge semantics, but the
 elaborator attaches a warning naming the engine bug: `none` (evaluates to the
-string `"none"`, not `∅` — use `no e`), `ni` (evaluated as ¬subset, not Forge's
-flipped subset), `<:` / `:>` / `++` (the engine throws at render), `A one ->
-lone B` arrow-multiplicity annotations (silently dropped), `` `atom `` backquote
-literals (a placeholder marker), and `sum[e]` (evaluates to `∅`).
+string `"none"`, not `∅` — use `no e`), `<:` / `:>` / `++` (the engine throws at
+render), `A one -> lone B` arrow-multiplicity annotations (silently dropped),
+`` `atom `` backquote literals (a placeholder marker), and `sum[e]` (evaluates
+to `∅`).
 
 ### What gets checked
 
@@ -255,6 +260,14 @@ Checking is **strict** exactly when the vocabulary is closed (a monomorphic
 type built from monomorphic fields). A type parameter, function-typed field,
 or custom relationalizer opens the world: unknown names downgrade to warnings
 there, and resolved types (like `Nat` in a `Tree α` spec) pass silently.
+
+Derived type and field names are **short names** (the last component — `T` for
+`A.T`, `left` for a `left` field), a convention shared with the Rust and Python
+Spytial implementations. At render time a selector like `hideField left` matches
+*every* relation with that short name, so two constructors that each have a
+`left` field are styled together. The compile-time checker, by contrast, resolves
+and hovers one specific declaration — so on a short-name collision the runtime
+over-matches relative to what the checker points at.
 
 ## Available operations
 

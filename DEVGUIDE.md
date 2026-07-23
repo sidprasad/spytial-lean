@@ -46,11 +46,12 @@ lake build SpytialTests
 ```
 
 `tests/SelectorTest.lean` is the behavioral contract for the selector DSL: it
-pins the SGQ lowering (compiled YAML) of every surface form — the Forge
+pins the SGQ lowering (compiled JSON) of every surface form — the Forge
 precedence battery, word/symbolic connectives, quantifiers and `let`, the
-integer layer, box join, negated comparisons — plus one diagnostic per checker
-error class and a warning golden for each engine-bug form (`none`, `ni`, `<:`,
-`:>`, `++`, arrow-multiplicity, backquote, `sum[e]`).
+integer layer, box join, negated comparisons (`!in`, `not in`, `ni`, `!ni`) —
+plus one diagnostic per checker error class and a warning golden for each
+engine-bug form (`none`, `<:`, `:>`, `++`, arrow-multiplicity, backquote,
+`sum[e]`).
 
 ### Demos
 
@@ -139,7 +140,7 @@ To add a new layout operation:
 
 1. Add the constructor to `SpytialOp` in `SpytialLean/Spec.lean`
 2. Add it to `isConstraint` (if it's a constraint) or leave it as a directive
-3. Add a YAML serialization case in `constraintToYaml` or `directiveToYaml`
+3. Add a JSON serialization case in `SpytialOp.toJson` (in `SpytialLean/Spec.lean`)
 4. Add a keyword case to `elabSpytialOp` in `SpytialLean/Command.lean`, giving each selector position its `ArityExpect` and interpreting the other arguments
 5. Add an example in a `demos/` file and a golden in `tests/SelectorTest.lean`
 6. Rebuild: `lake build Demos SpytialTests`
@@ -156,13 +157,14 @@ Shows the JSON data instance — atoms and relations with their names. The spec
 elaborator checks selector names against the same vocabulary, so this is for
 seeing the data, not for guessing names.
 
-### Inspect generated YAML
+### Inspect the generated spec
 
 ```lean
 #spytial.spec myValue with [orientation left below]
 ```
 
-Shows the YAML that gets passed to `parseLayoutSpec`.
+Shows the spec string (JSON, which is valid YAML) that gets passed to
+`parseLayoutSpec`.
 
 ### Widget console errors
 

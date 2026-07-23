@@ -39,6 +39,12 @@ meta def ropeRel : CustomRelationalizer := fun _ _ => do
 namespace CoverageFixture
 
 spytial_spec Graph [hideAtom Nat]
+-- finding 7: a non-`public` relationalizer registers but is unusable across
+-- modules, so registration warns. Kept non-public here to pin that warning.
+/--
+warning: '_private.CoverageTest.0.ropeRel' is not `public`, so a `#spytial` on this type from an importing module fails at render with `Unknown constant` — declare it `public meta def`
+-/
+#guard_msgs in
 spytial_relationalizer Rope ropeRel
 spytial_opt_out Waived "structural noise, not domain data"
 
@@ -73,3 +79,83 @@ error: Unknown constant `CoverageFixture.DoesNotExist`
 -/
 #guard_msgs in
 spytial_opt_out CoverageFixture.DoesNotExist "x"
+
+/-! ## Strict gate + empty-namespace guard (findings 1, 11) -/
+
+-- finding 11: strict `!` on a fully-covered namespace succeeds — the "can't
+-- false-pass" property that guards finding 1.
+/--
+info: Spytial coverage: 4/4 data types in 'CoverageFixture' covered.
+-/
+#guard_msgs in
+#spytial.coverage! CoverageFixture
+
+-- finding 1: a namespace matching nothing fails strict mode instead of reporting
+-- a hollow 0/0 pass …
+/--
+error: no Spytial coverage data types found under 'NoSuchNamespace' — check the spelling and that the namespace is imported
+-/
+#guard_msgs in
+#spytial.coverage! NoSuchNamespace
+
+-- … and warns (never the success line) in the plain form.
+/--
+warning: no Spytial coverage data types found under 'NoSuchNamespace' — check the spelling and that the namespace is imported
+-/
+#guard_msgs in
+#spytial.coverage NoSuchNamespace
+
+/-! ## Inherited spec counts as covered (finding 2) -/
+
+namespace CovInherit
+
+public structure Parent where
+  a : Nat
+
+public structure Child extends Parent where
+  b : Nat
+
+spytial_spec Parent [hideAtom Nat]
+
+end CovInherit
+
+-- Child has no own spec but renders via Parent's inherited spec — strict passes.
+/--
+info: Spytial coverage: 2/2 data types in 'CovInherit' covered.
+-/
+#guard_msgs in
+#spytial.coverage! CovInherit
+
+/-! ## Custom-relationalizer referential integrity (finding 6)
+
+A value whose type has a custom relationalizer, appearing twice, must not leave a
+tuple pointing at the pre-allocated id the relationalizer discards. `boxedRel`
+returns its own fresh id (like the demo's SimpleGraph), and the second occurrence
+of `boxedTwice`'s components hits the seen-cache. -/
+
+public structure Boxed where
+  n : Nat
+
+public meta def boxedRel : CustomRelationalizer := fun _ _ => do
+  let s ← get
+  let (bid, s) := s.freshId
+  set s
+  modify (·.addAtom { id := bid, type := "Boxed", label := "boxed" })
+  return bid
+
+spytial_relationalizer Boxed boxedRel
+
+public def boxedTwice : Boxed × Boxed := (⟨5⟩, ⟨5⟩)
+
+-- Referential integrity: every tuple endpoint is a real atom. Fails (throws)
+-- without the finding-6 fix, since the repeated occurrence resolves to the
+-- never-emitted pre-allocated id.
+open Lean in
+#eval show MetaM Unit from do
+  let di ← relationalize (mkConst ``boxedTwice)
+  let atomIds := di.atoms.toList.map (·.id)
+  for r in di.relations do
+    for t in r.tuples do
+      for a in t.atoms do
+        unless atomIds.contains a do
+          throwError "finding 6: dangling endpoint '{a}' in relation '{r.name}' — not an atom"

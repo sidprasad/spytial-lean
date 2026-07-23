@@ -352,8 +352,8 @@ meta def lookupTypeSpec (e : Expr) : MetaM (Option SpytialSpec) := do
   | _ => return none
 
 /-- Elaborate a `#spytial`-style payload: the term's data instance plus the
-    YAML spec (explicit ops override an attached spec, which is rendered once
-    here at payload-build time). -/
+    rendered spec string (explicit ops override an attached spec, which is
+    rendered once here at payload-build time). -/
 private meta def elabSpytialPayload (t : Syntax) (ops? : Option (Array (TSyntax `spytial_op)))
     (cfg : WalkConfig := {}) : TermElabM (JsonDataInstance × Option String) := do
   let e ← Term.elabTerm t none
@@ -365,12 +365,12 @@ private meta def elabSpytialPayload (t : Syntax) (ops? : Option (Array (TSyntax 
       let scope ← scopeForExpr e
       pure (some (← elabSpytialOps scope ops))
     | none => lookupTypeSpec e
-  return (di, spec?.map SpytialSpec.toYaml)
+  return (di, spec?.map SpytialSpec.render)
 
-private meta def spytialProps (di : JsonDataInstance) (yaml? : Option String) : Json :=
+private meta def spytialProps (di : JsonDataInstance) (cndSpec? : Option String) : Json :=
   Json.mkObj <|
     [("dataInstance", toJson di)] ++
-    match yaml? with
+    match cndSpec? with
     | some s => [("cndSpec", toJson s)]
     | none => []
 
@@ -393,13 +393,13 @@ private meta def optionalOps (stx : Syntax) : Option (Array (TSyntax `spytial_op
 @[command_elab spytialCmd]
 meta def elabSpytialCmd : CommandElab := fun
   | stx@`(#spytial $t:term) => do
-    let (di, yaml?) ← liftTermElabM <| elabSpytialPayload t none
+    let (di, cndSpec?) ← liftTermElabM <| elabSpytialPayload t none
     liftCoreM <| savePanelWidgetInfo SpytialWidget.javascriptHash
-      (return spytialProps di yaml?) stx
+      (return spytialProps di cndSpec?) stx
   | stx@`(#spytial $t:term with [$ops,*]) => do
-    let (di, yaml?) ← liftTermElabM <| elabSpytialPayload t (some ops.getElems)
+    let (di, cndSpec?) ← liftTermElabM <| elabSpytialPayload t (some ops.getElems)
     liftCoreM <| savePanelWidgetInfo SpytialWidget.javascriptHash
-      (return spytialProps di yaml?) stx
+      (return spytialProps di cndSpec?) stx
   | stx => throwError "Unexpected syntax {stx}."
 
 /-! ## spytial_spec command -/
@@ -435,8 +435,11 @@ meta def elabSpytialSpecCmd : CommandElab := fun
 /-- `spytial_relationalizer <TypeName> <defName>` registers a custom relationalizer
     for a type. The def must have type `CustomRelationalizer`.
 
+    The def must be `public` (`public meta def`): a non-`public` relationalizer is
+    name-mangled and unusable from importing modules.
+
     ```
-    def myRelationalizer : CustomRelationalizer := fun e walkExpr => do ...
+    public meta def myRelationalizer : CustomRelationalizer := fun e walkExpr => do ...
 
     spytial_relationalizer MyType myRelationalizer
     ```
@@ -453,26 +456,34 @@ meta def elabSpytialRelationalizerCmd : CommandElab := fun
       let declType := (← getConstInfo defName).type
       unless (← Meta.isDefEq declType (Lean.mkConst ``CustomRelationalizer)) do
         throwError s!"'{defName}' must have type `CustomRelationalizer`"
+    -- A non-`public` def is name-mangled to `_private.…`, which importing modules
+    -- cannot evaluate — a `#spytial` on this type from another module would fail
+    -- at render with `Unknown constant`.
+    if isPrivateName defName then
+      logWarningAt defId m!"'{defName}' is not `public`, so a `#spytial` on this \
+        type from an importing module fails at render with `Unknown constant` — \
+        declare it `public meta def`"
     liftCoreM <| setSpytialRelationalizer typeName defName
   | stx => throwError "Unexpected syntax {stx}."
 
 /-! ## Debugging commands -/
 
-/-- `#spytial.spec <term> with [<ops>]` prints the generated YAML spec.
-    Useful for debugging whether the spec is what you expect. -/
+/-- `#spytial.spec <term> with [<ops>]` prints the generated spec string (JSON,
+    which is valid YAML for spytial-core's parser). Useful for debugging whether
+    the spec is what you expect. -/
 syntax (name := spytialSpecDebug) "#spytial.spec " term " with " "[" spytial_op,* "]" : command
 
 @[command_elab spytialSpecDebug]
 meta def elabSpytialSpecDebug : CommandElab := fun
   | `(#spytial.spec $t:term with [$ops,*]) => do
-    let yamlStr ← liftTermElabM do
+    let specStr ← liftTermElabM do
       let e ← Term.elabTerm t none
       Term.synthesizeSyntheticMVarsNoPostponing
       let e ← instantiateMVars e
       let scope ← scopeForExpr e
       let spec ← elabSpytialOps scope ops.getElems
-      return spec.toYaml
-    logInfo m!"{yamlStr}"
+      return spec.render
+    logInfo m!"{specStr}"
   | stx => throwError "Unexpected syntax {stx}."
 
 /-- `#spytial.datum <term>` prints the generated JSON data instance.
@@ -504,14 +515,14 @@ syntax (name := spytialProofCmd) "#spytial.proof " term (" with " "[" spytial_op
 @[command_elab spytialProofCmd]
 meta def elabSpytialProofCmd : CommandElab := fun
   | stx@`(#spytial.proof $t:term) => do
-    let (di, yaml?) ← liftTermElabM <| elabSpytialPayload t none { filterProofs := false }
+    let (di, cndSpec?) ← liftTermElabM <| elabSpytialPayload t none { filterProofs := false }
     liftCoreM <| savePanelWidgetInfo SpytialWidget.javascriptHash
-      (return spytialProps di yaml?) stx
+      (return spytialProps di cndSpec?) stx
   | stx@`(#spytial.proof $t:term with [$ops,*]) => do
-    let (di, yaml?) ← liftTermElabM <|
+    let (di, cndSpec?) ← liftTermElabM <|
       elabSpytialPayload t (some ops.getElems) { filterProofs := false }
     liftCoreM <| savePanelWidgetInfo SpytialWidget.javascriptHash
-      (return spytialProps di yaml?) stx
+      (return spytialProps di cndSpec?) stx
   | stx => throwError "Unexpected syntax {stx}."
 
 /-- `#spytial.proof.datum <term>` prints the JSON data instance in proof mode. -/
@@ -551,11 +562,11 @@ open Tactic in
 meta def elabSpytialTactic : Tactic := fun stx => do
   match stx with
   | `(tactic| spytial $t:term) => do
-    let (di, yaml?) ← elabSpytialPayload t none
-    savePanelWidgetInfo SpytialWidget.javascriptHash (return spytialProps di yaml?) stx
+    let (di, cndSpec?) ← elabSpytialPayload t none
+    savePanelWidgetInfo SpytialWidget.javascriptHash (return spytialProps di cndSpec?) stx
   | `(tactic| spytial $t:term with [$ops,*]) => do
-    let (di, yaml?) ← elabSpytialPayload t (some ops.getElems)
-    savePanelWidgetInfo SpytialWidget.javascriptHash (return spytialProps di yaml?) stx
+    let (di, cndSpec?) ← elabSpytialPayload t (some ops.getElems)
+    savePanelWidgetInfo SpytialWidget.javascriptHash (return spytialProps di cndSpec?) stx
   | _ => throwError "Unexpected syntax {stx}."
 
 /-! ## Proof tactic -/
@@ -571,8 +582,8 @@ meta def elabSpytialProofTactic : Tactic := fun stx => do
   -- The dotted leading atom `spytial.proof ` defeats quotation patterns
   -- (quotations lex it as a qualified ident), so extract positionally.
   let t := stx[1]
-  let (di, yaml?) ← elabSpytialPayload t (optionalOps stx[2]) { filterProofs := false }
-  savePanelWidgetInfo SpytialWidget.javascriptHash (return spytialProps di yaml?) stx
+  let (di, cndSpec?) ← elabSpytialPayload t (optionalOps stx[2]) { filterProofs := false }
+  savePanelWidgetInfo SpytialWidget.javascriptHash (return spytialProps di cndSpec?) stx
 
 end
 
