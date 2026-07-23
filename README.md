@@ -223,10 +223,11 @@ binder would capture is a compile error), so the engine never sees a `let`.
 **Integer layer.** `#e` (cardinality), integer literals (with `-`), `@num:e`
 (numeric projection), the builtins `add subtract multiply divide remainder abs
 sign` and aggregators `min[e] max[e]` (arity-1 int column, applied through box
-join), and the int comparisons form a small typed sub-language: integer-typed
-positions accept exactly these, and tuple positions reject them with a type
-error — so counting selectors like `#{x : T | φ} = 2` and `@num:(x.key) < 5`
-work, while `some #e` is a compile error rather than a silent falsehood.
+join), the `sum x : A | ie` aggregation quantifier, and the int comparisons
+form a small typed sub-language: integer-typed positions accept exactly these,
+and tuple positions reject them with a type error — so counting selectors like
+`#{x : T | φ} = 2` and `@num:(x.key) < 5` work, while `some #e` is a compile
+error rather than a silent falsehood.
 
 Label comparisons accept nullary constructors (`@:x = nil`), string literals,
 another projection (`@:vr = @:(y.v)`), or — opposite a `@bool:` projection —

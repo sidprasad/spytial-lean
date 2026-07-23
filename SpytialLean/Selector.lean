@@ -116,6 +116,11 @@ public meta inductive SelInt where
   | proj (e : Sel)                                   -- `@num:e`
   | builtin (op : IntBuiltin) (args : Array SelInt)  -- `add[a, b]`
   | agg (op : IntAgg) (e : Sel)                      -- `sum[e]`, `min[e]`, `max[e]`
+  /-- `sum x : A | ie` — Forge's integer aggregation quantifier (sum of the
+      integer body `ie` over all `x` in `A`). Single binder, per Forge's
+      expander. Unlike the `sum[e]` aggregator, SGQ evaluates this correctly, so
+      it carries no warning. -/
+  | sumQuant (x : Name) (dom : Sel) (body : SelInt)
   deriving Repr, BEq
 
 /-- A label/literal value, the operands of `@:`-style comparisons. A nullary
@@ -272,6 +277,10 @@ public meta partial def SelInt.toSGQ : SelInt → String
   | .proj e => s!"@num:{e.toSGQCtx 100}"
   | .builtin op args => s!"{op.toSGQ}[{", ".intercalate (args.toList.map SelInt.toSGQ)}]"
   | .agg op e => s!"{op.toSGQ}[{e.toSGQCtx 0}]"
+  -- The body extends maximally right in SGQ, so a `sum` used as a comparison
+  -- operand must be parenthesized (`(sum …) > 2`); always wrap.
+  | .sumQuant x dom body =>
+    s!"(sum {quoteIfReserved (toString x)} : {dom.toSGQCtx 0} | {body.toSGQ})"
 
 /-- Lower a label/value operand. The projected expression prints at atom
     strength, so `@:x` stays bare while `@:(x.v)` gets its parentheses. -/
@@ -339,6 +348,7 @@ public meta partial def SelInt.freeVars : SelInt → Array Name
   | .lit .. => #[]
   | .card e | .proj e | .agg _ e => e.freeVars
   | .builtin _ args => args.foldl (· ++ ·.freeVars) #[]
+  | .sumQuant x dom body => dom.freeVars ++ body.freeVars.filter (· != x)
 
 public meta partial def SelForm.freeVars : SelForm → Array Name
   | .subset a b | .notSubset a b | .eq a b | .neq a b =>
