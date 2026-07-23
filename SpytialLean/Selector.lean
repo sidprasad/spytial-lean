@@ -83,6 +83,8 @@ public meta inductive SelInt where
   | proj (e : Sel)                                   -- `@num:e`
   | builtin (op : IntBuiltin) (args : Array SelInt)  -- `add[a, b]`
   | agg (op : IntAgg) (e : Sel)                      -- `sum[e]`, `min[e]`, `max[e]`
+  /-- Single binder, per Forge's expander. -/
+  | sumQuant (x : Name) (dom : Sel) (body : SelInt)  -- `sum x : A | ie`
   deriving Repr, BEq
 
 /-- A nullary-constructor literal (`@:x = tt`) lowers to the short-name label
@@ -249,6 +251,9 @@ public meta partial def SelInt.toSGQ : SelInt → String
   -- Aggregators read numeric values; walker atom ids are opaque (`atom_N`),
   -- the value is the label — decode via the engine's numeric projection.
   | .agg op e => s!"{op.toSGQ}[@num:({e.toSGQCtx 0})]"
+  -- the body extends maximally right; always wrap (`(sum …) > 2`)
+  | .sumQuant x dom body =>
+    s!"(sum {quoteIfReserved (toString x)} : {dom.toSGQCtx 0} | {body.toSGQ})"
 
 public meta partial def SelVal.toSGQ : SelVal → String
   | .label proj e =>
@@ -316,6 +321,7 @@ public meta partial def SelInt.freeVars : SelInt → Array Name
   | .lit .. => #[]
   | .card e | .proj e | .agg _ e => e.freeVars
   | .builtin _ args => args.foldl (· ++ ·.freeVars) #[]
+  | .sumQuant x dom body => dom.freeVars ++ body.freeVars.filter (· != x)
 
 public meta partial def SelForm.freeVars : SelForm → Array Name
   | .subset a b | .notSubset a b | .ni a b | .notNi a b | .eq a b | .neq a b =>
