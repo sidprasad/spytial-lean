@@ -150,24 +150,19 @@ private meta def unknownName {α} (scope : SelScope) (ref : Syntax) (what : Stri
 
 /-! ## Syntax
 
-The grammar replicates Forge's single expression/formula cascade over two Lean
-categories. The formula category is `behavior := both` so a keyword-led rule and
-a bare identifier can coexist — a relation literally named `some` still parses,
-and the syntax elaborator compiles each leading keyword to a `nonReservedSymbol`
-(the multiplicity/quantifier forms with a mandatory further token win by
-longest-match). The expression category stays `.default` (see the note above the
-declaration). The precedence numbers below are Forge's cascade re-scaled: loosest
-at the top. -/
+The grammar replicates Forge's expression/formula cascade over two categories.
+Both use `behavior := both`, so keyword-led rules compile to
+`nonReservedSymbol` and a relation named `some` still parses. Forms with a
+mandatory further token win by longest-match; the nullary constants tie with a
+bare ident, so they take `priority := high`. The precedence numbers are
+Forge's cascade re-scaled, loosest at the top. -/
 
 open Lean Parser
 
--- `spytial_sel` stays `.default`: `behavior := both` breaks parsing of the
--- `@`-leading projection tokens (Lean's antiquotation/`@` handling), and the only
--- expression form that would need keyword dispatch — the `sum x : A | ie`
--- quantifier — is deferred in favour of the `sum[e]` aggregator. The formula
--- category needs `.both` for its multiplicity/quantifier/word keywords, and has
--- no `@`-leading tokens.
-declare_syntax_cat spytial_sel
+-- `nonReservedSymbol` registers no token, so an `@:`-family head would
+-- maximal-munch onto the global `@`; those rules are hand-written below with
+-- reserved `symbol` heads.
+declare_syntax_cat spytial_sel (behavior := both)
 declare_syntax_cat spytial_sel_form (behavior := both)
 
 syntax spytialSelBinderGroup := sepBy1(ident, ", ") " : " spytial_sel
@@ -188,12 +183,14 @@ syntax:60 (name := selBox) spytial_sel:60 noWs "[" sepBy(spytial_sel, ", ") "]" 
 syntax:70 "^" spytial_sel:70 : spytial_sel
 syntax:70 "*" spytial_sel:70 : spytial_sel
 syntax:70 "~" spytial_sel:70 : spytial_sel
--- Label projections (SGQ extension; Forge has no `@`): expr-tier prefix ops.
--- Matched by kind at elaboration — `@`-leading quotations break under `.both`.
-syntax:100 (name := selProjPlain) "@:" spytial_sel:100 : spytial_sel
-syntax:100 (name := selProjStr)  "@str:" spytial_sel:100 : spytial_sel
-syntax:100 (name := selProjBool) "@bool:" spytial_sel:100 : spytial_sel
-syntax:100 (name := selProjNum)  "@num:" spytial_sel:100 : spytial_sel
+@[spytial_sel_parser] meta def selProjPlainOp : Parser :=
+  leadingNode `selProjPlain 100 (symbol "@:" >> categoryParser `spytial_sel 100)
+@[spytial_sel_parser] meta def selProjStrOp : Parser :=
+  leadingNode `selProjStr 100 (symbol "@str:" >> categoryParser `spytial_sel 100)
+@[spytial_sel_parser] meta def selProjBoolOp : Parser :=
+  leadingNode `selProjBool 100 (symbol "@bool:" >> categoryParser `spytial_sel 100)
+@[spytial_sel_parser] meta def selProjNumOp : Parser :=
+  leadingNode `selProjNum 100 (symbol "@num:" >> categoryParser `spytial_sel 100)
 syntax:100 (name := selIdent) ident : spytial_sel
 syntax:100 "(" spytial_sel ")" : spytial_sel
 syntax:100 "{" sepBy1(spytialSelBinderGroup, ", ") " | " spytial_sel_form "}" : spytial_sel
@@ -203,7 +200,14 @@ syntax:100 (name := selNegNum) "-" noWs num : spytial_sel
 /-- Backquote atom literal (`` `a0 ``), spelled with Lean's `name` literal. -/
 syntax:100 (name := selAtomLit) name : spytial_sel
 
-/-- One optional arrow-multiplicity keyword, non-reserving. -/
+syntax:100 (name := selUniv) (priority := high) "univ" : spytial_sel
+syntax:100 (name := selIden) (priority := high) "iden" : spytial_sel
+syntax:100 (name := selNone) (priority := high) "none" : spytial_sel
+
+-- Bare `sum` fails the rule and falls to `selIdent`, so a field named `sum`
+-- still parses.
+syntax:5 (name := selSum) "sum " ident " : " spytial_sel " | " spytial_sel : spytial_sel
+
 private meta def arrowMultP : Parser :=
   nonReservedSymbol "lone" (includeIdent := true) <|>
     nonReservedSymbol "one" (includeIdent := true) <|>
@@ -373,6 +377,14 @@ private meta partial def elabExpr (scope : SelScope) (env : LEnv) :
     return .val (.strLit s.getString)
   | `(spytial_sel| $n:num) => return .int (.lit (Int.ofNat n.getNat))
   | `(spytial_sel| -$n:num) => return .int (.lit (-(Int.ofNat n.getNat)))
+  | `(spytial_sel| univ) => return .rel .univ (some 1)
+  | `(spytial_sel| iden) => return .rel .iden (some 2)
+  | `(spytial_sel| none) => return .rel .none_ (some 1)
+  | `(spytial_sel| sum $x:ident : $dom | $body) => do
+    let (domSel, domArity) ← elabRel scope env dom
+    checkArity dom "a sum-quantifier binder domain" domArity 1
+    let bodyInt ← elabInt scope ((x.getId, .binder) :: env) body
+    return .int (.sumQuant x.getId domSel bodyInt)
   | `(spytial_sel| $a + $b) => elabRelBinary scope env .union "+" a b
   | `(spytial_sel| $a - $b) => elabRelBinary scope env .diff "-" a b
   | `(spytial_sel| $a & $b) => elabRelBinary scope env .inter "&" a b
@@ -408,11 +420,10 @@ private meta partial def elabExpr (scope : SelScope) (env : LEnv) :
     return .rel (.compr binders bodyForm) (some binders.size)
   | stx =>
     match stx.getKind with
-    -- Label projections (matched by kind — `@`-quotations break under `.both`).
-    | ``selProjPlain => return .val (← elabLabel scope env .plain ⟨stx[1]⟩)
-    | ``selProjStr   => return .val (← elabLabel scope env .str ⟨stx[1]⟩)
-    | ``selProjBool  => return .val (← elabLabel scope env .bool ⟨stx[1]⟩)
-    | ``selProjNum   => do
+    | `selProjPlain => return .val (← elabLabel scope env .plain ⟨stx[1]⟩)
+    | `selProjStr   => return .val (← elabLabel scope env .str ⟨stx[1]⟩)
+    | `selProjBool  => return .val (← elabLabel scope env .bool ⟨stx[1]⟩)
+    | `selProjNum   => do
       let (sel, arity) ← elabRel scope env stx[1]
       checkArity stx[1] "a label projection's operand" arity 1
       return .int (.proj sel)
@@ -556,7 +567,6 @@ private meta partial def resolveExprIdent (scope : SelScope) (env : LEnv)
         | _ => throwErrorAt stx m!"'{head}' is a let-bound \
             {if let .int _ := e then "integer" else "value"}; it has no fields to join"
     if rest.isEmpty then
-      -- A lone ident may be a nullary-constructor label (a value).
       if let some v ← resolveCtorLit? scope stx then
         return .val v
     let (sel, arity, unconsumed) ← resolveHead stx head rest
@@ -575,9 +585,6 @@ where
   resolveHead (idStx : Syntax) (head : Name) (rest : List Name) :
       TermElabM (Sel × Option Nat × List Name) := do
     let s := head.toString
-    if s == "univ" then return (.univ, some 1, rest)
-    if s == "iden" then return (.iden, some 2, rest)
-    if s == "none" then return (.none_, some 1, rest)
     if scope.rels.contains s then return (.rel s, some 2, rest)
     if let some arity := scope.introduced.get? s then return (.rel s, some arity, rest)
     -- Longest prefix that names a type wins (`SelQual.Inner.someField`): try
@@ -634,8 +641,8 @@ private meta partial def elabCmp (scope : SelScope) (env : LEnv) (stx : Syntax)
     (op : IntCmp) (rel : Bool) (a b : Syntax) : TermElabM SelForm := do
   let classify (s : Syntax) : Option Bool :=   -- some true = value, some false = int
     match s.getKind with
-    | ``selProjPlain | ``selProjStr | ``selProjBool | ``selStr => some true
-    | ``selProjNum | ``selCard | ``selNum | ``selNegNum => some false
+    | `selProjPlain | `selProjStr | `selProjBool | ``selStr => some true
+    | `selProjNum | ``selCard | ``selNum | ``selNegNum => some false
     | _ => none
   let intCmp : Bool := op matches .lt | .gt | .le | .ge
   let asVal (s : Syntax) : TermElabM SelVal := do
@@ -655,9 +662,9 @@ private meta partial def elabCmp (scope : SelScope) (env : LEnv) (stx : Syntax)
       match s[0].getId.toString with
       | "true" => some true | "false" => some false | _ => none
     else none
-  if a.getKind == ``selProjBool then
+  if a.getKind == `selProjBool then
     if let some bl := boolLitIdent? b then return mkV (← asVal a) (.boolLit bl)
-  if b.getKind == ``selProjBool then
+  if b.getKind == `selProjBool then
     if let some bl := boolLitIdent? a then return mkV (.boolLit bl) (← asVal b)
   match classify a, classify b with
   | some true, _ | _, some true => return mkV (← asVal a) (← asVal b)

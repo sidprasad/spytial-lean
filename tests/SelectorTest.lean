@@ -495,6 +495,27 @@ info: {"constraints":
   hideAtom lo[SBDD]
 ]
 
+/-! ## `sum x : A | ie` integer aggregation quantifier
+
+Lowering parenthesizes it — SGQ extends the body maximally right, so
+`(sum …) > 2` needs the parens the surface omits. -/
+
+/--
+info: {"directives":
+ [{"atomColor":
+   {"value": "red",
+    "selector": "{x : SRB | (sum y : SRB | @num:(y.key)) > 2}"}}]}
+-/
+#guard_msgs in
+#spytial.spec sRB with [
+  atomColor {x : SRB | (sum y : SRB | @num:(y.key)) > 2} "red"
+]
+
+-- The binder domain is checked like the other quantifiers' (arity 1).
+/-- error: a sum-quantifier binder domain must have arity 1, got 2 -/
+#guard_msgs in
+#spytial.spec sRB with [atomColor {x : SRB | (sum y : left | @num:(y.key)) > 2} "red"]
+
 /-! ## Negated comparisons (`!in`, `not in` — both lower to `!in`) -/
 
 /--
@@ -653,6 +674,33 @@ public def sWeird : SWeird := .leaf
 #guard_msgs in
 #spytial.spec sWeird with [hideAtom {x : SWeird | some some and one one}]
 
+/-! ## Vocabulary shadowing — fields literally named `sum` / `univ`
+
+The `.both` flip added `univ`/`iden`/`none`/`sum` keyword rules to the expression
+category. `sum` is only ever the long-form quantifier — bare `sum` fails the rule
+and falls to the ident, so a field named `sum` parses both glued (`x.sum`) and
+spaced (`X . sum`). A nullary `univ` would tie with the ident, so it wins by
+priority; a field named `univ` stays reachable via the glued join `x.univ` (one
+ident token the keyword never matches). -/
+
+public inductive SVocab where
+  | mk (sum univ : SVocab)
+  | leaf
+
+public def sVocab : SVocab := .leaf
+
+/-- info: {"constraints":
+ [{"hideAtom": {"selector": "{x : SVocab | some x.`sum`}"}},
+  {"hideAtom": {"selector": "{x : SVocab | some x.`univ`}"}},
+  {"hideAtom": {"selector": "SVocab.`sum`"}}]}
+-/
+#guard_msgs in
+#spytial.spec sVocab with [
+  hideAtom {x : SVocab | some x.sum},
+  hideAtom {x : SVocab | some x.univ},
+  hideAtom SVocab . sum
+]
+
 /-! ## Products chain left; quantifiers keep their parens under a connective -/
 
 /--
@@ -689,3 +737,10 @@ def hygieneNotInBounds (inBounds : Bool) : Bool := !inBounds
 example : Nat := let and := 5; and
 example : Nat := let ni := hygieneNi; ni
 example : Option Nat := some 3
+-- The `.both` constant/quantifier keywords (`univ`/`iden`/`none`/`sum`) auto-compile
+-- to `nonReservedSymbol`, so they never enter the token table — still plain idents.
+def hygieneSum : Nat := 5
+example : Nat := let univ := 3; univ
+example : Nat := let iden := 4; iden
+example : Nat := let sum := hygieneSum; sum
+example : Nat := let none := 7; none
