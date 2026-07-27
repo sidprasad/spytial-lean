@@ -35,6 +35,7 @@ pass here is evidence about the real infoview render, not a simulation.
 just render              # full suite
 just render -g rbtree    # one case (playwright title filter)
 just render-update       # re-bless baselines — inspect the PNGs first!
+just render-review       # kitty terminals: re-blessed baselines vs HEAD, side by side
 ```
 
 Failures write actual/expected/diff PNGs under `out/test-results/` and a

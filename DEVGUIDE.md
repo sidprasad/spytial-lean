@@ -65,6 +65,7 @@ against `tests/render/baseline/`. See
 ```sh
 just render            # full suite (`just render -g rbtree` filters by case)
 just render-update     # re-bless baselines — inspect the PNGs first!
+just render-review     # kitty terminals: re-blessed baselines vs HEAD, side by side
 ```
 
 Requirements: a host Chrome — Playwright's downloaded browsers don't run on
