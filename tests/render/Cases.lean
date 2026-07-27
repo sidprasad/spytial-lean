@@ -48,7 +48,8 @@ def elabSnapshot : CommandElab := fun
 /-! ## Cases
 
 One per distinct visual feature. Values and specs come from the demos, so these
-snapshots track what a user of the demo files actually sees.
+snapshots track what a user of the demo files actually sees (exception:
+`group-align`, below).
 -/
 
 -- Red-black tree: nil-hiding, key/color attributes, node coloring by field label.
@@ -83,3 +84,19 @@ snapshots track what a user of the demo files actually sees.
 -- No spec at all (Person has none attached): the `cndSpec` prop is absent,
 -- exercising the widget's free-layout path.
 #spytial_snapshot "person-free" alice
+
+-- Purpose-built (not from a demo): group boxes, align, and per-field edge
+-- colors — visual features no current demo exercises.
+structure TreePair where
+  left : Tree Nat
+  right : Tree Nat
+
+def duo : TreePair := { left := .node (.leaf 1) (.leaf 2), right := .leaf 3 }
+
+#spytial_snapshot "group-align" duo with [
+  group Tree grove,
+  align {x, y : Tree | x != y} horizontal,
+  edgeColor left "#e91e63",
+  edgeColor right "#0066ff",
+  hideAtom Nat
+]
