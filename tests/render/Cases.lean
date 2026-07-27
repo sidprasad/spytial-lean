@@ -43,7 +43,8 @@ def elabSnapshot : CommandElab := fun stx => do
 /-! ## Cases
 
 One per distinct visual feature. Values and specs come from the demos, so these
-snapshots track what a user of the demo files actually sees.
+snapshots track what a user of the demo files actually sees (exception:
+`group-align`, below).
 
 The flagship BDD cases (`bdd`, `bdd-reduced`) return with the identity PR —
 the demo and its collapse machinery aren't in this series yet.
@@ -81,3 +82,20 @@ the demo and its collapse machinery aren't in this series yet.
 -- No spec at all (Person has none attached): the `cndSpec` prop is absent,
 -- exercising the widget's free-layout path.
 #spytial_snapshot "person-free" alice
+
+/-- Purpose-built (not from a demo): interim coverage for the visual features
+    the BDD cases carried — group boxes, align, per-field edge colors — until
+    the identity PR brings those demos back. -/
+structure TreePair where
+  left : Tree Nat
+  right : Tree Nat
+
+def duo : TreePair := { left := .node (.leaf 1) (.leaf 2), right := .leaf 3 }
+
+#spytial_snapshot "group-align" duo with [
+  group Tree grove,
+  align {x, y : Tree | x != y} horizontal,
+  edgeColor left "#e91e63",
+  edgeColor right "#0066ff",
+  hideAtom Nat
+]
