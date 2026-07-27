@@ -140,6 +140,11 @@ private meta def suggest (scope : SelScope) (unknown : String) : String :=
   else
     ""
 
+/-- `U+`-prefixed hexadecimal spelling of a character, for naming one that has
+    no printable form in a diagnostic. -/
+private meta def codepoint (c : Char) : String :=
+  s!"U+{String.ofList ((Nat.toDigits 16 c.val.toNat).leftpad 4 '0') |>.toUpper}"
+
 /-- Unknown-name handling: an error in strict scopes, a warning in lenient ones
     (the walker may legitimately emit names we cannot predict there). Returns
     the recovery value used when lenient. -/
@@ -422,15 +427,16 @@ private meta partial def elabExpr (scope : SelScope) (env : LEnv) :
     Syntax → TermElabM EExpr
   | `(spytial_sel| $x:ident) => resolveExprIdent scope env x
   | `(spytial_sel| ($s)) => elabExpr scope env s
-  | `(spytial_sel| $s:str) => return .val (.strLit s.getString)
+  | `(spytial_sel| $s:str) => do
+    if let some c := sgqUnspellableChar? s.getString then
+      throwErrorAt s m!"string literal contains {codepoint c} — SGQ's string \
+        syntax has no escape for it, and it cannot ride raw through the spec"
+    return .val (.strLit s.getString)
   | `(spytial_sel| $n:num) => return .int (.lit (Int.ofNat n.getNat))
   | `(spytial_sel| -$n:num) => return .int (.lit (-(Int.ofNat n.getNat)))
   | `(spytial_sel| univ) => return .rel .univ (some 1)
   | `(spytial_sel| iden) => return .rel .iden (some 2)
-  | stx@`(spytial_sel| none) => do
-    logWarningAt stx "the SGQ engine evaluates `none` to the string \"none\", \
-      not the empty set — use `no e` for emptiness tests (upstream bug)"
-    return .rel .none_ (some 1)
+  | `(spytial_sel| none) => return .rel .none_ (some 1)
   | `(spytial_sel| sum $x:ident : $dom | $body) => do
     let (domSel, domArity) ← elabRel scope env dom
     checkArity dom "a sum-quantifier binder domain" domArity 1

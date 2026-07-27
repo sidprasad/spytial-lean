@@ -13,7 +13,7 @@
     "@leanprover/infoview": "~0.8.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "spytial-core": "^3.4.0"
+    "spytial-core": "~4.1.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

@@ -232,7 +232,12 @@ work, while `some #e` is a compile error rather than a silent falsehood.
 
 Label comparisons accept nullary constructors (`@:x = nil`), string/numeric
 literals, another projection (`@:vr = @:(y.v)`), or — opposite a `@bool:`
-projection — the boolean literals `true`/`false`. `ni` and its negations desugar
+projection — the boolean literals `true`/`false`. A comparison is exact equality
+against the label the relationalizer gave the atom, and each literal form lowers
+to the spelling that makes that equality hold for the value written: `@:x = nil`
+matches the atoms built by the `nil` constructor, and `@str:(x.v) = "abc"` the
+`String` atom holding `abc`. (A string literal carrying a character SGQ cannot
+spell — a control character — is a compile error.) `ni` and its negations desugar
 to Forge's flipped subset (`a ni b ≡ b in a`, `a !ni b ≡ b !in a`), so they lower
 to ordinary subset constraints.
 
@@ -240,11 +245,10 @@ to ordinary subset constraints.
 
 A few forms Forge parses are mislowered by the current spytial-core (SGQ)
 evaluator. They are accepted and emitted with the Forge semantics, but the
-elaborator attaches a warning naming the engine bug: `none` (evaluates to the
-string `"none"`, not `∅` — use `no e`), `<:` / `:>` / `++` (the engine throws at
-render), `A one -> lone B` arrow-multiplicity annotations (silently dropped),
-`` `atom `` backquote literals (a placeholder marker), and `sum[e]` (evaluates
-to `∅`).
+elaborator attaches a warning naming the engine bug: `<:` / `:>` / `++` (the
+engine throws at render), `A one -> lone B` arrow-multiplicity annotations
+(silently dropped), `` `atom `` backquote literals (a placeholder marker), and
+`sum[e]` (evaluates to `∅`).
 
 ### What gets checked
 

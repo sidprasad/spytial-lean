@@ -50,8 +50,7 @@ pins the SGQ lowering (compiled JSON) of every surface form — the Forge
 precedence battery, word/symbolic connectives, quantifiers and `let`, the
 integer layer, box join, negated comparisons (`!in`, `not in`, `ni`, `!ni`) —
 plus one diagnostic per checker error class and a warning golden for each
-engine-bug form (`none`, `<:`, `:>`, `++`, arrow-multiplicity, backquote,
-`sum[e]`).
+engine-bug form (`<:`, `:>`, `++`, arrow-multiplicity, backquote, `sum[e]`).
 
 ### Demos
 

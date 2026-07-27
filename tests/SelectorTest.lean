@@ -65,14 +65,16 @@ info: {"directives":
  [{"edgeStyle":
    {"lineStyle": {"pattern": "dashed", "color": "orange"}, "field": "lo"}},
   {"atomStyle":
-   {"selector": "{x : SBDD | @:x = ff}", "borderStyle": {"color": "red"}}},
+   {"selector": "{x : SBDD | @:x = \"ff\"}", "borderStyle": {"color": "red"}}},
   {"attribute": {"field": "v"}},
   {"inferredEdge":
    {"selector": "lo.hi",
     "name": "shortcut",
     "lineStyle": {"pattern": "dotted", "color": "#123456"}}},
   {"icon":
-   {"showLabels": true, "selector": "{x : SBDD | @:x = tt}", "path": "tt.png"}},
+   {"showLabels": true,
+    "selector": "{x : SBDD | @:x = \"tt\"}",
+    "path": "tt.png"}},
   {"tag": {"value": "bdd", "toTag": "SBDD", "name": "kind"}},
   {"flag": "hideDisconnected"},
   {"hideField": {"field": "hi"}},
@@ -84,7 +86,7 @@ info: {"directives":
    {"selector": "{x, y : SBDD | x->y in lo + hi}", "directions": ["below"]}},
   {"orientation":
    {"selector":
-    "lo - SBDD->{b : SBDD | @:b = tt} - SBDD->{b : SBDD | @:b = ff}",
+    "lo - SBDD->{b : SBDD | @:b = \"tt\"} - SBDD->{b : SBDD | @:b = \"ff\"}",
     "directions": ["left"]}},
   {"align":
    {"selector": "{x, y : SBDD | x != y and x.v = y.v}",
@@ -130,15 +132,15 @@ spytial_spec SRB [
 /--
 info: {"directives":
  [{"atomStyle":
-   {"selector": "{x : SRB | @:(x.color) = red}",
+   {"selector": "{x : SRB | @:(x.color) = \"red\"}",
     "borderStyle": {"color": "red"}}},
   {"attribute": {"field": "key"}}],
  "constraints":
  [{"orientation":
-   {"selector": "left - SRB->{x : SRB | @:x = nil}",
+   {"selector": "left - SRB->{x : SRB | @:x = \"nil\"}",
     "directions": ["left", "below"]}},
   {"orientation":
-   {"selector": "right - SRB->{x : SRB | @:x = nil}",
+   {"selector": "right - SRB->{x : SRB | @:x = \"nil\"}",
     "directions": ["right", "below"]}},
   {"hideAtom": {"selector": "SColor + Nat"}}]}
 -/
@@ -346,6 +348,29 @@ info: {"directives":
   atomColor {x : SRB | @num:(x.key) = 1} "red"
 ]
 
+/-! ## String literals
+
+The relationalizer labels a `String` atom with its Lean spelling, quotes
+included, so a literal matching one lowers to a doubly-quoted SGQ string. -/
+
+/--
+info: {"directives":
+ [{"atomStyle":
+   {"selector": "{x : SBDD | @str:(x.v) = \"\\\"x\\\"\"}",
+    "borderStyle": {"color": "red"}}}],
+ "constraints":
+ [{"hideAtom": {"selector": "{vr : String | @:vr = \"\\\"x\\\"\"}"}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [
+  atomColor {x : SBDD | @str:(x.v) = "x"} "red",
+  hideAtom {vr : String | @:vr = "x"}
+]
+
+/-- error: string literal contains U+0001 — SGQ's string syntax has no escape for it, and it cannot ride raw through the spec -/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom {vr : String | @:vr = "a\x01b"}]
+
 /-! ## Sort-typed field: dropped from vocabulary, scope stays strict -/
 
 /-- A `Type`-valued field is proof-like — the walker drops it, so it is neither
@@ -419,7 +444,7 @@ info: {"constraints":
  [{"hideAtom": {"selector": "{x : SBDD | all y : SBDD | some y.lo}"}},
   {"hideAtom": {"selector": "{x : SBDD | some disj y, z : SBDD | y != z}"}},
   {"hideAtom":
-   {"selector": "{x : SBDD | no y : SBDD, w : String | @:y = tt}"}}]}
+   {"selector": "{x : SBDD | no y : SBDD, w : String | @:y = \"tt\"}"}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [
@@ -532,15 +557,15 @@ info: {"constraints":
   hideAtom {x : SBDD | x.lo not ni x.hi}
 ]
 
-/-! ## Engine-bug forms — accepted, lowered verbatim, warned (upstream SGQ issues) -/
+/-! ## `none` is the empty relation -/
 
 /--
-warning: the SGQ engine evaluates `none` to the string "none", not the empty set — use `no e` for emptiness tests (upstream bug)
----
 info: {"constraints": [{"hideAtom": {"selector": "{x : SBDD | no none}"}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [hideAtom {x : SBDD | no none}]
+
+/-! ## Engine-bug forms — accepted, lowered verbatim, warned (upstream SGQ issues) -/
 
 /--
 warning: the SGQ engine currently throws on `<:` (domain restriction) at render — in a constraint position this kills the render (upstream bug)
