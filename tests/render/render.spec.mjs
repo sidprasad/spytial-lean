@@ -60,11 +60,21 @@ for (const name of cases) {
     expect(events).toContain('layout-complete');
     expect(events).not.toContain('constraint-error');
     expect(events).not.toContain('layout-generation-error');
+    // The layout-progress toast produced the first generation of false
+    // baselines; assert it explicitly rather than hoping the crop catches it.
+    const toastVisible = await page.evaluate(() => {
+      const toast = document.querySelector('webcola-cnd-graph')?.shadowRoot?.querySelector('#loading');
+      return !!toast && toast.classList.contains('visible');
+    });
+    expect(toastVisible, 'layout-progress toast still visible at settle').toBe(false);
 
     try {
-      // toHaveScreenshot waits for two consecutive identical shots, so any
-      // post-layout animation tail settles before the comparison.
-      await expect(page).toHaveScreenshot(`${name}.png`);
+      // The diagram SVG only (the locator pierces the graph element's shadow
+      // root): the toolbar's native <select>s are the most machine-dependent
+      // paint on the page, and everything else is chrome or blank viewport.
+      // toHaveScreenshot still waits for two consecutive identical shots, so
+      // any animation tail settles first.
+      await expect(page.locator('webcola-cnd-graph svg')).toHaveScreenshot(`${name}.png`);
     } finally {
       const { svg, ...metrics } = await page.evaluate(() => window.__spytialFinish());
       if (svg) fs.writeFileSync(path.join(outDir, 'render.svg'), svg);

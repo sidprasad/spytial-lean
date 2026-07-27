@@ -1,9 +1,12 @@
 # Render snapshot tests
 
 Image-snapshot tests for the infoview widget: each case renders real widget
-props in headless Chrome and pixel-compares a screenshot against a committed
-baseline PNG. This is the only test layer that sees actual layout — geometry,
-edge routing, colors, grouping — without launching VS Code.
+props in headless Chrome and pixel-compares a screenshot of the diagram
+container against a committed baseline PNG. This is the only test layer that
+sees actual layout — geometry, edge routing, colors, grouping — without
+launching VS Code. The capture is the container element only: the toolbar's
+native `<select>`s are the most machine-dependent paint on the page, and the
+rest of the viewport is blank.
 
 ## Pipeline
 
@@ -64,7 +67,8 @@ after a few fires), while CDP evaluates always run — and then leans on
 `toHaveScreenshot`'s stabilization (two consecutive identical frames) for any
 animation tail. Byte-stability of the SVG alone is *not* a settle signal: the
 constraint solver pauses mid-layout long enough to fake it (baselines once
-captured a "Computing layout... 8%" toast).
+captured a "Computing layout... 8%" toast — the toast's visibility is now an
+explicit assertion at settle, not a job for the pixel crop).
 
 `metrics.json` per case records node centers/sizes/fills, edge lengths and
 straightness (`straightness: null` = path never routed), and group boxes —
