@@ -1,7 +1,10 @@
-// spytial-core virtual-module + CSS-noop helpers, factored out of
-// rollup.config.js. spytial-core ships as pre-built IIFE bundles that can't be
-// imported as ordinary ES modules, so we wrap each in a virtual module that
-// runs the IIFE and re-exports the global it assigns.
+// spytial-core virtual-module + CSS-noop helpers, shared between the widget
+// build (rollup.config.js) and the render-test harness
+// (tests/render/rollup.config.mjs): both must resolve the spytial-core imports
+// the same way, or the harness stops testing what the infoview runs.
+// spytial-core ships as pre-built IIFE bundles that can't be imported as
+// ordinary ES modules, so we wrap each in a virtual module that runs the IIFE
+// and re-exports the global it assigns.
 import virtual from '@rollup/plugin-virtual';
 import fs from 'fs';
 import path from 'path';

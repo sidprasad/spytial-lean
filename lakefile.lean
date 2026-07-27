@@ -73,6 +73,32 @@ target widgetJsAll pkg : Unit := do
     -- the job's trace is the built JS itself, so out-of-band rebuilds re-embed
     setTrace (← computeTrace (pkg.buildDir / "js" / "spytialWidget.js"))
 
+/-! ## Render-test harness (tests/render/) -/
+
+input_file renderEntry where
+  path := "tests" / "render" / "entry.mjs"
+  text := true
+
+input_file renderRollupConfig where
+  path := "tests" / "render" / "rollup.config.mjs"
+  text := true
+
+/-- Self-contained browser bundle for the headless render tests: the real
+    widget component + react + the spytial-core virtual modules. Built into
+    `tests/render/dist/harness.js`; consumed by `tests/render/render.spec.mjs`. -/
+target renderHarnessJs pkg : Unit := do
+  let widgetJs ← widgetJsAll.fetch
+  let entry ← renderEntry.fetch
+  let cfg ← renderRollupConfig.fetch
+  let virt ← widgetRollupVirtual.fetch
+  widgetJs.bindM (sync := true) fun _ =>
+  entry.bindM (sync := true) fun _ =>
+  cfg.bindM (sync := true) fun _ =>
+  virt.mapM fun _ => do
+    let traceFile := pkg.buildDir / "renderHarness.trace"
+    buildUnlessUpToDate traceFile (← getTrace) traceFile do
+      pkg.runPnpmCommand #["run", "build:render-harness"]
+
 @[default_target]
 lean_lib SpytialLean where
   needs := #[widgetJsAll]

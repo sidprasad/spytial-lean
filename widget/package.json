@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc && rollup --environment NODE_ENV:production --config",
     "build-dev": "tsc && rollup --config",
+    "build:render-harness": "rollup --config ../tests/render/rollup.config.mjs",
     "watch": "rollup --config --watch"
   },
   "dependencies": {
@@ -15,6 +16,7 @@
     "spytial-core": "^2.8.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@rollup/plugin-commonjs": "^28.0.1",
     "@rollup/plugin-node-resolve": "^15.0.2",
     "@rollup/plugin-replace": "^6.0.1",

@@ -54,6 +54,23 @@ with `just demos`, or directly with lake:
 lake build Demos
 ```
 
+### Render tests
+
+Image-snapshot tests of the widget in headless Chrome: each case in
+`tests/render/Cases.lean` dumps the real widget props, a rollup harness mounts
+the same compiled component on them, and Playwright pixel-compares a screenshot
+against `tests/render/baseline/`. See
+[tests/render/README.md](tests/render/README.md).
+
+```sh
+just render            # full suite (`just render -g rbtree` filters by case)
+just render-update     # re-bless baselines — inspect the PNGs first!
+```
+
+Requirements: a host Chrome — Playwright's downloaded browsers don't run on
+NixOS, so the config uses `google-chrome-stable` from PATH (`SPYTIAL_CHROME`
+overrides) — and no strict sandbox (Chrome needs unix sockets).
+
 ### Widget reload
 
 The built JS's hash is part of the `widgetJsAll` trace, so `just build`
@@ -101,8 +118,8 @@ dagre, etc.) — this is why the final widget JS is ~3MB.
 
 ```
 widget/src/spytialWidget.tsx
-  → (tsc)    widget/dist/spytialWidget.js
-  → (rollup) .lake/build/js/spytialWidget.js
+  → (tsc)    widget/dist/spytialWidget.js      ← render harness mounts this
+  → (rollup) .lake/build/js/spytialWidget.js   ← include_str embeds this
 ```
 
 The final `.lake/build/js/spytialWidget.js` is what `include_str` embeds into
@@ -138,4 +155,7 @@ Shows the YAML that gets passed to `parseLayoutSpec`.
 
 ### Widget console errors
 
-In VS Code, open the Developer Tools (**Help → Toggle Developer Tools**) and check the Console tab for `SpytialWidget render error` messages.
+In VS Code, open the Developer Tools (**Help → Toggle Developer Tools**) and
+check the Console tab for `SpytialWidget render error` messages. Outside VS
+Code, `just render` surfaces the same component's errors headlessly (widget
+error state and `constraint-error` events fail the test).
