@@ -17,12 +17,11 @@ public meta structure WalkState where
       `Expr.equal`, so repeated sub-values share one atom and a hash collision cannot
       merge distinct values. Also guards recursion. -/
   seen : ExprStructMap String := {}
-  /-- Per-walk cache: whnf'd type → its `BEq` instance, when usable for
-      declared-equality merging (`none` records both "no instance" and
-      "instance failed to evaluate"). -/
+  /-- Per-walk cache: whnf'd type → its `BEq` instance (`none` = no instance). -/
   beqInstCache : ExprStructMap (Option Expr) := {}
-  /-- Declared-equality representatives per type head: (whnf'd expr, atom id). -/
-  repsByType : Std.HashMap Name (Array (Expr × String)) := {}
+  /-- Declared-equality representatives, keyed by the full whnf'd type — not its
+      head — so `List Nat` never probes `List String` representatives. -/
+  repsByType : ExprStructMap (Array (Expr × String)) := {}
   /-- Per-walk cache: whnf'd type → its `Repr` instance, when usable for leaf
       labels (`none` records both "no instance" and "failed to evaluate"). -/
   reprInstCache : ExprStructMap (Option Expr) := {}
@@ -180,7 +179,8 @@ private meta opaque evalBool (e : Expr) : MetaM Bool
 
 /-- The `BEq` instance for the (whnf'd) type, synthesized at most once per walk per
     type. `Prop`s are ineligible for free: `BEq : Type u → Type u` never synthesizes
-    for them. -/
+    for them. Evaluation failures are per-comparison and never disable the instance
+    (see `tryDeclaredEq`). -/
 meta def getBEqInst? (tyWhnf : Expr) : StateT WalkState MetaM (Option Expr) := do
   if let some cached := (← get).beqInstCache.get? ⟨tyWhnf⟩ then
     return cached
@@ -199,23 +199,25 @@ meta inductive DeclaredEq where
   /-- No usable `BEq` on this type. -/
   | ineligible
 
-/-- Compare `e` (whnf'd, closed) against the representatives of its type under the
-    type's declared `BEq`. An evaluation failure marks the whole type unusable, so a
-    broken or noncomputable instance is attempted only once per walk. -/
-meta def tryDeclaredEq (e tyWhnf : Expr) (typeHead : Name) :
-    StateT WalkState MetaM DeclaredEq := do
+/-- Compare `e` (whnf'd, closed) against the representatives of its (whnf'd) type
+    under the type's declared `BEq`. A failed evaluation belongs to that single
+    comparison — the representative involved is dropped, so an unevaluable value
+    (e.g. one containing `sorry`) costs one failed evaluation total and the
+    instance stays usable for everything else. -/
+meta def tryDeclaredEq (e tyWhnf : Expr) : StateT WalkState MetaM DeclaredEq := do
   let some inst ← getBEqInst? tyWhnf | return .ineligible
-  for (rep, repId) in (← get).repsByType.getD typeHead #[] do
-    -- `.defeq` mode records open representatives too; `==` cannot evaluate those,
-    -- and failing on one must not disable the instance for the whole type.
+  for (rep, repId) in (← get).repsByType.getD ⟨tyWhnf⟩ #[] do
+    -- `.defeq` mode records open representatives too; `==` cannot evaluate those.
     if rep.hasFVar || rep.hasMVar || rep.hasLevelParam then
       continue
-    let isEq ← try
-        evalBool (← Meta.mkAppOptM ``BEq.beq #[none, some inst, some rep, some e])
+    let isEq? ← try
+        some <$> evalBool (← Meta.mkAppOptM ``BEq.beq #[none, some inst, some rep, some e])
       catch _ =>
-        modify fun s => { s with beqInstCache := s.beqInstCache.insert ⟨tyWhnf⟩ none }
-        return .ineligible
-    if isEq then
+        modify fun s =>
+          let pruned := (s.repsByType.getD ⟨tyWhnf⟩ #[]).filter (·.2 != repId)
+          { s with repsByType := s.repsByType.insert ⟨tyWhnf⟩ pruned }
+        pure none
+    if isEq? == some true then
       return .merged repId
   return .newRep
 
@@ -253,7 +255,8 @@ meta def getReprInst? (tyWhnf : Expr) : StateT WalkState MetaM (Option Expr) := 
 
 /-- Label for a leaf atom: `repr` evaluated when the term is closed and its type
     declares it, otherwise the pretty-printed expression. A failing evaluation
-    disables `Repr` labels for the type for the rest of the walk. -/
+    belongs to that one term (e.g. it contains `sorry`) — the `seen` memo keeps
+    retries to one per distinct term, and the instance stays usable. -/
 meta def leafLabel (e tyWhnf : Expr) : StateT WalkState MetaM String := do
   if !e.hasFVar && !e.hasMVar && !e.hasLevelParam then
     if let some inst ← getReprInst? tyWhnf then
@@ -261,7 +264,7 @@ meta def leafLabel (e tyWhnf : Expr) : StateT WalkState MetaM String := do
         let fmt ← evalFormat (← Meta.mkAppOptM ``repr #[none, some inst, some e])
         return fmt.pretty
       catch _ =>
-        modify fun s => { s with reprInstCache := s.reprInstCache.insert ⟨tyWhnf⟩ none }
+        pure ()
   ppLabel e
 
 /-- Walk a Lean expression and produce atoms + relations.
@@ -293,38 +296,41 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : State
   -- first representative the instance calls equal. Literals are skipped: whnf'd
   -- literals are already syntactically canonical, so a lawful `BEq` could never
   -- merge distinct ones.
-  let mut newRepOf? : Option Name := none
-  if !(cfg.identityMode matches .syntactic) && customRel?.isNone && !e.isLit then
-    if let some typeHead := tyHeadName? then
-      let mut beqScanned := false
-      if !e.hasFVar && !e.hasMVar && !e.hasLevelParam then
-        match ← tryDeclaredEq e tyWhnfForLookup typeHead with
-        | .merged repId =>
+  let mut recordRep := false
+  if !(cfg.identityMode matches .syntactic) && customRel?.isNone && !e.isLit
+      && tyHeadName?.isSome then
+    let mut beqScanned := false
+    if !e.hasFVar && !e.hasMVar && !e.hasLevelParam then
+      match ← tryDeclaredEq e tyWhnfForLookup with
+      | .merged repId =>
+        modify (·.markSeen e repId)
+        return repId
+      | .newRep =>
+        recordRep := true
+        beqScanned := true
+      | .ineligible => pure ()
+    -- `.defeq` only: merge definitionally equal subterms — the one notion that
+    -- reaches open terms. Representatives the `BEq` scan already rejected are not
+    -- re-tried (for a lawful instance, defeq implies beq-equal), but open
+    -- representatives were never scanned, so they always are.
+    if cfg.identityMode matches .defeq then
+      for (rep, repId) in (← get).repsByType.getD ⟨tyWhnfForLookup⟩ #[] do
+        if beqScanned && !rep.hasFVar && !rep.hasMVar && !rep.hasLevelParam then
+          continue
+        if ← isDefEqSafe rep e then
           modify (·.markSeen e repId)
           return repId
-        | .newRep =>
-          newRepOf? := some typeHead
-          beqScanned := true
-        | .ineligible => pure ()
-      -- `.defeq` only: merge definitionally equal subterms — the one notion that
-      -- reaches open terms. Skipped when the `BEq` scan already missed: for a
-      -- lawful instance, defeq implies beq-equal, so a second scan cannot hit.
-      if (cfg.identityMode matches .defeq) && !beqScanned then
-        for (rep, repId) in (← get).repsByType.getD typeHead #[] do
-          if ← isDefEqSafe rep e then
-            modify (·.markSeen e repId)
-            return repId
-        newRepOf? := some typeHead
+      recordRep := true
 
   -- Allocate a fresh ID and mark as seen immediately (before recursing)
   let s ← get
   let (atomId, s) := s.freshId
   let s := s.markSeen e atomId
   set s
-  if let some typeHead := newRepOf? then
+  if recordRep then
     modify fun s => { s with
-      repsByType := s.repsByType.insert typeHead
-        ((s.repsByType.getD typeHead #[]).push (e, atomId)) }
+      repsByType := s.repsByType.insert ⟨tyWhnfForLookup⟩
+        ((s.repsByType.getD ⟨tyWhnfForLookup⟩ #[]).push (e, atomId)) }
 
   if let some relFn := customRel? then
     return ← relFn eOrig (walkExpr cfg)

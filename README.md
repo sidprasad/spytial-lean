@@ -235,6 +235,8 @@ An opt-in third level, `.defeq`, additionally merges definitionally equal subter
 via `isDefEq` — the only notion that reaches open terms (with a hypothesis `k`, the
 stuck leaves `f (id k)` and `f k` become one atom). It pays pairwise unification
 cost per subterm and is sensitive to transparency settings, hence not the default.
+(Closed representatives a lawful `BEq` already rejected are not re-checked; an
+unlawful instance can therefore suppress a defeq merge between closed terms.)
 
 ### Relation naming
 

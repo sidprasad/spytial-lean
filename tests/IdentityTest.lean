@@ -181,3 +181,180 @@ open Lean Meta in
     let di' ← relationalize pair
     unless di'.atoms.size == 3 do
       throwError "declared: expected 3 atoms (pair + two leaves), got {di'.atoms.size}"
+
+/-! Regressions from the pre-PR review. -/
+
+namespace IdentityFixture
+
+/-- Representatives are keyed by the full whnf'd type: walking a `List String` first
+    must not disturb `BEq`-merging of two `List Nat` spellings. -/
+public def viaReplicate : List Nat := List.replicate 2 7
+
+/-- A value containing `sorry` cannot be compared by evaluation; it must cost one
+    failed comparison and then get out of the way, not disable `BEq` for `W`. -/
+public structure W where
+  n : Nat
+  deriving BEq
+
+/-- warning: declaration uses `sorry` -/
+#guard_msgs in
+public def wBad : W := ⟨sorry⟩
+
+/-- `DecidableEq` alone must feed declared equality via `instBEqOfDecidableEq`. -/
+public structure DE where
+  n : Nat
+  deriving DecidableEq
+
+/-- Registered types are exempt from declared merging even when their `BEq` calls
+    everything equal — the custom relationalizer owns identity. -/
+public inductive Money where
+  | mk (n : Nat)
+
+public instance : BEq Money := ⟨fun _ _ => true⟩
+
+/-- Zero-field structure: every `Token` term is defeq to `Token.mk` by eta. -/
+public structure Token where
+  deriving BEq
+
+end IdentityFixture
+
+meta def moneyRel : CustomRelationalizer := fun _ _ => do
+  let s ← get
+  let (id, s) := s.freshId
+  set (s.addAtom { id, type := "Money", label := "money" })
+  return id
+
+spytial_relationalizer IdentityFixture.Money moneyRel
+
+/--
+info: {"relations":
+ [{"types": ["Prod", "Prod"],
+   "tuples":
+   [{"types": ["Prod", "Prod"], "atoms": ["atom_0", "atom_1"]},
+    {"types": ["Prod", "Prod"], "atoms": ["atom_4", "atom_5"]}],
+   "name": "fst",
+   "id": "fst"},
+  {"types": ["Prod", "Prod"],
+   "tuples":
+   [{"types": ["Prod", "Prod"], "atoms": ["atom_4", "atom_5"]},
+    {"types": ["Prod", "Prod"], "atoms": ["atom_0", "atom_4"]}],
+   "name": "snd",
+   "id": "snd"},
+  {"types": ["List", "List"],
+   "tuples":
+   [{"types": ["List", "List"], "atoms": ["atom_1", "atom_2"]},
+    {"types": ["List", "List"], "atoms": ["atom_5", "atom_6"]},
+    {"types": ["List", "List"], "atoms": ["atom_7", "atom_6"]}],
+   "name": "head",
+   "id": "head"},
+  {"types": ["List", "List"],
+   "tuples":
+   [{"types": ["List", "List"], "atoms": ["atom_1", "atom_3"]},
+    {"types": ["List", "List"], "atoms": ["atom_7", "atom_8"]},
+    {"types": ["List", "List"], "atoms": ["atom_5", "atom_7"]}],
+   "name": "tail",
+   "id": "tail"}],
+ "atoms":
+ [{"type": "Prod", "label": "mk", "id": "atom_0"},
+  {"type": "List", "label": "cons", "id": "atom_1"},
+  {"type": "String", "label": "\"a\"", "id": "atom_2"},
+  {"type": "List", "label": "nil", "id": "atom_3"},
+  {"type": "Prod", "label": "mk", "id": "atom_4"},
+  {"type": "List", "label": "cons", "id": "atom_5"},
+  {"type": "Nat", "label": "7", "id": "atom_6"},
+  {"type": "List", "label": "cons", "id": "atom_7"},
+  {"type": "List", "label": "nil", "id": "atom_8"}]}
+-/
+#guard_msgs in
+#spytial.datum ((["a"] : List String), IdentityFixture.viaReplicate, ([7, 7] : List Nat))
+
+/--
+warning: declaration uses `sorry`
+---
+warning: declaration uses `sorry`
+---
+info: {"relations":
+ [{"types": ["Prod", "Prod"],
+   "tuples":
+   [{"types": ["Prod", "Prod"], "atoms": ["atom_0", "atom_1"]},
+    {"types": ["Prod", "Prod"], "atoms": ["atom_3", "atom_4"]}],
+   "name": "fst",
+   "id": "fst"},
+  {"types": ["W", "W"],
+   "tuples":
+   [{"types": ["W", "W"], "atoms": ["atom_1", "atom_2"]},
+    {"types": ["W", "W"], "atoms": ["atom_4", "atom_5"]}],
+   "name": "n",
+   "id": "n"},
+  {"types": ["Prod", "Prod"],
+   "tuples":
+   [{"types": ["Prod", "Prod"], "atoms": ["atom_3", "atom_4"]},
+    {"types": ["Prod", "Prod"], "atoms": ["atom_0", "atom_3"]}],
+   "name": "snd",
+   "id": "snd"}],
+ "atoms":
+ [{"type": "Prod", "label": "mk", "id": "atom_0"},
+  {"type": "W", "label": "mk", "id": "atom_1"},
+  {"type": "Nat", "label": "sorry", "id": "atom_2"},
+  {"type": "Prod", "label": "mk", "id": "atom_3"},
+  {"type": "W", "label": "mk", "id": "atom_4"},
+  {"type": "Nat", "label": "5", "id": "atom_5"}]}
+-/
+#guard_msgs in
+#spytial.datum (IdentityFixture.wBad, (⟨5⟩ : IdentityFixture.W), (⟨2+3⟩ : IdentityFixture.W))
+
+/--
+info: {"relations":
+ [{"types": ["Prod", "Prod"],
+   "tuples": [{"types": ["Prod", "Prod"], "atoms": ["atom_0", "atom_1"]}],
+   "name": "fst",
+   "id": "fst"},
+  {"types": ["DE", "DE"],
+   "tuples": [{"types": ["DE", "DE"], "atoms": ["atom_1", "atom_2"]}],
+   "name": "n",
+   "id": "n"},
+  {"types": ["Prod", "Prod"],
+   "tuples": [{"types": ["Prod", "Prod"], "atoms": ["atom_0", "atom_1"]}],
+   "name": "snd",
+   "id": "snd"}],
+ "atoms":
+ [{"type": "Prod", "label": "mk", "id": "atom_0"},
+  {"type": "DE", "label": "mk", "id": "atom_1"},
+  {"type": "Nat", "label": "4", "id": "atom_2"}]}
+-/
+#guard_msgs in
+#spytial.datum ((⟨2+2⟩ : IdentityFixture.DE), (⟨4⟩ : IdentityFixture.DE))
+
+/--
+info: {"relations":
+ [{"types": ["Prod", "Prod"],
+   "tuples": [{"types": ["Prod", "Prod"], "atoms": ["atom_0", "atom_2"]}],
+   "name": "fst",
+   "id": "fst"},
+  {"types": ["Prod", "Prod"],
+   "tuples": [{"types": ["Prod", "Prod"], "atoms": ["atom_0", "atom_4"]}],
+   "name": "snd",
+   "id": "snd"}],
+ "atoms":
+ [{"type": "Prod", "label": "mk", "id": "atom_0"},
+  {"type": "Money", "label": "money", "id": "atom_2"},
+  {"type": "Money", "label": "money", "id": "atom_4"}]}
+-/
+#guard_msgs in
+#spytial.datum (IdentityFixture.Money.mk 1, IdentityFixture.Money.mk 2)
+
+/- Regression: a closed probe must still be defeq-compared against OPEN
+representatives the `BEq` scan never saw — in both traversal orders. -/
+open Lean Meta in
+#eval show MetaM Unit from do
+  let natTy := Lean.mkConst ``Nat
+  let tokTy := Lean.mkConst ``IdentityFixture.Token
+  withLocalDeclD `f (Expr.forallE `x natTy tokTy .default) fun f => do
+  withLocalDeclD `k natTy fun k => do
+    let fk := Lean.mkApp f k
+    let mk ← mkAppM ``IdentityFixture.Token.mk #[]
+    for (a, b, tag) in [(fk, mk, "open-first"), (mk, fk, "closed-first")] do
+      let pair ← mkAppM ``Prod.mk #[a, b]
+      let di ← relationalize pair { identityMode := .defeq }
+      unless di.atoms.size == 2 do
+        throwError "defeq {tag}: expected 2 atoms (pair + merged Token), got {di.atoms.size}"
