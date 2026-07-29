@@ -85,7 +85,7 @@ lean_lib Demos where
 /-- Headless unit tests: `lake build SpytialTests`. -/
 lean_lib SpytialTests where
   srcDir := "tests"
-  roots := #[`TypeShapeTest, `CoverageTest]
+  roots := #[`TypeShapeTest, `CoverageTest, `IdentityTest]
 
 require proofwidgets from
   git "https://github.com/leanprover-community/ProofWidgets4" @ "v0.0.105"

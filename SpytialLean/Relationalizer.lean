@@ -13,8 +13,10 @@ public meta structure WalkState where
   atoms : Array JsonAtom := #[]
   /-- Map from relation name to accumulated tuples. -/
   relations : Std.HashMap String (Array String × Array JsonTuple) := {}
-  /-- Expression pointer → atom ID, for cycle detection. -/
-  seen : Std.HashMap UInt64 String := {}
+  /-- Whnf'd subterm → atom ID. Structural dedup: hash-bucketed but confirmed with
+      `Expr.equal`, so repeated sub-values share one atom and a hash collision cannot
+      merge distinct values. Also guards recursion. -/
+  seen : ExprStructMap String := {}
   nextId : Nat := 0
 
 /-- Generate a fresh atom ID. -/
@@ -32,9 +34,9 @@ public meta def WalkState.addTuple (s : WalkState) (relName : String) (types : A
   let existing := s.relations.getD relName (types, #[])
   { s with relations := s.relations.insert relName (existing.1, existing.2.push tuple) }
 
-/-- Mark an expression as seen with the given atom ID. -/
-public meta def WalkState.markSeen (s : WalkState) (hash : UInt64) (atomId : String) : WalkState :=
-  { s with seen := s.seen.insert hash atomId }
+/-- Record the atom ID assigned to a (whnf'd) expression. -/
+public meta def WalkState.markSeen (s : WalkState) (e : Expr) (atomId : String) : WalkState :=
+  { s with seen := s.seen.insert ⟨e⟩ atomId }
 
 /-- Convert accumulated state to a JsonDataInstance. -/
 public meta def WalkState.toDataInstance (s : WalkState) : JsonDataInstance :=
@@ -151,10 +153,10 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : State
   -- WHNF reduce to expose constructors
   let e ← Meta.whnf eOrig
 
-  -- Check for cycles
-  let hash := e.hash
+  -- Structural dedup (and recursion guard): a repeated sub-value resolves to the
+  -- atom already emitted for it.
   let s ← get
-  if let some existingId := s.seen[hash]? then
+  if let some existingId := s.seen.get? ⟨e⟩ then
     return existingId
 
   let ty ← Meta.inferType e
@@ -162,7 +164,7 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : State
   -- Allocate a fresh ID and mark as seen immediately (before recursing)
   let s ← get
   let (atomId, s) := s.freshId
-  let s := s.markSeen hash atomId
+  let s := s.markSeen e atomId
   set s
 
   -- Check for custom relationalizer before default dispatch
