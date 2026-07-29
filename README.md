@@ -231,6 +231,11 @@ representatives, not quotient classes; and `Repr` is for labels, never identity 
 non-injective `Repr` would merge atoms the way a hash collision does. Select the
 level with `WalkConfig.identityMode` (`.syntactic`, or the default `.declared`).
 
+An opt-in third level, `.defeq`, additionally merges definitionally equal subterms
+via `isDefEq` — the only notion that reaches open terms (with a hypothesis `k`, the
+stuck leaves `f (id k)` and `f k` become one atom). It pays pairwise unification
+cost per subterm and is sensitive to transparency settings, hence not the default.
+
 ### Relation naming
 
 Relations are named after the constructor parameter names you define:

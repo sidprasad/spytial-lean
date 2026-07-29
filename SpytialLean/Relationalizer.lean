@@ -206,6 +206,10 @@ meta def tryDeclaredEq (e tyWhnf : Expr) (typeHead : Name) :
     StateT WalkState MetaM DeclaredEq := do
   let some inst ← getBEqInst? tyWhnf | return .ineligible
   for (rep, repId) in (← get).repsByType.getD typeHead #[] do
+    -- `.defeq` mode records open representatives too; `==` cannot evaluate those,
+    -- and failing on one must not disable the instance for the whole type.
+    if rep.hasFVar || rep.hasMVar || rep.hasLevelParam then
+      continue
     let isEq ← try
         evalBool (← Meta.mkAppOptM ``BEq.beq #[none, some inst, some rep, some e])
       catch _ =>
@@ -214,6 +218,14 @@ meta def tryDeclaredEq (e tyWhnf : Expr) (typeHead : Name) :
     if isEq then
       return .merged repId
   return .newRep
+
+/-- `isDefEq` in a fresh metavariable-context depth — no assignments leak into the
+    caller's goal state — with failures treated as "not equal". Used only in the
+    opt-in `.defeq` identity mode. -/
+meta def isDefEqSafe (a b : Expr) : MetaM Bool := do
+  try
+    Meta.withNewMCtxDepth <| Meta.isDefEq a b
+  catch _ => return false
 
 /-! ### Instance-evaluated leaf labels
 
@@ -282,15 +294,27 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : State
   -- literals are already syntactically canonical, so a lawful `BEq` could never
   -- merge distinct ones.
   let mut newRepOf? : Option Name := none
-  if !(cfg.identityMode matches .syntactic) && customRel?.isNone && !e.isLit
-      && !e.hasFVar && !e.hasMVar && !e.hasLevelParam then
+  if !(cfg.identityMode matches .syntactic) && customRel?.isNone && !e.isLit then
     if let some typeHead := tyHeadName? then
-      match ← tryDeclaredEq e tyWhnfForLookup typeHead with
-      | .merged repId =>
-        modify (·.markSeen e repId)
-        return repId
-      | .newRep => newRepOf? := some typeHead
-      | .ineligible => pure ()
+      let mut beqScanned := false
+      if !e.hasFVar && !e.hasMVar && !e.hasLevelParam then
+        match ← tryDeclaredEq e tyWhnfForLookup typeHead with
+        | .merged repId =>
+          modify (·.markSeen e repId)
+          return repId
+        | .newRep =>
+          newRepOf? := some typeHead
+          beqScanned := true
+        | .ineligible => pure ()
+      -- `.defeq` only: merge definitionally equal subterms — the one notion that
+      -- reaches open terms. Skipped when the `BEq` scan already missed: for a
+      -- lawful instance, defeq implies beq-equal, so a second scan cannot hit.
+      if (cfg.identityMode matches .defeq) && !beqScanned then
+        for (rep, repId) in (← get).repsByType.getD typeHead #[] do
+          if ← isDefEqSafe rep e then
+            modify (·.markSeen e repId)
+            return repId
+        newRepOf? := some typeHead
 
   -- Allocate a fresh ID and mark as seen immediately (before recursing)
   let s ← get

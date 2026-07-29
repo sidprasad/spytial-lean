@@ -163,3 +163,21 @@ end IdentityFixture
 /-- info: {"relations": [], "atoms": [{"type": "Nat", "label": "97", "id": "atom_0"}]} -/
 #guard_msgs in
 #spytial.datum IdentityFixture.opaque97
+
+/- `.defeq` merges reduction-equivalent open terms that the default mode keeps
+apart: with local `f : Nat → Nat` and `k : Nat`, the stuck leaves `f (id k)`
+and `f k` are definitionally equal but syntactically distinct. -/
+open Lean Meta in
+#eval show MetaM Unit from do
+  let natTy := Lean.mkConst ``Nat
+  withLocalDeclD `f (Expr.forallE `x natTy natTy .default) fun f => do
+  withLocalDeclD `k natTy fun k => do
+    let e1 := Lean.mkApp f (← mkAppM ``id #[k])
+    let e2 := Lean.mkApp f k
+    let pair ← mkAppM ``Prod.mk #[e1, e2]
+    let di ← relationalize pair { identityMode := .defeq }
+    unless di.atoms.size == 2 do
+      throwError "defeq: expected 2 atoms (pair + merged leaf), got {di.atoms.size}"
+    let di' ← relationalize pair
+    unless di'.atoms.size == 3 do
+      throwError "declared: expected 3 atoms (pair + two leaves), got {di'.atoms.size}"
