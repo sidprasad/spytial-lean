@@ -17,6 +17,12 @@ public meta structure WalkState where
       `Expr.equal`, so repeated sub-values share one atom and a hash collision cannot
       merge distinct values. Also guards recursion. -/
   seen : ExprStructMap String := {}
+  /-- Per-walk cache: whnf'd type → its `BEq` instance, when usable for
+      declared-equality merging (`none` records both "no instance" and
+      "instance failed to evaluate"). -/
+  beqInstCache : ExprStructMap (Option Expr) := {}
+  /-- Declared-equality representatives per type head: (whnf'd expr, atom id). -/
+  repsByType : Std.HashMap Name (Array (Expr × String)) := {}
   nextId : Nat := 0
 
 /-- Generate a fresh atom ID. -/
@@ -44,10 +50,21 @@ public meta def WalkState.toDataInstance (s : WalkState) : JsonDataInstance :=
     { id := name, name := name, types := types, tuples := tuples : JsonRelation }
   { atoms := s.atoms, relations := relations }
 
+/-- Which equivalence decides when two subterms map to the same atom. -/
+public meta inductive IdentityMode where
+  /-- Structural equality of whnf'd subterms only (the `seen` memo). -/
+  | syntactic
+  /-- Also merge closed subterms that the type's declared `BEq` calls equal. -/
+  | declared
+  /-- Also merge definitionally equal subterms (`Meta.isDefEq`); reaches open terms. -/
+  | defeq
+
 /-- Configuration for the expression walker. -/
 public meta structure WalkConfig where
   /-- When true, skip Prop-typed fields (data mode). When false, show them (proof mode). -/
   filterProofs : Bool := true
+  /-- Identity ladder level; see `IdentityMode`. -/
+  identityMode : IdentityMode := .declared
 
 /-- Check if an expression is a proof or type (erased at runtime). -/
 public meta def isProofArg (e : Expr) : MetaM Bool := do
@@ -145,6 +162,56 @@ public meta def tryEnumerateDomain (ty : Expr) : MetaM (Option (Array (String ×
     else return none
   | _ => return none
 
+/-! ### Declared-equality identity
+
+When a type carries a `BEq` instance (including one derived from `DecidableEq` via
+`instBEqOfDecidableEq`), that instance — not the syntactic spelling of a term — is the
+user's notion of equality, so closed subterms it calls equal share one atom. -/
+
+private meta unsafe def evalBoolUnsafe (e : Expr) : MetaM Bool :=
+  Meta.evalExpr Bool (mkConst ``Bool) e
+
+/-- Evaluate a closed `Bool`-valued expression (declared-equality checks). -/
+@[implemented_by evalBoolUnsafe]
+private meta opaque evalBool (e : Expr) : MetaM Bool
+
+/-- The `BEq` instance for the (whnf'd) type, synthesized at most once per walk per
+    type. `Prop`s are ineligible for free: `BEq : Type u → Type u` never synthesizes
+    for them. -/
+meta def getBEqInst? (tyWhnf : Expr) : StateT WalkState MetaM (Option Expr) := do
+  if let some cached := (← get).beqInstCache.get? ⟨tyWhnf⟩ then
+    return cached
+  let inst? ← try
+      Meta.synthInstance? (← Meta.mkAppM ``BEq #[tyWhnf])
+    catch _ => pure none
+  modify fun s => { s with beqInstCache := s.beqInstCache.insert ⟨tyWhnf⟩ inst? }
+  return inst?
+
+/-- Outcome of a declared-equality lookup for a subterm. -/
+meta inductive DeclaredEq where
+  /-- The type's `BEq` matched an existing representative carrying this atom id. -/
+  | merged (atomId : String)
+  /-- Eligible type but no equal representative: record the subterm as a new one. -/
+  | newRep
+  /-- No usable `BEq` on this type. -/
+  | ineligible
+
+/-- Compare `e` (whnf'd, closed) against the representatives of its type under the
+    type's declared `BEq`. An evaluation failure marks the whole type unusable, so a
+    broken or noncomputable instance is attempted only once per walk. -/
+meta def tryDeclaredEq (e tyWhnf : Expr) (typeHead : Name) :
+    StateT WalkState MetaM DeclaredEq := do
+  let some inst ← getBEqInst? tyWhnf | return .ineligible
+  for (rep, repId) in (← get).repsByType.getD typeHead #[] do
+    let isEq ← try
+        evalBool (← Meta.mkAppOptM ``BEq.beq #[none, some inst, some rep, some e])
+      catch _ =>
+        modify fun s => { s with beqInstCache := s.beqInstCache.insert ⟨tyWhnf⟩ none }
+        return .ineligible
+    if isEq then
+      return .merged repId
+  return .newRep
+
 /-- Walk a Lean expression and produce atoms + relations.
     Returns the atom ID assigned to this expression. -/
 public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : StateT WalkState MetaM String := do
@@ -161,17 +228,42 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : State
 
   let ty ← Meta.inferType e
 
+  -- The custom-relationalizer lookup happens up front: an explicit registration is
+  -- the strongest user intent, so it also disables declared-equality merging.
+  let tyWhnfForLookup ← Meta.whnf ty
+  let tyHeadName? : Option Name :=
+    if let .const n _ := tyWhnfForLookup.getAppFn then some n else none
+  let customRel? ← match tyHeadName? with
+    | some n => getSpytialRelationalizer? n
+    | none => pure none
+
+  -- Declared equality: a closed subterm of a type with `BEq` collapses onto the
+  -- first representative the instance calls equal. Literals are skipped: whnf'd
+  -- literals are already syntactically canonical, so a lawful `BEq` could never
+  -- merge distinct ones.
+  let mut newRepOf? : Option Name := none
+  if !(cfg.identityMode matches .syntactic) && customRel?.isNone && !e.isLit
+      && !e.hasFVar && !e.hasMVar && !e.hasLevelParam then
+    if let some typeHead := tyHeadName? then
+      match ← tryDeclaredEq e tyWhnfForLookup typeHead with
+      | .merged repId =>
+        modify (·.markSeen e repId)
+        return repId
+      | .newRep => newRepOf? := some typeHead
+      | .ineligible => pure ()
+
   -- Allocate a fresh ID and mark as seen immediately (before recursing)
   let s ← get
   let (atomId, s) := s.freshId
   let s := s.markSeen e atomId
   set s
+  if let some typeHead := newRepOf? then
+    modify fun s => { s with
+      repsByType := s.repsByType.insert typeHead
+        ((s.repsByType.getD typeHead #[]).push (e, atomId)) }
 
-  -- Check for custom relationalizer before default dispatch
-  let tyWhnfForLookup ← Meta.whnf ty
-  if let .const typeConstName _ := tyWhnfForLookup.getAppFn then
-    if let some relFn ← getSpytialRelationalizer? typeConstName then
-      return ← relFn eOrig (walkExpr cfg)
+  if let some relFn := customRel? then
+    return ← relFn eOrig (walkExpr cfg)
 
   -- Dispatch by expression form
   match e with
