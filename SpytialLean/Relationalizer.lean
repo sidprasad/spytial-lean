@@ -25,17 +25,12 @@ public meta structure WalkState where
       `Expr.equal`, so repeated sub-values share one atom and a hash collision cannot
       merge distinct values. Also guards recursion. -/
   seen : ExprStructMap String := {}
-  /-- Per-walk cache: whnf'd type → its `BEq` instance (`none` = no instance). -/
-  beqInstCache : ExprStructMap (Option Expr) := {}
+  /-- Per-walk instance cache, keyed by the class application (`BEq τ`,
+      `Hashable τ`, `Repr τ`); `none` records "does not synthesize". -/
+  instCache : ExprStructMap (Option Expr) := {}
   /-- Declared-equality representatives, keyed by the full whnf'd type — not its
       head — so `List Nat` never probes `List String` representatives. -/
   repsByType : ExprStructMap (Array RepEntry) := {}
-  /-- Per-walk cache: whnf'd type → its `Hashable` instance (`none` = no instance).
-      Purely an accelerator for declared equality. -/
-  hashInstCache : ExprStructMap (Option Expr) := {}
-  /-- Per-walk cache: whnf'd type → its `Repr` instance, when usable for leaf
-      labels (`none` records both "no instance" and "failed to evaluate"). -/
-  reprInstCache : ExprStructMap (Option Expr) := {}
   nextId : Nat := 0
 
 /-- Generate a fresh atom ID. -/
@@ -179,45 +174,31 @@ public meta def tryEnumerateDomain (ty : Expr) : MetaM (Option (Array (String ×
 
 When a type carries a `BEq` instance (including one derived from `DecidableEq` via
 `instBEqOfDecidableEq`), that instance — not the syntactic spelling of a term — is the
-user's notion of equality, so closed subterms it calls equal share one atom. -/
+user's notion of equality, so closed subterms it calls equal share one atom.
+(`Prop`s are ineligible for free: `BEq : Type u → Type u` never synthesizes for them.) -/
 
-private meta unsafe def evalBoolUnsafe (e : Expr) : MetaM Bool :=
-  Meta.evalExpr Bool (mkConst ``Bool) e
+private meta unsafe def evalValueUnsafe {α : Type} [Inhabited α] (type e : Expr) : MetaM α :=
+  Meta.evalExpr α type e
+
+/-- Evaluate a closed expression of a known closed type. -/
+@[implemented_by evalValueUnsafe]
+private meta opaque evalValue {α : Type} [Inhabited α] (type e : Expr) : MetaM α
 
 /-- Evaluate a closed `Bool`-valued expression (declared-equality checks). -/
-@[implemented_by evalBoolUnsafe]
-private meta opaque evalBool (e : Expr) : MetaM Bool
-
-private meta unsafe def evalUInt64Unsafe (e : Expr) : MetaM UInt64 :=
-  Meta.evalExpr UInt64 (mkConst ``UInt64) e
+private meta def evalBool : Expr → MetaM Bool := evalValue (mkConst ``Bool)
 
 /-- Evaluate a closed `UInt64`-valued expression (declared-equality hash buckets). -/
-@[implemented_by evalUInt64Unsafe]
-private meta opaque evalUInt64 (e : Expr) : MetaM UInt64
+private meta def evalUInt64 : Expr → MetaM UInt64 := evalValue (mkConst ``UInt64)
 
-/-- The `Hashable` instance for the (whnf'd) type, synthesized at most once per walk
-    per type. An accelerator only: assumed consistent with `==`, and an inconsistent
-    instance can only cause under-merging, never a false merge. -/
-meta def getHashableInst? (tyWhnf : Expr) : StateT WalkState MetaM (Option Expr) := do
-  if let some cached := (← get).hashInstCache.get? ⟨tyWhnf⟩ then
+/-- The `cls` instance for the (whnf'd) type, synthesized at most once per walk per
+    class/type pair (`none` = does not synthesize). Evaluation failures downstream
+    never disable a cached instance (see `tryDeclaredEq`). -/
+meta def getInst? (cls : Name) (tyWhnf : Expr) : StateT WalkState MetaM (Option Expr) := do
+  let classApp ← try Meta.mkAppM cls #[tyWhnf] catch _ => return none
+  if let some cached := (← get).instCache.get? ⟨classApp⟩ then
     return cached
-  let inst? ← try
-      Meta.synthInstance? (← Meta.mkAppM ``Hashable #[tyWhnf])
-    catch _ => pure none
-  modify fun s => { s with hashInstCache := s.hashInstCache.insert ⟨tyWhnf⟩ inst? }
-  return inst?
-
-/-- The `BEq` instance for the (whnf'd) type, synthesized at most once per walk per
-    type. `Prop`s are ineligible for free: `BEq : Type u → Type u` never synthesizes
-    for them. Evaluation failures are per-comparison and never disable the instance
-    (see `tryDeclaredEq`). -/
-meta def getBEqInst? (tyWhnf : Expr) : StateT WalkState MetaM (Option Expr) := do
-  if let some cached := (← get).beqInstCache.get? ⟨tyWhnf⟩ then
-    return cached
-  let inst? ← try
-      Meta.synthInstance? (← Meta.mkAppM ``BEq #[tyWhnf])
-    catch _ => pure none
-  modify fun s => { s with beqInstCache := s.beqInstCache.insert ⟨tyWhnf⟩ inst? }
+  let inst? ← try Meta.synthInstance? classApp catch _ => pure none
+  modify fun s => { s with instCache := s.instCache.insert ⟨classApp⟩ inst? }
   return inst?
 
 /-- Outcome of a declared-equality lookup for a subterm. -/
@@ -236,10 +217,10 @@ meta inductive DeclaredEq where
     (e.g. a noncomputable one) costs one failed evaluation total and the
     instance stays usable for everything else. -/
 meta def tryDeclaredEq (e tyWhnf : Expr) : StateT WalkState MetaM DeclaredEq := do
-  let some inst ← getBEqInst? tyWhnf | return .ineligible
+  let some inst ← getInst? ``BEq tyWhnf | return .ineligible
   -- One evaluated hash per subterm lets the loop below skip whole comparison
   -- compilations; without `Hashable` the scan stays pairwise.
-  let myHash? ← match ← getHashableInst? tyWhnf with
+  let myHash? ← match ← getInst? ``Hashable tyWhnf with
     | some hInst =>
       try
         some <$> evalUInt64 (← Meta.mkAppOptM ``Hashable.hash #[none, some hInst, some e])
@@ -249,7 +230,8 @@ meta def tryDeclaredEq (e tyWhnf : Expr) : StateT WalkState MetaM DeclaredEq := 
     -- `.defeq` mode records open representatives too; `==` cannot evaluate those.
     if rep.expr.hasFVar || rep.expr.hasMVar || rep.expr.hasLevelParam then
       continue
-    -- Different hashes ⇒ not `==`-equal (for a `Hashable` consistent with `BEq`).
+    -- Different hashes ⇒ not `==`-equal (`Hashable` is assumed consistent with
+    -- `==`; an inconsistent instance only under-merges, never falsely merges).
     if let (some h₁, some h₂) := (rep.hash?, myHash?) then
       if h₁ != h₂ then
         continue
@@ -278,23 +260,8 @@ meta def isDefEqSafe (a b : Expr) : MetaM Bool := do
 the hash-collision bug all over again. But when a leaf's type declares `Repr` and the
 term is closed, the evaluated rendering beats the pretty-printed spelling. -/
 
-private meta unsafe def evalFormatUnsafe (e : Expr) : MetaM Std.Format :=
-  Meta.evalExpr Std.Format (mkConst ``Std.Format) e
-
 /-- Evaluate a closed `Std.Format`-valued expression (leaf labels via `Repr`). -/
-@[implemented_by evalFormatUnsafe]
-private meta opaque evalFormat (e : Expr) : MetaM Std.Format
-
-/-- The `Repr` instance for the (whnf'd) type, synthesized at most once per walk per
-    type. -/
-meta def getReprInst? (tyWhnf : Expr) : StateT WalkState MetaM (Option Expr) := do
-  if let some cached := (← get).reprInstCache.get? ⟨tyWhnf⟩ then
-    return cached
-  let inst? ← try
-      Meta.synthInstance? (← Meta.mkAppM ``Repr #[tyWhnf])
-    catch _ => pure none
-  modify fun s => { s with reprInstCache := s.reprInstCache.insert ⟨tyWhnf⟩ inst? }
-  return inst?
+private meta def evalFormat : Expr → MetaM Std.Format := evalValue (mkConst ``Std.Format)
 
 /-- Label for a leaf atom: `repr` evaluated when the term is closed and its type
     declares it, otherwise the pretty-printed expression. A failing evaluation
@@ -302,7 +269,7 @@ meta def getReprInst? (tyWhnf : Expr) : StateT WalkState MetaM (Option Expr) := 
     retries to one per distinct term, and the instance stays usable. -/
 meta def leafLabel (e tyWhnf : Expr) : StateT WalkState MetaM String := do
   if !e.hasFVar && !e.hasMVar && !e.hasLevelParam && !e.hasSorry then
-    if let some inst ← getReprInst? tyWhnf then
+    if let some inst ← getInst? ``Repr tyWhnf then
       try
         let fmt ← evalFormat (← Meta.mkAppOptM ``repr #[none, some inst, some e])
         return fmt.pretty
