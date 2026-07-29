@@ -150,3 +150,16 @@ info: {"relations":
 -/
 #guard_msgs in
 #spytial.datum (IdentityFixture.Plain.pair (.leaf (0+1)) (.leaf 1))
+
+namespace IdentityFixture
+
+/-- `@[irreducible]` keeps whnf from exposing a value, so this lands in the leaf
+    branch; with `Repr Nat` available the label is the evaluated `repr`, not the
+    pretty-printed spelling. `Repr` never affects identity, only how a leaf reads. -/
+@[irreducible] public def opaque97 : Nat := 90 + 7
+
+end IdentityFixture
+
+/-- info: {"relations": [], "atoms": [{"type": "Nat", "label": "97", "id": "atom_0"}]} -/
+#guard_msgs in
+#spytial.datum IdentityFixture.opaque97

@@ -23,6 +23,9 @@ public meta structure WalkState where
   beqInstCache : ExprStructMap (Option Expr) := {}
   /-- Declared-equality representatives per type head: (whnf'd expr, atom id). -/
   repsByType : Std.HashMap Name (Array (Expr × String)) := {}
+  /-- Per-walk cache: whnf'd type → its `Repr` instance, when usable for leaf
+      labels (`none` records both "no instance" and "failed to evaluate"). -/
+  reprInstCache : ExprStructMap (Option Expr) := {}
   nextId : Nat := 0
 
 /-- Generate a fresh atom ID. -/
@@ -212,6 +215,43 @@ meta def tryDeclaredEq (e tyWhnf : Expr) (typeHead : Name) :
       return .merged repId
   return .newRep
 
+/-! ### Instance-evaluated leaf labels
+
+`Repr` is for labels, never identity: a non-injective `Repr` merging atoms would be
+the hash-collision bug all over again. But when a leaf's type declares `Repr` and the
+term is closed, the evaluated rendering beats the pretty-printed spelling. -/
+
+private meta unsafe def evalFormatUnsafe (e : Expr) : MetaM Std.Format :=
+  Meta.evalExpr Std.Format (mkConst ``Std.Format) e
+
+/-- Evaluate a closed `Std.Format`-valued expression (leaf labels via `Repr`). -/
+@[implemented_by evalFormatUnsafe]
+private meta opaque evalFormat (e : Expr) : MetaM Std.Format
+
+/-- The `Repr` instance for the (whnf'd) type, synthesized at most once per walk per
+    type. -/
+meta def getReprInst? (tyWhnf : Expr) : StateT WalkState MetaM (Option Expr) := do
+  if let some cached := (← get).reprInstCache.get? ⟨tyWhnf⟩ then
+    return cached
+  let inst? ← try
+      Meta.synthInstance? (← Meta.mkAppM ``Repr #[tyWhnf])
+    catch _ => pure none
+  modify fun s => { s with reprInstCache := s.reprInstCache.insert ⟨tyWhnf⟩ inst? }
+  return inst?
+
+/-- Label for a leaf atom: `repr` evaluated when the term is closed and its type
+    declares it, otherwise the pretty-printed expression. A failing evaluation
+    disables `Repr` labels for the type for the rest of the walk. -/
+meta def leafLabel (e tyWhnf : Expr) : StateT WalkState MetaM String := do
+  if !e.hasFVar && !e.hasMVar && !e.hasLevelParam then
+    if let some inst ← getReprInst? tyWhnf then
+      try
+        let fmt ← evalFormat (← Meta.mkAppOptM ``repr #[none, some inst, some e])
+        return fmt.pretty
+      catch _ =>
+        modify fun s => { s with reprInstCache := s.reprInstCache.insert ⟨tyWhnf⟩ none }
+  ppLabel e
+
 /-- Walk a Lean expression and produce atoms + relations.
     Returns the atom ID assigned to this expression. -/
 public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : StateT WalkState MetaM String := do
@@ -339,12 +379,12 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : State
         return atomId
       else do
         -- Generic function application or unknown — leaf atom
-        let label ← ppLabel e
+        let label ← leafLabel e tyWhnfForLookup
         modify fun s => s.addAtom { id := atomId, type := typeName, label := label }
         return atomId
     | _ => do
       -- Not a const application — leaf atom
-      let label ← ppLabel e
+      let label ← leafLabel e tyWhnfForLookup
       modify fun s => s.addAtom { id := atomId, type := typeName, label := label }
       return atomId
 
