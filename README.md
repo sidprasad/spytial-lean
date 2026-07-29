@@ -220,7 +220,9 @@ trusted source first:
    first representative's atom, and that representative's structure is what gets
    drawn. For `deriving BEq` this coincides with structural equality; it becomes
    visible with hand-written instances (case-insensitive wrappers, quotient-like
-   types). Types registered with `spytial_relationalizer` are exempt — a custom
+   types). When the type also has `Hashable`, comparisons are bucketed by evaluated
+   hash — assumed consistent with `==` — so unequal values rarely pay a compiled
+   comparison. Types registered with `spytial_relationalizer` are exempt — a custom
    relationalizer owns its type's identity.
 3. Everything else keeps one atom per distinct spelling: sound, if conservative.
 

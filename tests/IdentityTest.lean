@@ -190,8 +190,9 @@ namespace IdentityFixture
     must not disturb `BEq`-merging of two `List Nat` spellings. -/
 public def viaReplicate : List Nat := List.replicate 2 7
 
-/-- A value containing `sorry` cannot be compared by evaluation; it must cost one
-    failed comparison and then get out of the way, not disable `BEq` for `W`. -/
+/-- A value containing `sorry` cannot be compared by evaluation; it is excluded
+    from declared equality up front and must not disturb `BEq`-merging of the
+    healthy `W` values that follow. -/
 public structure W where
   n : Nat
   deriving BEq
@@ -269,10 +270,6 @@ info: {"relations":
 #spytial.datum ((["a"] : List String), IdentityFixture.viaReplicate, ([7, 7] : List Nat))
 
 /--
-warning: declaration uses `sorry`
----
-warning: declaration uses `sorry`
----
 info: {"relations":
  [{"types": ["Prod", "Prod"],
    "tuples":

@@ -8,6 +8,14 @@ namespace SpytialLean
 
 open Lean Meta
 
+/-- A declared-equality representative: the (whnf'd) term, its atom, and its
+    evaluated hash when the type has a usable `Hashable` — probes skip a
+    representative whose hash differs instead of compiling a comparison. -/
+public meta structure RepEntry where
+  expr : Expr
+  atomId : String
+  hash? : Option UInt64 := none
+
 /-- State maintained while walking an expression tree. -/
 public meta structure WalkState where
   atoms : Array JsonAtom := #[]
@@ -21,7 +29,10 @@ public meta structure WalkState where
   beqInstCache : ExprStructMap (Option Expr) := {}
   /-- Declared-equality representatives, keyed by the full whnf'd type — not its
       head — so `List Nat` never probes `List String` representatives. -/
-  repsByType : ExprStructMap (Array (Expr × String)) := {}
+  repsByType : ExprStructMap (Array RepEntry) := {}
+  /-- Per-walk cache: whnf'd type → its `Hashable` instance (`none` = no instance).
+      Purely an accelerator for declared equality. -/
+  hashInstCache : ExprStructMap (Option Expr) := {}
   /-- Per-walk cache: whnf'd type → its `Repr` instance, when usable for leaf
       labels (`none` records both "no instance" and "failed to evaluate"). -/
   reprInstCache : ExprStructMap (Option Expr) := {}
@@ -177,6 +188,25 @@ private meta unsafe def evalBoolUnsafe (e : Expr) : MetaM Bool :=
 @[implemented_by evalBoolUnsafe]
 private meta opaque evalBool (e : Expr) : MetaM Bool
 
+private meta unsafe def evalUInt64Unsafe (e : Expr) : MetaM UInt64 :=
+  Meta.evalExpr UInt64 (mkConst ``UInt64) e
+
+/-- Evaluate a closed `UInt64`-valued expression (declared-equality hash buckets). -/
+@[implemented_by evalUInt64Unsafe]
+private meta opaque evalUInt64 (e : Expr) : MetaM UInt64
+
+/-- The `Hashable` instance for the (whnf'd) type, synthesized at most once per walk
+    per type. An accelerator only: assumed consistent with `==`, and an inconsistent
+    instance can only cause under-merging, never a false merge. -/
+meta def getHashableInst? (tyWhnf : Expr) : StateT WalkState MetaM (Option Expr) := do
+  if let some cached := (← get).hashInstCache.get? ⟨tyWhnf⟩ then
+    return cached
+  let inst? ← try
+      Meta.synthInstance? (← Meta.mkAppM ``Hashable #[tyWhnf])
+    catch _ => pure none
+  modify fun s => { s with hashInstCache := s.hashInstCache.insert ⟨tyWhnf⟩ inst? }
+  return inst?
+
 /-- The `BEq` instance for the (whnf'd) type, synthesized at most once per walk per
     type. `Prop`s are ineligible for free: `BEq : Type u → Type u` never synthesizes
     for them. Evaluation failures are per-comparison and never disable the instance
@@ -194,32 +224,45 @@ meta def getBEqInst? (tyWhnf : Expr) : StateT WalkState MetaM (Option Expr) := d
 meta inductive DeclaredEq where
   /-- The type's `BEq` matched an existing representative carrying this atom id. -/
   | merged (atomId : String)
-  /-- Eligible type but no equal representative: record the subterm as a new one. -/
-  | newRep
+  /-- Eligible type but no equal representative: record the subterm as a new one,
+      carrying its evaluated hash when available. -/
+  | newRep (hash? : Option UInt64)
   /-- No usable `BEq` on this type. -/
   | ineligible
 
 /-- Compare `e` (whnf'd, closed) against the representatives of its (whnf'd) type
     under the type's declared `BEq`. A failed evaluation belongs to that single
     comparison — the representative involved is dropped, so an unevaluable value
-    (e.g. one containing `sorry`) costs one failed evaluation total and the
+    (e.g. a noncomputable one) costs one failed evaluation total and the
     instance stays usable for everything else. -/
 meta def tryDeclaredEq (e tyWhnf : Expr) : StateT WalkState MetaM DeclaredEq := do
   let some inst ← getBEqInst? tyWhnf | return .ineligible
-  for (rep, repId) in (← get).repsByType.getD ⟨tyWhnf⟩ #[] do
+  -- One evaluated hash per subterm lets the loop below skip whole comparison
+  -- compilations; without `Hashable` the scan stays pairwise.
+  let myHash? ← match ← getHashableInst? tyWhnf with
+    | some hInst =>
+      try
+        some <$> evalUInt64 (← Meta.mkAppOptM ``Hashable.hash #[none, some hInst, some e])
+      catch _ => pure none
+    | none => pure none
+  for rep in (← get).repsByType.getD ⟨tyWhnf⟩ #[] do
     -- `.defeq` mode records open representatives too; `==` cannot evaluate those.
-    if rep.hasFVar || rep.hasMVar || rep.hasLevelParam then
+    if rep.expr.hasFVar || rep.expr.hasMVar || rep.expr.hasLevelParam then
       continue
+    -- Different hashes ⇒ not `==`-equal (for a `Hashable` consistent with `BEq`).
+    if let (some h₁, some h₂) := (rep.hash?, myHash?) then
+      if h₁ != h₂ then
+        continue
     let isEq? ← try
-        some <$> evalBool (← Meta.mkAppOptM ``BEq.beq #[none, some inst, some rep, some e])
+        some <$> evalBool (← Meta.mkAppOptM ``BEq.beq #[none, some inst, some rep.expr, some e])
       catch _ =>
         modify fun s =>
-          let pruned := (s.repsByType.getD ⟨tyWhnf⟩ #[]).filter (·.2 != repId)
+          let pruned := (s.repsByType.getD ⟨tyWhnf⟩ #[]).filter (·.atomId != rep.atomId)
           { s with repsByType := s.repsByType.insert ⟨tyWhnf⟩ pruned }
         pure none
     if isEq? == some true then
-      return .merged repId
-  return .newRep
+      return .merged rep.atomId
+  return .newRep myHash?
 
 /-- `isDefEq` in a fresh metavariable-context depth — no assignments leak into the
     caller's goal state — with failures treated as "not equal". Used only in the
@@ -258,7 +301,7 @@ meta def getReprInst? (tyWhnf : Expr) : StateT WalkState MetaM (Option Expr) := 
     belongs to that one term (e.g. it contains `sorry`) — the `seen` memo keeps
     retries to one per distinct term, and the instance stays usable. -/
 meta def leafLabel (e tyWhnf : Expr) : StateT WalkState MetaM String := do
-  if !e.hasFVar && !e.hasMVar && !e.hasLevelParam then
+  if !e.hasFVar && !e.hasMVar && !e.hasLevelParam && !e.hasSorry then
     if let some inst ← getReprInst? tyWhnf then
       try
         let fmt ← evalFormat (← Meta.mkAppOptM ``repr #[none, some inst, some e])
@@ -297,16 +340,20 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : State
   -- literals are already syntactically canonical, so a lawful `BEq` could never
   -- merge distinct ones.
   let mut recordRep := false
+  let mut repHash? : Option UInt64 := none
   if !(cfg.identityMode matches .syntactic) && customRel?.isNone && !e.isLit
       && tyHeadName?.isSome then
     let mut beqScanned := false
-    if !e.hasFVar && !e.hasMVar && !e.hasLevelParam then
+    -- `hasSorry` is excluded up front: compiling such a term can only fail, and
+    -- each attempt logs a spurious "declaration uses sorry" warning.
+    if !e.hasFVar && !e.hasMVar && !e.hasLevelParam && !e.hasSorry then
       match ← tryDeclaredEq e tyWhnfForLookup with
       | .merged repId =>
         modify (·.markSeen e repId)
         return repId
-      | .newRep =>
+      | .newRep h? =>
         recordRep := true
+        repHash? := h?
         beqScanned := true
       | .ineligible => pure ()
     -- `.defeq` only: merge definitionally equal subterms — the one notion that
@@ -314,12 +361,13 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : State
     -- re-tried (for a lawful instance, defeq implies beq-equal), but open
     -- representatives were never scanned, so they always are.
     if cfg.identityMode matches .defeq then
-      for (rep, repId) in (← get).repsByType.getD ⟨tyWhnfForLookup⟩ #[] do
-        if beqScanned && !rep.hasFVar && !rep.hasMVar && !rep.hasLevelParam then
+      for rep in (← get).repsByType.getD ⟨tyWhnfForLookup⟩ #[] do
+        if beqScanned && !rep.expr.hasFVar && !rep.expr.hasMVar
+            && !rep.expr.hasLevelParam then
           continue
-        if ← isDefEqSafe rep e then
-          modify (·.markSeen e repId)
-          return repId
+        if ← isDefEqSafe rep.expr e then
+          modify (·.markSeen e rep.atomId)
+          return rep.atomId
       recordRep := true
 
   -- Allocate a fresh ID and mark as seen immediately (before recursing)
@@ -330,7 +378,7 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : State
   if recordRep then
     modify fun s => { s with
       repsByType := s.repsByType.insert ⟨tyWhnfForLookup⟩
-        ((s.repsByType.getD ⟨tyWhnfForLookup⟩ #[]).push (e, atomId)) }
+        ((s.repsByType.getD ⟨tyWhnfForLookup⟩ #[]).push { expr := e, atomId, hash? := repHash? }) }
 
   if let some relFn := customRel? then
     return ← relFn eOrig (walkExpr cfg)
