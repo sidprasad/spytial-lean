@@ -218,17 +218,21 @@ trusted source first:
 2. **Declared equality** — if the type has a `BEq` instance (including one derived
    from `DecidableEq`), closed subterms the instance calls equal collapse onto the
    first representative's atom, and that representative's structure is what gets
-   drawn. For `deriving BEq` this coincides with structural equality; it becomes
+   drawn. A `DecidableEq`-derived instance is lawful (`a == b = true` implies
+   `a = b`), so atoms merged through it are provably equal values.
+   For `deriving BEq` this coincides with structural equality; it becomes
    visible with hand-written instances (case-insensitive wrappers, quotient-like
    types). When the type also has `Hashable`, comparisons are bucketed by evaluated
    hash — assumed consistent with `==` — so unequal values rarely pay a compiled
-   comparison. Types registered with `spytial_relationalizer` are exempt — a custom
+   comparison. The hash only skips comparisons; it never causes a merge.
+   Types registered with `spytial_relationalizer` are exempt — a custom
    relationalizer owns its type's identity.
 3. Everything else keeps one atom per distinct spelling: sound, if conservative.
 
 Caveats: the syntactic memo wins over declared equality, observable only for
 reflexivity-breaking instances (`Float`'s `NaN == NaN` is `false`, but two occurrences
-of the same `NaN` expression still merge); quotient types without `DecidableEq` show
+of the same `NaN` expression still merge — the memo merges only occurrences of the
+same term, the identity-before-equality rule containers use); quotient types without `DecidableEq` show
 representatives, not quotient classes; and `Repr` is for labels, never identity — a
 non-injective `Repr` would merge atoms the way a hash collision does. Select the
 level with `WalkConfig.identityMode` (`.syntactic`, or the default `.declared`).
