@@ -73,3 +73,49 @@ error: Unknown constant `CoverageFixture.DoesNotExist`
 -/
 #guard_msgs in
 spytial_opt_out CoverageFixture.DoesNotExist "x"
+
+/-! ## Strict gate + empty-namespace guard -/
+
+-- Strict `!` on a fully-covered namespace succeeds — pinning the clean pass so
+-- the empty-root guard below cannot regress it into a false failure.
+/--
+info: Spytial coverage: 4/4 data types in 'CoverageFixture' covered.
+-/
+#guard_msgs in
+#spytial.coverage! CoverageFixture
+
+-- A namespace matching nothing fails strict mode instead of reporting a hollow
+-- 0/0 pass …
+/--
+error: no Spytial coverage data types found under 'NoSuchNamespace' — check the spelling and that the namespace is imported
+-/
+#guard_msgs in
+#spytial.coverage! NoSuchNamespace
+
+-- … and warns (never the success line) in the plain form.
+/--
+warning: no Spytial coverage data types found under 'NoSuchNamespace' — check the spelling and that the namespace is imported
+-/
+#guard_msgs in
+#spytial.coverage NoSuchNamespace
+
+/-! ## Inherited spec counts as covered -/
+
+namespace CovInherit
+
+public structure Parent where
+  a : Nat
+
+public structure Child extends Parent where
+  b : Nat
+
+spytial_spec Parent [hideAtom Nat]
+
+end CovInherit
+
+-- Child has no own spec but renders via Parent's inherited spec — strict passes.
+/--
+info: Spytial coverage: 2/2 data types in 'CovInherit' covered.
+-/
+#guard_msgs in
+#spytial.coverage! CovInherit

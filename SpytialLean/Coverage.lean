@@ -35,7 +35,10 @@ meta def isDataType (ii : InductiveVal) : MetaM Bool :=
   forallTelescopeReducing ii.type fun _ body => return !body.isProp
 
 /-- The coverage candidates in `root`, each paired with whether it is covered (has an
-    attached spec, a custom relationalizer, or an explicit opt-out). -/
+    attached spec, a custom relationalizer, or an explicit opt-out).
+
+    Non-public (module-private) types are name-mangled to `_private.…` — both an
+    internal detail and outside `root`'s prefix — so they are not enumerated. -/
 meta def coverageReport (root : Name) : MetaM (Array (Name × Bool)) := do
   let env ← getEnv
   -- cheap pure name filter first; the MetaM refinement below runs only on survivors
@@ -51,8 +54,17 @@ meta def coverageReport (root : Name) : MetaM (Array (Name × Bool)) := do
   let mut out : Array (Name × Bool) := #[]
   for (n, ii) in candidates do
     unless (← isDataType ii) do continue
-    let covered := (getSpytialSpec? env n).isSome || (getSpytialOptOut? env n).isSome
+    let directlyCovered := (getSpytialSpec? env n).isSome || (getSpytialOptOut? env n).isSome
       || (getSpytialRelationalizerName? env n).isSome
+    -- A structure also renders — and so counts — via an inherited spec, mirroring
+    -- `lookupTypeSpec`'s parent walk (Command.lean). Spec inheritance only:
+    -- relationalizers and opt-outs do not inherit.
+    let covered ← do
+      if directlyCovered || !isStructure env n then
+        pure directlyCovered
+      else
+        let parents ← getAllParentStructures n
+        pure (parents.any (getSpytialSpec? env · |>.isSome))
     out := out.push (n, covered)
   return out
 
@@ -77,7 +89,10 @@ meta def elabSpytialOptOutCmd : CommandElab := fun
 
     `#spytial.coverage! <Namespace>` is strict: it errors on gaps, failing the
     build. Place such a command in a module imported by the build target, after all
-    `spytial_spec`/`spytial_opt_out` declarations. -/
+    `spytial_spec`/`spytial_opt_out` declarations.
+
+    Only the `!` form gates a build by itself; the plain form warns, which fails
+    a build only under `warningAsError`. -/
 syntax (name := spytialCoverageCmd) "#spytial.coverage" "!"? ident : command
 
 @[command_elab spytialCoverageCmd]
@@ -89,7 +104,13 @@ meta def elabSpytialCoverageCmd : CommandElab := fun stx => do
   let covered := (report.filter (·.2)).size
   let uncovered := (report.filterMap fun (n, c) => if c then none else some n)
     |>.qsort (fun a b => decide (toString a < toString b))
-  if uncovered.isEmpty then
+  if total == 0 then
+    -- Nothing matched the root: a mistyped, renamed, or unimported namespace
+    -- must not silently pass — reporting 0/0 as "covered" is a false gate.
+    let msg := m!"no Spytial coverage data types found under '{root}' — check the \
+      spelling and that the namespace is imported"
+    if strict then throwError msg else logWarning msg
+  else if uncovered.isEmpty then
     logInfo m!"Spytial coverage: {covered}/{total} data types in '{root}' covered."
   else
     let listing := String.intercalate "\n" (uncovered.toList.map fun n => s!"  • {n}")
