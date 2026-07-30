@@ -6,7 +6,14 @@ package spytialLean where
   buildArchive? := "SpytialLean.tar.gz"
   releaseRepo := "https://github.com/sidprasad/spytial-lean"
 
-/-! ## Widget JS build targets -/
+/-! ## JS build targets
+
+The repo is one pnpm workspace whose sole member, `widget/`, bundles the
+infoview component, with every shared version pinned once in the root
+`pnpm-workspace.yaml` catalog. pnpm therefore always runs from the package
+root — the workspace root, where the single lockfile lives — and `-C` picks the
+member to act on. `--filter` would read better but exits 0 when no package
+matches its name, so a renamed member would silently build nothing. -/
 
 def widgetDir : FilePath := "widget"
 
@@ -18,22 +25,37 @@ def Lake.Package.runPnpmCommand (pkg : Package) (args : Array String) : LogIO Un
     proc {
       cmd := "powershell"
       args := #["-Command", "pnpm.cmd"] ++ args
-      cwd := some pkg.widgetDir
+      cwd := some pkg.dir
     } (quiet := true)
   else
     proc {
       cmd := "pnpm"
       args
-      cwd := some pkg.widgetDir
+      cwd := some pkg.dir
     } (quiet := true)
+
+input_file pnpmWorkspaceYaml where
+  path := "pnpm-workspace.yaml"
+  text := true
+
+input_file pnpmLock where
+  path := "pnpm-lock.yaml"
+  text := true
+
+input_file rootPackageJson where
+  path := "package.json"
+  text := true
 
 input_file widgetPackageJson where
   path := widgetDir / "package.json"
   text := true
 
-input_file widgetPnpmLock where
-  path := widgetDir / "pnpm-lock.yaml"
-  text := true
+/-- Everything `pnpm install --frozen-lockfile` reads: the workspace layout and
+    catalog, the one lockfile, and every member manifest. -/
+def fetchPnpmWorkspaceFiles : FetchM (Job Unit) := do
+  return Job.mixArray (traceCaption := "pnpm workspace") #[
+    ← pnpmWorkspaceYaml.fetch, ← pnpmLock.fetch, ← rootPackageJson.fetch,
+    ← widgetPackageJson.fetch]
 
 input_dir widgetJsSrcs where
   path := widgetDir / "src"
@@ -53,23 +75,17 @@ input_file widgetTsconfig where
   text := true
 
 target widgetJsAll pkg : Unit := do
-  let srcs ← widgetJsSrcs.fetch
-  let rollupConfig ← widgetRollupConfig.fetch
-  let rollupVirtual ← widgetRollupVirtual.fetch
-  let tsconfig ← widgetTsconfig.fetch
-  let packageJson ← widgetPackageJson.fetch
-  let pnpmLock ← widgetPnpmLock.fetch
+  let inputs := (← fetchPnpmWorkspaceFiles)
+    |>.mix (← widgetJsSrcs.fetch)
+    |>.mix (← widgetRollupConfig.fetch)
+    |>.mix (← widgetRollupVirtual.fetch)
+    |>.mix (← widgetTsconfig.fetch)
   pkg.afterBuildCacheAsync do
-  srcs.bindM (sync := true) fun _ =>
-  rollupConfig.bindM (sync := true) fun _ =>
-  rollupVirtual.bindM (sync := true) fun _ =>
-  tsconfig.bindM (sync := true) fun _ =>
-  packageJson.bindM (sync := true) fun _ =>
-  pnpmLock.mapM fun _ => do
+  inputs.mapM fun _ => do
     let traceFile := pkg.buildDir / "js" / "lake.trace"
     buildUnlessUpToDate traceFile (← getTrace) traceFile do
       pkg.runPnpmCommand #["install", "--frozen-lockfile"]
-      pkg.runPnpmCommand #["run", "build"]
+      pkg.runPnpmCommand #["-C", widgetDir.toString, "run", "build"]
     -- the job's trace is the built JS itself, so out-of-band rebuilds re-embed
     setTrace (← computeTrace (pkg.buildDir / "js" / "spytialWidget.js"))
 
