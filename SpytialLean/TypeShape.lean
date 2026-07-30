@@ -23,15 +23,17 @@ public meta def typeHead? (ty : Expr) : MetaM (Option Name) := do
   | .const n _ => return some n
   | _          => return none
 
-/-- Const heads of a type application's *type* arguments (`List Node` →
-    `#[Node]`), so scope closures can see through polymorphic containers.
-    Value arguments (`Fin 3`'s `3`) and anything without a constant head
-    contribute no vocabulary and are skipped. -/
-public meta def typeConstArgHeads (ty : Expr) : MetaM (Array Name) := do
-  ty.getAppArgs.filterMapM fun arg => do
+/-- Const heads of a type application's *type* arguments, recursively
+    (`List (Node GraderKind)` → `#[Node, GraderKind]`), so scope closures can
+    see through polymorphic containers even where a field's type is a bare
+    parameter of the container. Value arguments (`Fin 3`'s `3`) and anything
+    without a constant head contribute no vocabulary and are skipped. -/
+public meta partial def typeConstArgHeads (ty : Expr) : MetaM (Array Name) := do
+  ty.getAppArgs.flatMapM fun arg => do
     let arg ← Meta.whnf arg
-    let .const n _ := arg.getAppFn | return none
-    return if (← Meta.inferType arg).isSort then some n else none
+    let inner ← typeConstArgHeads arg
+    let .const n _ := arg.getAppFn | return inner
+    return if (← Meta.inferType arg).isSort then #[n] ++ inner else inner
 
 public meta def sigOfType (ty : Expr) : MetaM String := do
   match ← typeHead? ty with

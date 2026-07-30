@@ -188,6 +188,17 @@ public meta unsafe def getSpytialRelationalizerImpl (typeName : Name) :
 @[implemented_by getSpytialRelationalizerImpl]
 public meta opaque getSpytialRelationalizer? (typeName : Name) : MetaM (Option CustomRelationalizer)
 
+/-- Evaluate a closed `String`-typed expression to its value; `none` when it
+    cannot be evaluated (open terms). -/
+public meta unsafe def evalStringImpl (e : Expr) : MetaM (Option String) := do
+  try
+    return some (← Meta.evalExpr String (mkConst ``String) e)
+  catch _ =>
+    return none
+
+@[implemented_by evalStringImpl]
+public meta opaque evalString? (e : Expr) : MetaM (Option String)
+
 /-- Try to enumerate all elements of a finite type.
     Returns `some [(label, expr)]` for finite types, `none` otherwise. -/
 public meta def tryEnumerateDomain (ty : Expr) : MetaM (Option (Array (String × Expr))) := do
@@ -646,6 +657,16 @@ private meta def customDispatch? (eOrig e tyKey : Expr)
   modify fun s => { s with customSeen := s.customSeen.insert ⟨e⟩ id }
   return some id
 
+/-- A closed `String` that whnf did not surface as a literal (appends,
+    interpolation) still denotes one; walk that literal instead of its byte
+    representation. Shared by the fused walker and the reference, and purely
+    the decomposition layer: the resulting literal merges only as `String`
+    identity declarations say, like any written literal. -/
+private meta def normalizeStringValue (e tyKey : Expr) : MetaM Expr := do
+  if e matches .lit (.strVal _) then return e
+  unless tyKey.isConstOf ``String && isClosedValue e do return e
+  return ((← evalString? e).map (Expr.lit <| .strVal ·)).getD e
+
 /-- Emit the atom for `e` (already whnf'd; id already allocated) and walk its
     children through `recurse` — the display dispatch shared by the fused
     walker and the two-pass reference. `recurse` closes over the child walk
@@ -785,6 +806,7 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
   if let some id ← customDispatch? eOrig e tyKey
       (fun guardId c => walkExpr cfg c { mode, ancestors := ctx.ancestors.push (e, guardId) }) then
     return id
+  let e ← normalizeStringValue e tyKey
   -- The identity decision (declared mode, closed subterms only).
   let verdict ←
     if mode == .declared && isClosedValue e then identityVerdict tyKey e
@@ -847,6 +869,7 @@ public meta partial def referenceRelationalize (e : Expr) (cfg : WalkConfig := {
     if let some id ← customDispatch? eOrig e tyKey
         (fun guardId c => refWalk c { mode, ancestors := ctx.ancestors.push (e, guardId) }) then
       return id
+    let e ← normalizeStringValue e tyKey
     let s ← get
     let (atomId, s) := s.freshId
     set s

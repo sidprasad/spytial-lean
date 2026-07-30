@@ -356,16 +356,31 @@ private meta def elabRelationalized (t : Syntax) (cfg : WalkConfig := {}) :
   let e ← elabTermInstantiated t
   return (e, ← relationalize e cfg)
 
+/-- Seed relations the type declares but this value happens not to exercise,
+    as empty. A selector naming an absent constructor's field (`err` in a trace
+    with no internal errors) then evaluates to the empty set instead of
+    tripping the engine's unresolved-name warning — so one spec serves every
+    value of the type. -/
+private meta def seedDeclaredRelations (scope : SelScope)
+    (di : JsonDataInstance) : JsonDataInstance :=
+  let present := di.relations.map (·.name)
+  let missing := scope.rels.toArray.filter fun (r, _) =>
+    r != "scrutinee" && !present.contains r
+  let seeded := missing.map fun (r, owner) =>
+    let sig := shortName owner
+    { id := r, name := r, types := #[sig, sig], tuples := #[] : JsonRelation }
+  { di with relations := di.relations ++ seeded }
+
 /-- Elaborate a term and resolve its layout spec: an explicit `with [<ops>]`
     overrides a spec attached to the term's type. The composed spec is rendered
     once here, at payload-build time. -/
 private meta def elabSpytialPayload (t : Syntax) (ops? : Option (Array (TSyntax `spytial_op)))
     (cfg : WalkConfig) : TermElabM (JsonDataInstance × Option String) := do
   let (e, di) ← elabRelationalized t cfg
+  let scope ← scopeForExpr e
+  let di := seedDeclaredRelations scope di
   let spec? ← match ops? with
-    | some ops => do
-      let scope ← scopeForExpr e
-      pure (some (← elabSpytialOps scope ops))
+    | some ops => pure (some (← elabSpytialOps scope ops))
     | none => lookupTypeSpec e
   return (di, spec?.map SpytialSpec.render)
 

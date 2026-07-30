@@ -158,3 +158,18 @@ open Lean in
       for a in t.atoms do
         unless atomIds.contains a do
           throwError "dangling endpoint '{a}' in relation '{r.name}' — not an emitted atom"
+
+/-- A computed and a literal spelling of one string: both walk as the value's
+    literal, never its byte guts. They stay two atoms — the as-written default
+    holds for literals; declaring `SpytialIdentity String` is what merges them. -/
+public def composedStrings : List String := ["num-rooms" ++ "-def", "num-rooms-def"]
+
+open Lean in
+#eval show MetaM Unit from do
+  let di ← relationalize (mkConst ``composedStrings)
+  let strAtoms := di.atoms.toList.filter (·.type == "String")
+  unless strAtoms.length == 2 &&
+      strAtoms.all (·.label == "\"num-rooms-def\"") do
+    throwError "computed string: expected two \"num-rooms-def\" atoms, got {strAtoms.map (·.label)}"
+  unless di.atoms.all (fun a => a.type != "ByteArray" && a.type != "UInt8") do
+    throwError "computed string leaked its byte representation"
