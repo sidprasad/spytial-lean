@@ -21,11 +21,14 @@ consumes these. -/
 
 /-- Internal representation of `IdentityKey`. Leaves (`str`, `nat`) and
     composites (`node`) are distinct constructors, so tupling is injective for
-    free. -/
+    free. `spelling` is its own constructor so the walker's opacity gate
+    (keying a deliberately-opaque leaf by its spelling) can never collide with
+    a genuine structural or encoded key. -/
 private inductive KeyRep where
   | str (s : String)
   | nat (n : Nat)
   | node (ks : List KeyRep)
+  | spelling (s : String)
   deriving BEq, Hashable, Repr, Inhabited
 
 /-- Opaque identity token. Guaranteed properties: decidable equality, hashable,
@@ -43,6 +46,13 @@ public def IdentityKey.ofNat (n : Nat) : IdentityKey := ⟨.nat n⟩
 
 public def IdentityKey.ofList (ks : List IdentityKey) : IdentityKey :=
   ⟨.node (ks.map (·.rep))⟩
+
+/-- Key for a deliberately-opaque leaf (`@[irreducible]` / `opaque` head), from
+    its spelling — the walker's opacity gate. A distinct constructor underneath,
+    so a spelling key never collides with any `ofString`/`ofNat`/`ofList` key a
+    structural or encoded identity can produce: `leaf hidden` merges with other
+    occurrences of the same spelling and with nothing else. -/
+public def IdentityKey.ofSpelling (s : String) : IdentityKey := ⟨.spelling s⟩
 
 /-! ## Encoding: ToIdentityKey
 
@@ -208,14 +218,16 @@ walker; this layer provides only the types. -/
     typechecks) walks `declared` — spell the value `Raw.mk t`. -/
 @[expose] public def Raw (α : Type u) : Type u := α
 
-public def Raw.mk {α : Type u} (a : α) : Raw α := a
+-- `@[expose]` on the `mk`s too: without it, module contexts cannot whnf-melt
+-- the wrapper application, and the walker's unwrap relies on the melt.
+@[expose] public def Raw.mk {α : Type u} (a : α) : Raw α := a
 
 /-- The dual shift: back to `declared` for the subtree — the unquote — so a
     term draws as written except one collapsed sub-region. Same device and
     instance-search invisibility as `Raw`. -/
 @[expose] public def Viewed (α : Type u) : Type u := α
 
-public def Viewed.mk {α : Type u} (a : α) : Viewed α := a
+@[expose] public def Viewed.mk {α : Type u} (a : α) : Viewed α := a
 
 /-! ## Derived-structural registry
 
