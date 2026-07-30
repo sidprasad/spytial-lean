@@ -540,9 +540,9 @@ maximally right, so `(sum …) > 2` needs the parens the surface omits. -/
 
 /--
 info: {"directives":
- [{"atomColor":
-   {"value": "red",
-    "selector": "{x : SRB | (sum y : SRB | @num:(y.key)) > 2}"}}]}
+ [{"atomStyle":
+   {"selector": "{x : SRB | (sum y : SRB | @num:(y.key)) > 2}",
+    "borderStyle": {"color": "red"}}}]}
 -/
 #guard_msgs in
 #spytial.spec sRB with [
