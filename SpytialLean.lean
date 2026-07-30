@@ -1,5 +1,6 @@
 module
 
+public import SpytialLean.Identity
 public meta import SpytialLean.Types
 public meta import SpytialLean.Selector
 public meta import SpytialLean.Spec
