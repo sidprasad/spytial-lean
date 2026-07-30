@@ -42,6 +42,13 @@ public inductive STree (α : Type) where
 
 public def sTree : STree Nat := .node (.leaf 1) (.leaf 2)
 
+/-- Container field: the closure follows `List`'s type argument, so `SBDD`'s
+    relation names are known here; the scope stays lenient (`List`'s α). -/
+public structure SForest where
+  trees : List SBDD
+
+public def sForest : SForest := ⟨[sExample]⟩
+
 public section
 
 /-- Dump the stored spec of a type (tests attach + storage + lowering). -/
@@ -179,13 +186,27 @@ info: {"constraints":
 ]
 
 /--
-warning: unknown name 'lft' (did you mean 'left'?) — the vocabulary of 'STree' is open (a custom relationalizer, type parameter, or function field makes it unpredictable), so the name passes through unchecked
+warning: unknown name 'lft' (did you mean 'Nat', 'left'?) — the vocabulary of 'STree' is open (a custom relationalizer, type parameter, or function field makes it unpredictable), so the name passes through unchecked
 ---
 info: {"constraints": [{"orientation": {"selector": "lft", "directions": ["below"]}}]}
 -/
 #guard_msgs in
 #spytial.spec sTree with [
   orientation lft below
+]
+
+/-! Element relations through a container field resolve silently: `lo` is
+    `SBDD` vocabulary, reachable only via `trees : List SBDD`'s type argument. -/
+
+/--
+info: {"constraints":
+ [{"orientation": {"selector": "lo", "directions": ["below"]}},
+  {"hideAtom": {"selector": "List"}}]}
+-/
+#guard_msgs in
+#spytial.spec sForest with [
+  orientation lo below,
+  hideAtom List
 ]
 
 /-! ## Checker errors — one per class -/

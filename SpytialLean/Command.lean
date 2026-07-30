@@ -308,11 +308,14 @@ meta def elabSpytialOps (scope : SelScope) (ops : Array (TSyntax `spytial_op)) :
   return spec.toList
 
 /-- The scope for a `with [...]` op list: the head of the term's type when it
-    has one, else a fully lenient scope (everything warns, nothing errors). -/
+    has one — seeded with the type's own arguments, so a `List Node` root
+    admits `Node`'s vocabulary — else a fully lenient scope (everything warns,
+    nothing errors). -/
 meta def scopeForExpr (e : Expr) : MetaM SelScope := do
-  match ← typeHead? (← inferType e) with
-  | some n => SelScope.ofType n
-  | none => return { root := `_anonymous, lenient := true }
+  let ty ← Meta.whnf (← inferType e)
+  match ty.getAppFn with
+  | .const n _ => SelScope.ofType n (seeds := ← typeConstArgHeads ty)
+  | _ => return { root := `_anonymous, lenient := true }
 
 /-! ## #spytial command -/
 

@@ -62,13 +62,15 @@ private meta def scalarTypes : List Name :=
   [``Nat, ``Int, ``String, ``Char, ``Float, ``UInt8, ``UInt16, ``UInt32, ``UInt64, ``USize]
 
 /-- Compute the scope of `root`: walk the field-type closure collecting sigs,
-    relation names, and nullary-constructor labels. -/
-meta def SelScope.ofType (root : Name) : MetaM SelScope := do
+    relation names, and nullary-constructor labels. `seeds` adds extra starting
+    points — the root type's own type arguments, when the caller has them
+    (`List Node` contributes `Node`). -/
+meta def SelScope.ofType (root : Name) (seeds : Array Name := #[]) : MetaM SelScope := do
   let env ← getEnv
   let mut scope : SelScope := { root }
   -- Stuck-match nodes can appear in any open value, typed at the scrutinized type.
   scope := { scope with rels := scope.rels.insert "scrutinee" root }
-  let mut queue : Array Name := #[root]
+  let mut queue : Array Name := #[root] ++ seeds
   let mut seen : NameSet := {}
   while !queue.isEmpty do
     let t := queue.back!
@@ -98,6 +100,7 @@ meta def SelScope.ofType (root : Name) : MetaM SelScope := do
             match f.typeHead with
             | some ft => queue := queue.push ft
             | none => scope := { scope with lenient := true }
+            queue := queue ++ f.typeArgHeads
   return scope
 
 /-- Register a spec-introduced name (a group, an inferred edge) with its arity. -/
