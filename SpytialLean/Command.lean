@@ -63,14 +63,14 @@ private meta def elabRelationalized (t : Syntax) (cfg : WalkConfig := {}) :
 
 /-- Elaborate a term and resolve its layout spec: an explicit `with <ops>`
     overrides a spec attached to the term's type. The composed spec is rendered
-    to YAML once here, at payload-build time. -/
+    once here, at payload-build time. -/
 private meta def elabSpytialPayload (t : Syntax) (spec? : Option Syntax)
     (cfg : WalkConfig) : TermElabM (JsonDataInstance × Option String) := do
   let (e, di) ← elabRelationalized t cfg
   let spec ← match spec? with
     | some specTerm => some <$> evalSpytialSpec specTerm
     | none => lookupTypeSpec e
-  return (di, spec.map SpytialSpec.toYaml)
+  return (di, spec.map SpytialSpec.render)
 
 private meta def spytialProps (di : JsonDataInstance) (cndSpec? : Option String) : Json :=
   Json.mkObj <|
@@ -165,15 +165,15 @@ meta def elabSpytialRelationalizerCmd : CommandElab := fun
 
 /-! ## Debugging commands -/
 
-/-- `#spytial.spec <term> with [<ops>]` prints the generated YAML spec.
-    Useful for debugging whether the spec is what you expect. -/
+/-- `#spytial.spec <term> with [<ops>]` prints the spec string handed to
+    spytial-core. Useful for debugging whether the spec is what you expect. -/
 syntax (name := spytialSpecDebug) "#spytial.spec " term " with " term : command
 
 @[command_elab spytialSpecDebug]
 meta def elabSpytialSpecDebug : CommandElab := fun
   | `(#spytial.spec $_t:term with $specTerm:term) => do
-    let yamlStr ← liftTermElabM <| SpytialSpec.toYaml <$> evalSpytialSpec specTerm
-    logInfo m!"{yamlStr}"
+    let specStr ← liftTermElabM <| SpytialSpec.render <$> evalSpytialSpec specTerm
+    logInfo m!"{specStr}"
   | stx => throwError "Unexpected syntax {stx}."
 
 /-- `#spytial.datum <term>` prints the generated JSON data instance.
