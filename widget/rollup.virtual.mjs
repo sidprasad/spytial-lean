@@ -13,7 +13,12 @@ function readBundle(rel) {
   const p = path.resolve(widgetDir, rel);
   if (!fs.existsSync(p))
     throw new Error(`${p} not found — build spytial-core first`);
-  return fs.readFileSync(p, 'utf-8');
+  const contents = fs.readFileSync(p, 'utf-8');
+  // A local `file:` core checkout can leave an empty bundle mid-build;
+  // embedding it silently would ship an empty module.
+  if (contents.trim() === '')
+    throw new Error(`${p} is empty — rebuild spytial-core`);
+  return contents;
 }
 
 /** Handle CSS imports from spytial-core source as no-ops
