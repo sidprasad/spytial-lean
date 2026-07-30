@@ -111,7 +111,7 @@ lean_lib Demos where
   srcDir := "demos"
   roots := #[`Showcase, `ProofFieldFiltering, `FunctionFields, `TypeClassInstances,
              `CustomRelationalizer, `HoareLogic, `OperationalSemantics, `ProofTerms,
-             `PartialTerms]
+             `PartialTerms, `BDD]
   needs := #[widgetJsAll]
 
 /-- Headless unit tests: `lake build SpytialTests`. -/
