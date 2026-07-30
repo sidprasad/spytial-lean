@@ -104,6 +104,17 @@ public meta unsafe def getSpytialRelationalizerImpl (typeName : Name) :
 @[implemented_by getSpytialRelationalizerImpl]
 public meta opaque getSpytialRelationalizer? (typeName : Name) : MetaM (Option CustomRelationalizer)
 
+/-- Evaluate a closed `String`-typed expression to its value; `none` when it
+    cannot be evaluated (open terms). -/
+public meta unsafe def evalStringImpl (e : Expr) : MetaM (Option String) := do
+  try
+    return some (← Meta.evalExpr String (mkConst ``String) e)
+  catch _ =>
+    return none
+
+@[implemented_by evalStringImpl]
+public meta opaque evalString? (e : Expr) : MetaM (Option String)
+
 /-- Try to enumerate all elements of a finite type.
     Returns `some [(label, expr)]` for finite types, `none` otherwise. -/
 public meta def tryEnumerateDomain (ty : Expr) : MetaM (Option (Array (String × Expr))) := do
@@ -214,6 +225,20 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : State
   | _ => do
     -- Try to get the type name
     let typeName ← sigOfType ty
+
+    -- A String that whnf did not surface as a literal (appends, interpolation)
+    -- still denotes one; evaluate it rather than walking its byte
+    -- representation, and reconcile the seen-map with the literal spelling so
+    -- a computed and a literal occurrence of the same string stay one atom.
+    if typeName == "String" then
+      if let some s ← evalString? e then
+        let litHash := (Expr.lit (.strVal s)).hash
+        if let some existingId := (← get).seen[litHash]? then
+          modify (·.markSeen hash existingId)
+          return existingId
+        modify fun st => st.addAtom { id := atomId, type := "String", label := s!"\"{s}\"" }
+        modify (·.markSeen litHash atomId)
+        return atomId
 
     -- Check if it's an application of a constructor
     match e.getAppFn with

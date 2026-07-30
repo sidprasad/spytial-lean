@@ -159,3 +159,16 @@ open Lean in
       for a in t.atoms do
         unless atomIds.contains a do
           throwError "finding 6: dangling endpoint '{a}' in relation '{r.name}' — not an atom"
+
+/-- A computed and a literal spelling of one string: one atom, no byte guts. -/
+public def composedStrings : List String := ["num-rooms" ++ "-def", "num-rooms-def"]
+
+open Lean in
+#eval show MetaM Unit from do
+  let di ← relationalize (mkConst ``composedStrings)
+  let strAtoms := di.atoms.toList.filter (·.type == "String")
+  unless strAtoms.length == 1 &&
+      strAtoms.all (·.label == "\"num-rooms-def\"") do
+    throwError "computed string: expected one \"num-rooms-def\" atom, got {strAtoms.map (·.label)}"
+  unless di.atoms.all (fun a => a.type != "ByteArray" && a.type != "UInt8") do
+    throwError "computed string leaked its byte representation"
