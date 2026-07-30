@@ -175,8 +175,10 @@ type nobody has visualized yet.
 
 ## The selector language
 
-Selectors are Forge-style relational expressions over the diagram's atoms and
-relations, embedded as Lean syntax (category `spytial_sel`):
+Selectors replicate Forge's relational expression/formula grammar, embedded as
+Lean syntax (categories `spytial_sel` and `spytial_sel_form`).
+
+**Expressions** (`spytial_sel`):
 
 | Form | Meaning |
 |------|---------|
@@ -185,14 +187,62 @@ relations, embedded as Lean syntax (category `spytial_sel`):
 | `a + b`, `a - b`, `a & b` | union, difference, intersection |
 | `a->b` | product |
 | `a . b` (or a glued `x.v`) | relational join |
-| `^a`, `*a`, `~a` | transitive closure, reflexive-transitive closure, transpose |
+| `a[b, …]` | box join (`a[b] ≡ b.a`) |
+| `^a`, `*a`, `~a` | transitive/reflexive-transitive closure, transpose |
 | `{x, y : T \| φ}` | set comprehension (arity = number of binders) |
-| `@:e = lit` | label comparison (`@str:`/`@bool:`/`@num:` for typed reads) |
+| `@:e`, `@str:e`, `@bool:e` | label projections (string/bool value reads) |
+| `univ`, `iden` | the universe and identity relations |
 
-Formulas inside comprehensions use Forge's symbolic connective spellings —
-`&&`, `||`, `=>`, `!`, plus `in`, `=`, `!=` — and the multiplicity forms
-`some`/`no`/`lone`/`one <sel>`. Label comparisons accept nullary constructors
-(`@:x = nil`), string/numeric literals, or another projection (`@:vr = @:(y.v)`).
+**Formulas** (comprehension/quantifier bodies). Every connective has a symbolic
+and a word spelling; both lower identically:
+
+| Tier (loosest → tightest) | Spellings |
+|---|---|
+| disjunction | `\|\|` / `or` |
+| exclusive or | `xor` |
+| bi-implication | `<=>` / `iff` |
+| implication (+ `else`) | `=>` / `implies` |
+| conjunction | `&&` / `and` |
+| negation | `!` / `not` |
+| comparison | `in`, `=`, `!=`, `!in`, `not in`, `ni`, `!ni`, `not ni`; int-only `< > <= >= =<` |
+| multiplicity | `some`/`no`/`lone`/`one <sel>` |
+
+Note the **Forge precedence**: implication binds *tighter* than `or`/`iff` (so
+`a \|\| b => c` means `a \|\| (b => c)`) and is the only right-associative
+connective (`a => b => c` is `a => (b => c)`).
+
+**Quantifiers** bind variables over a domain: `all/no/some/lone/one [disj]
+x, y : A, z : B | φ` (comma name-groups, comma typed-groups, a leading `disj`).
+Longest-match separates the quantifier `some x : A | φ` from the multiplicity
+`some e`.
+
+**`let x = e, … | φ`** is desugared by substitution at elaboration (a later
+comprehension/quantifier binder shadows the `let`, and a substitution an inner
+binder would capture is a compile error), so the engine never sees a `let`.
+
+**Integer layer.** `#e` (cardinality), integer literals (with `-`), `@num:e`
+(numeric projection), the builtins `add subtract multiply divide remainder abs
+sign` and aggregators `min[e] max[e]` (arity-1 int column, applied through box
+join), and the int comparisons form a small typed sub-language: integer-typed
+positions accept exactly these, and tuple positions reject them with a type
+error — so counting selectors like `#{x : T | φ} = 2` and `@num:(x.key) < 5`
+work, while `some #e` is a compile error rather than a silent falsehood.
+
+Label comparisons accept nullary constructors (`@:x = nil`), string literals,
+another projection (`@:vr = @:(y.v)`), or — opposite a `@bool:` projection —
+the boolean literals `true`/`false`; numeric labels go through `@num:`. `ni`
+and its negations desugar to Forge's flipped subset (`a ni b ≡ b in a`,
+`a !ni b ≡ b !in a`), so they lower to ordinary subset constraints.
+
+### Accepted, but currently warns (upstream engine issues)
+
+A few forms Forge parses are mislowered by the current spytial-core (SGQ)
+evaluator. They are accepted and emitted with the Forge semantics, but the
+elaborator attaches a warning naming the engine bug: `none` (evaluates to the
+string `"none"`, not `∅` — use `no e`), `<:` / `:>` / `++` (the engine throws at
+render), `A one -> lone B` arrow-multiplicity annotations (silently dropped),
+`` `atom `` backquote literals (a placeholder marker), and `sum[e]` (evaluates
+to `∅`).
 
 ### What gets checked
 
@@ -208,6 +258,14 @@ Checking is **strict** exactly when the vocabulary is closed (a monomorphic
 type built from monomorphic fields). A type parameter, function-typed field,
 or custom relationalizer opens the world: unknown names downgrade to warnings
 there, and resolved types (like `Nat` in a `Tree α` spec) pass silently.
+
+Derived type and field names are **short names** (the last component — `T` for
+`A.T`, `left` for a `left` field), a convention shared with the Rust and Python
+Spytial implementations. At render time a selector like `hideField left` matches
+*every* relation with that short name, so two constructors that each have a
+`left` field are styled together. The compile-time checker, by contrast, resolves
+and hovers one specific declaration — so on a short-name collision the runtime
+over-matches relative to what the checker points at.
 
 ## Available operations
 
