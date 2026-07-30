@@ -78,20 +78,26 @@ public meta def getSpytialRelationalizerName? (env : Environment) (typeName : Na
 public meta def setSpytialRelationalizer (typeName declName : Name) : CoreM Unit :=
   modifyEnv fun env => spytialRelationalizerExt.addEntry env (typeName, declName)
 
-/-- Session-local cache of *compiled* relationalizer functions keyed by def name, so a
-    registered def is evaluated at most once per process. The persistent extension is
-    the source of truth; this only memoizes the `evalExpr`. -/
+/-- Session-local cache of *compiled* relationalizer functions keyed by def name
+    together with a hash of the def's body, so a def is compiled once per distinct
+    body per process: an interactive body edit (same name, new body) recompiles
+    rather than serving the stale closure. The persistent extension is the source
+    of truth; this only memoizes the `evalExpr`. -/
 public meta initialize spytialRelationalizerCache :
-    IO.Ref (Std.HashMap Name CustomRelationalizer) ← IO.mkRef {}
+    IO.Ref (Std.HashMap Name (UInt64 × CustomRelationalizer)) ← IO.mkRef {}
 
 /-- Compile (with memoization) the custom relationalizer registered for `typeName`. -/
 public meta unsafe def getSpytialRelationalizerImpl (typeName : Name) :
     MetaM (Option CustomRelationalizer) := do
   let some declName := getSpytialRelationalizerName? (← getEnv) typeName | return none
-  if let some fn := (← spytialRelationalizerCache.get).get? declName then
-    return some fn
+  -- Key on the def's body hash, not just its name. A def with no accessible body
+  -- (`value? = none` — opaque, and `partial` defs' fixpoint wrappers) falls back
+  -- to hash 0, i.e. name-only caching with no edit detection.
+  let bodyHash := ((← getConstInfo declName).value?.map Expr.hash).getD 0
+  if let some (h, fn) := (← spytialRelationalizerCache.get).get? declName then
+    if h == bodyHash then return some fn
   let fn ← Meta.evalExpr CustomRelationalizer (mkConst ``CustomRelationalizer) (mkConst declName)
-  spytialRelationalizerCache.modify (·.insert declName fn)
+  spytialRelationalizerCache.modify (·.insert declName (bodyHash, fn))
   return some fn
 
 /-- Look up the custom relationalizer registered for a type name, if any. Reads the
@@ -167,7 +173,13 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : State
   let tyWhnfForLookup ← Meta.whnf ty
   if let .const typeConstName _ := tyWhnfForLookup.getAppFn then
     if let some relFn ← getSpytialRelationalizer? typeConstName then
-      return ← relFn eOrig (walkExpr cfg)
+      -- The relationalizer returns its own root id, not the `atomId` we
+      -- pre-allocated; reconcile `seen[hash]` to it so a repeated occurrence
+      -- resolves to a real atom rather than the never-emitted pre-allocated one.
+      -- The pre-mark before dispatch still bounds degenerate re-walks.
+      let rootId ← relFn eOrig (walkExpr cfg)
+      modify (·.markSeen hash rootId)
+      return rootId
 
   -- Dispatch by expression form
   match e with

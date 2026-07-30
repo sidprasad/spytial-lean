@@ -445,10 +445,12 @@ meta def elabSpytialSpecCmd : CommandElab := fun
 /-! ## spytial_relationalizer command -/
 
 /-- `spytial_relationalizer <TypeName> <defName>` registers a custom relationalizer
-    for a type. The def must have type `CustomRelationalizer`.
+    for a type. The def must have type `CustomRelationalizer`, and — to be usable
+    from importing modules — should be `public meta def` (registration warns
+    otherwise).
 
     ```
-    def myRelationalizer : CustomRelationalizer := fun e walkExpr => do ...
+    public meta def myRelationalizer : CustomRelationalizer := fun e walkExpr => do ...
 
     spytial_relationalizer MyType myRelationalizer
     ```
@@ -465,6 +467,10 @@ meta def elabSpytialRelationalizerCmd : CommandElab := fun
       let declType := (← getConstInfo defName).type
       unless (← Meta.isDefEq declType (Lean.mkConst ``CustomRelationalizer)) do
         throwError s!"'{defName}' must have type `CustomRelationalizer`"
+    if isPrivateName defName then
+      logWarningAt defId m!"'{defName}' is not `public`, so a `#spytial` on this \
+        type from an importing module fails at render with `Unknown constant` — \
+        declare it `public meta def`"
     liftCoreM <| setSpytialRelationalizer typeName defName
   | stx => throwError "Unexpected syntax {stx}."
 
