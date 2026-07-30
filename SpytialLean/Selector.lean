@@ -22,7 +22,7 @@ here alongside the strings the relationalizer actually emits. Lowering back to
 the concrete SGQ string consumed by spytial-core is `Sel.toSGQ`.
 
 The surface grammar mirrors Forge; a few forms Forge parses are currently
-*mislowered by the SGQ engine* (`none`, `<:`, `:>`, `++`, `->`-multiplicity
+*mislowered by the SGQ engine* (`<:`, `:>`, `++`, `->`-multiplicity
 annotations). We reify and emit them faithfully (Forge semantics) so a corpus
 author can write them, and the elaborator attaches a warning naming the upstream
 engine bug and its interim workaround — see the `FIXME(sgq …)` markers below.
@@ -76,8 +76,6 @@ public meta inductive Sel where
   | var (x : Name)
   | univ
   | iden
-  /-- `FIXME(sgq none-literal)`: SGQ evaluates `none` to the string `"none"`
-      instead of the empty set. Emitted faithfully; the elaborator warns. -/
   | none_
   /-- A backquote atom literal (`` `a0 ``) — a specific atom by name. -/
   | atomLit (name : String)
@@ -207,6 +205,33 @@ private meta def sgqReserved : List String :=
     keyword (`some` → `` `some` ``). -/
 private meta def quoteIfReserved (s : String) : String :=
   if sgqReserved.contains s then s!"`{s}`" else s
+/-- How SGQ spells `c` inside a double-quoted literal. Its unquoting resolves
+    exactly `\n`, `\t`, `\r`, `\0`, `\"` and `\\` and drops the backslash from
+    every other escape, so those six are the whole escape alphabet and any other
+    character has to ride raw. `none` marks a character with no spelling either
+    way: a C0 control or DEL without an escape of its own, which would have to
+    ride raw through the spec's JSON/YAML hop and does not survive it. -/
+private meta def sgqStringChar? : Char → Option String
+  | '\\' => some "\\\\"
+  | '"' => some "\\\""
+  | '\n' => some "\\n"
+  | '\t' => some "\\t"
+  | '\r' => some "\\r"
+  | '\x00' => some "\\0"
+  | c => if c.val < 0x20 || c.val == 0x7f then none else some c.toString
+
+/-- The first character of `s` that SGQ's string syntax cannot spell, for the
+    elaborator to reject before it reaches a lowering. Only a user-written
+    string literal can trip this — identifier-derived labels carry no controls. -/
+public meta def sgqUnspellableChar? (s : String) : Option Char :=
+  s.toList.find? fun c => (sgqStringChar? c).isNone
+
+/-- Render `s` as an SGQ double-quoted string literal. An unspellable character
+    is emitted raw, the closest thing to right for a case the elaborator has
+    already rejected. -/
+public meta def sgqStringLit (s : String) : String :=
+  let body := s.toList.map fun c => (sgqStringChar? c).getD c.toString
+  s!"\"{String.join body}\""
 
 private meta def ArrowMult.toSGQ : ArrowMult → String
   | .lone => "lone" | .one => "one" | .some => "some" | .set => "set"
@@ -288,8 +313,11 @@ public meta partial def SelVal.toSGQ : SelVal → String
   | .label proj e =>
     let tok := match proj with | .plain => "@:" | .str => "@str:" | .bool => "@bool:"
     s!"{tok}{e.toSGQCtx 100}"
-  | .ctorLit _ label => quoteIfReserved label
-  | .strLit s => s!"\"{s}\""
+  | .ctorLit _ label => sgqStringLit label
+  -- The relationalizer labels a `String` atom with its Lean spelling, quotes
+  -- included (`Relationalizer.lean`), so matching one takes a literal whose
+  -- content carries those quotes too.
+  | .strLit s => sgqStringLit s!"\"{s}\""
   | .boolLit b => toString b
 
 /-- Lower a formula. Connective precedence follows Forge's loose-end cascade

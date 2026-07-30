@@ -62,13 +62,15 @@ private meta def scalarTypes : List Name :=
   [``Nat, ``Int, ``String, ``Char, ``Float, ``UInt8, ``UInt16, ``UInt32, ``UInt64, ``USize]
 
 /-- Compute the scope of `root`: walk the field-type closure collecting sigs,
-    relation names, and nullary-constructor labels. -/
-meta def SelScope.ofType (root : Name) : MetaM SelScope := do
+    relation names, and nullary-constructor labels. `seeds` adds extra starting
+    points — the root type's own type arguments, when the caller has them
+    (`List Node` contributes `Node`). -/
+meta def SelScope.ofType (root : Name) (seeds : Array Name := #[]) : MetaM SelScope := do
   let env ← getEnv
   let mut scope : SelScope := { root }
   -- Stuck-match nodes can appear in any open value, typed at the scrutinized type.
   scope := { scope with rels := scope.rels.insert "scrutinee" root }
-  let mut queue : Array Name := #[root]
+  let mut queue : Array Name := #[root] ++ seeds
   let mut seen : NameSet := {}
   while !queue.isEmpty do
     let t := queue.back!
@@ -98,6 +100,7 @@ meta def SelScope.ofType (root : Name) : MetaM SelScope := do
             match f.typeHead with
             | some ft => queue := queue.push ft
             | none => scope := { scope with lenient := true }
+            queue := queue ++ f.typeArgHeads
   return scope
 
 /-- Register a spec-introduced name (a group, an inferred edge) with its arity. -/
@@ -139,6 +142,11 @@ private meta def suggest (scope : SelScope) (unknown : String) : String :=
     s!"; vocabulary of '{scope.root}': {", ".intercalate vocab.toList}"
   else
     ""
+
+/-- `U+`-prefixed hexadecimal spelling of a character, for naming one that has
+    no printable form in a diagnostic. -/
+private meta def codepoint (c : Char) : String :=
+  s!"U+{String.ofList ((Nat.toDigits 16 c.val.toNat).leftpad 4 '0') |>.toUpper}"
 
 /-- Unknown-name handling: an error in strict scopes, a warning in lenient ones
     (the walker may legitimately emit names we cannot predict there). Returns
@@ -424,15 +432,16 @@ private meta partial def elabExpr (scope : SelScope) (env : LEnv) :
     Syntax → TermElabM EExpr
   | `(spytial_sel| $x:ident) => resolveExprIdent scope env x
   | `(spytial_sel| ($s)) => elabExpr scope env s
-  | `(spytial_sel| $s:str) => return .val (.strLit s.getString)
+  | `(spytial_sel| $s:str) => do
+    if let some c := sgqUnspellableChar? s.getString then
+      throwErrorAt s m!"string literal contains {codepoint c} — SGQ's string \
+        syntax has no escape for it, and it cannot ride raw through the spec"
+    return .val (.strLit s.getString)
   | `(spytial_sel| $n:num) => return .int (.lit (Int.ofNat n.getNat))
   | `(spytial_sel| -$n:num) => return .int (.lit (-(Int.ofNat n.getNat)))
   | `(spytial_sel| univ) => return .rel .univ (some 1)
   | `(spytial_sel| iden) => return .rel .iden (some 2)
-  | stx@`(spytial_sel| none) => do
-    logWarningAt stx "the SGQ engine evaluates `none` to the string \"none\", \
-      not the empty set — use `no e` for emptiness tests (upstream bug)"
-    return .rel .none_ (some 1)
+  | `(spytial_sel| none) => return .rel .none_ (some 1)
   | `(spytial_sel| sum $x:ident : $dom | $body) => do
     let (domSel, domArity) ← elabRel scope env dom
     checkArity dom "a sum-quantifier binder domain" domArity 1

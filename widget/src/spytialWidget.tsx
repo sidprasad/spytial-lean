@@ -4,6 +4,7 @@ import { useRpcSession } from '@leanprover/infoview';
 import spytialcore from 'spytial-core';
 // @ts-ignore — virtual module for components bundle (provides mountErrorMessageModal, ErrorAPI)
 import spytialComponents from 'spytial-core-components';
+import type { Layout } from 'spytial-core';
 
 const { JSONDataInstance, LayoutInstance, parseLayoutSpec, SGraphQueryEvaluator } = spytialcore;
 const { CnDCore } = spytialComponents;
@@ -200,6 +201,20 @@ interface SpytialWidgetProps {
 const MIN_HEIGHT = 200;
 const DEFAULT_HEIGHT = 500;
 
+/**
+ * The fields the widget reads off a layout error. `generateLayout` types its
+ * `error` as the base `ConstraintError`; `errorMessages`/`overlappingNodes`
+ * live on subtypes reachable only through value-position type guards, and
+ * `spytial-core` here is a rollup virtual module — only type-position imports
+ * of the real package survive bundling.
+ */
+type LayoutError = {
+  readonly type: string;
+  readonly message: string;
+  readonly errorMessages?: Layout.ErrorMessages;
+  readonly overlappingNodes?: readonly unknown[];
+};
+
 export default function SpytialWidget(props: SpytialWidgetProps) {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const errorMountRef = React.useRef<HTMLDivElement>(null);
@@ -258,7 +273,7 @@ export default function SpytialWidget(props: SpytialWidgetProps) {
 
         // Dispatch errors via ErrorAPI (same pattern as sterling-ts / spytial-py)
         if (result.error && CnDCore.ErrorAPI) {
-          const err = result.error;
+          const err = result.error as LayoutError;
           if (err.type === 'hidden-node-conflict' && err.errorMessages) {
             CnDCore.ErrorAPI.showHiddenNodeConflict(err.errorMessages);
           } else if (err.errorMessages) {

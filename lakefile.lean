@@ -5,6 +5,10 @@ package spytialLean where
   preferReleaseBuild := true
   buildArchive? := "SpytialLean.tar.gz"
   releaseRepo := "https://github.com/sidprasad/spytial-lean"
+  -- The include_str'd widget bundle is minified JS; silence the cosmetic C
+  -- warnings its size and stray bidi chars trigger when Widget.c is compiled
+  -- (no effect on the infoview, which reads the string from oleans, not C).
+  moreLeancArgs := #["-Wno-bidi-chars", "-Wno-overlength-strings"]
 
 /-! ## JS build targets
 
@@ -135,13 +139,15 @@ lean_lib SpytialLean where
 lean_lib Demos where
   srcDir := "demos"
   roots := #[`Showcase, `ProofFieldFiltering, `FunctionFields, `TypeClassInstances,
-             `CustomRelationalizer, `ProofTerms, `HoareLogic, `OperationalSemantics]
+             `CustomRelationalizer, `HoareLogic, `OperationalSemantics, `ProofTerms,
+             `PartialTerms, `BDD]
   needs := #[widgetJsAll]
 
 /-- Headless unit tests: `lake build SpytialTests`. -/
 lean_lib SpytialTests where
   srcDir := "tests"
-  roots := #[`TypeShapeTest, `CoverageTest, `TacticTest, `SelectorTest]
+  roots := #[`TypeShapeTest, `CoverageTest, `TacticTest, `SelectorTest,
+             `IdentityTest, `IdentityWalkTest]
 
 require proofwidgets from
   git "https://github.com/leanprover-community/ProofWidgets4" @ "v0.0.105"

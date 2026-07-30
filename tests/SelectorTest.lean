@@ -42,6 +42,13 @@ public inductive STree (α : Type) where
 
 public def sTree : STree Nat := .node (.leaf 1) (.leaf 2)
 
+/-- Container field: the closure follows `List`'s type argument, so `SBDD`'s
+    relation names are known here; the scope stays lenient (`List`'s α). -/
+public structure SForest where
+  trees : List SBDD
+
+public def sForest : SForest := ⟨[sExample]⟩
+
 public section
 
 /-- Dump the stored spec of a type (tests attach + storage + lowering). -/
@@ -62,26 +69,31 @@ public meta def elabStoredSpec : CommandElab := fun
 
 /--
 info: {"directives":
- [{"edgeColor": {"value": "orange", "style": "dashed", "field": "lo"}},
-  {"atomColor": {"value": "red", "selector": "{x : SBDD | @:x = ff}"}},
+ [{"edgeStyle":
+   {"lineStyle": {"pattern": "dashed", "color": "orange"}, "field": "lo"}},
+  {"atomStyle":
+   {"selector": "{x : SBDD | @:x = \"ff\"}", "borderStyle": {"color": "red"}}},
   {"attribute": {"field": "v"}},
   {"inferredEdge":
-   {"style": "dotted",
-    "selector": "lo.hi",
+   {"selector": "lo.hi",
     "name": "shortcut",
-    "color": "#123456"}},
+    "lineStyle": {"pattern": "dotted", "color": "#123456"}}},
   {"icon":
-   {"showLabels": true, "selector": "{x : SBDD | @:x = tt}", "path": "tt.png"}},
+   {"showLabels": true,
+    "selector": "{x : SBDD | @:x = \"tt\"}",
+    "path": "tt.png"}},
   {"tag": {"value": "bdd", "toTag": "SBDD", "name": "kind"}},
   {"flag": "hideDisconnected"},
   {"hideField": {"field": "hi"}},
-  {"atomColor": {"value": "green", "selector": "raw & unchecked \"quoted\""}}],
+  {"atomStyle":
+   {"selector": "raw & unchecked \"quoted\"",
+    "borderStyle": {"color": "green"}}}],
  "constraints":
  [{"orientation":
    {"selector": "{x, y : SBDD | x->y in lo + hi}", "directions": ["below"]}},
   {"orientation":
    {"selector":
-    "lo - SBDD->{b : SBDD | @:b = tt} - SBDD->{b : SBDD | @:b = ff}",
+    "lo - SBDD->{b : SBDD | @:b = \"tt\"} - SBDD->{b : SBDD | @:b = \"ff\"}",
     "directions": ["left"]}},
   {"align":
    {"selector": "{x, y : SBDD | x != y and x.v = y.v}",
@@ -133,14 +145,16 @@ spytial_spec SRB [
 
 /--
 info: {"directives":
- [{"atomColor": {"value": "red", "selector": "{x : SRB | @:(x.color) = red}"}},
+ [{"atomStyle":
+   {"selector": "{x : SRB | @:(x.color) = \"red\"}",
+    "borderStyle": {"color": "red"}}},
   {"attribute": {"field": "key"}}],
  "constraints":
  [{"orientation":
-   {"selector": "left - SRB->{x : SRB | @:x = nil}",
+   {"selector": "left - SRB->{x : SRB | @:x = \"nil\"}",
     "directions": ["left", "below"]}},
   {"orientation":
-   {"selector": "right - SRB->{x : SRB | @:x = nil}",
+   {"selector": "right - SRB->{x : SRB | @:x = \"nil\"}",
     "directions": ["right", "below"]}},
   {"hideAtom": {"selector": "SColor + Nat"}}]}
 -/
@@ -179,13 +193,27 @@ info: {"constraints":
 ]
 
 /--
-warning: unknown name 'lft' (did you mean 'left'?) — the vocabulary of 'STree' is open (a custom relationalizer, type parameter, or function field makes it unpredictable), so the name passes through unchecked
+warning: unknown name 'lft' (did you mean 'Nat', 'left'?) — the vocabulary of 'STree' is open (a custom relationalizer, type parameter, or function field makes it unpredictable), so the name passes through unchecked
 ---
 info: {"constraints": [{"orientation": {"selector": "lft", "directions": ["below"]}}]}
 -/
 #guard_msgs in
 #spytial.spec sTree with [
   orientation lft below
+]
+
+/-! Element relations through a container field resolve silently: `lo` is
+    `SBDD` vocabulary, reachable only via `trees : List SBDD`'s type argument. -/
+
+/--
+info: {"constraints":
+ [{"orientation": {"selector": "lo", "directions": ["below"]}},
+  {"hideAtom": {"selector": "List"}}]}
+-/
+#guard_msgs in
+#spytial.spec sForest with [
+  orientation lo below,
+  hideAtom List
 ]
 
 /-! ## Checker errors — one per class -/
@@ -261,8 +289,11 @@ error: unknown Spytial op 'orientate'; known ops: align, atomColor, attribute, c
 /--
 info: {"directives":
  [{"inferredEdge":
-   {"style": "solid", "selector": "lo.hi", "name": "hop", "color": "#000000"}},
-  {"edgeColor": {"value": "purple", "style": "solid", "field": "hop"}}],
+   {"selector": "lo.hi",
+    "name": "hop",
+    "lineStyle": {"pattern": "solid", "color": "#000000"}}},
+  {"edgeStyle":
+   {"lineStyle": {"pattern": "solid", "color": "purple"}, "field": "hop"}}],
  "constraints": [{"group": {"selector": "SBDD", "name": "cluster"}}]}
 -/
 #guard_msgs in
@@ -336,12 +367,37 @@ info: {"constraints":
 
 /--
 info: {"directives":
- [{"atomColor": {"value": "red", "selector": "{x : SRB | @num:(x.key) = 1}"}}]}
+ [{"atomStyle":
+   {"selector": "{x : SRB | @num:(x.key) = 1}",
+    "borderStyle": {"color": "red"}}}]}
 -/
 #guard_msgs in
 #spytial.spec sRB with [
   atomColor {x : SRB | @num:(x.key) = 1} "red"
 ]
+
+/-! ## String literals
+
+The relationalizer labels a `String` atom with its Lean spelling, quotes
+included, so a literal matching one lowers to a doubly-quoted SGQ string. -/
+
+/--
+info: {"directives":
+ [{"atomStyle":
+   {"selector": "{x : SBDD | @str:(x.v) = \"\\\"x\\\"\"}",
+    "borderStyle": {"color": "red"}}}],
+ "constraints":
+ [{"hideAtom": {"selector": "{vr : String | @:vr = \"\\\"x\\\"\"}"}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [
+  atomColor {x : SBDD | @str:(x.v) = "x"} "red",
+  hideAtom {vr : String | @:vr = "x"}
+]
+
+/-- error: string literal contains U+0001 — SGQ's string syntax has no escape for it, and it cannot ride raw through the spec -/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom {vr : String | @:vr = "a\x01b"}]
 
 /-! ## Sort-typed field: dropped from vocabulary, scope stays strict -/
 
@@ -416,7 +472,7 @@ info: {"constraints":
  [{"hideAtom": {"selector": "{x : SBDD | all y : SBDD | some y.lo}"}},
   {"hideAtom": {"selector": "{x : SBDD | some disj y, z : SBDD | y != z}"}},
   {"hideAtom":
-   {"selector": "{x : SBDD | no y : SBDD, w : String | @:y = tt}"}}]}
+   {"selector": "{x : SBDD | no y : SBDD, w : String | @:y = \"tt\"}"}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [
@@ -442,12 +498,18 @@ info: {"constraints":
 
 /--
 info: {"directives":
- [{"atomColor": {"value": "red", "selector": "{x : SRB | @num:(x.key) < 5}"}},
-  {"atomColor":
-   {"value": "red", "selector": "{x : SRB | add[@num:(x.key), 1] > 2}"}},
-  {"atomColor":
-   {"value": "red", "selector": "{x : SRB | abs[@num:(x.key)] >= 1}"}},
-  {"atomColor": {"value": "red", "selector": "{x : SRB | min[SRB.key] <= 3}"}}]}
+ [{"atomStyle":
+   {"selector": "{x : SRB | @num:(x.key) < 5}",
+    "borderStyle": {"color": "red"}}},
+  {"atomStyle":
+   {"selector": "{x : SRB | add[@num:(x.key), 1] > 2}",
+    "borderStyle": {"color": "red"}}},
+  {"atomStyle":
+   {"selector": "{x : SRB | abs[@num:(x.key)] >= 1}",
+    "borderStyle": {"color": "red"}}},
+  {"atomStyle":
+   {"selector": "{x : SRB | min[SRB.key] <= 3}",
+    "borderStyle": {"color": "red"}}}]}
 -/
 #guard_msgs in
 #spytial.spec sRB with [
@@ -523,15 +585,15 @@ info: {"constraints":
   hideAtom {x : SBDD | x.lo not ni x.hi}
 ]
 
-/-! ## Engine-bug forms — accepted, lowered verbatim, warned (upstream SGQ issues) -/
+/-! ## `none` is the empty relation -/
 
 /--
-warning: the SGQ engine evaluates `none` to the string "none", not the empty set — use `no e` for emptiness tests (upstream bug)
----
 info: {"constraints": [{"hideAtom": {"selector": "{x : SBDD | no none}"}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [hideAtom {x : SBDD | no none}]
+
+/-! ## Engine-bug forms — accepted, lowered verbatim, warned (upstream SGQ issues) -/
 
 /--
 warning: the SGQ engine currently throws on `<:` (domain restriction) at render — in a constraint position this kills the render (upstream bug)
@@ -582,7 +644,9 @@ info: {"constraints": [{"hideAtom": {"selector": "{x : SBDD | x = `a0}"}}]}
 warning: the SGQ engine evaluates `sum[e]` to the empty set rather than summing its atoms (upstream bug)
 ---
 info: {"directives":
- [{"atomColor": {"value": "red", "selector": "{x : SRB | sum[SRB.key] > 2}"}}]}
+ [{"atomStyle":
+   {"selector": "{x : SRB | sum[SRB.key] > 2}",
+    "borderStyle": {"color": "red"}}}]}
 -/
 #guard_msgs in
 #spytial.spec sRB with [atomColor {x : SRB | sum[SRB.key] > 2} "red"]
@@ -615,8 +679,9 @@ info: {"directives":
 -- because Bool cannot occur in SBDD.
 /--
 info: {"directives":
- [{"atomColor":
-   {"value": "red", "selector": "{x : SBDD | @bool:(x.v) = true}"}}]}
+ [{"atomStyle":
+   {"selector": "{x : SBDD | @bool:(x.v) = true}",
+    "borderStyle": {"color": "red"}}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [atomColor {x : SBDD | @bool:(x.v) = true} "red"]
