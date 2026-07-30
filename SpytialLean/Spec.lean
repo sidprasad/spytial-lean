@@ -51,19 +51,23 @@ public meta inductive SpytialOp where
 /-- A list of Spytial operations forming a complete layout specification. -/
 public meta abbrev SpytialSpec := List SpytialOp
 
-/-! ## YAML serialization
+/-! ## Spec serialization
 
-`parseLayoutSpec` in spytial-core accepts YAML with two top-level keys:
-```yaml
-constraints:
-  - orientation: { selector: "...", directions: [above, below] }
-directives:
-  - atomColor: { selector: "...", value: "#ff0000" }
+`parseLayoutSpec` in spytial-core is js-yaml's `yaml.load`, and JSON is valid
+YAML, so we emit the spec as `Lean.Json`: structured (no hand-rolled string
+quoting to get wrong), escape-safe, and stable in goldens. The shape has two
+optional top-level keys:
+```json
+{"constraints": [{"orientation": {"selector": "…", "directions": ["above"]}}],
+ "directives":  [{"atomColor": {"selector": "…", "value": "#ff0000"}}]}
 ```
-We partition `SpytialOp`s into constraints vs directives and emit this format.
+`SpytialOp`s partition into constraints vs directives; each lowers to a single
+`{opName: …}` object.
 -/
 
-private meta def Direction.toYaml : Direction → String
+open Lean (Json)
+
+private meta def Direction.toStr : Direction → String
   | .above => "above"
   | .below => "below"
   | .left => "left"
@@ -73,21 +77,18 @@ private meta def Direction.toYaml : Direction → String
   | .directlyLeft => "directlyLeft"
   | .directlyRight => "directlyRight"
 
-private meta def AlignDir.toYaml : AlignDir → String
+private meta def AlignDir.toStr : AlignDir → String
   | .horizontal => "horizontal"
   | .vertical => "vertical"
 
-private meta def RotationDir.toYaml : RotationDir → String
+private meta def RotationDir.toStr : RotationDir → String
   | .clockwise => "clockwise"
   | .counterclockwise => "counterclockwise"
 
-private meta def EdgeStyle.toYaml : EdgeStyle → String
+private meta def EdgeStyle.toStr : EdgeStyle → String
   | .solid => "solid"
   | .dashed => "dashed"
   | .dotted => "dotted"
-
-private meta def directionsToYaml (ds : List Direction) : String :=
-  "[" ++ ", ".intercalate (ds.map Direction.toYaml) ++ "]"
 
 /-- Is this op a constraint (affects layout geometry)? -/
 private meta def SpytialOp.isConstraint : SpytialOp → Bool
@@ -95,57 +96,59 @@ private meta def SpytialOp.isConstraint : SpytialOp → Bool
   | .hideAtom .. | .size .. => true
   | _ => false
 
-/-- Render a single constraint op as a YAML list item. -/
-private meta def constraintToYaml : SpytialOp → String
-  | .orientation sel dirs =>
-    s!"  - orientation: \{selector: \"{sel}\", directions: {directionsToYaml dirs}}"
-  | .align sel dir =>
-    s!"  - align: \{selector: \"{sel}\", direction: {dir.toYaml}}"
-  | .cyclic sel dir =>
-    s!"  - cyclic: \{selector: \"{sel}\", direction: {dir.toYaml}}"
-  | .group sel name addEdge =>
-    let ae := if addEdge then ", addEdge: true" else ""
-    s!"  - group: \{selector: \"{sel}\", name: \"{name}\"{ae}}"
-  | .hideAtom sel =>
-    s!"  - hideAtom: \{selector: \"{sel}\"}"
-  | .size sel w h =>
-    s!"  - size: \{selector: \"{sel}\", width: {w}, height: {h}}"
-  | _ => ""
-
-/-- Render a single directive op as a YAML list item. -/
-private meta def directiveToYaml : SpytialOp → String
-  | .atomColor sel val =>
-    s!"  - atomColor: \{selector: \"{sel}\", value: \"{val}\"}"
+/-- Lower one op to its `{opName: …}` JSON object. Optional fields (`addEdge`,
+    `showLabels`) are emitted only when set. -/
+private meta def SpytialOp.toJson (op : SpytialOp) : Json :=
+  match op with
+  | .orientation s dirs =>
+    Json.mkObj [("orientation", Json.mkObj
+      [("selector", Json.str s),
+       ("directions", Json.arr (dirs.map (fun d => Json.str d.toStr)).toArray)])]
+  | .align s dir =>
+    Json.mkObj [("align", Json.mkObj [("selector", Json.str s), ("direction", Json.str dir.toStr)])]
+  | .cyclic s dir =>
+    Json.mkObj [("cyclic", Json.mkObj [("selector", Json.str s), ("direction", Json.str dir.toStr)])]
+  | .group s name addEdge =>
+    Json.mkObj [("group", Json.mkObj <|
+      [("selector", Json.str s), ("name", Json.str name)] ++
+      (if addEdge then [("addEdge", Json.bool true)] else []))]
+  | .hideAtom s =>
+    Json.mkObj [("hideAtom", Json.mkObj [("selector", Json.str s)])]
+  | .size s w h =>
+    Json.mkObj [("size", Json.mkObj
+      [("selector", Json.str s), ("width", Json.num (.fromNat w)), ("height", Json.num (.fromNat h))])]
+  | .atomColor s val =>
+    Json.mkObj [("atomColor", Json.mkObj [("selector", Json.str s), ("value", Json.str val)])]
   | .edgeColor field val style =>
-    s!"  - edgeColor: \{field: \"{field}\", value: \"{val}\", style: {style.toYaml}}"
+    Json.mkObj [("edgeColor", Json.mkObj
+      [("field", Json.str field), ("value", Json.str val), ("style", Json.str style.toStr)])]
   | .hideField field =>
-    s!"  - hideField: \{field: \"{field}\"}"
+    Json.mkObj [("hideField", Json.mkObj [("field", Json.str field)])]
   | .attribute field =>
-    s!"  - attribute: \{field: \"{field}\"}"
-  | .icon sel path showLabels =>
-    let sl := if showLabels then ", showLabels: true" else ""
-    s!"  - icon: \{selector: \"{sel}\", path: \"{path}\"{sl}}"
+    Json.mkObj [("attribute", Json.mkObj [("field", Json.str field)])]
+  | .icon s path showLabels =>
+    Json.mkObj [("icon", Json.mkObj <|
+      [("selector", Json.str s), ("path", Json.str path)] ++
+      (if showLabels then [("showLabels", Json.bool true)] else []))]
   | .tag toTag name value =>
-    s!"  - tag: \{toTag: \"{toTag}\", name: \"{name}\", value: \"{value}\"}"
-  | .inferredEdge name sel color style =>
-    s!"  - inferredEdge: \{name: \"{name}\", selector: \"{sel}\", color: \"{color}\", style: {style.toYaml}}"
+    Json.mkObj [("tag", Json.mkObj
+      [("toTag", Json.str toTag), ("name", Json.str name), ("value", Json.str value)])]
+  | .inferredEdge name s color style =>
+    Json.mkObj [("inferredEdge", Json.mkObj
+      [("name", Json.str name), ("selector", Json.str s), ("color", Json.str color),
+       ("style", Json.str style.toStr)])]
   | .flag name =>
-    s!"  - flag: {name}"
-  | .hideAtom sel =>
-    s!"  - hideAtom: \{selector: \"{sel}\"}"
-  | .size sel w h =>
-    s!"  - size: \{selector: \"{sel}\", width: {w}, height: {h}}"
-  | _ => ""
+    Json.mkObj [("flag", Json.str name)]
 
-/-- Convert a `SpytialSpec` to a YAML string consumable by `parseLayoutSpec`. -/
-public meta def SpytialSpec.toYaml (spec : SpytialSpec) : String :=
-  let constraints := spec.filter SpytialOp.isConstraint
-  let directives := spec.filter (! SpytialOp.isConstraint ·)
-  let parts : List String := []
-  let parts := if constraints.isEmpty then parts else
-    parts ++ ["constraints:"] ++ constraints.map constraintToYaml
-  let parts := if directives.isEmpty then parts else
-    parts ++ ["directives:"] ++ directives.map directiveToYaml
-  "\n".intercalate parts
+/-- Render a `SpytialSpec` as the spec string spytial-core consumes. Emitted as
+    JSON, which is valid YAML for the core's js-yaml `parseLayoutSpec`; a spec
+    with no ops renders as the empty string (not `{}`). -/
+public meta def SpytialSpec.render (spec : SpytialSpec) : String :=
+  let mkSection (key : String) (ops : SpytialSpec) : List (String × Json) :=
+    if ops.isEmpty then [] else [(key, Json.arr (ops.map SpytialOp.toJson).toArray)]
+  let (constraints, directives) := spec.partition SpytialOp.isConstraint
+  match mkSection "constraints" constraints ++ mkSection "directives" directives with
+  | [] => ""
+  | kvs => (Json.mkObj kvs).pretty
 
 end SpytialLean

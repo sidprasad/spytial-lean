@@ -10,8 +10,8 @@ open Lean
 /-! ## Spytial spec extension -/
 
 /-- Environment extension storing Spytial specs attached to type declarations.
-    Maps declaration name → structured `SpytialSpec`; YAML is rendered only at
-    widget-payload time. -/
+    Maps declaration name → structured `SpytialSpec`; the wire string is
+    rendered only at widget-payload time. -/
 public meta initialize spytialSpecExt :
     SimplePersistentEnvExtension (Name × SpytialSpec) (Std.HashMap Name SpytialSpec) ←
   registerSimplePersistentEnvExtension {

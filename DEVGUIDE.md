@@ -134,7 +134,7 @@ To add a new layout operation:
 
 1. Add the constructor to `SpytialOp` in `SpytialLean/Spec.lean`
 2. Add it to `isConstraint` (if it's a constraint) or leave it as a directive
-3. Add a YAML serialization case in `constraintToYaml` or `directiveToYaml`
+3. Add a JSON serialization case in `SpytialOp.toJson` (in `SpytialLean/Spec.lean`)
 4. Add an example in `Demo.lean`
 5. Rebuild: `lake build Demo`
 
@@ -148,13 +148,14 @@ To add a new layout operation:
 
 Shows the JSON data instance — atoms and relations with their names. Use this to find the correct selector strings for your spec.
 
-### Inspect generated YAML
+### Inspect the generated spec
 
 ```lean
 #spytial.spec myValue with [.orientation (selector := "left") (directions := [.below])]
 ```
 
-Shows the YAML that gets passed to `parseLayoutSpec`.
+Shows the spec string (JSON, which is valid YAML) that gets passed to
+`parseLayoutSpec`.
 
 ### Widget console errors
 
