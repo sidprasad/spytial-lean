@@ -11,21 +11,24 @@ open Lean Elab Meta
 
 public section
 
-/-! # SelectorElab — embedded selector syntax, checked against the data vocabulary
+/-! # SelectorElab — checked selector syntax
 
-Selectors are written as Lean syntax (category `spytial_sel`) and elaborated
-against a `SelScope`: the vocabulary of atoms and relations the relationalizer
-can emit for values of the target type. Every identifier must resolve — to a
-comprehension binder, a field relation, a type in the reachable closure, or (in
-value position) a nullary constructor — and every operator's arity must make
-sense, so a renamed cslib field or a typo'd sig is a compile error at the exact
-ident, not a silently empty selection at render time.
+Selectors are Lean syntax (categories `spytial_sel` and `spytial_sel_form`),
+elaborated against a `SelScope`: the vocabulary of sigs, relations, and
+nullary-constructor labels the relationalizer can emit for the target type.
+Every identifier must resolve and every operator's arity must check. A renamed
+field or a typo is a compile error at the ident, not an empty selection at
+render time.
 
-Scopes are *strict* exactly when the vocabulary is closed: a monomorphic type
-built from monomorphic fields. A type parameter, function-typed field, custom
-relationalizer, or non-inductive in the closure opens the world — the walker can
-then emit names no static analysis predicts — and unknown names downgrade to
-warnings there.
+An expression elaborates to one of three kinds (`EExpr`): relational, value,
+or integer. Each position accepts specific kinds. This rejects SGQ's silent
+scalar/tuple confusion (`some #e`) at compile time.
+
+A scope is strict when the vocabulary is closed: a monomorphic type built from
+monomorphic fields. A type parameter, function-typed field, custom
+relationalizer, or non-inductive in the closure makes the scope lenient. The
+walker can then emit names no static analysis predicts, so unknown names warn
+and pass through.
 -/
 
 /-! ## Scope -/
@@ -142,69 +145,168 @@ private meta def unknownName {α} (scope : SelScope) (ref : Syntax) (what : Stri
   else
     throwErrorAt ref msg
 
-/-! ## Syntax -/
+/-! ## Syntax
 
+The grammar replicates Forge's single expression/formula cascade over two Lean
+categories. The formula category is `behavior := both` so a keyword-led rule and
+a bare identifier can coexist — a relation literally named `some` still parses,
+and the syntax elaborator compiles each leading keyword to a `nonReservedSymbol`
+(the multiplicity/quantifier forms with a mandatory further token win by
+longest-match). The expression category stays `.default` (see the note above the
+declaration). The precedence numbers below are Forge's cascade re-scaled: loosest
+at the top. -/
+
+open Lean Parser
+
+-- `spytial_sel` stays `.default`: `behavior := both` breaks parsing of the
+-- `@`-leading projection tokens (Lean's antiquotation/`@` handling), and the only
+-- expression form that would need keyword dispatch — the `sum x : A | ie`
+-- quantifier — is deferred in favour of the `sum[e]` aggregator. The formula
+-- category needs `.both` for its multiplicity/quantifier/word keywords, and has
+-- no `@`-leading tokens.
 declare_syntax_cat spytial_sel
-declare_syntax_cat spytial_sel_form
-declare_syntax_cat spytial_sel_val
-declare_syntax_cat spytial_sel_cmparg
+declare_syntax_cat spytial_sel_form (behavior := both)
 
-/-- Binder group of a set comprehension: `x, y : BDD`. -/
 syntax spytialSelBinderGroup := sepBy1(ident, ", ") " : " spytial_sel
 
-syntax:100 (name := selIdent) ident : spytial_sel
-syntax:100 "(" spytial_sel ")" : spytial_sel
-syntax:100 "{" sepBy1(spytialSelBinderGroup, ", ") " | " spytial_sel_form "}" : spytial_sel
-/-- Escape hatch: a string literal in selector position is a verbatim,
-    unchecked SGQ expression. -/
--- TODO: close the remaining grammar gaps so the escape hatch is rarely needed —
--- `#` (cardinality), `<:`/`:>` (domain/range restriction), box join, and `let`
--- are not yet surfaced.
-syntax:100 (name := selStr) str : spytial_sel
+/-! ### Relational / integer expressions (`spytial_sel`) -/
+
 syntax:30 spytial_sel:30 " + " spytial_sel:31 : spytial_sel
 syntax:30 spytial_sel:30 " - " spytial_sel:31 : spytial_sel
+syntax:34 (name := selCard) "#" spytial_sel:35 : spytial_sel
+syntax:36 spytial_sel:36 " ++ " spytial_sel:37 : spytial_sel
 syntax:40 spytial_sel:40 " & " spytial_sel:41 : spytial_sel
-syntax:50 spytial_sel:50 " -> " spytial_sel:51 : spytial_sel
+-- Product `A -> B` (prec 50) is the hand-written `selProdOp` below, so its
+-- arrow-multiplicity annotations stay non-reserving.
+syntax:55 spytial_sel:55 " <: " spytial_sel:56 : spytial_sel
+syntax:55 spytial_sel:55 " :> " spytial_sel:56 : spytial_sel
 syntax:60 spytial_sel:60 " . " spytial_sel:61 : spytial_sel
+syntax:60 (name := selBox) spytial_sel:60 noWs "[" sepBy(spytial_sel, ", ") "]" : spytial_sel
 syntax:70 "^" spytial_sel:70 : spytial_sel
 syntax:70 "*" spytial_sel:70 : spytial_sel
 syntax:70 "~" spytial_sel:70 : spytial_sel
+-- Label projections (SGQ extension; Forge has no `@`): expr-tier prefix ops.
+-- Matched by kind at elaboration — `@`-leading quotations break under `.both`.
+syntax:100 (name := selProjPlain) "@:" spytial_sel:100 : spytial_sel
+syntax:100 (name := selProjStr)  "@str:" spytial_sel:100 : spytial_sel
+syntax:100 (name := selProjBool) "@bool:" spytial_sel:100 : spytial_sel
+syntax:100 (name := selProjNum)  "@num:" spytial_sel:100 : spytial_sel
+syntax:100 (name := selIdent) ident : spytial_sel
+syntax:100 "(" spytial_sel ")" : spytial_sel
+syntax:100 "{" sepBy1(spytialSelBinderGroup, ", ") " | " spytial_sel_form "}" : spytial_sel
+syntax:100 (name := selStr) str : spytial_sel
+syntax:100 (name := selNum) num : spytial_sel
+syntax:100 (name := selNegNum) "-" noWs num : spytial_sel
+/-- Backquote atom literal (`` `a0 ``), spelled with Lean's `name` literal. -/
+syntax:100 (name := selAtomLit) name : spytial_sel
 
-syntax "@:" spytial_sel:100 : spytial_sel_val
-syntax "@str:" spytial_sel:100 : spytial_sel_val
-syntax "@bool:" spytial_sel:100 : spytial_sel_val
-syntax "@num:" spytial_sel:100 : spytial_sel_val
-syntax str : spytial_sel_val
-syntax num : spytial_sel_val
+/-- One optional arrow-multiplicity keyword, non-reserving. -/
+private meta def arrowMultP : Parser :=
+  nonReservedSymbol "lone" (includeIdent := true) <|>
+    nonReservedSymbol "one" (includeIdent := true) <|>
+    nonReservedSymbol "some" (includeIdent := true) <|>
+    nonReservedSymbol "set" (includeIdent := true)
 
-syntax (priority := high) spytial_sel_val : spytial_sel_cmparg
-syntax spytial_sel : spytial_sel_cmparg
+/-- Arrow-multiplicity product (`A one -> lone B`). `includeIdent` lets a left
+    annotation trigger the trailing parser; the right side is `atomic`, so a
+    relation named `one`/`lone` still works as the bare operand. -/
+@[spytial_sel_parser] meta def selProdOp : TrailingParser :=
+  trailingNode `selProd 50 50
+    (Lean.Parser.optional arrowMultP >> symbol "->" >>
+      ((Lean.Parser.atomic (arrowMultP >> categoryParser `spytial_sel 51)) <|>
+        (Lean.Parser.pushNone >> categoryParser `spytial_sel 51)))
 
-syntax:50 spytial_sel_cmparg " = " spytial_sel_cmparg : spytial_sel_form
-syntax:50 spytial_sel_cmparg " != " spytial_sel_cmparg : spytial_sel_form
-syntax:50 spytial_sel " in " spytial_sel : spytial_sel_form
--- Forge's symbolic connective spellings (`&&`/`||`/`=>`/`!` alias
--- `and`/`or`/`implies`/`not`). The word forms cannot be parsed here: they would
--- need non-reserved keywords, which lose dispatch to the bare-ident rule, and
--- reserving them would break `.and`-style dot idents everywhere else. Lowering
--- still emits the word forms.
-syntax:35 spytial_sel_form:35 " && " spytial_sel_form:36 : spytial_sel_form
-syntax:25 spytial_sel_form:25 " || " spytial_sel_form:26 : spytial_sel_form
-syntax:15 spytial_sel_form:16 " => " spytial_sel_form:15 : spytial_sel_form
-syntax:45 "!" spytial_sel_form:45 : spytial_sel_form
+/-! ### Formulas (`spytial_sel_form`) -/
+
+syntax:5 (name := selQAll)  "all "  (&" disj")? spytialSelBinderGroup,+ " | " spytial_sel_form:5 : spytial_sel_form
+syntax:5 (name := selQNo)   "no "   (&" disj")? spytialSelBinderGroup,+ " | " spytial_sel_form:5 : spytial_sel_form
+syntax:5 (name := selQSome) "some " (&" disj")? spytialSelBinderGroup,+ " | " spytial_sel_form:5 : spytial_sel_form
+syntax:5 (name := selQLone) "lone " (&" disj")? spytialSelBinderGroup,+ " | " spytial_sel_form:5 : spytial_sel_form
+syntax:5 (name := selQOne)  "one "  (&" disj")? spytialSelBinderGroup,+ " | " spytial_sel_form:5 : spytial_sel_form
+
+syntax:5 (name := selLet) "let " sepBy1(ident " = " spytial_sel, ", ") " | " spytial_sel_form:5 : spytial_sel_form
+
+-- `=<` is Forge's alias for `<=`
+syntax:50 spytial_sel " = "   spytial_sel : spytial_sel_form
+syntax:50 spytial_sel " != "  spytial_sel : spytial_sel_form
+syntax:50 spytial_sel " in "  spytial_sel : spytial_sel_form
+-- `!in` must stay the two existing tokens `!` `in`: a `"!in"` atom would
+-- enter the global token table and steal the prefix of negations like
+-- `!input` in every importing module.
+syntax:50 spytial_sel " !" "in " spytial_sel : spytial_sel_form
+syntax:50 spytial_sel " < "   spytial_sel : spytial_sel_form
+syntax:50 spytial_sel " > "   spytial_sel : spytial_sel_form
+syntax:50 spytial_sel " <= "  spytial_sel : spytial_sel_form
+syntax:50 spytial_sel " >= "  spytial_sel : spytial_sel_form
+syntax:50 spytial_sel " =< "  spytial_sel : spytial_sel_form
+
+-- `a not in b`, `a ni b`, `a !ni b`, `a not ni b`. These are hand-written:
+-- `syntax` rules would reserve `not`/`ni` for every importing module.
+@[spytial_sel_form_parser] meta def selNotInOp : Parser :=
+  leadingNode `selNotIn 50
+    (categoryParser `spytial_sel 0 >> nonReservedSymbol "not" >> symbol "in" >>
+      categoryParser `spytial_sel 0)
+
+@[spytial_sel_form_parser] meta def selNiOp : Parser :=
+  leadingNode `selNi 50
+    (categoryParser `spytial_sel 0 >> nonReservedSymbol "ni" >>
+      categoryParser `spytial_sel 0)
+
+@[spytial_sel_form_parser] meta def selNotNiOp : Parser :=
+  leadingNode `selNotNi 50
+    (categoryParser `spytial_sel 0 >> (symbol "!" <|> nonReservedSymbol "not") >>
+      nonReservedSymbol "ni" >> categoryParser `spytial_sel 0)
+
+syntax:60 "some " spytial_sel:30 : spytial_sel_form
+syntax:60 "no "   spytial_sel:30 : spytial_sel_form
+syntax:60 "lone " spytial_sel:30 : spytial_sel_form
+syntax:60 "one "  spytial_sel:30 : spytial_sel_form
+
+syntax:40 "! "  spytial_sel_form:40 : spytial_sel_form
+syntax:40 "not " spytial_sel_form:40 : spytial_sel_form
+
 syntax:100 "(" spytial_sel_form ")" : spytial_sel_form
--- Multiplicity formulas (Forge): `some`/`no`/`lone`/`one <sel>`. Prefix, at
--- atomic-formula precedence so they bind tighter than `&&`/`||`/`=>`. Parsed as
--- a leading ident — the keywords cannot be reserved tokens without shadowing
--- ordinary identifiers like `Option.some` — and dispatched in `elabForm`, where
--- a non-keyword head errors; the comparison forms keep their `=`/`!=`/`in`.
-syntax:50 (name := selMult) ident spytial_sel : spytial_sel_form
+
+private meta def connOp (kind : SyntaxNodeKind) (prec lhsPrec rhsPrec : Nat) (opP : Parser) :
+    TrailingParser :=
+  trailingNode kind prec lhsPrec (opP >> categoryParser `spytial_sel_form rhsPrec)
+
+-- `includeIdent` indexes the word spelling under `identKind`, so the
+-- behavior-blind trailing loop reaches it after any formula.
+private meta def wordSym (sym word : String) : Parser :=
+  symbol sym <|> nonReservedSymbol word (includeIdent := true)
+
+@[spytial_sel_form_parser] meta def selOrOp   : TrailingParser := connOp `selOr   10 10 11 (wordSym "||" "or")
+@[spytial_sel_form_parser] meta def selXorOp  : TrailingParser := connOp `selXor  13 13 14 (nonReservedSymbol "xor" (includeIdent := true))
+@[spytial_sel_form_parser] meta def selIffOp  : TrailingParser := connOp `selIff  16 16 17 (wordSym "<=>" "iff")
+@[spytial_sel_form_parser] meta def selImpOp  : TrailingParser := connOp `selImplies 20 21 20 (wordSym "=>" "implies")
+@[spytial_sel_form_parser] meta def selAndOp  : TrailingParser := connOp `selAnd  30 30 31 (wordSym "&&" "and")
+
+@[spytial_sel_form_parser] meta def selIteOp : TrailingParser :=
+  trailingNode `selIte 20 21
+    (wordSym "=>" "implies" >> categoryParser `spytial_sel_form 21 >>
+      symbol "else" >> categoryParser `spytial_sel_form 20)
 
 /-! ## Elaboration
 
-Elaboration returns the reified selector and its arity; `none` arity means
-statically unknown (`raw`, or an unknown name passed through leniently), which
-soft-disables downstream arity requirements. -/
+Relational results carry an arity. `none` means statically unknown (`raw`, or
+a lenient pass-through) and disables downstream arity checks. -/
+
+/-- The typed result of elaborating a `spytial_sel`. Compile-time only; never
+    stored. -/
+meta inductive EExpr where
+  | rel (s : Sel) (arity : Option Nat)
+  | val (v : SelVal)
+  | int (i : SelInt)
+
+/-- A local binding introduced by a comprehension/quantifier binder or a `let`. -/
+meta inductive LocalBind where
+  | binder                 -- ranges over a domain (arity 1)
+  | letE (e : EExpr)       -- `let`-bound: substituted at use
+
+/-- Ordered local environment (most-recent first); a later binder shadows an
+    earlier `let` of the same name and vice versa. -/
+meta abbrev LEnv := List (Name × LocalBind)
 
 private meta def checkArity (ref : Syntax) (what : String) (got : Option Nat)
     (want : Nat) : TermElabM Unit := do
@@ -228,35 +330,261 @@ private meta def sameArity (ref : Syntax) (op : String) :
   | some a, none | none, some a => return some a
   | none, none => return none
 
-/-- Resolve an ident as a global constant, quietly returning `none` when it
-    does not resolve (with hover/go-to-def info when it does). -/
+/-- Adds hover/go-to-def info on success. -/
 private meta def resolveGlobal? (stx : Syntax) : TermElabM (Option Name) := do
   try
     pure (some (← realizeGlobalConstNoOverloadWithInfo stx))
   catch _ =>
     pure none
 
-/-- Resolve an identifier in relational position. Multi-component idents
-    (`x.v` lexes as one ident) are join chains — unless the whole name resolves
-    as a type reference (`Cslib.SKI`): the head resolves like a bare name,
-    every later component must be a relation. -/
-private meta def resolveSelIdent (scope : SelScope) (vars : List Name)
-    (stx : Syntax) : TermElabM (Sel × Option Nat) := do
+private meta def intBuiltinOf? : String → Option IntBuiltin
+  | "add" => some .add | "subtract" => some .subtract | "multiply" => some .multiply
+  | "divide" => some .divide | "remainder" => some .remainder
+  | "abs" => some .abs | "sign" => some .sign | _ => none
+
+private meta def IntBuiltin.arity : IntBuiltin → Nat
+  | .abs | .sign => 1
+  | _ => 2
+
+private meta def intAggOf? : String → Option IntAgg
+  | "sum" => some .sum | "min" => some .min | "max" => some .max | _ => none
+
+/-- The nullary-constructor label a bare ident denotes, with hover info. -/
+private meta def resolveCtorLit? (scope : SelScope) (stx : Syntax) : TermElabM (Option SelVal) := do
+  if let some ctorName := scope.ctorLabels.get? stx.getId.toString then
+    if let some e ← try pure (some (← mkConstWithLevelParams ctorName)) catch _ => pure none then
+      discard <| Term.addTermInfo stx e
+    return some (.ctorLit ctorName (shortName ctorName))
+  return none
+
+mutual
+
+private meta partial def elabExpr (scope : SelScope) (env : LEnv) :
+    Syntax → TermElabM EExpr
+  | `(spytial_sel| $x:ident) => resolveExprIdent scope env x
+  | `(spytial_sel| ($s)) => elabExpr scope env s
+  | `(spytial_sel| $s:str) => do
+    if let some c := sgqUnspellableChar? s.getString then
+      throwErrorAt s m!"string literal contains {codepoint c} — SGQ's string \
+        syntax has no escape for it, and it cannot ride raw through the spec"
+    return .val (.strLit s.getString)
+  | `(spytial_sel| $n:num) => return .int (.lit (Int.ofNat n.getNat))
+  | `(spytial_sel| -$n:num) => return .int (.lit (-(Int.ofNat n.getNat)))
+  | `(spytial_sel| $a + $b) => elabRelBinary scope env .union "+" a b
+  | `(spytial_sel| $a - $b) => elabRelBinary scope env .diff "-" a b
+  | `(spytial_sel| $a & $b) => elabRelBinary scope env .inter "&" a b
+  | stx@`(spytial_sel| $a ++ $b) => do
+    let (sa, aa) ← elabRel scope env a
+    let (sb, ab) ← elabRel scope env b
+    return .rel (.override sa sb) (← sameArity stx "++" aa ab)
+  | `(spytial_sel| $a <: $b) => do
+    let (sa, _) ← elabRel scope env a
+    let (sb, ab) ← elabRel scope env b
+    return .rel (.restrictDom sa sb) ab
+  | `(spytial_sel| $a :> $b) => do
+    let (sa, aa) ← elabRel scope env a
+    let (sb, _) ← elabRel scope env b
+    return .rel (.restrictRan sa sb) aa
+  | stx@`(spytial_sel| $a . $b) => do
+    let (sa, aa) ← elabRel scope env a
+    let (sb, ab) ← elabRel scope env b
+    return .rel (.join sa sb) (← joinArity stx aa ab)
+  | stx@`(spytial_sel| ^$a) => elabClosure scope env stx .trans "^" a
+  | stx@`(spytial_sel| *$a) => elabClosure scope env stx .reflTrans "*" a
+  | stx@`(spytial_sel| ~$a) => elabClosure scope env stx .transpose "~" a
+  | stx@`(spytial_sel| #$a) => do
+    let (sa, _) ← elabRel scope env a
+    return .int (.card sa)
+  | stx@`(spytial_sel| $a:name) => do
+    match a.raw.isNameLit? with
+    | some n => return .rel (.atomLit n.toString) (some 1)
+    | none => throwErrorAt stx "malformed atom literal"
+  | `(spytial_sel| {$groups,* | $body}) => do
+    let (binders, env') ← elabBinderGroups scope env "comprehension" (groups.getElems.map (·.raw))
+    let bodyForm ← elabForm scope env' body
+    return .rel (.compr binders bodyForm) (some binders.size)
+  | stx =>
+    match stx.getKind with
+    -- Label projections (matched by kind — `@`-quotations break under `.both`).
+    | ``selProjPlain => return .val (← elabLabel scope env .plain ⟨stx[1]⟩)
+    | ``selProjStr   => return .val (← elabLabel scope env .str ⟨stx[1]⟩)
+    | ``selProjBool  => return .val (← elabLabel scope env .bool ⟨stx[1]⟩)
+    | ``selProjNum   => do
+      let (sel, arity) ← elabRel scope env stx[1]
+      checkArity stx[1] "a label projection's operand" arity 1
+      return .int (.proj sel)
+    | `selProd => elabProd scope env stx
+    | _ => elabBoxJoin? scope env stx
+
+private meta partial def elabBoxJoin? (scope : SelScope) (env : LEnv) (stx : Syntax) :
+    TermElabM EExpr := do
+  match stx with
+  | `(spytial_sel| $head[$args,*]) => do
+    let argSyns := args.getElems
+    let headName? : Option String := match head with
+      | `(spytial_sel| $x:ident) =>
+        if (env.lookup x.getId).isSome then none else some x.getId.toString
+      | _ => none
+    match headName? with
+    | some hn =>
+      if let some op := intBuiltinOf? hn then
+        unless argSyns.size == op.arity do
+          throwErrorAt stx m!"'{hn}' takes {op.arity} integer argument(s), got {argSyns.size}"
+        let iargs ← argSyns.mapM (elabInt scope env)
+        return .int (.builtin op iargs)
+      if let some op := intAggOf? hn then
+        unless argSyns.size == 1 do
+          throwErrorAt stx m!"'{hn}[e]' takes one relational argument, got {argSyns.size}"
+        let (sa, aa) ← elabRel scope env argSyns[0]!
+        checkArity argSyns[0]! s!"the argument of {hn}[e]" aa 1
+        return .int (.agg op sa)
+      elabRelBoxJoin scope env stx head argSyns
+    | none => elabRelBoxJoin scope env stx head argSyns
+  | _ => throwErrorAt stx "unexpected selector syntax"
+
+/-- `e[a, b] ≡ b.a.e` (Forge). -/
+private meta partial def elabRelBoxJoin (scope : SelScope) (env : LEnv) (stx : Syntax)
+    (head : Syntax) (args : Array Syntax) : TermElabM EExpr := do
+  if args.isEmpty then
+    throwErrorAt stx "box join needs at least one argument (`a[b]` means `b.a`)"
+  let (hs, ha) ← elabRel scope env head
+  let mut sel := hs
+  let mut arity := ha
+  for arg in args do
+    let (asel, aar) ← elabRel scope env arg
+    arity ← joinArity stx aar arity
+    sel := .join asel sel
+  return .rel sel arity
+
+/-- Node shape: `[lhs, leftOpt, "->", rightMultOrNull, rhs]` (see `selProdOp`). -/
+private meta partial def elabProd (scope : SelScope) (env : LEnv) (stx : Syntax) :
+    TermElabM EExpr := do
+  let lm := if stx[1].getNumArgs == 0 then none else arrowMultOf? stx[1][0]
+  let rm := arrowMultOf? stx[3]
+  let (sa, aa) ← elabRel scope env stx[0]
+  let (sb, ab) ← elabRel scope env stx[4]
+  let arity : Option Nat := do return (← aa) + (← ab)
+  if lm.isSome || rm.isSome then
+    return .rel (.prodMult sa lm rm sb) arity
+  return .rel (.prod sa sb) arity
+where
+  arrowMultOf? (s : Syntax) : Option ArrowMult :=
+    match s.getAtomVal with
+    | "lone" => some .lone | "one" => some .one
+    | "some" => some .some | "set" => some .set | _ => none
+
+private meta partial def elabBinderGroups (scope : SelScope) (env : LEnv)
+    (what : String) (groups : Array Syntax) : TermElabM (Array (Name × Sel) × LEnv) := do
+  let mut binders : Array (Name × Sel) := #[]
+  let mut env := env
+  for group in groups do
+    match group with
+    | `(spytialSelBinderGroup| $xs,* : $dom) => do
+      let (domSel, domArity) ← elabRel scope env dom
+      checkArity dom s!"a {what} binder domain" domArity 1
+      for x in xs.getElems do
+        binders := binders.push (x.getId, domSel)
+        env := (x.getId, .binder) :: env
+    | g => throwErrorAt g "unexpected binder group"
+  return (binders, env)
+
+private meta partial def elabRel (scope : SelScope) (env : LEnv) (stx : Syntax) :
+    TermElabM (Sel × Option Nat) := do
+  match ← elabExpr scope env stx with
+  | .rel s a => return (s, a)
+  | .int _ => throwErrorAt stx "this position expects a relational expression, \
+      but the selector is an integer (`#`, a numeral, `@num:`, or an int builtin)"
+  | .val _ => throwErrorAt stx "this position expects a relational expression, \
+      but the selector is a label/literal value"
+
+private meta partial def elabInt (scope : SelScope) (env : LEnv) (stx : Syntax) :
+    TermElabM SelInt := do
+  match ← elabExpr scope env stx with
+  | .int i => return i
+  | _ => throwErrorAt stx "this position expects an integer expression (`#e`, a \
+      numeral, `@num:e`, or an int builtin)"
+
+private meta partial def elabRelBinary (scope : SelScope) (env : LEnv)
+    (mk : Sel → Sel → Sel) (op : String) (a b : TSyntax `spytial_sel) :
+    TermElabM EExpr := do
+  let (sa, aa) ← elabRel scope env a
+  let (sb, ab) ← elabRel scope env b
+  return .rel (mk sa sb) (← sameArity a op aa ab)
+
+private meta partial def elabClosure (scope : SelScope) (env : LEnv) (stx : Syntax)
+    (mk : Sel → Sel) (op : String) (a : TSyntax `spytial_sel) : TermElabM EExpr := do
+  let (sa, aa) ← elabRel scope env a
+  checkArity stx s!"the operand of {op}" aa 2
+  return .rel (mk sa) (some 2)
+
+private meta partial def elabLabel (scope : SelScope) (env : LEnv)
+    (proj : LabelProj) (e : TSyntax `spytial_sel) : TermElabM SelVal := do
+  let (sel, arity) ← elabRel scope env e
+  checkArity e "a label projection's operand" arity 1
+  return .label proj sel
+
+/-- Resolution order: local binding, nullary-constructor label, vocabulary.
+    Dotted components fold as joins unless a prefix names a type. -/
+private meta partial def resolveExprIdent (scope : SelScope) (env : LEnv)
+    (stx : TSyntax `ident) : TermElabM EExpr := do
   match stx.getId.components with
   | [] => throwErrorAt stx "empty selector name"
-  | head :: rest => do
-    if !rest.isEmpty && !vars.contains head then
-      if let some res ← resolveTypeRef? stx then
-        return res
-    let init ← resolveHead head
-    rest.foldlM (init := init) fun (sel, arity) comp => do
-      let compStr := comp.toString
-      if scope.rels.contains compStr || scope.introduced.contains compStr then
-        return (.join sel (.rel compStr), ← joinArity stx arity (some 2))
-      else
-        unknownName scope stx s!"relation '{compStr}'" (Sel.join sel (.rel compStr), none)
+  | head :: rest =>
+    if let some bind := env.lookup head then
+      match bind with
+      | .binder => return ← joinRest (.var head) (some 1) rest
+      | .letE e =>
+        -- Lowering is name-based, so a binder introduced after the `let` would
+        -- silently capture the substituted expression's free variables.
+        let fvs := match e with
+          | .rel s _ => s.freeVars
+          | .val v => v.freeVars
+          | .int i => i.freeVars
+        for (n, b) in env do
+          if n == head then break
+          if b matches .binder then
+            if fvs.contains n then
+              throwErrorAt stx m!"cannot use let-bound '{head}' here: it refers \
+                to '{n}', which a nearer binder shadows — the substitution would \
+                be captured; rename the inner binder"
+        if rest.isEmpty then return e
+        match e with
+        | .rel s a => return ← joinRest s a rest
+        | _ => throwErrorAt stx m!"'{head}' is a let-bound \
+            {if let .int _ := e then "integer" else "value"}; it has no fields to join"
+    if rest.isEmpty then
+      -- A lone ident may be a nullary-constructor label (a value).
+      if let some v ← resolveCtorLit? scope stx then
+        return .val v
+    let (sel, arity, unconsumed) ← resolveHead stx head rest
+    joinRest sel arity unconsumed
 where
-  /-- An ident as a sig reference to a known (or leniently unknown) type. -/
+  joinRest (sel : Sel) (arity : Option Nat) (rest : List Name) : TermElabM EExpr := do
+    let s ← rest.foldlM (init := (sel, arity)) fun (sel, arity) comp => do
+      let compStr := comp.toString
+      let compArity? : Option Nat :=
+        if scope.rels.contains compStr then some 2
+        else scope.introduced.get? compStr
+      match compArity? with
+      | some ca => return (.join sel (.rel compStr), ← joinArity stx arity (some ca))
+      | none => unknownName scope stx s!"relation '{compStr}'" (Sel.join sel (.rel compStr), none)
+    return .rel s.1 s.2
+  resolveHead (idStx : Syntax) (head : Name) (rest : List Name) :
+      TermElabM (Sel × Option Nat × List Name) := do
+    let s := head.toString
+    if s == "univ" then return (.univ, some 1, rest)
+    if s == "iden" then return (.iden, some 2, rest)
+    if s == "none" then return (.none_, some 1, rest)
+    if scope.rels.contains s then return (.rel s, some 2, rest)
+    if let some arity := scope.introduced.get? s then return (.rel s, some arity, rest)
+    -- Longest prefix that names a type wins (`SelQual.Inner.someField`): try
+    -- the full name, then shorter prefixes; the unconsumed tail folds as joins.
+    let total := rest.length + 1
+    for i in [0:total] do
+      let prefixName := Nat.repeat Name.getPrefix i idStx.getId
+      if let some (sel, arity) ← resolveTypeRef? (mkIdentFrom idStx prefixName) then
+        return (sel, arity, rest.drop (total - 1 - i))
+    unknownName scope idStx s!"name '{s}'" (Sel.rel s, none, rest)
   resolveTypeRef? (idStx : Syntax) : TermElabM (Option (Sel × Option Nat)) := do
     let some constName ← resolveGlobal? idStx | return none
     match (← getEnv).find? constName with
@@ -264,8 +592,6 @@ where
       if scope.types.contains constName then
         return some (.sig constName (shortName constName), some 1)
       else if scope.lenient then
-        -- An open world cannot rule the type out, and referencing an element
-        -- type of a polymorphic container is the normal case — pass silently.
         return some (.sig constName (shortName constName), some 1)
       else
         throwErrorAt stx m!"type '{constName}' cannot occur in values of \
@@ -274,189 +600,158 @@ where
       throwErrorAt stx m!"'{constName}' is a constructor — constructor literals \
         only occur in label comparisons (e.g. `@:x = {shortName constName}`)"
     | _ => return none
-  resolveHead (head : Name) : TermElabM (Sel × Option Nat) := do
-    let s := head.toString
-    if vars.contains head then
-      return (.var head, some 1)
-    if s == "univ" then return (.univ, some 1)
-    if s == "iden" then return (.iden, some 2)
-    if scope.rels.contains s then
-      return (.rel s, some 2)
-    if let some arity := scope.introduced.get? s then
-      return (.rel s, some arity)
-    -- Not a relation: a sig is a real Lean type reference.
-    if let some res ← resolveTypeRef? (mkIdentFrom stx head) then
-      return res
-    unknownName scope stx s!"name '{s}'" (Sel.rel s, none)
-
-/-- Resolve a bare identifier in value position: a nullary constructor whose
-    short name is the atom label the walker emits. Unqualified labels resolve
-    through the scope (`tt` means `BDD.tt` without any `open`), qualified ones
-    through the Lean resolver. -/
-private meta def resolveCtorLit (scope : SelScope) (stx : Syntax) : TermElabM SelVal := do
-  if let some ctorName := scope.ctorLabels.get? stx.getId.toString then
-    if let some e ← try pure (some (← mkConstWithLevelParams ctorName)) catch _ => pure none then
-      discard <| Term.addTermInfo stx e
-    return .ctorLit ctorName (shortName ctorName)
-  let some constName ← resolveGlobal? stx
-    | throwErrorAt stx m!"unknown constructor label '{stx.getId}'; known labels of \
-        '{scope.root}': {", ".intercalate (sortDedup (scope.ctorLabels.toList.map (·.1)).toArray).toList}"
-  match (← getEnv).find? constName with
-  | some (.ctorInfo ci) =>
-    unless ci.numFields == 0 do
-      throwErrorAt stx m!"'{constName}' has fields — only nullary constructors \
-        are atom labels"
-    if !scope.types.contains ci.induct && !scope.lenient then
-      throwErrorAt stx m!"constructor '{constName}' belongs to '{ci.induct}', \
-        which cannot occur in values of '{scope.root}'"
-    return .ctorLit constName (shortName constName)
-  | _ =>
-    throwErrorAt stx m!"'{constName}' is not a constructor; label comparisons \
-      expect a nullary constructor or a literal"
-
-/-- The value form inside a comparison argument, if it is one. -/
-private meta def cmpVal? (arg : TSyntax `spytial_sel_cmparg) : Option Syntax :=
-  match arg with
-  | `(spytial_sel_cmparg| $v:spytial_sel_val) => some v
-  | _ => none
-
-/-- The relational form inside a comparison argument. -/
-private meta def cmpSel! (arg : TSyntax `spytial_sel_cmparg) : TSyntax `spytial_sel :=
-  match arg with
-  | `(spytial_sel_cmparg| $s:spytial_sel) => s
-  | _ => ⟨arg.raw⟩
 
 /-- A relational expression opposite a value: only a bare ident makes sense, as
     a constructor-label literal. -/
-private meta def coerceVal (scope : SelScope) (arg : TSyntax `spytial_sel_cmparg) :
+private meta partial def coerceVal (scope : SelScope) (stx : Syntax) :
     TermElabM SelVal := do
-  match cmpSel! arg with
-  | `(spytial_sel| $x:ident) => resolveCtorLit scope x
-  | s => throwErrorAt s "cannot compare a label value with a relational \
-      expression; project a label with `@:` or compare against a constructor \
-      or literal"
-
-mutual
-
-private meta partial def elabSel (scope : SelScope) (vars : List Name) :
-    Syntax → TermElabM (Sel × Option Nat)
+  match stx with
   | `(spytial_sel| $x:ident) =>
-    resolveSelIdent scope vars x
-  | `(spytial_sel| ($s)) => elabSel scope vars s
-  | `(spytial_sel| $s:str) => return (.raw s.getString, none)
-  | stx@`(spytial_sel| $a + $b) => elabBinary scope vars stx .union "+" a b
-  | stx@`(spytial_sel| $a - $b) => elabBinary scope vars stx .diff "-" a b
-  | stx@`(spytial_sel| $a & $b) => elabBinary scope vars stx .inter "&" a b
-  | `(spytial_sel| $a -> $b) => do
-    let (sa, aa) ← elabSel scope vars a
-    let (sb, ab) ← elabSel scope vars b
-    let arity : Option Nat := do return (← aa) + (← ab)
-    return (.prod sa sb, arity)
-  | stx@`(spytial_sel| $a . $b) => do
-    let (sa, aa) ← elabSel scope vars a
-    let (sb, ab) ← elabSel scope vars b
-    return (.join sa sb, ← joinArity stx aa ab)
-  | stx@`(spytial_sel| ^$a) => elabClosure scope vars stx .trans "^" a
-  | stx@`(spytial_sel| *$a) => elabClosure scope vars stx .reflTrans "*" a
-  | stx@`(spytial_sel| ~$a) => elabClosure scope vars stx .transpose "~" a
-  | `(spytial_sel| {$groups,* | $body}) => do
-    let mut binders : Array (Name × Sel) := #[]
-    let mut vars := vars
-    for group in groups.getElems do
-      match group with
-      | `(spytialSelBinderGroup| $xs,* : $dom) => do
-        let (domSel, domArity) ← elabSel scope vars dom
-        checkArity dom "a comprehension binder domain" domArity 1
-        for x in xs.getElems do
-          binders := binders.push (x.getId, domSel)
-          vars := x.getId :: vars
-      | g => throwErrorAt g "unexpected binder group"
-    let bodyForm ← elabForm scope vars body
-    return (.compr binders bodyForm, some binders.size)
-  | stx => throwErrorAt stx "unexpected selector syntax"
+    if let some v ← resolveCtorLit? scope x then return v
+    let some constName ← resolveGlobal? x
+      | throwErrorAt x m!"unknown constructor label '{x.getId}'; known labels of \
+          '{scope.root}': {", ".intercalate (sortDedup (scope.ctorLabels.toList.map (·.1)).toArray).toList}"
+    match (← getEnv).find? constName with
+    | some (.ctorInfo ci) =>
+      unless ci.numFields == 0 do
+        throwErrorAt x m!"'{constName}' has fields — only nullary constructors \
+          are atom labels"
+      if !scope.types.contains ci.induct && !scope.lenient then
+        throwErrorAt x m!"constructor '{constName}' belongs to '{ci.induct}', \
+          which cannot occur in values of '{scope.root}'"
+      return .ctorLit constName (shortName constName)
+    | _ =>
+      throwErrorAt x m!"'{constName}' is not a constructor; label comparisons \
+        expect a nullary constructor or a literal"
+  | s => throwErrorAt s "cannot compare a label value with this operand; a label \
+      value compares against a nullary constructor or a string literal — for a \
+      numeric label, project with `@num:`"
 
-private meta partial def elabBinary (scope : SelScope) (vars : List Name) (stx : Syntax)
-    (mk : Sel → Sel → Sel) (op : String) (a b : TSyntax `spytial_sel) :
-    TermElabM (Sel × Option Nat) := do
-  let (sa, aa) ← elabSel scope vars a
-  let (sb, ab) ← elabSel scope vars b
-  return (mk sa sb, ← sameArity stx op aa ab)
+private meta partial def elabCmp (scope : SelScope) (env : LEnv) (stx : Syntax)
+    (op : IntCmp) (rel : Bool) (a b : Syntax) : TermElabM SelForm := do
+  let classify (s : Syntax) : Option Bool :=   -- some true = value, some false = int
+    match s.getKind with
+    | ``selProjPlain | ``selProjStr | ``selProjBool | ``selStr => some true
+    | ``selProjNum | ``selCard | ``selNum | ``selNegNum => some false
+    | _ => none
+  let intCmp : Bool := op matches .lt | .gt | .le | .ge
+  let asVal (s : Syntax) : TermElabM SelVal := do
+    match classify s with
+    | some true => match ← elabExpr scope env s with
+      | .val v => return v
+      | _ => throwErrorAt s "expected a label/literal value"
+    | _ => coerceVal scope s
+  let asInt (s : Syntax) : TermElabM SelInt := elabInt scope env s
+  let mkV (x y : SelVal) : SelForm := if rel && op == .ne then .vneq x y else .veq x y
+  let mkI (x y : SelInt) : SelForm := .icmp op x y
+  if intCmp then
+    return mkI (← asInt a) (← asInt b)
+  -- against `@:`/`@str:` a bare `true`/`false` keeps the constructor-label reading
+  let boolLitIdent? (s : Syntax) : Option Bool :=
+    if s.getKind == ``selIdent then
+      match s[0].getId.toString with
+      | "true" => some true | "false" => some false | _ => none
+    else none
+  if a.getKind == ``selProjBool then
+    if let some bl := boolLitIdent? b then return mkV (← asVal a) (.boolLit bl)
+  if b.getKind == ``selProjBool then
+    if let some bl := boolLitIdent? a then return mkV (.boolLit bl) (← asVal b)
+  match classify a, classify b with
+  | some true, _ | _, some true => return mkV (← asVal a) (← asVal b)
+  | some false, _ | _, some false => return mkI (← asInt a) (← asInt b)
+  | none, none =>
+    let ea ← elabExpr scope env a
+    let eb ← elabExpr scope env b
+    match ea, eb with
+    | .rel sa aa, .rel sb ab =>
+      discard <| sameArity stx (if rel && op == .ne then "!=" else "=") aa ab
+      return if rel && op == .ne then .neq sa sb else .eq sa sb
+    | .int ia, .int ib => return mkI ia ib
+    | .val va, .val vb => return mkV va vb
+    | .val va, .rel .. => return mkV va (← coerceVal scope b)
+    | .rel .., .val vb => return mkV (← coerceVal scope a) vb
+    | _, _ => throwErrorAt stx "cannot compare a relational expression with a \
+        label or integer; the two operands have different kinds"
 
-private meta partial def elabClosure (scope : SelScope) (vars : List Name) (stx : Syntax)
-    (mk : Sel → Sel) (op : String) (a : TSyntax `spytial_sel) :
-    TermElabM (Sel × Option Nat) := do
-  let (sa, aa) ← elabSel scope vars a
-  checkArity stx s!"the operand of {op}" aa 2
-  return (mk sa, some 2)
-
-/-- Elaborate a value operand (`@:`-projection or literal). -/
-private meta partial def elabVal (scope : SelScope) (vars : List Name) :
-    Syntax → TermElabM SelVal
-  | stx@`(spytial_sel_val| @:$e) => elabLabel scope vars stx .plain e
-  | stx@`(spytial_sel_val| @str:$e) => elabLabel scope vars stx .str e
-  | stx@`(spytial_sel_val| @bool:$e) => elabLabel scope vars stx .bool e
-  | stx@`(spytial_sel_val| @num:$e) => elabLabel scope vars stx .num e
-  | `(spytial_sel_val| $s:str) => do
-    if let some c := sgqUnspellableChar? s.getString then
-      throwErrorAt s m!"string literal contains {codepoint c} — SGQ's string \
-        syntax has no escape for it, and it cannot ride raw through the spec"
-    return .strLit s.getString
-  | `(spytial_sel_val| $n:num) => return .numLit n.getNat
-  | stx => throwErrorAt stx "unexpected value syntax"
-
-private meta partial def elabLabel (scope : SelScope) (vars : List Name) (stx : Syntax)
-    (proj : LabelProj) (e : TSyntax `spytial_sel) : TermElabM SelVal := do
-  let (sel, arity) ← elabSel scope vars e
-  checkArity stx "a label projection's operand" arity 1
-  return .label proj sel
-
-/-- Elaborate a comparison: value-vs-value when either side is a value form
-    (a bare ident opposite a value is a constructor literal), else relational. -/
-private meta partial def elabCmp (scope : SelScope) (vars : List Name) (stx : Syntax)
-    (neg : Bool) (a b : TSyntax `spytial_sel_cmparg) : TermElabM SelForm := do
-  let mkV (va vb : SelVal) : SelForm := if neg then .vneq va vb else .veq va vb
-  match cmpVal? a, cmpVal? b with
-  | some va, some vb =>
-    return mkV (← elabVal scope vars va) (← elabVal scope vars vb)
-  | some va, none =>
-    return mkV (← elabVal scope vars va) (← coerceVal scope b)
-  | none, some vb =>
-    return mkV (← coerceVal scope a) (← elabVal scope vars vb)
-  | none, none => do
-    let (sa, aa) ← elabSel scope vars (cmpSel! a)
-    let (sb, ab) ← elabSel scope vars (cmpSel! b)
-    discard <| sameArity stx (if neg then "!=" else "=") aa ab
-    return if neg then .neq sa sb else .eq sa sb
-
-private meta partial def elabForm (scope : SelScope) (vars : List Name) :
+private meta partial def elabForm (scope : SelScope) (env : LEnv) :
     Syntax → TermElabM SelForm
-  | stx@`(spytial_sel_form| $a:spytial_sel_cmparg = $b) => elabCmp scope vars stx false a b
-  | stx@`(spytial_sel_form| $a:spytial_sel_cmparg != $b) => elabCmp scope vars stx true a b
+  | stx@`(spytial_sel_form| $a:spytial_sel = $b)   => elabCmp scope env stx .eq true a b
+  | stx@`(spytial_sel_form| $a:spytial_sel != $b)  => elabCmp scope env stx .ne true a b
+  | stx@`(spytial_sel_form| $a:spytial_sel < $b)   => elabCmp scope env stx .lt false a b
+  | stx@`(spytial_sel_form| $a:spytial_sel > $b)   => elabCmp scope env stx .gt false a b
+  | stx@`(spytial_sel_form| $a:spytial_sel <= $b)  => elabCmp scope env stx .le false a b
+  | stx@`(spytial_sel_form| $a:spytial_sel >= $b)  => elabCmp scope env stx .ge false a b
+  | stx@`(spytial_sel_form| $a:spytial_sel =< $b)  => elabCmp scope env stx .le false a b
   | stx@`(spytial_sel_form| $a:spytial_sel in $b) => do
-    let (sa, aa) ← elabSel scope vars a
-    let (sb, ab) ← elabSel scope vars b
+    let (sa, aa) ← elabRel scope env a
+    let (sb, ab) ← elabRel scope env b
     discard <| sameArity stx "in" aa ab
     return .subset sa sb
-  | `(spytial_sel_form| $a && $b) =>
-    return .and (← elabForm scope vars a) (← elabForm scope vars b)
-  | `(spytial_sel_form| $a || $b) =>
-    return .or (← elabForm scope vars a) (← elabForm scope vars b)
-  | `(spytial_sel_form| $a => $b) =>
-    return .implies (← elabForm scope vars a) (← elabForm scope vars b)
-  | `(spytial_sel_form| !$a) => return .not (← elabForm scope vars a)
-  | `(spytial_sel_form| ($f)) => elabForm scope vars f
-  -- Multiplicity (`some`/`no`/`lone`/`one`): any arity, so the operand is only
-  -- scope-checked; the head keyword is validated first.
-  | `(spytial_sel_form| $kw:ident $a:spytial_sel) => do
-    let mk ← match kw.getId.toString with
-      | "some" => pure SelForm.some_
-      | "no" => pure SelForm.no
-      | "lone" => pure SelForm.lone
-      | "one" => pure SelForm.one
-      | other => throwErrorAt kw m!"unknown multiplicity operator '{other}' \
-          (expected some, no, lone, one)"
-    return mk (← elabSel scope vars a).1
-  | stx => throwErrorAt stx "unexpected formula syntax"
+  | stx@`(spytial_sel_form| $a:spytial_sel !in $b) => do
+    let (sa, aa) ← elabRel scope env a
+    let (sb, ab) ← elabRel scope env b
+    discard <| sameArity stx "!in" aa ab
+    return .notSubset sa sb
+  | `(spytial_sel_form| ! $a)   => return .not (← elabForm scope env a)
+  | `(spytial_sel_form| not $a) => return .not (← elabForm scope env a)
+  | `(spytial_sel_form| some $a:spytial_sel) => return .some_ (← elabRel scope env a).1
+  | `(spytial_sel_form| no $a:spytial_sel)   => return .no (← elabRel scope env a).1
+  | `(spytial_sel_form| lone $a:spytial_sel) => return .lone (← elabRel scope env a).1
+  | `(spytial_sel_form| one $a:spytial_sel)  => return .one (← elabRel scope env a).1
+  | `(spytial_sel_form| ($f)) => elabForm scope env f
+  | stx =>
+    match stx.getKind with
+    -- Declared quantifier / `let` kinds (namespace-qualified) …
+    | ``selQAll  => elabQuant scope env .all stx
+    | ``selQNo   => elabQuant scope env .no stx
+    | ``selQSome => elabQuant scope env .some stx
+    | ``selQLone => elabQuant scope env .lone stx
+    | ``selQOne  => elabQuant scope env .one stx
+    | ``selLet   => elabLet scope env stx
+    -- … and the hand-written parser kinds (simple names).
+    | `selNotIn => do
+      let (sa, aa) ← elabRel scope env stx[0]
+      let (sb, ab) ← elabRel scope env stx[3]
+      discard <| sameArity stx "not in" aa ab
+      return .notSubset sa sb
+    | `selNi => do
+      let (sa, aa) ← elabRel scope env stx[0]
+      let (sb, ab) ← elabRel scope env stx[2]
+      discard <| sameArity stx "ni" aa ab
+      return .ni sa sb
+    | `selNotNi => do
+      let (sa, aa) ← elabRel scope env stx[0]
+      let (sb, ab) ← elabRel scope env stx[3]
+      discard <| sameArity stx "!ni" aa ab
+      return .notNi sa sb
+    | `selOr      => return .or (← elabForm scope env stx[0]) (← elabForm scope env stx[2])
+    | `selXor     => return .xor (← elabForm scope env stx[0]) (← elabForm scope env stx[2])
+    | `selIff     => return .iff (← elabForm scope env stx[0]) (← elabForm scope env stx[2])
+    | `selAnd     => return .and (← elabForm scope env stx[0]) (← elabForm scope env stx[2])
+    | `selImplies => return .implies (← elabForm scope env stx[0]) (← elabForm scope env stx[2])
+    | `selIte =>
+      return .ite (← elabForm scope env stx[0]) (← elabForm scope env stx[2])
+        (← elabForm scope env stx[4])
+    | _ => throwErrorAt stx "unexpected formula syntax"
+
+/-- Node layout: `[kw, optDisj, binders, "|", body]`. -/
+private meta partial def elabQuant (scope : SelScope) (env : LEnv) (q : Quant)
+    (stx : Syntax) : TermElabM SelForm := do
+  let disj := !stx[1].isNone
+  let (binders, env') ← elabBinderGroups scope env "quantifier" stx[2].getSepArgs
+  let body ← elabForm scope env' stx[4]
+  return .quant q disj binders body
+
+/-- Desugars by substitution — SGQ has no `let`. A later binder shadows the
+    `let`. -/
+private meta partial def elabLet (scope : SelScope) (env : LEnv) (stx : Syntax) :
+    TermElabM SelForm := do
+  let mut env := env
+  for bind in stx[1].getSepArgs do
+    let x := bind[0].getId
+    let e ← elabExpr scope env bind[2]
+    env := (x, .letE e) :: env
+  elabForm scope env stx[3]
 
 end
 
@@ -470,11 +765,12 @@ meta inductive ArityExpect where
   | unaryOrPair
   deriving Repr, Inhabited
 
-/-- Elaborate a selector against `scope`, enforcing the op position's arity
-    expectation (skipped when the arity is statically unknown). -/
+/-- A whole-selector string literal is the raw escape hatch. -/
 meta def elabSelector (scope : SelScope) (expect : ArityExpect)
     (stx : TSyntax `spytial_sel) : TermElabM Sel := do
-  let (sel, arity) ← elabSel scope [] stx
+  if let `(spytial_sel| $s:str) := stx then
+    return .raw s.getString
+  let (sel, arity) ← elabRel scope [] stx
   if let some a := arity then
     match expect with
     | .unary =>
