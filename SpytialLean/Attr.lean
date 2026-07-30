@@ -1,6 +1,7 @@
 module
 
 public import Lean
+public meta import SpytialLean.Spec
 
 namespace SpytialLean
 
@@ -9,9 +10,10 @@ open Lean
 /-! ## Spytial spec extension -/
 
 /-- Environment extension storing Spytial specs attached to type declarations.
-    Maps declaration name → YAML string. -/
+    Maps declaration name → structured `SpytialSpec`; YAML is rendered only at
+    widget-payload time. -/
 public meta initialize spytialSpecExt :
-    SimplePersistentEnvExtension (Name × String) (Std.HashMap Name String) ←
+    SimplePersistentEnvExtension (Name × SpytialSpec) (Std.HashMap Name SpytialSpec) ←
   registerSimplePersistentEnvExtension {
     addEntryFn := fun m (n, s) => m.insert n s
     addImportedFn := fun arrays =>
@@ -19,12 +21,12 @@ public meta initialize spytialSpecExt :
   }
 
 /-- Look up the Spytial spec for a declaration name, if any. -/
-public meta def getSpytialSpec? (env : Environment) (declName : Name) : Option String :=
+public meta def getSpytialSpec? (env : Environment) (declName : Name) : Option SpytialSpec :=
   spytialSpecExt.getState env |>.get? declName
 
-/-- Attach a Spytial spec (as YAML string) to a declaration name. -/
-public meta def setSpytialSpec (declName : Name) (yaml : String) : CoreM Unit :=
-  modifyEnv fun env => spytialSpecExt.addEntry env (declName, yaml)
+/-- Attach a Spytial spec to a declaration name. -/
+public meta def setSpytialSpec (declName : Name) (spec : SpytialSpec) : CoreM Unit :=
+  modifyEnv fun env => spytialSpecExt.addEntry env (declName, spec)
 
 /-! ## Spytial coverage opt-out extension -/
 

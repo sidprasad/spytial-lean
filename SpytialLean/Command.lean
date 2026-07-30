@@ -29,11 +29,6 @@ private meta unsafe def evalSpytialSpecUnsafe (stx : Syntax) : TermElabM Spytial
 @[implemented_by evalSpytialSpecUnsafe]
 private meta opaque evalSpytialSpec (stx : Syntax) : TermElabM SpytialSpec
 
-/-- Evaluate a `SpytialSpec` term to the YAML the widget and the `spytial_spec`
-    attribute both store. -/
-private meta def evalSpecYaml (stx : Syntax) : TermElabM String :=
-  SpytialSpec.toYaml <$> evalSpytialSpec stx
-
 /-! ## Widget payload
 
 The commands and tactics below differ only in whether Prop-typed fields are
@@ -42,7 +37,7 @@ receives. -/
 
 /-- Try to find a Spytial spec attached to the head type of an expression.
     For structures, walks the parent chain and composes specs (parent-first). -/
-private meta def lookupTypeSpec (e : Expr) : MetaM (Option String) := do
+private meta def lookupTypeSpec (e : Expr) : MetaM (Option SpytialSpec) := do
   let ty ← inferType e
   let tyHead := (← whnf ty).getAppFn
   match tyHead with
@@ -53,11 +48,8 @@ private meta def lookupTypeSpec (e : Expr) : MetaM (Option String) := do
       let parents ← getAllParentStructures n
       -- Root-first order, self last
       let allNames := parents.reverse.toList ++ [n]
-      let yamls := allNames.filterMap (getSpytialSpec? env ·)
-      match yamls with
-      | []    => return none
-      | [one] => return some one
-      | _     => return some (mergeSpecYamls yamls)
+      let specs := allNames.filterMap (getSpytialSpec? env ·)
+      return if specs.isEmpty then none else some specs.flatten
     else
       -- Plain inductive — direct lookup
       return getSpytialSpec? env n
@@ -72,14 +64,15 @@ private meta def elabRelationalized (t : Syntax) (cfg : WalkConfig := {}) :
   return (e, ← relationalize e cfg)
 
 /-- Elaborate a term and resolve its layout spec: an explicit `with <ops>`
-    overrides a spec attached to the term's type. -/
+    overrides a spec attached to the term's type. The composed spec is rendered
+    to YAML once here, at payload-build time. -/
 private meta def elabSpytialPayload (t : Syntax) (spec? : Option Syntax)
     (cfg : WalkConfig) : TermElabM (JsonDataInstance × Option String) := do
   let (e, di) ← elabRelationalized t cfg
-  let yaml? ← match spec? with
-    | some specTerm => some <$> evalSpecYaml specTerm
+  let spec ← match spec? with
+    | some specTerm => some <$> evalSpytialSpec specTerm
     | none => lookupTypeSpec e
-  return (di, yaml?)
+  return (di, spec.map SpytialSpec.toYaml)
 
 private meta def spytialProps (di : JsonDataInstance) (cndSpec? : Option String) : Json :=
   Json.mkObj <|
@@ -143,8 +136,8 @@ syntax (name := spytialSpecCmd) "spytial_spec " ident term : command
 meta def elabSpytialSpecCmd : CommandElab := fun
   | `(spytial_spec $id:ident $specTerm:term) => do
     let declName ← resolveGlobalConstNoOverload id
-    let yamlStr ← liftTermElabM <| evalSpecYaml specTerm
-    liftCoreM <| setSpytialSpec declName yamlStr
+    let spec ← liftTermElabM <| evalSpytialSpec specTerm
+    liftCoreM <| setSpytialSpec declName spec
   | stx => throwError "Unexpected syntax {stx}."
 
 /-! ## spytial_relationalizer command -/
@@ -182,7 +175,7 @@ syntax (name := spytialSpecDebug) "#spytial.spec " term " with " term : command
 @[command_elab spytialSpecDebug]
 meta def elabSpytialSpecDebug : CommandElab := fun
   | `(#spytial.spec $_t:term with $specTerm:term) => do
-    let yamlStr ← liftTermElabM <| evalSpecYaml specTerm
+    let yamlStr ← liftTermElabM <| SpytialSpec.toYaml <$> evalSpytialSpec specTerm
     logInfo m!"{yamlStr}"
   | stx => throwError "Unexpected syntax {stx}."
 
