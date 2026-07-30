@@ -29,7 +29,9 @@ Pre-built artifacts are downloaded automatically from GitHub Releases. **Node.js
 
 If you want to build from source (e.g., for development), you will also need:
 
-- [Node.js](https://nodejs.org/) (for building the widget JS)
+- [Node.js](https://nodejs.org/) with [pnpm](https://pnpm.io/installation) ≥ 9.5 —
+  for building the widget JS (`lake build` shells `pnpm install`, and the
+  workspace catalog needs 9.5+). The Nix dev shell already provides both.
 
 ```sh
 git clone https://github.com/sidprasad/spytial-lean.git
@@ -42,7 +44,7 @@ Open a file in `demos/` and place your cursor on a `#spytial` line. The infoview
 
 ### Nix dev shell
 
-A [flake](flake.nix) provides a dev shell (elan + Node + just) — run `nix develop`. To opt into [direnv](https://direnv.net/): `ln -s nix/envrc .envrc && direnv allow`.
+A [flake](flake.nix) provides a dev shell (elan + Node + pnpm + just) — run `nix develop`. To opt into [direnv](https://direnv.net/): `ln -s nix/envrc .envrc && direnv allow`.
 
 ## Usage
 
