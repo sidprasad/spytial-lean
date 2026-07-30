@@ -1,0 +1,18 @@
+{
+  "name": "spytial-lean-render-tests",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:render-harness": "rollup --config rollup.config.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "catalog:",
+    "@rollup/plugin-commonjs": "catalog:",
+    "@rollup/plugin-node-resolve": "catalog:",
+    "@rollup/plugin-replace": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "rollup": "catalog:"
+  }
+}

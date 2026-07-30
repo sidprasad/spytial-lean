@@ -241,6 +241,10 @@ SpytialLean/
   Widget.lean         -- ProofWidgets4 widget module registration
   Attr.lean           -- Environment extension for spytial_spec
   Command.lean        -- #spytial command and spytial_spec elaborators
+tests/
+  TypeShapeTest.lean  -- Naming + walker unit tests
+  CoverageTest.lean   -- #spytial.coverage diagnostics tests
+  render/             -- Image-snapshot tests of the widget in headless Chromium
 widget/
   src/spytialWidget.tsx  -- React component rendering the diagram
   rollup.config.js       -- Bundles spytial-core into the widget

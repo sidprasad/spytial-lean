@@ -45,6 +45,19 @@ jobs:
       - name: Build, test, demos
         run: just build test demos
 
+      # Renders in tests/render/Dockerfile's container, same as locally — which
+      # is why the committed baselines mean anything here.
+      - name: Render tests
+        run: just render
+
+      - name: Upload render diffs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: render-output
+          path: tests/render/out
+          retention-days: 7
+
       - name: Create GitHub Release
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2

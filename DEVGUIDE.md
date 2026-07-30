@@ -8,10 +8,11 @@ spytial-lean has two build systems that feed into each other:
 2. **Lean** (lake) — compiles the Lean library, embedding the widget JS via `include_str`
 
 The Lean build depends on the widget JS through the `widgetJsAll` lake target,
-which runs `pnpm install --frozen-lockfile` and `pnpm run build` in `widget/`
-whenever its tracked inputs (sources, rollup configs, `package.json`,
-`pnpm-lock.yaml`) change. The lockfile is committed; dependency changes go
-through `pnpm add` / `pnpm remove` in `widget/`.
+which runs `pnpm install --frozen-lockfile` at the workspace root and
+`pnpm -C widget run build` whenever its tracked inputs (sources, rollup
+configs, `package.json`, `pnpm-lock.yaml`) change. The lockfile is committed;
+change a member's deps with `pnpm -C widget add` / `pnpm -C widget remove`
+and shared versions by editing the `pnpm-workspace.yaml` catalog.
 
 ## Prerequisites
 
@@ -34,7 +35,8 @@ lake build
 
 The first build also fetches the Lean dependencies (ProofWidgets4) pinned in
 `lake-manifest.json`. Under the hood `just build` runs `pnpm install
---frozen-lockfile` and `pnpm run build` in `widget/` before compiling Lean.
+--frozen-lockfile` at the workspace root and `pnpm -C widget run build`
+before compiling Lean.
 
 ### Tests
 
@@ -54,6 +56,23 @@ with `just demos`, or directly with lake:
 lake build Demos
 ```
 
+### Render tests
+
+Image-snapshot tests of the widget in headless Chromium: each case in
+`tests/render/Cases.lean` dumps real widget props, a rollup harness mounts the
+compiled component on them, and Playwright pixel-compares against
+`tests/render/baseline/`. See [tests/render/README.md](tests/render/README.md).
+
+```sh
+just render            # full suite (`just render -g rbtree` filters by case)
+just render-update     # re-bless baselines — inspect the PNGs first!
+just render-review     # kitty terminals: re-blessed baselines vs HEAD, side by side
+```
+
+Browser, font and rasterization flags all come from `tests/render/Dockerfile`,
+which is what makes a baseline comparable on a machine that didn't bless it — and
+lets CI run the same recipe. Needs `docker` (or `SPYTIAL_CONTAINER=podman`).
+
 ### Widget reload
 
 The built JS's hash is part of the `widgetJsAll` trace, so `just build`
@@ -71,7 +90,8 @@ Server"**) to pick up the new widget.
 ### Changed spytial-core
 
 spytial-core is a registry dependency (`spytial-core` in `widget/package.json`).
-Bump the version and run `pnpm install` in `widget/`; the next `just build`
+Bump the version and run `pnpm install` at the workspace root; the next
+`just build`
 re-embeds it. For an unreleased core, point the dependency at a local checkout
 (`"spytial-core": "file:../../spytial-core"`) and use `just widget-reload`
 after each core rebuild.
@@ -101,8 +121,8 @@ dagre, etc.) — this is why the final widget JS is ~3MB.
 
 ```
 widget/src/spytialWidget.tsx
-  → (tsc)    widget/dist/spytialWidget.js
-  → (rollup) .lake/build/js/spytialWidget.js
+  → (tsc)    widget/dist/spytialWidget.js      ← render harness mounts this
+  → (rollup) .lake/build/js/spytialWidget.js   ← include_str embeds this
 ```
 
 The final `.lake/build/js/spytialWidget.js` is what `include_str` embeds into
@@ -138,4 +158,7 @@ Shows the YAML that gets passed to `parseLayoutSpec`.
 
 ### Widget console errors
 
-In VS Code, open the Developer Tools (**Help → Toggle Developer Tools**) and check the Console tab for `SpytialWidget render error` messages.
+In VS Code, open the Developer Tools (**Help → Toggle Developer Tools**) and
+check the Console tab for `SpytialWidget render error` messages. Outside VS
+Code, `just render` surfaces the same component's errors headlessly (widget
+error state and `constraint-error` events fail the test).
