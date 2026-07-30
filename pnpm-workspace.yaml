@@ -1,0 +1,11 @@
+packages:
+  - widget
+
+# Pinned to stay consistent with the infoview bundle.
+catalog:
+  '@rollup/plugin-commonjs': ^28.0.1
+  '@rollup/plugin-node-resolve': ^15.0.2
+  '@rollup/plugin-replace': ^6.0.1
+  react: ^18.2.0
+  react-dom: ^18.2.0
+  rollup: ^4.17.2
