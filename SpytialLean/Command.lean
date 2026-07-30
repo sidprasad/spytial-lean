@@ -275,10 +275,19 @@ meta def elabSpytialTactic : Tactic := fun stx => do
 
 /-! ## Proof tactic -/
 
+/-- Leading parser for the `spytial.proof` tactic. A dotted atom never enters
+    the token table — the lexer reads `spytial.proof` as one qualified
+    identifier — so an atom-led rule can never fire; match the identifier by
+    value instead. `includeIdent := true` indexes the rule under the parser
+    table's ident bucket; without it the rule is never tried. (`#`-led command
+    atoms take the symbol path and are unaffected.) -/
+meta def spytialProofKw : Lean.Parser.Parser :=
+  Lean.Parser.nonReservedSymbol "spytial.proof" (includeIdent := true)
+
 open Tactic in
 /-- `spytial.proof <term>` visualizes a proof term in tactic mode,
     showing the full proof structure without filtering Prop-typed fields. -/
-syntax (name := spytialProofTactic) "spytial.proof " term (" with " term)? : tactic
+syntax (name := spytialProofTactic) spytialProofKw term (" with " term)? : tactic
 
 open Tactic in
 @[tactic spytialProofTactic]
