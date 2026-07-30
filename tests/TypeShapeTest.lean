@@ -67,3 +67,14 @@ public structure Bundle where
 #eval show MetaM Unit from do
   let r ← TypeShape.ofInductive ``Nat.add
   unless r.isNone do throwError "expected none for a non-inductive"
+
+public structure Pack where
+  items : List (Tree Nat)             -- container: element type is vocabulary
+  bound : Fin 3                       -- value argument: contributes nothing
+  size : Nat
+
+#eval show MetaM Unit from do
+  let some ts ← TypeShape.ofInductive ``Pack | throwError "Pack: no shape"
+  let mk := ts.ctors[0]!
+  assertEq "Pack.typeHead"     (mk.fields.map (·.typeHead)) #[some ``List, some ``Fin, some ``Nat]
+  assertEq "Pack.typeArgHeads" (mk.fields.map (·.typeArgHeads)) #[#[``Tree], #[], #[]]

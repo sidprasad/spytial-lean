@@ -23,6 +23,16 @@ public meta def typeHead? (ty : Expr) : MetaM (Option Name) := do
   | .const n _ => return some n
   | _          => return none
 
+/-- Const heads of a type application's *type* arguments (`List Node` →
+    `#[Node]`), so scope closures can see through polymorphic containers.
+    Value arguments (`Fin 3`'s `3`) and anything without a constant head
+    contribute no vocabulary and are skipped. -/
+public meta def typeConstArgHeads (ty : Expr) : MetaM (Array Name) := do
+  ty.getAppArgs.filterMapM fun arg => do
+    let arg ← Meta.whnf arg
+    let .const n _ := arg.getAppFn | return none
+    return if (← Meta.inferType arg).isSort then some n else none
+
 public meta def sigOfType (ty : Expr) : MetaM String := do
   match ← typeHead? ty with
   | some n => return shortName n
@@ -60,6 +70,10 @@ public meta structure FieldShape where
   /-- Head constant of the field type, when it has one; `none` for a type
       parameter or function type (unpredictable vocabulary). -/
   typeHead : Option Name := none
+  /-- Const heads of the field type's type arguments (`deps : List Node` →
+      `#[Node]`); the scope closure follows these so a container's element
+      vocabulary is known. -/
+  typeArgHeads : Array Name := #[]
   /-- The walker drops this field: it is `Prop`- or `Sort`-typed. -/
   isProofLike : Bool
   deriving Repr, Inhabited
@@ -90,12 +104,14 @@ public meta def TypeShape.ofInductive (typeName : Name) : MetaM (Option TypeShap
       for i in [:dataXs.size] do
         let xty ← Meta.inferType dataXs[i]!
         let isProofLike ← isProofLikeType xty
+        let xty ← Meta.whnf xty
         let (typeSig, typeHead) ←
-          match (← Meta.whnf xty).getAppFn with
+          match xty.getAppFn with
           | .const n _ => pure (some (shortName n), some n)
           | _          => pure (none, none)
         fs := fs.push { relName := fieldRelName ctorShort binderNames i,
-                        typeSig, typeHead, isProofLike }
+                        typeSig, typeHead,
+                        typeArgHeads := ← typeConstArgHeads xty, isProofLike }
       return fs
     ctors := ctors.push { ctorName, ctorShort, fields }
   return some { typeName, sig := shortName typeName, ctors }
