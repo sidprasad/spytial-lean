@@ -21,24 +21,8 @@ public section
 
 /-! ## The op DSL
 
-An op is a keyword ident followed by juxtaposed arguments — selectors, relation
-names, direction/style idents, strings, numbers:
-
-```
-spytial_spec BDD [
-  orientation {x, y : BDD | x->y in (lo + hi)} below,
-  edgeColor lo "orange" dashed,
-  atomColor {x : BDD | @:x = ff} "red",
-  hideAtom String
-]
-```
-
 The head ident dispatches interpretation, so op keywords need no token-table
-entries; arguments are parsed uniformly (`spytial_sel` or a numeral) and each
-position is interpreted per op — selector positions elaborate against the
-target's `SelScope` with the op's arity expectation, field positions must name
-known relations, and enumerated idents (directions, styles) are validated by
-value. -/
+entries. -/
 
 declare_syntax_cat spytial_op
 
@@ -49,33 +33,6 @@ syntax (name := spytialOpStx) ident spytialOpArg* : spytial_op
 syntax (name := spytialAttrOp) "attribute " spytialOpArg* : spytial_op
 
 /-! ### Argument interpretation -/
-
-private meta def Direction.parse? : String → Option Direction
-  | "above" => some .above
-  | "below" => some .below
-  | "left" => some .left
-  | "right" => some .right
-  | "directlyAbove" => some .directlyAbove
-  | "directlyBelow" => some .directlyBelow
-  | "directlyLeft" => some .directlyLeft
-  | "directlyRight" => some .directlyRight
-  | _ => none
-
-private meta def EdgeStyle.parse? : String → Option EdgeStyle
-  | "solid" => some .solid
-  | "dashed" => some .dashed
-  | "dotted" => some .dotted
-  | _ => none
-
-private meta def AlignDir.parse? : String → Option AlignDir
-  | "horizontal" => some .horizontal
-  | "vertical" => some .vertical
-  | _ => none
-
-private meta def RotationDir.parse? : String → Option RotationDir
-  | "clockwise" => some .clockwise
-  | "counterclockwise" => some .counterclockwise
-  | _ => none
 
 private meta structure OpArgs where
   opName : Syntax
@@ -133,21 +90,22 @@ private meta def OpArgs.nat (a : OpArgs) (i : Nat) (what : String) : TermElabM N
   | some n => return n
   | none => throwErrorAt inner m!"expected {what} (a numeral); usage: {a.usage}"
 
-private meta def parseEnum {α} (what : String) (parse : String → Option α)
-    (values : String) (x : Ident) : TermElabM α := do
-  match parse x.getId.toString with
-  | some v => return v
-  | none => throwErrorAt x m!"unknown {what} '{x.getId}' (expected {values})"
+private meta def enumValues (typeName : Name) : TermElabM String := do
+  return ", ".intercalate ((← getConstInfoInduct typeName).ctors.map (·.getString!))
 
-private meta def directionValues : String :=
-  "above, below, left, right, directlyAbove, directlyBelow, directlyLeft, directlyRight"
+private meta def parseEnum {α} [FromJson α] (what : String) (typeName : Name)
+    (x : Ident) : TermElabM α := do
+  match fromJson? (Json.str x.getId.toString) with
+  | .ok v => return v
+  | .error _ =>
+    throwErrorAt x m!"unknown {what} '{x.getId}' (expected {← enumValues typeName})"
 
 private meta def OpArgs.style (a : OpArgs) (i : Nat) : TermElabM EdgeStyle := do
   match a.ident? i with
-  | some x => parseEnum "edge style" EdgeStyle.parse? "solid, dashed, dotted" x
+  | some x => parseEnum "edge style" ``EdgeStyle x
   | none => do
     if (a.get? i).isSome then
-      throwErrorAt (← a.get i) m!"expected an edge style (solid, dashed, dotted); \
+      throwErrorAt (← a.get i) m!"expected an edge style ({← enumValues ``EdgeStyle}); \
         usage: {a.usage}"
     return .solid
 
@@ -191,13 +149,13 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
         throwErrorAt head m!"missing direction; usage: {a.usage}"
       for i in [1:a.args.size] do
         let x ← a.ident i "a direction"
-        dirs := dirs ++ [← parseEnum "direction" Direction.parse? directionValues x]
+        dirs := dirs ++ [← parseEnum "direction" ``Direction x]
       return (.orientation s dirs, scope)
     | "align" => do
       let a := mkArgs "align <selector> horizontal|vertical"
       let s ← sel a 0 .pair
       let x ← a.ident 1 "an alignment direction"
-      let d ← parseEnum "alignment direction" AlignDir.parse? "horizontal, vertical" x
+      let d ← parseEnum "alignment direction" ``AlignDir x
       a.checkNoExtra 2
       return (.align s d, scope)
     | "cyclic" => do
@@ -205,11 +163,11 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
       let s ← sel a 0 .pair
       let d ← match a.ident? 1 with
         | some x =>
-          parseEnum "rotation direction" RotationDir.parse? "clockwise, counterclockwise" x
+          parseEnum "rotation direction" ``RotationDir x
         | none => do
           if (a.get? 1).isSome then
-            throwErrorAt (← a.get 1) m!"expected a rotation direction (clockwise, \
-              counterclockwise); usage: {a.usage}"
+            throwErrorAt (← a.get 1) m!"expected a rotation direction \
+              ({← enumValues ``RotationDir}); usage: {a.usage}"
           pure RotationDir.clockwise
       a.checkNoExtra 2
       return (.cyclic s d, scope)

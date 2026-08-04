@@ -5,26 +5,30 @@ public meta import SpytialLean.Selector
 
 namespace SpytialLean
 
+open Lean (Json ToJson FromJson toJson)
+
 /-- Relative positioning directions for orientation constraints. -/
 public meta inductive Direction where
   | above | below | left | right
   | directlyAbove | directlyBelow | directlyLeft | directlyRight
-  deriving Repr, DecidableEq, Inhabited
+  deriving Repr, DecidableEq, Inhabited, ToJson, FromJson
 
 /-- Alignment direction. -/
 public meta inductive AlignDir where
   | horizontal | vertical
-  deriving Repr, DecidableEq, Inhabited
+  deriving Repr, DecidableEq, Inhabited, ToJson, FromJson
 
 /-- Rotation direction for cyclic constraints. -/
 public meta inductive RotationDir where
   | clockwise | counterclockwise
-  deriving Repr, DecidableEq, Inhabited
+  deriving Repr, DecidableEq, Inhabited, ToJson, FromJson
 
 /-- Edge line style. -/
 public meta inductive EdgeStyle where
   | solid | dashed | dotted
-  deriving Repr, DecidableEq, Inhabited
+  deriving Repr, DecidableEq, Inhabited, ToJson, FromJson
+
+public meta instance : ToJson Sel := ⟨fun s => Json.str s.toSGQ⟩
 
 /-- Selector positions carry checked `Sel`s; `field` positions carry relation
     names validated against the target type's vocabulary. -/
@@ -66,86 +70,24 @@ environment stores the structured spec, and the wire string exists only in the
 widget payload.
 -/
 
-open Lean (Json)
-
-private meta def Direction.toStr : Direction → String
-  | .above => "above"
-  | .below => "below"
-  | .left => "left"
-  | .right => "right"
-  | .directlyAbove => "directlyAbove"
-  | .directlyBelow => "directlyBelow"
-  | .directlyLeft => "directlyLeft"
-  | .directlyRight => "directlyRight"
-
-private meta def AlignDir.toStr : AlignDir → String
-  | .horizontal => "horizontal"
-  | .vertical => "vertical"
-
-private meta def RotationDir.toStr : RotationDir → String
-  | .clockwise => "clockwise"
-  | .counterclockwise => "counterclockwise"
-
-private meta def EdgeStyle.toStr : EdgeStyle → String
-  | .solid => "solid"
-  | .dashed => "dashed"
-  | .dotted => "dotted"
-
 /-- Is this op a constraint (affects layout geometry)? -/
 private meta def SpytialOp.isConstraint : SpytialOp → Bool
   | .orientation .. | .align .. | .cyclic .. | .group .. => true
   | .hideAtom .. | .size .. => true
   | _ => false
 
-/-- Lower one op to its `{opName: …}` JSON object. Optional fields (`addEdge`,
-    `showLabels`) are emitted only when set. -/
-private meta def SpytialOp.toJson (op : SpytialOp) : Json :=
-  let sel (s : Sel) : Json := Json.str s.toSGQ
-  match op with
-  | .orientation s dirs =>
-    Json.mkObj [("orientation", Json.mkObj
-      [("selector", sel s),
-       ("directions", Json.arr (dirs.map (fun d => Json.str d.toStr)).toArray)])]
-  | .align s dir =>
-    Json.mkObj [("align", Json.mkObj [("selector", sel s), ("direction", Json.str dir.toStr)])]
-  | .cyclic s dir =>
-    Json.mkObj [("cyclic", Json.mkObj [("selector", sel s), ("direction", Json.str dir.toStr)])]
-  | .group s name addEdge =>
-    Json.mkObj [("group", Json.mkObj <|
-      [("selector", sel s), ("name", Json.str name)] ++
-      (if addEdge then [("addEdge", Json.bool true)] else []))]
-  | .hideAtom s =>
-    Json.mkObj [("hideAtom", Json.mkObj [("selector", sel s)])]
-  | .size s w h =>
-    Json.mkObj [("size", Json.mkObj
-      [("selector", sel s), ("width", Json.num (.fromNat w)), ("height", Json.num (.fromNat h))])]
-  | .atomColor s val =>
-    Json.mkObj [("atomColor", Json.mkObj [("selector", sel s), ("value", Json.str val)])]
-  | .edgeColor field val style =>
-    Json.mkObj [("edgeColor", Json.mkObj
-      [("field", Json.str field), ("value", Json.str val), ("style", Json.str style.toStr)])]
-  | .hideField field =>
-    Json.mkObj [("hideField", Json.mkObj [("field", Json.str field)])]
-  | .attribute field =>
-    Json.mkObj [("attribute", Json.mkObj [("field", Json.str field)])]
-  | .icon s path showLabels =>
-    Json.mkObj [("icon", Json.mkObj <|
-      [("selector", sel s), ("path", Json.str path)] ++
-      (if showLabels then [("showLabels", Json.bool true)] else []))]
-  | .tag toTag name value =>
-    Json.mkObj [("tag", Json.mkObj
-      [("toTag", sel toTag), ("name", Json.str name), ("value", Json.str value)])]
-  | .inferredEdge name s color style =>
-    Json.mkObj [("inferredEdge", Json.mkObj
-      [("name", Json.str name), ("selector", sel s), ("color", Json.str color),
-       ("style", Json.str style.toStr)])]
-  | .flag name =>
-    Json.mkObj [("flag", Json.str name)]
+deriving instance ToJson for SpytialOp
+
+public meta instance : ToJson SpytialOp where
+  toJson
+    -- core matches flags by string, so the payload is the bare name
+    | .flag name => Json.mkObj [("flag", toJson name)]
+    | op => instToJsonSpytialOp.toJson op
 
 /-- A spec with no ops renders as the empty string, not `{}`. -/
 public meta def SpytialSpec.render (spec : SpytialSpec) : String :=
   let mkSection (key : String) (ops : SpytialSpec) : List (String × Json) :=
-    if ops.isEmpty then [] else [(key, Json.arr (ops.map SpytialOp.toJson).toArray)]
+    if ops.isEmpty then [] else [(key, toJson ops)]
   let (constraints, directives) := spec.partition SpytialOp.isConstraint
   match mkSection "constraints" constraints ++ mkSection "directives" directives with
   | [] => ""

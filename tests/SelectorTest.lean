@@ -86,7 +86,9 @@ info: {"directives":
    {"selector": "{x, y : SBDD | x != y and x.v = y.v}",
     "direction": "horizontal"}},
   {"group":
-   {"selector": "{vr : String, y : SBDD | @:vr = @:(y.v)}", "name": "nodes"}},
+   {"selector": "{vr : String, y : SBDD | @:vr = @:(y.v)}",
+    "name": "nodes",
+    "addEdge": false}},
   {"hideAtom": {"selector": "String"}},
   {"size": {"width": 120, "selector": "SBDD", "height": 80}},
   {"cyclic":
@@ -282,7 +284,8 @@ info: {"directives":
  [{"inferredEdge":
    {"style": "solid", "selector": "lo.hi", "name": "hop", "color": "#000000"}},
   {"edgeColor": {"value": "purple", "style": "solid", "field": "hop"}}],
- "constraints": [{"group": {"selector": "SBDD", "name": "cluster"}}]}
+ "constraints":
+ [{"group": {"selector": "SBDD", "name": "cluster", "addEdge": false}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [
