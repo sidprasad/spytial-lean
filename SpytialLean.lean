@@ -1,8 +1,10 @@
 module
 
 public meta import SpytialLean.Types
+public meta import SpytialLean.Selector
 public meta import SpytialLean.Spec
 public meta import SpytialLean.TypeShape
+public meta import SpytialLean.SelectorElab
 public meta import SpytialLean.Relationalizer
 public meta import SpytialLean.Widget
 public meta import SpytialLean.Attr

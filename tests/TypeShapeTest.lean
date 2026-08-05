@@ -38,6 +38,8 @@ public structure Demo where
   assertEq "Tree.dataRelNames" ts.dataRelNames #["value", "left", "right"]
   assertEq "Tree.leaf.typeSig" (ts.ctors[0]!.fields.map (·.typeSig)) #[none]
   assertEq "Tree.node.typeSig" (ts.ctors[1]!.fields.map (·.typeSig)) #[some "Tree", some "Tree"]
+  assertEq "Tree.leaf.typeHead" (ts.ctors[0]!.fields.map (·.typeHead)) #[none]
+  assertEq "Tree.node.typeHead" (ts.ctors[1]!.fields.map (·.typeHead)) #[some ``Tree, some ``Tree]
 
 #eval show MetaM Unit from do
   let some ts ← TypeShape.ofInductive ``Pos | throwError "Pos: no shape"
@@ -47,8 +49,20 @@ public structure Demo where
   let some ts ← TypeShape.ofInductive ``Demo | throwError "Demo: no shape"
   let mk := ts.ctors[0]!
   assertEq "Demo.relNames"     (mk.fields.map (·.relName)) #["val", "ok"]
-  assertEq "Demo.isProp"       (mk.fields.map (·.isProp)) #[false, true]
+  assertEq "Demo.isProofLike"  (mk.fields.map (·.isProofLike)) #[false, true]
   assertEq "Demo.dataRelNames" ts.dataRelNames #["val"]
+
+public structure Bundle where
+  carrier : Type                  -- a Sort-typed field: proof-like, dropped by the walker
+  size : Nat
+
+#eval show MetaM Unit from do
+  let some ts ← TypeShape.ofInductive ``Bundle | throwError "Bundle: no shape"
+  let mk := ts.ctors[0]!
+  assertEq "Bundle.relNames"     (mk.fields.map (·.relName)) #["carrier", "size"]
+  assertEq "Bundle.isProofLike"  (mk.fields.map (·.isProofLike)) #[true, false]
+  assertEq "Bundle.typeHead"     (mk.fields.map (·.typeHead)) #[none, some ``Nat]
+  assertEq "Bundle.dataRelNames" ts.dataRelNames #["size"]
 
 #eval show MetaM Unit from do
   let r ← TypeShape.ofInductive ``Nat.add

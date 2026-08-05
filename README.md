@@ -22,7 +22,7 @@ Pre-built artifacts are downloaded automatically from GitHub Releases. **Node.js
 
 ### Prerequisites
 
-- [Lean 4](https://leanprover.github.io/lean4/doc/setup.html) (v4.24.0)
+- [Lean 4](https://leanprover.github.io/lean4/doc/setup.html) (v4.32.0)
 - [VS Code](https://code.visualstudio.com/) with the [Lean 4 extension](https://marketplace.visualstudio.com/items?itemName=leanprover.lean4)
 
 ### Building from source
@@ -38,7 +38,7 @@ lake update
 lake build
 ```
 
-Open `Demo.lean` and place your cursor on a `#spytial` line. The infoview panel will show the diagram.
+Open a file in `demos/` and place your cursor on a `#spytial` line. The infoview panel will show the diagram.
 
 ### Nix dev shell
 
@@ -62,7 +62,8 @@ The relationalizer walks the expression, turning constructors into nodes and arg
 
 ### Layout operations
 
-Pass a `with [...]` block to control how the diagram is laid out:
+Pass a `with [...]` block to control how the diagram is laid out. Ops and
+selectors are Lean syntax, not strings:
 
 ```lean
 inductive Tree (α : Type) where
@@ -72,13 +73,17 @@ inductive Tree (α : Type) where
 def t := Tree.node (.leaf 1) (.node (.leaf 2) (.leaf 3))
 
 #spytial t with [
-  .orientation (selector := "left") (directions := [.left, .below]),
-  .orientation (selector := "right") (directions := [.right, .below]),
-  .hideAtom (selector := "Nat")
+  orientation left left below,
+  orientation right right below,
+  hideAtom Nat
 ]
 ```
 
-Selectors use the **constructor parameter names** you define. Named arguments like `(left : Tree α)` produce a relation called `"left"`. Structure fields also use their declared names.
+The elaborator checks each name against the data vocabulary of the type.
+`left` and `right` must be relations of `Tree`; relation names come from the
+constructor parameter names. `Nat` resolves like a Lean name. A wrong name
+causes a compile error with a suggestion: `unknown name 'lft' (did you mean
+'left'?)`.
 
 ### Attaching specs to types
 
@@ -86,16 +91,18 @@ Use `spytial_spec` to attach a default layout to a type. Any `#spytial` call on 
 
 ```lean
 spytial_spec Tree [
-  .orientation (selector := "left") (directions := [.left, .below]),
-  .orientation (selector := "right") (directions := [.right, .below]),
-  .hideAtom (selector := "Nat")
+  orientation left left below,
+  orientation right right below,
+  hideAtom Nat
 ]
 
 -- Uses the attached spec automatically
 #spytial t
 ```
 
-An explicit `with [...]` overrides the attached spec.
+The target resolves like a Lean name, so `open` works. The spec is stored
+structurally in the environment and survives into downstream modules. An
+explicit `with [...]` overrides the attached spec.
 
 ### Red-Black Tree example
 
@@ -110,13 +117,13 @@ inductive RBNode where
   | node (color : Color) (key : Nat) (left : RBNode) (right : RBNode) : RBNode
 
 spytial_spec RBNode [
-  .attribute (field := "key"),
-  .attribute (field := "color"),
-  .orientation (selector := "left") (directions := [.left, .below]),
-  .orientation (selector := "right") (directions := [.right, .below]),
-  .hideAtom (selector := "Color + Nat"),
-  .atomColor (selector := "{x : RBNode | @:(x.color) = \"red\"}") (value := "red"),
-  .atomColor (selector := "{x : RBNode | @:(x.color) = \"black\"}") (value := "black")
+  attribute key,
+  attribute color,
+  orientation left left below,
+  orientation right right below,
+  hideAtom Color + Nat,
+  atomColor {x : RBNode | @:(x.color) = red} "red",
+  atomColor {x : RBNode | @:(x.color) = black} "black"
 ]
 
 def myRBTree : RBNode :=
@@ -131,6 +138,10 @@ def myRBTree : RBNode :=
 #spytial myRBTree
 ```
 
+The `red` and `black` in the label comparisons are the `Color.red` and
+`Color.black` constructors, resolved and checked. Renaming a constructor
+causes a compile error in the spec.
+
 ### Debugging
 
 Use `#spytial.datum` and `#spytial.spec` to inspect what the relationalizer and spec serializer produce:
@@ -139,9 +150,9 @@ Use `#spytial.datum` and `#spytial.spec` to inspect what the relationalizer and 
 -- See the JSON data instance (atoms + relations with their names)
 #spytial.datum myTree
 
--- See the generated YAML spec
+-- See the generated spec
 #spytial.spec myTree with [
-  .orientation (selector := "left") (directions := [.left, .below])
+  orientation left left below
 ]
 ```
 
@@ -161,49 +172,92 @@ spytial_opt_out Tree.Internal "not worth diagramming"
 `lake build` elaborates, and the build fails whenever the library grows a
 type nobody has visualized yet.
 
+## The selector language
+
+Selectors are Forge-style relational expressions over the diagram's atoms and
+relations, embedded as Lean syntax (category `spytial_sel`):
+
+| Form | Meaning |
+|------|---------|
+| `left`, `app_0` | a field relation (arity 2: parent → child) |
+| `RBNode`, `String` | a type sig (arity 1: all atoms of that type) |
+| `a + b`, `a - b`, `a & b` | union, difference, intersection |
+| `a->b` | product |
+| `a . b` (or a glued `x.v`) | relational join |
+| `^a`, `*a`, `~a` | transitive closure, reflexive-transitive closure, transpose |
+| `{x, y : T \| φ}` | set comprehension (arity = number of binders) |
+| `@:e = lit` | label comparison (`@str:`/`@bool:`/`@num:` for typed reads) |
+
+Formulas inside comprehensions use Forge's symbolic connective spellings —
+`&&`, `||`, `=>`, `!`, plus `in`, `=`, `!=` — and the multiplicity forms
+`some`/`no`/`lone`/`one <sel>`. Label comparisons accept nullary constructors
+(`@:x = nil`), string/numeric literals, or another projection (`@:vr = @:(y.v)`).
+A comparison is exact equality against the label the relationalizer gave the
+atom, and each literal form lowers to the spelling that makes that equality
+hold for the value written: `@:x = nil` matches the atoms built by the `nil`
+constructor, and `@str:(x.v) = "abc"` the `String` atom holding `abc`. (A
+string literal carrying a character SGQ cannot spell — a control character —
+is a compile error.)
+
+### What gets checked
+
+The elaborator computes the target type's **data vocabulary**: the reachable
+closure of type sigs, field-relation names, and nullary-constructor labels
+that the relationalizer can emit — and checks every identifier and every
+operator's arity against it. Op positions have arity expectations too:
+`hideAtom`/`atomColor` select atoms (arity 1), `orientation`/`align` select
+pairs, so `hideAtom left` is a compile error rather than a diagram that
+silently hides nothing.
+
+Checking is **strict** exactly when the vocabulary is closed (a monomorphic
+type built from monomorphic fields). A type parameter, function-typed field,
+or custom relationalizer opens the world: unknown names downgrade to warnings
+there, and resolved types (like `Nat` in a `Tree α` spec) pass silently.
+
 ## Available operations
 
-Operations are constructors of `SpytialOp`. Pass them as a list to `with [...]` or `spytial_spec`.
+Ops go in a bracketed, comma-separated list after `spytial_spec <Type>` or
+`#spytial <term> with`.
 
 ### Layout constraints
 
 | Operation | Description |
 |-----------|-------------|
-| `.orientation (selector) (directions)` | Position source above/below/left/right of target |
-| `.align (selector) (direction)` | Align selected elements horizontally or vertically |
-| `.cyclic (selector) (direction)` | Arrange elements in a circle (clockwise/counterclockwise) |
-| `.group (selector) (name)` | Group selected elements with a bounding box |
-| `.hideAtom (selector)` | Hide elements matching the selector |
-| `.size (selector) (width) (height)` | Set node dimensions |
+| `orientation <sel> <dir>+` | Position edge targets relative to sources |
+| `align <sel> horizontal\|vertical` | Align selected pairs |
+| `cyclic <sel> [clockwise\|counterclockwise]` | Arrange elements in a circle |
+| `group <sel> <name> [edge]` | Group elements with a bounding box |
+| `hideAtom <sel>` | Hide elements matching the selector |
+| `size <sel> <width> <height>` | Set node dimensions |
 
 ### Visual directives
 
 | Operation | Description |
 |-----------|-------------|
-| `.atomColor (selector) (value)` | Color nodes (any CSS color) |
-| `.edgeColor (field) (value)` | Color edges for a relation |
-| `.hideField (field)` | Hide all edges for a relation |
-| `.attribute (field)` | Display a relation as a node label instead of an edge |
-| `.icon (selector) (path)` | Set a custom icon on nodes |
-| `.tag (toTag) (name) (value)` | Add computed attributes to nodes |
-| `.inferredEdge (name) (selector)` | Add edges that don't exist in the data |
-| `.flag (name)` | Set a boolean flag (e.g., `hideDisconnected`) |
+| `atomColor <sel> <css-color>` | Color nodes |
+| `edgeColor <field> <css-color> [style]` | Color a relation's edges |
+| `hideField <field>` | Hide all edges for a relation |
+| `attribute <field>` | Display a relation as a node label instead of an edge |
+| `icon <sel> <path> [labels]` | Set a custom icon on nodes |
+| `tag <sel> <name> <value>` | Add computed attributes to nodes |
+| `inferredEdge <name> <sel> [<css-color>] [style]` | Add edges that don't exist in the data |
+| `flag <name>` | Set a boolean flag (e.g., `hideDisconnected`) |
 
-### Direction values
+`<field>` positions take a bare relation name, checked against the vocabulary.
+Group and inferred-edge names are in scope for later ops in the same spec.
 
-`Direction`: `.above`, `.below`, `.left`, `.right`, `.directlyAbove`, `.directlyBelow`, `.directlyLeft`, `.directlyRight`
+### Enumerated values
 
-`AlignDir`: `.horizontal`, `.vertical`
-
-`RotationDir`: `.clockwise`, `.counterclockwise`
-
-`EdgeStyle`: `.solid`, `.dashed`, `.dotted`
+Directions: `above`, `below`, `left`, `right`, `directlyAbove`,
+`directlyBelow`, `directlyLeft`, `directlyRight` · Alignment: `horizontal`,
+`vertical` · Rotation: `clockwise`, `counterclockwise` · Edge styles:
+`solid`, `dashed`, `dotted`
 
 ## How it works
 
 1. **Relationalizer** (`SpytialLean/Relationalizer.lean`) — Walks the Lean `Expr` tree after WHNF reduction. Constructors become atoms (nodes), data arguments become relations (edges). Type and proof arguments are skipped.
 
-2. **Spec** (`SpytialLean/Spec.lean`) — Typed Lean operations serialize to YAML for spytial-core's layout engine.
+2. **Selector DSL** (`SpytialLean/Selector.lean`, `SelectorElab.lean`) — Selectors elaborate to a reified AST, checked against the vocabulary derived from `TypeShape`. The checker and the relationalizer share the naming logic, so the checker predicts what the walker emits. Specs are stored structurally; the SGQ strings are produced only in the widget payload.
 
 3. **Widget** (`widget/src/spytialWidget.tsx`) — A ProofWidgets4 widget module that loads spytial-core, generates a layout from the relational data + spec, and renders via the `webcola-cnd-graph` web component.
 
@@ -217,9 +271,9 @@ inductive Tree (α : Type) where
   | node (left : Tree α) (right : Tree α) : Tree α
 ```
 
-This produces relations named `value`, `left`, `right`. Use `#spytial.datum` to see the exact names. Structure fields use their declared field names directly.
+This produces relations named `value`, `left`, `right`. Structure fields use their declared field names directly.
 
-If constructor arguments are unnamed (positional style `| node : Tree α → Tree α → Tree α`), the relationalizer falls back to `ctorName_index` (e.g., `node_0`, `node_1`).
+If constructor arguments are unnamed (positional style `| node : Tree α → Tree α → Tree α`), the relationalizer falls back to `ctorName_index` (e.g., `node_0`, `node_1`). The spec elaborator knows the real names either way; a wrong one is a compile error that lists the vocabulary.
 
 ### Error handling
 
@@ -229,18 +283,28 @@ When constraints are unsatisfiable, the widget:
 - Highlights related constraints on hover (bidirectional source/diagram cross-highlighting)
 - Reports selector evaluation errors separately
 
-This uses spytial-core's `ErrorMessageModal` component directly.
+This uses spytial-core's `ErrorMessageModal` component directly. Static
+selector errors (unknown names, arity mismatches) are Lean elaboration errors
+and never reach the widget.
 
 ## Project structure
 
 ```
 SpytialLean/
   Types.lean          -- JSON-serializable data instance types
-  Spec.lean           -- SpytialOp, SpytialSpec, Direction, etc.
+  Selector.lean       -- Reified selector AST + SGQ lowering
+  SelectorElab.lean   -- spytial_sel syntax, vocabulary scopes, checking
+  Spec.lean           -- SpytialOp, SpytialSpec, JSON serialization
+  TypeShape.lean      -- Shared naming logic (walker + checker source of truth)
   Relationalizer.lean -- Expr walker producing atoms + relations
   Widget.lean         -- ProofWidgets4 widget module registration
-  Attr.lean           -- Environment extension for spytial_spec
-  Command.lean        -- #spytial command and spytial_spec elaborators
+  Attr.lean           -- Environment extensions (specs, opt-outs)
+  Command.lean        -- #spytial, spytial_spec, the op DSL, tactics
+  Coverage.lean       -- #spytial.coverage build-time coverage check
+tests/
+  TypeShapeTest.lean  -- Naming + walker unit tests
+  SelectorTest.lean   -- Golden lowering + checker diagnostics tests
+  CoverageTest.lean   -- #spytial.coverage diagnostics tests
 widget/
   src/spytialWidget.tsx  -- React component rendering the diagram
   rollup.config.js       -- Bundles spytial-core into the widget
@@ -258,17 +322,17 @@ structure Vehicle where
   year : Nat
 
 spytial_spec Vehicle [
-  .attribute (field := "make"),
-  .attribute (field := "year"),
-  .hideAtom (selector := "String + Nat")
+  attribute make,
+  attribute year,
+  hideAtom String + Nat
 ]
 
 structure ElectricCar extends Vehicle where
   range : Nat
 
 spytial_spec ElectricCar [
-  .attribute (field := "range"),
-  .atomColor (selector := "ElectricCar") (value := "#2196F3")
+  attribute range,
+  atomColor ElectricCar "#2196F3"
 ]
 
 -- Effective spec = Vehicle's ops ++ ElectricCar's ops
