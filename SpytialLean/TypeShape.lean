@@ -48,10 +48,19 @@ public meta def fieldRelName (ctorShort : String) (binderNames : Array Name) (i 
   else
     s!"{ctorShort}_{i}"
 
+/-- Whether the walker erases a value of this type — proofs (`Prop`) and types
+    (`Sort`) — and so drops fields of it. -/
+public meta def isProofLikeType (ty : Expr) : MetaM Bool := do
+  return (← Meta.isProp ty) || ty.isSort
+
 public meta structure FieldShape where
   relName : String
   typeSig : Option String
-  isProp : Bool
+  /-- Head constant of the field type, when it has one; `none` for a type
+      parameter or function type (unpredictable vocabulary). -/
+  typeHead : Option Name := none
+  /-- The walker drops this field: it is `Prop`- or `Sort`-typed. -/
+  isProofLike : Bool
   deriving Repr, Inhabited
 
 public meta structure CtorShape where
@@ -79,12 +88,13 @@ public meta def TypeShape.ofInductive (typeName : Name) : MetaM (Option TypeShap
       let mut fs : Array FieldShape := #[]
       for i in [:dataXs.size] do
         let xty ← Meta.inferType dataXs[i]!
-        let isP ← Meta.isProp xty
-        let typeSig ←
+        let isProofLike ← isProofLikeType xty
+        let (typeSig, typeHead) ←
           match (← Meta.whnf xty).getAppFn with
-          | .const n _ => pure (some (shortName n))
-          | _          => pure none
-        fs := fs.push { relName := fieldRelName ctorShort binderNames i, typeSig, isProp := isP }
+          | .const n _ => pure (some (shortName n), some n)
+          | _          => pure (none, none)
+        fs := fs.push { relName := fieldRelName ctorShort binderNames i,
+                        typeSig, typeHead, isProofLike }
       return fs
     ctors := ctors.push { ctorName, ctorShort, fields }
   return some { typeName, sig := shortName typeName, ctors }
@@ -93,7 +103,7 @@ public meta def TypeShape.dataRelNames (ts : TypeShape) : Array String := Id.run
   let mut out : Array String := #[]
   for c in ts.ctors do
     for f in c.fields do
-      unless f.isProp do
+      unless f.isProofLike do
         out := out.push f.relName
   return out
 

@@ -30,7 +30,7 @@ example (xs : List Nat) : True := by
 
 -- data tactic with an inline spec
 example : True := by
-  spytial [1, 2, 3] with [.hideAtom (selector := "Nat")]
+  spytial [1, 2, 3] with [hideAtom Nat]
   trivial
 
 -- proof tactic on a global
@@ -46,5 +46,5 @@ example (h : TEven 4) : True := by
 
 -- proof tactic with an inline spec
 example : True := by
-  spytial.proof teven_four with [.hideAtom (selector := "Nat")]
+  spytial.proof teven_four with [hideAtom Nat]
   trivial
