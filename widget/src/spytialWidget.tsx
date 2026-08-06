@@ -6,6 +6,8 @@ import spytialcore from 'spytial-core';
 import spytialComponents from 'spytial-core-components';
 
 const { JSONDataInstance, LayoutInstance, parseLayoutSpec, SGraphQueryEvaluator } = spytialcore;
+const { isPositionalConstraintError, isGroupOverlapError, isHiddenNodeConflictError } =
+  spytialcore.Layout;
 const { CnDCore } = spytialComponents;
 
 let cssInjected = false;
@@ -259,11 +261,11 @@ export default function SpytialWidget(props: SpytialWidgetProps) {
         // Dispatch errors via ErrorAPI (same pattern as sterling-ts / spytial-py)
         if (result.error && CnDCore.ErrorAPI) {
           const err = result.error;
-          if (err.type === 'hidden-node-conflict' && err.errorMessages) {
+          if (isHiddenNodeConflictError(err)) {
             CnDCore.ErrorAPI.showHiddenNodeConflict(err.errorMessages);
-          } else if (err.errorMessages) {
+          } else if (isPositionalConstraintError(err) && err.errorMessages) {
             CnDCore.ErrorAPI.showConstraintError(err.errorMessages);
-          } else if (err.overlappingNodes) {
+          } else if (isGroupOverlapError(err)) {
             CnDCore.ErrorAPI.showGroupOverlapError(err.message);
           } else {
             CnDCore.ErrorAPI.showGeneralError(err.message || 'Layout error');

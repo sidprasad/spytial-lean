@@ -14,3 +14,7 @@ catalog:
   # No caret: Playwright rejects browsers that don't match the npm package.
   # Bump with the image tag in render/Dockerfile.
   '@playwright/test': 1.62.0
+
+minimumReleaseAgeExclude:
+  - spytial-core@4.4.3
+  - simple-graph-query@3.1.0

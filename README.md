@@ -115,8 +115,8 @@ spytial_spec RBNode [
   .orientation (selector := "left") (directions := [.left, .below]),
   .orientation (selector := "right") (directions := [.right, .below]),
   .hideAtom (selector := "Color + Nat"),
-  .atomColor (selector := "{x : RBNode | @:(x.color) = red}") (value := "red"),
-  .atomColor (selector := "{x : RBNode | @:(x.color) = black}") (value := "black")
+  .atomColor (selector := "{x : RBNode | @:(x.color) = \"red\"}") (value := "red"),
+  .atomColor (selector := "{x : RBNode | @:(x.color) = \"black\"}") (value := "black")
 ]
 
 def myRBTree : RBNode :=
