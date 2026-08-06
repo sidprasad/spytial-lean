@@ -506,17 +506,13 @@ info: {"directives":
     "borderStyle": {"color": "red"}}},
   {"atomStyle":
    {"selector": "{x : SRB | abs[@num:(x.key)] >= 1}",
-    "borderStyle": {"color": "red"}}},
-  {"atomStyle":
-   {"selector": "{x : SRB | min[SRB.key] <= 3}",
     "borderStyle": {"color": "red"}}}]}
 -/
 #guard_msgs in
 #spytial.spec sRB with [
   atomColor {x : SRB | @num:(x.key) < 5} "red",
   atomColor {x : SRB | add[@num:(x.key), 1] > 2} "red",
-  atomColor {x : SRB | abs[@num:(x.key)] >= 1} "red",
-  atomColor {x : SRB | min[SRB.key] <= 3} "red"
+  atomColor {x : SRB | abs[@num:(x.key)] >= 1} "red"
 ]
 
 -- Counting idiom and relational box join (`a[b] ≡ b.a`).
@@ -651,6 +647,28 @@ info: {"directives":
 #guard_msgs in
 #spytial.spec sRB with [atomColor {x : SRB | sum[SRB.key] > 2} "red"]
 
+/--
+warning: the SGQ engine currently throws on `min[e]` at render (it compares atom ids, never their numeric labels) — in a constraint position this kills the render (upstream bug)
+---
+info: {"directives":
+ [{"atomStyle":
+   {"selector": "{x : SRB | min[SRB.key] <= 3}",
+    "borderStyle": {"color": "red"}}}]}
+-/
+#guard_msgs in
+#spytial.spec sRB with [atomColor {x : SRB | min[SRB.key] <= 3} "red"]
+
+/--
+warning: the SGQ engine currently throws on `max[e]` at render (it compares atom ids, never their numeric labels) — in a constraint position this kills the render (upstream bug)
+---
+info: {"directives":
+ [{"atomStyle":
+   {"selector": "{x : SRB | max[SRB.key] >= 3}",
+    "borderStyle": {"color": "red"}}}]}
+-/
+#guard_msgs in
+#spytial.spec sRB with [atomColor {x : SRB | max[SRB.key] >= 3} "red"]
+
 /-! ## Integer-layer type errors — one per class -/
 
 /-- error: this position expects a relational expression, but the selector is an integer (`#`, a numeral, `@num:`, or an int builtin) -/
@@ -695,12 +713,13 @@ info: {"directives":
 #guard_msgs in
 #spytial.spec sExample with [hideAtom {x : SBDD | @:x = 5}]
 
--- A string literal escapes per SGQ's string grammar (`\"` `\\` `\n` `\t` `\r` `\0`).
+-- A string literal quote-wraps to match the walker's label convention, then
+-- escapes per SGQ's string grammar (`\"` `\\` `\n` `\t` `\r` `\0`).
 /--
 info: {"directives":
- [{"atomColor":
-   {"value": "red",
-    "selector": "{x : SBDD | @str:(x.v) = \"a\\\"b\\\\c\\nd\"}"}}]}
+ [{"atomStyle":
+   {"selector": "{x : SBDD | @str:(x.v) = \"\\\"a\\\"b\\\\c\\nd\\\"\"}",
+    "borderStyle": {"color": "red"}}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [atomColor {x : SBDD | @str:(x.v) = "a\"b\\c\nd"} "red"]

@@ -525,9 +525,12 @@ private meta partial def elabBoxJoin? (scope : SelScope) (env : LEnv) (stx : Syn
         let (sa, aa) ← elabRel scope env argSyns[0]!
         -- Aggregators fold a single column of integers (arity 1).
         checkArity argSyns[0]! s!"the argument of {hn}[e]" aa 1
-        if op == .sum then
-          logWarningAt stx "the SGQ engine evaluates `sum[e]` to the empty set \
+        match op with
+        | .sum => logWarningAt stx "the SGQ engine evaluates `sum[e]` to the empty set \
             rather than summing its atoms (upstream bug)"
+        | .min | .max => logWarningAt stx s!"the SGQ engine currently throws on \
+            `{hn}[e]` at render (it compares atom ids, never their numeric labels) — \
+            in a constraint position this kills the render (upstream bug)"
         return .int (.agg op sa)
       elabRelBoxJoin scope env stx head argSyns
     | none => elabRelBoxJoin scope env stx head argSyns
