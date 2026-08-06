@@ -653,6 +653,22 @@ info: {"directives":
 #guard_msgs in
 #spytial.spec sExample with [hideAtom {x : SBDD | @:x = 5}]
 
+-- The relationalizer labels a `String` atom with its Lean spelling, quotes
+-- included, so a literal matching one lowers to a doubly-quoted SGQ string,
+-- escaped per SGQ's string grammar (`\"` `\\` `\n` `\t` `\r` `\0`).
+/--
+info: {"directives":
+ [{"atomColor":
+   {"value": "red",
+    "selector": "{x : SBDD | @str:(x.v) = \"\\\"a\\\"b\\\\c\\nd\\\"\"}"}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [atomColor {x : SBDD | @str:(x.v) = "a\"b\\c\nd"} "red"]
+
+/-- error: string literal contains U+0001 — SGQ's string syntax has no escape for it, and it cannot ride raw through the spec -/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom {vr : String | @:vr = "a\x01b"}]
+
 -- A quantifier binder domain says "quantifier", not "comprehension".
 /-- error: a quantifier binder domain must have arity 1, got 2 -/
 #guard_msgs in
@@ -702,6 +718,31 @@ public def sVocab : SVocab := .leaf
   hideAtom {x : SVocab | some x.sum},
   hideAtom {x : SVocab | some x.univ},
   hideAtom SVocab . sum
+]
+
+/-! ## Identifiers outside SGQ's bare lexer rule
+
+SGQ bare identifiers are ASCII (`[a-zA-Z_$/][a-zA-Z_0-9$/]*`). Outside it the
+lexer fails open — `s₁` silently evaluates the prefix `s`, `x'` becomes a
+temporal prime, `σ` is a lexer error — so the lowering backtick-quotes every
+such name: fields, sigs, and binders alike. -/
+
+public inductive SUnicode where
+  | node (t₁ σ x' : SUnicode)
+  | leaf
+
+public def sUnicode : SUnicode := .leaf
+
+/-- info: {"constraints":
+ [{"hideAtom": {"selector": "{x : SUnicode | some x.`t₁`}"}},
+  {"hideAtom": {"selector": "{`σ` : SUnicode | some `σ`.`x'`}"}},
+  {"hideAtom": {"selector": "SUnicode.`σ`"}}]}
+-/
+#guard_msgs in
+#spytial.spec sUnicode with [
+  hideAtom {x : SUnicode | some x.t₁},
+  hideAtom {σ : SUnicode | some σ.x'},
+  hideAtom SUnicode.σ
 ]
 
 /-! ## Products chain left; quantifiers keep their parens under a connective -/
