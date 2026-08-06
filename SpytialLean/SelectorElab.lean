@@ -162,6 +162,15 @@ private meta def unknownName {α} (scope : SelScope) (ref : Syntax) (what : Stri
   else
     throwErrorAt ref msg
 
+/-- Groups and inferred edges exist only in the drawn graph; the engine
+    evaluates selectors against the data instance, so a selector reference to
+    one selects nothing. Field-name positions (`edgeColor`, `hideField`) act
+    graph-side and accept these names silently. -/
+private meta def warnGraphSideName (ref : Syntax) (name : String) : TermElabM Unit :=
+  logWarningAt ref s!"spec-introduced '{name}' exists only in the drawn graph — \
+    the engine evaluates selectors against the data instance, so this reference \
+    selects nothing at render (engine limitation)"
+
 /-! ## Syntax
 
 The grammar replicates Forge's single expression/formula cascade over two Lean
@@ -673,14 +682,18 @@ where
         if scope.rels.contains compStr then some 2
         else scope.introduced.get? compStr
       match compArity? with
-      | some ca => return (.join sel (.rel compStr), ← joinArity stx arity (some ca))
+      | some ca =>
+        unless scope.rels.contains compStr do warnGraphSideName stx compStr
+        return (.join sel (.rel compStr), ← joinArity stx arity (some ca))
       | none => unknownName scope stx s!"relation '{compStr}'" (Sel.join sel (.rel compStr), none)
     return .rel s.1 s.2
   resolveHead (idStx : Syntax) (head : Name) (rest : List Name) :
       TermElabM (Sel × Option Nat × List Name) := do
     let s := head.toString
     if scope.rels.contains s then return (.rel s, some 2, rest)
-    if let some arity := scope.introduced.get? s then return (.rel s, some arity, rest)
+    if let some arity := scope.introduced.get? s then
+      warnGraphSideName idStx s
+      return (.rel s, some arity, rest)
     -- Longest-prefix-as-reference: a dotted name may name a (possibly qualified)
     -- type in its leading components (`Cslib.SKI`, `SelQual.Inner`), the trailing
     -- components folding as joins. Try the full name first, then successively
