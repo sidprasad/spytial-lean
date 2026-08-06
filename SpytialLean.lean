@@ -7,4 +7,5 @@ public meta import SpytialLean.Relationalizer
 public meta import SpytialLean.Widget
 public meta import SpytialLean.Attr
 public meta import SpytialLean.Command
+public meta import SpytialLean.Snapshot
 public meta import SpytialLean.Coverage
