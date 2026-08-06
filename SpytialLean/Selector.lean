@@ -160,8 +160,20 @@ private meta def sgqReserved : List String :=
    "eventually", "after", "before", "once", "historically", "this",
    "sexpr", "inst", "eval", "example", "ni", "no", "sum", "Int", "option"]
 
-private meta def quoteIfReserved (s : String) : String :=
-  if sgqReserved.contains s then s!"`{s}`" else s
+/-- SGQ's bare-identifier rule is `[a-zA-Z_$/][a-zA-Z_0-9$/]*` (ForgeLexer.g4);
+    outside it the lexer fails open — `s₁` silently evaluates the prefix `s`,
+    `x'` becomes a temporal prime, `σ` is a lexer error. Backtick-quoted
+    identifiers accept any character, with `\`-escapes for `` ` `` and `\`. -/
+private meta def quoteIfNeeded (s : String) : String :=
+  let bareHead (c : Char) := c.isAlpha || c == '_' || c == '$' || c == '/'
+  let bare := match s.toList with
+    | c :: cs => bareHead c && cs.all fun c => bareHead c || c.isDigit
+    | [] => false
+  if bare && !sgqReserved.contains s then s
+  else
+    let esc := s.foldl (init := "") fun acc c =>
+      if c == '`' || c == '\\' then (acc.push '\\').push c else acc.push c
+    s!"`{esc}`"
 
 /-- How SGQ spells `c` inside a double-quoted literal: these six escapes are
     the whole alphabet (any other backslash is dropped), everything else rides
@@ -210,16 +222,16 @@ private meta def bindersToSGQ (binders : Array (Name × Sel)) (domToSGQ : Sel �
       if dom' == dom then gs.set! (gs.size - 1) (xs.push x, dom') else gs.push (#[x], dom)
     | none => gs.push (#[x], dom)
   ", ".intercalate <| groups.toList.map fun (xs, dom) =>
-    let names := ", ".intercalate (xs.toList.map (quoteIfReserved <| toString ·))
+    let names := ", ".intercalate (xs.toList.map (quoteIfNeeded <| toString ·))
     s!"{names} : {domToSGQ dom}"
 
 mutual
 
 /-- `ctx` is the binding strength of the enclosing position. -/
 public meta partial def Sel.toSGQCtx (ctx : Nat) : Sel → String
-  | .sig _ s => quoteIfReserved s
-  | .rel r => quoteIfReserved r
-  | .var x => quoteIfReserved (toString x)
+  | .sig _ s => quoteIfNeeded s
+  | .rel r => quoteIfNeeded r
+  | .var x => quoteIfNeeded (toString x)
   | .univ => "univ"
   | .iden => "iden"
   | .none_ => "none"
@@ -253,7 +265,7 @@ public meta partial def SelInt.toSGQ : SelInt → String
   | .agg op e => s!"{op.toSGQ}[@num:({e.toSGQCtx 0})]"
   -- the body extends maximally right; always wrap (`(sum …) > 2`)
   | .sumQuant x dom body =>
-    s!"(sum {quoteIfReserved (toString x)} : {dom.toSGQCtx 0} | {body.toSGQ})"
+    s!"(sum {quoteIfNeeded (toString x)} : {dom.toSGQCtx 0} | {body.toSGQ})"
 
 public meta partial def SelVal.toSGQ : SelVal → String
   | .label proj e =>
