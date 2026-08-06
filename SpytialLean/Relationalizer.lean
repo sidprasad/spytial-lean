@@ -80,6 +80,9 @@ public meta structure WalkState where
   /-- Exact-occurrence shortcut for `.eqv` types: a structurally identical
       subterm rejoins its group without re-evaluating the relation. -/
   eqvSeen : ExprStructMap String := {}
+  /-- Per-walk cache: whnf'd type → its `Repr` instance, when usable for leaf
+      labels (`none` records both "no instance" and "failed to evaluate"). -/
+  reprInstCache : ExprStructMap (Option Expr) := {}
 
 /-- Generate a fresh atom ID. -/
 public meta def WalkState.freshId (s : WalkState) : String × WalkState :=
@@ -707,12 +710,50 @@ private meta def tabulate? (cfg : WalkConfig) (recurse : Expr → StateT WalkSta
       modify fun s => s.addTuple relName types { atoms, types }
     return true
 
+/-! ### Instance-evaluated leaf labels
+
+`Repr` is for labels, never identity: a non-injective `Repr` merging atoms
+would be the hash-collision bug all over again. But when a leaf's type
+declares `Repr` and the term is closed, the evaluated rendering beats the
+pretty-printed spelling. -/
+
+private meta unsafe def evalFormatUnsafe (e : Expr) : MetaM Std.Format :=
+  Meta.evalExpr Std.Format (mkConst ``Std.Format) e
+
+/-- Evaluate a closed `Std.Format`-valued expression (leaf labels via `Repr`). -/
+@[implemented_by evalFormatUnsafe]
+private meta opaque evalFormat (e : Expr) : MetaM Std.Format
+
+/-- The `Repr` instance for the (whnf'd) type, synthesized at most once per
+    walk per type. -/
+private meta def getReprInst? (tyKey : Expr) : StateT WalkState MetaM (Option Expr) := do
+  if let some cached := (← get).reprInstCache[(⟨tyKey⟩ : ExprStructEq)]? then
+    return cached
+  let inst? ← try
+      synthInstance? (← mkAppM ``Repr #[tyKey])
+    catch _ => pure none
+  modify fun s => { s with reprInstCache := s.reprInstCache.insert ⟨tyKey⟩ inst? }
+  return inst?
+
+/-- Label for a leaf atom: `repr` evaluated when the term is closed and its
+    type declares it, otherwise the pretty-printed expression. A failing
+    evaluation disables `Repr` labels for the type for the rest of the walk. -/
+private meta def leafLabel (e tyKey : Expr) : StateT WalkState MetaM String := do
+  if isClosedValue e then
+    if let some inst ← getReprInst? tyKey then
+      try
+        let fmt ← evalFormat (← mkAppOptM ``repr #[none, some inst, some e])
+        return fmt.pretty
+      catch _ =>
+        modify fun s => { s with reprInstCache := s.reprInstCache.insert ⟨tyKey⟩ none }
+  ppLabel e
+
 /-- Emit the atom for `e` (already whnf'd; id already allocated) and walk its
     children through `recurse` — the display dispatch shared by the fused
     walker and the two-pass reference. `recurse` closes over the child walk
     context (ambient mode, unfold-guard ancestors). -/
 private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkState MetaM String)
-    (e ty : Expr) (origName : Option Name) (atomId : String) :
+    (e ty tyKey : Expr) (origName : Option Name) (atomId : String) :
     StateT WalkState MetaM Unit := do
   match e with
   -- Nat literal
@@ -798,11 +839,11 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
                 { atoms := #[atomId, childId], types := types }
       else do
         -- Generic function application or unknown — leaf atom
-        let label ← ppLabel e
+        let label ← leafLabel e tyKey
         modify fun s => s.addAtom { id := atomId, type := typeName, label := label }
     | _ => do
       -- Not a const application — leaf atom
-      let label ← ppLabel e
+      let label ← leafLabel e tyKey
       modify fun s => s.addAtom { id := atomId, type := typeName, label := label }
 
 /-- Walk a Lean expression and produce atoms + relations.
@@ -855,7 +896,7 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
   -- this atom.
   registerIdentity verdict e atomId
   emitNode cfg (fun c => walkExpr cfg c { mode, ancestors := ctx.ancestors.push (e, atomId) })
-    e ty origName atomId
+    e ty tyKey origName atomId
   return atomId
 
 /-- Walk an expression and produce a complete JsonDataInstance. -/
@@ -908,7 +949,7 @@ public meta partial def referenceRelationalize (e : Expr) (cfg : WalkConfig := {
     set s
     records.modify (·.push { atomId, expr := e, tyKey, mode })
     emitNode cfg (fun c => refWalk c { mode, ancestors := ctx.ancestors.push (e, atomId) })
-      e ty origName atomId
+      e ty tyKey origName atomId
     return atomId
   let (rootId, s) ← (refWalk e {}).run {}
   -- Pass 2: group occurrences by (type, identity), first occurrence the
