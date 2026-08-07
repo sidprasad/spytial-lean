@@ -134,5 +134,11 @@ lean_lib SpytialTests where
   srcDir := "tests"
   roots := #[`TypeShapeTest, `CoverageTest, `TacticTest]
 
+/-- Regenerates `SpytialLean/SpecGenerated.lean` from spytial-core's language
+    manifest (`just gen-spec`); `--check` fails if the checked-in file is stale. -/
+lean_exe specCodegen where
+  srcDir := "codegen"
+  root := `SpecCodegen
+
 require proofwidgets from
   git "https://github.com/leanprover-community/ProofWidgets4" @ "v0.0.105"
