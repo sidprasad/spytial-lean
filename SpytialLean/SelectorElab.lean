@@ -148,7 +148,7 @@ private meta def unknownName {α} (scope : SelScope) (ref : Syntax) (what : Stri
   else
     throwErrorAt ref msg
 
-/-- Selector positions only: field-name positions (`edgeColor`, `hideField`)
+/-- Selector positions only: field-name positions (`edgeStyle`, `hideField`)
     act graph-side, where spec-introduced names do exist. -/
 private meta def warnGraphSideName (ref : Syntax) (name : String) : TermElabM Unit :=
   logWarningAt ref s!"spec-introduced '{name}' exists only in the drawn graph — \

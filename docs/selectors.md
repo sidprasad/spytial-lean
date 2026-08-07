@@ -122,7 +122,7 @@ The elaborator computes the target type's **data vocabulary**: the reachable
 closure of type sigs, field-relation names, and nullary-constructor labels
 that the relationalizer can emit. It checks every identifier and every
 operator's arity against this vocabulary. Op positions have arity
-expectations: `hideAtom` and `atomColor` select atoms (arity 1),
+expectations: `hideAtom` and `atomStyle` select atoms (arity 1),
 `orientation` and `align` select pairs. `hideAtom left` is a compile error.
 
 Checking is **strict** exactly when the vocabulary is closed: a monomorphic

@@ -28,8 +28,8 @@ spytial_spec RBNode [
   orientation right - RBNode->{x : RBNode | @:x = nil} right below,
   hideAtom Color + Nat,
   hideAtom {x : RBNode | @:x = nil},
-  atomColor {x : RBNode | @:(x.color) = red} "red",
-  atomColor {x : RBNode | @:(x.color) = black} "black"
+  atomStyle {x : RBNode | @:(x.color) = red} (borderStyle "red"),
+  atomStyle {x : RBNode | @:(x.color) = black} (borderStyle "black")
 ]
 
 def exampleRBTree : RBNode :=
@@ -65,7 +65,7 @@ def myTree : Tree Nat :=
 #spytial myTree with [
   orientation left above,
   orientation right above,
-  atomColor Tree "#0066ff",
+  atomStyle Tree (borderStyle "#0066ff"),
   hideAtom Nat
 ]
 
@@ -80,7 +80,7 @@ def alice : Person := { name := "Alice", age := 30 }
 #spytial alice with [
   attribute name,
   attribute age,
-  atomColor Person "#4CAF50"
+  atomStyle Person (borderStyle "#4CAF50")
 ]
 
 /-! ## Spec Inheritance (Structure extends)
@@ -96,7 +96,7 @@ structure Vehicle where
 spytial_spec Vehicle [
   attribute make,
   attribute year,
-  atomColor Vehicle "#4CAF50",
+  atomStyle Vehicle (borderStyle "#4CAF50"),
   hideAtom String + Nat
 ]
 
@@ -114,7 +114,7 @@ structure ElectricCar extends Car where
 spytial_spec ElectricCar [
   attribute range,
   attribute doors,
-  atomColor ElectricCar "#2196F3"
+  atomStyle ElectricCar (borderStyle "#2196F3")
 ]
 
 -- ElectricCar's effective spec = Vehicle's ops ++ ElectricCar's ops
