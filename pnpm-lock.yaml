@@ -68,8 +68,8 @@ importers:
         specifier: 'catalog:'
         version: 18.3.1(react@18.3.1)
       spytial-core:
-        specifier: ~4.4.3
-        version: 4.4.3(alasql@4.17.3(react-native@0.86.2(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@18.3.31)(react@18.3.1)(supports-color@8.1.1)))(data-navigator@2.4.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+        specifier: ~5.0.0
+        version: 5.0.0(alasql@4.17.3(react-native@0.86.2(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@18.3.31)(react@18.3.1)(supports-color@8.1.1)))(data-navigator@2.4.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
     devDependencies:
       '@rollup/plugin-commonjs':
         specifier: 'catalog:'
@@ -1619,8 +1619,8 @@ packages:
     resolution: {integrity: sha512-UjgapumWlbMhkBgzT7Ykc5YXUT46F0iKu8SGXq0bcwP5dz/h0Plj6enJqjz1Zbq2l5WaqYnrVbwWOWMyF3F47g==}
     engines: {node: '>=0.10.0'}
 
-  spytial-core@4.4.3:
-    resolution: {integrity: sha512-1NPxcvclsvWh1qqm6hrWaADKph7WiAM4kdpYQp9XVdJoMmRIzCm4o7mXhX07TXw/cTZ+rJaISUaGlAGMtN/umg==}
+  spytial-core@5.0.0:
+    resolution: {integrity: sha512-Xl6Gccyiqk+CP1sStZRp9i46zdcn5HOZeR3a87qYUA1Qiov6DBukDK+GrbovWcowVSCwlIcQGgS2rNwuO3M3sw==}
     engines: {node: '>=16'}
     hasBin: true
     peerDependencies:
@@ -3705,7 +3705,7 @@ snapshots:
 
   source-map@0.6.1: {}
 
-  spytial-core@4.4.3(alasql@4.17.3(react-native@0.86.2(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@18.3.31)(react@18.3.1)(supports-color@8.1.1)))(data-navigator@2.4.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1):
+  spytial-core@5.0.0(alasql@4.17.3(react-native@0.86.2(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@18.3.31)(react@18.3.1)(supports-color@8.1.1)))(data-navigator@2.4.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1):
     dependencies:
       '@codemirror/commands': 6.10.4
       '@codemirror/lang-yaml': 6.1.3
