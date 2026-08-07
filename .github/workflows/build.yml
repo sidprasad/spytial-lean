@@ -43,7 +43,7 @@ jobs:
           key: lake-${{ hashFiles('lean-toolchain') }}-${{ hashFiles('lake-manifest.json') }}
 
       - name: Build, test, demos
-        run: just build test demos
+        run: just build test demos check-spec
 
       - name: Create GitHub Release
         if: github.ref_type == 'tag'

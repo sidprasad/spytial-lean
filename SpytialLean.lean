@@ -1,6 +1,7 @@
 module
 
 public meta import SpytialLean.Types
+public meta import SpytialLean.SpecGenerated
 public meta import SpytialLean.Spec
 public meta import SpytialLean.TypeShape
 public meta import SpytialLean.Relationalizer

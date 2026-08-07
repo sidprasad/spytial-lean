@@ -28,8 +28,8 @@ spytial_spec RBNode [
   .orientation (selector := "right - RBNode->{x : RBNode | @:x = \"nil\" }") (directions := [.right, .below]),
   .hideAtom (selector := "Color + Nat"),
   .hideAtom (selector := "{x : RBNode | @:x = \"nil\" }"),
-  .atomColor (selector := "{x : RBNode | @:(x.color) = \"red\"}") (value := "red"),
-  .atomColor (selector := "{x : RBNode | @:(x.color) = \"black\"}") (value := "black")
+  .atomStyle (selector := "{x : RBNode | @:(x.color) = \"red\"}") (borderStyle := { color := "red" }),
+  .atomStyle (selector := "{x : RBNode | @:(x.color) = \"black\"}") (borderStyle := { color := "black" })
 ]
 
 def exampleRBTree : RBNode :=
@@ -65,7 +65,7 @@ def myTree : Tree Nat :=
 #spytial myTree with [
   .orientation (selector := "left") (directions := [.above]),
   .orientation (selector := "right") (directions := [.above]),
-  .atomColor (selector := "Tree") (value := "#0066ff"),
+  .atomStyle (selector := "Tree") (borderStyle := { color := "#0066ff" }),
   .hideAtom (selector := "Nat")
 ]
 
@@ -80,7 +80,7 @@ def alice : Person := { name := "Alice", age := 30 }
 #spytial alice with [
   .attribute (field := "name"),
   .attribute (field := "age"),
-  .atomColor (selector := "Person") (value := "#4CAF50")
+  .atomStyle (selector := "Person") (borderStyle := { color := "#4CAF50" })
 ]
 
 /-! ## Spec Inheritance (Structure extends)
@@ -96,7 +96,7 @@ structure Vehicle where
 spytial_spec Vehicle [
   .attribute (field := "make"),
   .attribute (field := "year"),
-  .atomColor (selector := "Vehicle") (value := "#4CAF50"),
+  .atomStyle (selector := "Vehicle") (borderStyle := { color := "#4CAF50" }),
   .hideAtom (selector := "String + Nat")
 ]
 
@@ -114,7 +114,7 @@ structure ElectricCar extends Car where
 spytial_spec ElectricCar [
   .attribute (field := "range"),
   .attribute (field := "doors"),
-  .atomColor (selector := "ElectricCar") (value := "#2196F3")
+  .atomStyle (selector := "ElectricCar") (borderStyle := { color := "#2196F3" })
 ]
 
 -- ElectricCar's effective spec = Vehicle's ops ++ ElectricCar's ops

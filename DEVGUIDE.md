@@ -76,10 +76,29 @@ Server"**) to pick up the new widget.
 ### Changed spytial-core
 
 spytial-core is a registry dependency (`spytial-core` in `widget/package.json`).
-Bump the version and run `pnpm install` in `widget/`; the next `just build`
-re-embeds it. For an unreleased core, point the dependency at a local checkout
+Bump the version there, update the `minimumReleaseAgeExclude` pin in
+`pnpm-workspace.yaml` to match, and run `pnpm install` at the workspace root;
+the next `just build` re-embeds it. For an unreleased core, point the
+dependency at a local checkout
 (`"spytial-core": "file:../../spytial-core"`) and use `just widget-reload`
 after each core rebuild.
+
+After bumping, regenerate the authoring surface and commit the diff:
+
+```sh
+just gen-spec
+```
+
+`SpytialLean/SpecGenerated.lean` (the `SpytialOp` constructors, enums, style
+blocks, YAML serialization, and validation) is generated from the language
+manifest the npm package ships at
+`widget/node_modules/spytial-core/docs/spytial-language.json` — the same
+release the workspace lockfile pins for the renderer, so the two cannot drift
+apart. `just check-spec` fails when the checked-in file is stale, and CI runs
+it. The generator (`codegen/SpecCodegen.lean`) hard-errors on any manifest
+construct it wasn't written for, so a core release that grows the language
+stops codegen by name; deliberate divergences live in the override tables at
+the top of the generator, each with its reason.
 
 ## Widget build details
 
@@ -115,13 +134,11 @@ the Lean `@[widget_module]`.
 
 ## Adding a new SpytialOp
 
-To add a new layout operation:
-
-1. Add the constructor to `SpytialOp` in `SpytialLean/Spec.lean`
-2. Add it to `isConstraint` (if it's a constraint) or leave it as a directive
-3. Add a YAML serialization case in `constraintToYaml` or `directiveToYaml`
-4. Add an example in `Demo.lean`
-5. Rebuild: `lake build Demo`
+`SpytialOp` is generated — new operations come from spytial-core's language
+manifest, not from hand-edits. When a core release adds one, `just gen-spec`
+picks it up (or hard-errors naming the construct if the generator needs
+teaching — extend the override tables in `codegen/SpecCodegen.lean`). Then
+add an example in `demos/Showcase.lean` and rebuild: `lake build Demos`.
 
 ## Debugging
 

@@ -27,7 +27,20 @@ private meta unsafe def evalSpytialSpecUnsafe (stx : Syntax) : TermElabM Spytial
   evalExpr SpytialSpec (mkConst ``SpytialSpec) e
 
 @[implemented_by evalSpytialSpecUnsafe]
-private meta opaque evalSpytialSpec (stx : Syntax) : TermElabM SpytialSpec
+private meta opaque evalSpytialSpecCore (stx : Syntax) : TermElabM SpytialSpec
+
+/-- Evaluate a `SpytialSpec` term, then run the generated per-op checks:
+    invalid ops (out-of-range numbers, contradictory directions) are errors,
+    deprecated ops log a warning with the rewrite to apply. -/
+private meta def evalSpytialSpec (stx : Syntax) : TermElabM SpytialSpec := do
+  let spec ← evalSpytialSpecCore stx
+  let errs := spec.flatMap SpytialOp.validate
+  unless errs.isEmpty do
+    throwErrorAt stx (String.intercalate "\n" errs)
+  for op in spec do
+    if let some w := op.deprecationWarning then
+      logWarningAt stx w
+  return spec
 
 /-- Evaluate a `SpytialSpec` term to the YAML the widget and the `spytial_spec`
     attribute both store. -/

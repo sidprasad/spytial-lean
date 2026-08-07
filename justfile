@@ -16,3 +16,11 @@ demos:
 widget-reload:
     cd widget && pnpm run build
     lake build
+
+# regenerate SpytialLean/SpecGenerated.lean from spytial-core's language manifest
+gen-spec:
+    lake exe specCodegen
+
+# fail if the checked-in generated spec surface is stale
+check-spec:
+    lake exe specCodegen --check
