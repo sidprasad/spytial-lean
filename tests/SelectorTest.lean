@@ -296,15 +296,52 @@ info: {"directives":
 
 /-! ## Dotted-selector resolution -/
 
--- Glued `SBDD.cluster` and spaced `SBDD . cluster` agree — a join of the arity-1
--- sig and the arity-1 group has no columns left.
-/-- error: join of arity 1 and arity 1 has no columns left -/
+/--
+warning: spec-introduced 'cluster' exists only in the drawn graph — the engine evaluates selectors against the data instance, so this reference selects nothing at render
+---
+error: join of arity 1 and arity 1 has no columns left
+-/
 #guard_msgs in
 #spytial.spec sExample with [group SBDD cluster, hideAtom SBDD.cluster]
 
-/-- error: join of arity 1 and arity 1 has no columns left -/
+/--
+warning: spec-introduced 'cluster' exists only in the drawn graph — the engine evaluates selectors against the data instance, so this reference selects nothing at render
+---
+error: join of arity 1 and arity 1 has no columns left
+-/
 #guard_msgs in
 #spytial.spec sExample with [group SBDD cluster, hideAtom SBDD . cluster]
+
+/-! ## Selector references to graph-side names warn
+
+Groups and inferred edges join the drawn graph, not the data instance the
+engine evaluates selectors against — a constraint or directive selector
+naming one selects nothing at render. Field-name positions (`edgeColor hop`
+above) stay silent: they act on drawn edges, where the names do exist. -/
+
+/--
+warning: spec-introduced 'hop' exists only in the drawn graph — the engine evaluates selectors against the data instance, so this reference selects nothing at render
+---
+info: {"directives":
+ [{"inferredEdge":
+   {"style": "solid", "selector": "lo.hi", "name": "hop", "color": "#000000"}}],
+ "constraints": [{"orientation": {"selector": "hop", "directions": ["below"]}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [
+  inferredEdge hop lo.hi,
+  orientation hop below
+]
+
+/--
+warning: spec-introduced 'cluster' exists only in the drawn graph — the engine evaluates selectors against the data instance, so this reference selects nothing at render
+---
+info: {"constraints":
+ [{"group": {"selector": "SBDD", "name": "cluster", "addEdge": false}},
+  {"hideAtom": {"selector": "cluster"}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [group SBDD cluster, hideAtom cluster]
 
 namespace SelQual
 public structure Inner where

@@ -145,6 +145,13 @@ private meta def unknownName {α} (scope : SelScope) (ref : Syntax) (what : Stri
   else
     throwErrorAt ref msg
 
+/-- Selector positions only: field-name positions (`edgeColor`, `hideField`)
+    act graph-side, where spec-introduced names do exist. -/
+private meta def warnGraphSideName (ref : Syntax) (name : String) : TermElabM Unit :=
+  logWarningAt ref s!"spec-introduced '{name}' exists only in the drawn graph — \
+    the engine evaluates selectors against the data instance, so this reference \
+    selects nothing at render"
+
 /-! ## Syntax
 
 The grammar replicates Forge's expression/formula precedence over two
@@ -578,14 +585,18 @@ where
         if scope.rels.contains compStr then some 2
         else scope.introduced.get? compStr
       match compArity? with
-      | some ca => return (.join sel (.rel compStr), ← joinArity stx arity (some ca))
+      | some ca =>
+        unless scope.rels.contains compStr do warnGraphSideName stx compStr
+        return (.join sel (.rel compStr), ← joinArity stx arity (some ca))
       | none => unknownName scope stx s!"relation '{compStr}'" (Sel.join sel (.rel compStr), none)
     return .rel s.1 s.2
   resolveHead (idStx : Syntax) (head : Name) (rest : List Name) :
       TermElabM (Sel × Option Nat × List Name) := do
     let s := head.toString
     if scope.rels.contains s then return (.rel s, some 2, rest)
-    if let some arity := scope.introduced.get? s then return (.rel s, some arity, rest)
+    if let some arity := scope.introduced.get? s then
+      warnGraphSideName idStx s
+      return (.rel s, some arity, rest)
     -- Longest prefix that names a type wins (`SelQual.Inner.someField`): try
     -- the full name, then shorter prefixes; the unconsumed tail folds as joins.
     let total := rest.length + 1
