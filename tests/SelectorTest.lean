@@ -805,3 +805,81 @@ example : Nat := let univ := 3; univ
 example : Nat := let iden := 4; iden
 example : Nat := let sum := hygieneSum; sum
 example : Nat := let none := 7; none
+
+/-! ## Grammar tripwire — `docs/selectors.md` pins the surface grammar
+
+A rule added, removed, or reshaped in the selector categories changes a kind
+name here; update the EBNF alongside this golden. -/
+
+/--
+info: spytial_sel:
+SpytialLean.selAtomLit
+SpytialLean.selBox
+SpytialLean.selCard
+SpytialLean.selIden
+SpytialLean.selIdent
+SpytialLean.selNegNum
+SpytialLean.selNone
+SpytialLean.selNum
+SpytialLean.selProdOp
+SpytialLean.selProjBoolOp
+SpytialLean.selProjNumOp
+SpytialLean.selProjPlainOp
+SpytialLean.selProjStrOp
+SpytialLean.selStr
+SpytialLean.selSum
+SpytialLean.selUniv
+SpytialLean.«spytial_sel(_)»
+SpytialLean.«spytial_sel*_»
+SpytialLean.«spytial_sel^_»
+SpytialLean.«spytial_sel_&_»
+SpytialLean.«spytial_sel_++_»
+SpytialLean.«spytial_sel_+_»
+SpytialLean.«spytial_sel_-_»
+SpytialLean.«spytial_sel_._»
+SpytialLean.«spytial_sel_:>_»
+SpytialLean.«spytial_sel_<:_»
+SpytialLean.«spytial_sel{_,|_}»
+SpytialLean.«spytial_sel~_»
+---
+info: spytial_sel_form:
+SpytialLean.selAndOp
+SpytialLean.selIffOp
+SpytialLean.selImpOp
+SpytialLean.selIteOp
+SpytialLean.selLet
+SpytialLean.selNiOp
+SpytialLean.selNotInOp
+SpytialLean.selNotNiOp
+SpytialLean.selOrOp
+SpytialLean.selQAll
+SpytialLean.selQLone
+SpytialLean.selQNo
+SpytialLean.selQOne
+SpytialLean.selQSome
+SpytialLean.selXorOp
+SpytialLean.spytial_sel_form!_
+SpytialLean.spytial_sel_formLone_
+SpytialLean.spytial_sel_formNo_
+SpytialLean.spytial_sel_formNot_
+SpytialLean.spytial_sel_formOne_
+SpytialLean.spytial_sel_formSome_
+SpytialLean.spytial_sel_form_!In_
+SpytialLean.spytial_sel_form_In_
+SpytialLean.«spytial_sel_form(_)»
+SpytialLean.«spytial_sel_form_!=_»
+SpytialLean.«spytial_sel_form_<=_»
+SpytialLean.«spytial_sel_form_<_»
+SpytialLean.«spytial_sel_form_=<_»
+SpytialLean.«spytial_sel_form_=_»
+SpytialLean.«spytial_sel_form_>=_»
+SpytialLean.«spytial_sel_form_>_»
+-/
+#guard_msgs in
+open Lean Parser in
+run_cmd do
+  let cats := (parserExtension.getState (← getEnv)).categories
+  for cat in [`spytial_sel, `spytial_sel_form] do
+    let some c := cats.find? cat | throwError "no category {cat}"
+    let kinds := (c.kinds.toList.map (toString ·.1)).toArray.qsort (· < ·)
+    Lean.logInfo (m!"{cat}:\n" ++ m!"{"\n".intercalate kinds.toList}")
