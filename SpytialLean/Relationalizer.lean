@@ -257,7 +257,7 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : State
             let isProof ← if cfg.filterProofs then isProofArg discr else pure false
             unless isProof do
               let childId ← walkExpr cfg discr
-              let relName := if minfo.numDiscrs == 1 then "scrutinee" else s!"scrutinee_{i}"
+              let relName := scrutineeRelName minfo.numDiscrs i
               modify fun s => s.addTuple relName #[typeName, typeName]
                 { atoms := #[atomId, childId], types := #[typeName, typeName] }
           return atomId

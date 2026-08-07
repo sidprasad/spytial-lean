@@ -69,6 +69,19 @@ public structure Bundle where
   let r ← TypeShape.ofInductive ``Nat.add
   unless r.isNone do throwError "expected none for a non-inductive"
 
+/-! ## Scrutinee relation names -/
+
+#eval show MetaM Unit from do
+  assertEq "scrutinee.one"  #[scrutineeRelName 1 0] #["scrutinee"]
+  assertEq "scrutinee.many" #[scrutineeRelName 2 0, scrutineeRelName 2 1]
+    #["scrutinee_0", "scrutinee_1"]
+  assertEq "scrutinee.is"
+    (#["scrutinee", "scrutinee_0", "scrutinee_12"].map isScrutineeRelName)
+    #[true, true, true]
+  assertEq "scrutinee.isnt"
+    (#["scrutinee_", "scrutinee_x", "scrutineez", "left"].map isScrutineeRelName)
+    #[false, false, false, false]
+
 /-! ## Hole labels -/
 
 #eval show MetaM Unit from do
@@ -123,3 +136,18 @@ Elaborated here exactly as a synthesized term containing `match` would be. -/
     assertEq "match.labels" (di.atoms.map (·.label)) #["match", "t"]
     assertEq "match.types"  (di.atoms.map (·.type))  #["Nat", "Tree"]
     assertEq "match.rels"   (di.relations.map (·.name)) #["scrutinee"]
+
+#eval show Lean.Elab.TermElabM Unit from do
+  let treeNat := mkApp (mkConst ``Tree) (mkConst ``Nat)
+  withLocalDeclD `t treeNat fun t => do
+  withLocalDeclD `u treeNat fun u => do
+    let tStx ← Lean.Elab.Term.exprToSyntax t
+    let uStx ← Lean.Elab.Term.exprToSyntax u
+    let stx ← `(match $tStx:term, $uStx:term with | .leaf v, _ => v | _, _ => 0)
+    let e ← Lean.Elab.Term.elabTermEnsuringType stx (some (mkConst ``Nat))
+    Lean.Elab.Term.synthesizeSyntheticMVarsNoPostponing
+    let e ← instantiateMVars e
+    let di ← relationalize e
+    assertEq "match2.labels" (di.atoms.map (·.label)) #["match", "t", "u"]
+    assertEq "match2.rels"   ((di.relations.map (·.name)).qsort (· < ·))
+      #["scrutinee_0", "scrutinee_1"]
