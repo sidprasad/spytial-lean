@@ -59,22 +59,26 @@ public meta def elabStoredSpec : CommandElab := fun
 
 /--
 info: {"directives":
- [{"edgeColor": {"value": "orange", "style": "dashed", "field": "lo"}},
-  {"atomColor": {"value": "red", "selector": "{x : SBDD | @:x = \"ff\"}"}},
+ [{"edgeStyle":
+   {"lineStyle": {"weight": 2, "pattern": "dashed", "color": "orange"},
+    "field": "lo"}},
+  {"atomStyle":
+   {"selector": "{x : SBDD | @:x = \"ff\"}", "borderStyle": {"color": "red"}}},
   {"attribute": {"field": "v"}},
   {"inferredEdge":
-   {"style": "dotted",
-    "selector": "lo.hi",
+   {"selector": "lo.hi",
     "name": "shortcut",
-    "color": "#123456"}},
-  {"icon":
-   {"showLabels": true,
+    "lineStyle": {"pattern": "dotted", "color": "#123456"}}},
+  {"atomStyle":
+   {"showLabel": true,
     "selector": "{x : SBDD | @:x = \"tt\"}",
-    "path": "tt.png"}},
+    "iconStyle": {"placement": "badge", "path": "tt.png"}}},
   {"tag": {"value": "bdd", "toTag": "SBDD", "name": "kind"}},
   {"flag": "hideDisconnected"},
   {"hideField": {"field": "hi"}},
-  {"atomColor": {"value": "green", "selector": "raw & unchecked \"quoted\""}}],
+  {"atomStyle":
+   {"selector": "raw & unchecked \"quoted\"",
+    "borderStyle": {"color": "green"}}}],
  "constraints":
  [{"orientation":
    {"selector": "{x, y : SBDD | x->y in lo + hi}", "directions": ["below"]}},
@@ -86,9 +90,7 @@ info: {"directives":
    {"selector": "{x, y : SBDD | x != y and x.v = y.v}",
     "direction": "horizontal"}},
   {"group":
-   {"selector": "{vr : String, y : SBDD | @:vr = @:(y.v)}",
-    "name": "nodes",
-    "addEdge": false}},
+   {"selector": "{vr : String, y : SBDD | @:vr = @:(y.v)}", "name": "nodes"}},
   {"hideAtom": {"selector": "String"}},
   {"size": {"width": 120, "selector": "SBDD", "height": 80}},
   {"cyclic":
@@ -101,18 +103,18 @@ info: {"directives":
   orientation lo - SBDD->{b : SBDD | @:b = tt} - SBDD->{b : SBDD | @:b = ff} left,
   align {x, y : SBDD | (x != y) && (x.v) = (y.v)} horizontal,
   group {vr : String, y : SBDD | @:vr = @:(y.v)} nodes,
-  edgeColor lo "orange" dashed,
-  atomColor {x : SBDD | @:x = ff} "red",
+  edgeStyle lo (lineStyle "orange" dashed 2),
+  atomStyle {x : SBDD | @:x = ff} (borderStyle "red"),
   attribute v,
   hideAtom String,
   size SBDD 120 80,
   cyclic {x, y : SBDD | x->y in lo} counterclockwise,
-  inferredEdge shortcut lo.hi "#123456" dotted,
-  icon {x : SBDD | @:x = tt} "tt.png" labels,
+  inferredEdge shortcut lo.hi (lineStyle "#123456" dotted),
+  atomStyle {x : SBDD | @:x = tt} (iconStyle "tt.png" badge) labels,
   tag SBDD "kind" "bdd",
   flag hideDisconnected,
   hideField hi,
-  atomColor "raw & unchecked \"quoted\"" "green"
+  atomStyle "raw & unchecked \"quoted\"" (borderStyle "green")
 ]
 
 -- `Sel` is public API: a composed raw fragment binds loosest — parenthesized,
@@ -127,14 +129,15 @@ spytial_spec SRB [
   orientation left - SRB->{x : SRB | @:x = nil} left below,
   orientation right - SRB->{x : SRB | @:x = nil} right below,
   hideAtom SColor + Nat,
-  atomColor {x : SRB | @:(x.color) = red} "red",
+  atomStyle {x : SRB | @:(x.color) = red} (borderStyle "red"),
   attribute key
 ]
 
 /--
 info: {"directives":
- [{"atomColor":
-   {"value": "red", "selector": "{x : SRB | @:(x.color) = \"red\"}"}},
+ [{"atomStyle":
+   {"selector": "{x : SRB | @:(x.color) = \"red\"}",
+    "borderStyle": {"color": "red"}}},
   {"attribute": {"field": "key"}}],
  "constraints":
  [{"orientation":
@@ -216,7 +219,9 @@ strict scopes accept the whole family — in selector and field positions. -/
 
 /--
 info: {"directives":
- [{"edgeColor": {"value": "gray", "style": "dashed", "field": "scrutinee_0"}}],
+ [{"edgeStyle":
+   {"lineStyle": {"pattern": "dashed", "color": "gray"},
+    "field": "scrutinee_0"}}],
  "constraints":
  [{"orientation": {"selector": "scrutinee", "directions": ["below"]}},
   {"orientation": {"selector": "scrutinee_1", "directions": ["right"]}}]}
@@ -225,7 +230,7 @@ info: {"directives":
 #spytial.spec sExample with [
   orientation scrutinee below,
   orientation scrutinee_1 right,
-  edgeColor scrutinee_0 "gray" dashed
+  edgeStyle scrutinee_0 (lineStyle "gray" dashed)
 ]
 
 /-! ## Checker errors — one per class -/
@@ -240,11 +245,11 @@ info: {"directives":
 
 /-- error: unknown constructor label 'ttt'; known labels of 'SBDD': ff, tt -/
 #guard_msgs in
-#spytial.spec sExample with [atomColor {x : SBDD | @:x = ttt} "red"]
+#spytial.spec sExample with [atomStyle {x : SBDD | @:x = ttt} (borderStyle "red")]
 
 /-- error: constructor 'SRB.nil' belongs to 'SRB', which cannot occur in values of 'SBDD' -/
 #guard_msgs in
-#spytial.spec sExample with [atomColor {x : SBDD | @:x = «SRB.nil»} "red"]
+#spytial.spec sExample with [atomStyle {x : SBDD | @:x = «SRB.nil»} (borderStyle "red")]
 
 /-- error: this position selects atoms (arity 1), but the selector has arity 2 -/
 #guard_msgs in
@@ -272,21 +277,23 @@ info: {"directives":
 
 /-- error: unknown relation 'lof' (did you mean 'lo'?) -/
 #guard_msgs in
-#spytial.spec sExample with [edgeColor lof "red"]
+#spytial.spec sExample with [edgeStyle lof (lineStyle "red")]
 
 /-- error: unknown direction 'sideways' (expected above, below, left, right, directlyAbove, directlyBelow, directlyLeft, directlyRight) -/
 #guard_msgs in
 #spytial.spec sExample with [orientation lo sideways]
 
 /--
-error: unknown Spytial op 'orientate'; known ops: align, atomColor, attribute, cyclic, edgeColor, flag, group, hideAtom, hideField, icon, inferredEdge, orientation, size, tag
+error: unknown Spytial op 'orientate'; known ops: align, atomStyle, attribute, cyclic, edgeStyle, flag, group, hideAtom, hideField, inferredEdge, orientation, size, tag
 -/
 #guard_msgs in
 #spytial.spec sExample with [orientate lo below]
 
-/-- error: missing argument 2; usage: atomColor <selector> <css-color> -/
+/--
+error: atomStyle sets nothing; usage: atomStyle <selector> (borderStyle <color> [<width>])? (fillStyle <color>)? (iconStyle <path> [full|badge])? [labels|noLabels]
+-/
 #guard_msgs in
-#spytial.spec sExample with [atomColor SBDD]
+#spytial.spec sExample with [atomStyle SBDD]
 
 /-- error: unexpected extra argument; usage: hideAtom <selector> -/
 #guard_msgs in
@@ -300,17 +307,15 @@ error: unknown Spytial op 'orientate'; known ops: align, atomColor, attribute, c
 
 /--
 info: {"directives":
- [{"inferredEdge":
-   {"style": "solid", "selector": "lo.hi", "name": "hop", "color": "#000000"}},
-  {"edgeColor": {"value": "purple", "style": "solid", "field": "hop"}}],
- "constraints":
- [{"group": {"selector": "SBDD", "name": "cluster", "addEdge": false}}]}
+ [{"inferredEdge": {"selector": "lo.hi", "name": "hop"}},
+  {"edgeStyle": {"lineStyle": {"color": "purple"}, "field": "hop"}}],
+ "constraints": [{"group": {"selector": "SBDD", "name": "cluster"}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [
   group SBDD cluster,
   inferredEdge hop lo.hi,
-  edgeColor hop "purple"
+  edgeStyle hop (lineStyle "purple")
 ]
 
 /-! ## Dotted-selector resolution -/
@@ -335,15 +340,13 @@ error: join of arity 1 and arity 1 has no columns left
 
 Groups and inferred edges join the drawn graph, not the data instance the
 engine evaluates selectors against — a constraint or directive selector
-naming one selects nothing at render. Field-name positions (`edgeColor hop`
+naming one selects nothing at render. Field-name positions (`edgeStyle hop`
 above) stay silent: they act on drawn edges, where the names do exist. -/
 
 /--
 warning: spec-introduced 'hop' exists only in the drawn graph — the engine evaluates selectors against the data instance, so this reference selects nothing at render
 ---
-info: {"directives":
- [{"inferredEdge":
-   {"style": "solid", "selector": "lo.hi", "name": "hop", "color": "#000000"}}],
+info: {"directives": [{"inferredEdge": {"selector": "lo.hi", "name": "hop"}}],
  "constraints": [{"orientation": {"selector": "hop", "directions": ["below"]}}]}
 -/
 #guard_msgs in
@@ -356,11 +359,18 @@ info: {"directives":
 warning: spec-introduced 'cluster' exists only in the drawn graph — the engine evaluates selectors against the data instance, so this reference selects nothing at render
 ---
 info: {"constraints":
- [{"group": {"selector": "SBDD", "name": "cluster", "addEdge": false}},
+ [{"group": {"selector": "SBDD", "name": "cluster"}},
   {"hideAtom": {"selector": "cluster"}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [group SBDD cluster, hideAtom cluster]
+
+/--
+info: {"constraints":
+ [{"group": {"selector": "SBDD", "name": "cluster", "addEdge": "togroup"}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [group SBDD cluster (addEdge togroup)]
 
 namespace SelQual
 public structure Inner where
@@ -406,11 +416,13 @@ info: {"constraints":
 
 /--
 info: {"directives":
- [{"atomColor": {"value": "red", "selector": "{x : SRB | @num:(x.key) = 1}"}}]}
+ [{"atomStyle":
+   {"selector": "{x : SRB | @num:(x.key) = 1}",
+    "borderStyle": {"color": "red"}}}]}
 -/
 #guard_msgs in
 #spytial.spec sRB with [
-  atomColor {x : SRB | @num:(x.key) = 1} "red"
+  atomStyle {x : SRB | @num:(x.key) = 1} (borderStyle "red")
 ]
 
 /-! ## Sort-typed field: dropped from vocabulary, scope stays strict -/
@@ -526,7 +538,7 @@ info: {"constraints":
 
 /-- error: this position selects atoms (arity 1), but the selector has arity 2 -/
 #guard_msgs in
-#spytial.spec sExample with [atomColor (lo.hi) "#111"]
+#spytial.spec sExample with [atomStyle (lo.hi) (borderStyle "#111")]
 
 /-- error: join of arity 1 and arity 1 has no columns left -/
 #guard_msgs in
@@ -578,20 +590,25 @@ info: {"constraints":
 
 /--
 info: {"directives":
- [{"atomColor": {"value": "red", "selector": "{x : SRB | @num:(x.key) < 5}"}},
-  {"atomColor":
-   {"value": "red", "selector": "{x : SRB | add[@num:(x.key), 1] > 2}"}},
-  {"atomColor":
-   {"value": "red", "selector": "{x : SRB | abs[@num:(x.key)] >= 1}"}},
-  {"atomColor":
-   {"value": "red", "selector": "{x : SRB | min[@num:(SRB.key)] <= 3}"}}]}
+ [{"atomStyle":
+   {"selector": "{x : SRB | @num:(x.key) < 5}",
+    "borderStyle": {"color": "red"}}},
+  {"atomStyle":
+   {"selector": "{x : SRB | add[@num:(x.key), 1] > 2}",
+    "borderStyle": {"color": "red"}}},
+  {"atomStyle":
+   {"selector": "{x : SRB | abs[@num:(x.key)] >= 1}",
+    "borderStyle": {"color": "red"}}},
+  {"atomStyle":
+   {"selector": "{x : SRB | min[@num:(SRB.key)] <= 3}",
+    "borderStyle": {"color": "red"}}}]}
 -/
 #guard_msgs in
 #spytial.spec sRB with [
-  atomColor {x : SRB | @num:(x.key) < 5} "red",
-  atomColor {x : SRB | add[@num:(x.key), 1] > 2} "red",
-  atomColor {x : SRB | abs[@num:(x.key)] >= 1} "red",
-  atomColor {x : SRB | min[SRB.key] <= 3} "red"
+  atomStyle {x : SRB | @num:(x.key) < 5} (borderStyle "red"),
+  atomStyle {x : SRB | add[@num:(x.key), 1] > 2} (borderStyle "red"),
+  atomStyle {x : SRB | abs[@num:(x.key)] >= 1} (borderStyle "red"),
+  atomStyle {x : SRB | min[SRB.key] <= 3} (borderStyle "red")
 ]
 
 -- Counting idiom and relational box join (`a[b] ≡ b.a`).
@@ -613,18 +630,18 @@ Lowering parenthesizes it — SGQ extends the body maximally right, so
 
 /--
 info: {"directives":
- [{"atomColor":
-   {"value": "red",
-    "selector": "{x : SRB | (sum y : SRB | @num:(y.key)) > 2}"}}]}
+ [{"atomStyle":
+   {"selector": "{x : SRB | (sum y : SRB | @num:(y.key)) > 2}",
+    "borderStyle": {"color": "red"}}}]}
 -/
 #guard_msgs in
 #spytial.spec sRB with [
-  atomColor {x : SRB | (sum y : SRB | @num:(y.key)) > 2} "red"
+  atomStyle {x : SRB | (sum y : SRB | @num:(y.key)) > 2} (borderStyle "red")
 ]
 
 /-- error: a sum-quantifier binder domain must have arity 1, got 2 -/
 #guard_msgs in
-#spytial.spec sRB with [atomColor {x : SRB | (sum y : left | @num:(y.key)) > 2} "red"]
+#spytial.spec sRB with [atomStyle {x : SRB | (sum y : left | @num:(y.key)) > 2} (borderStyle "red")]
 
 /-! ## Negated comparisons (`!in`, `not in` — both lower to `!in`) -/
 
@@ -695,27 +712,30 @@ info: {"constraints":
 
 /--
 info: {"directives":
- [{"atomColor":
-   {"value": "red", "selector": "{x : SRB | sum[@num:(SRB.key)] > 2}"}}]}
+ [{"atomStyle":
+   {"selector": "{x : SRB | sum[@num:(SRB.key)] > 2}",
+    "borderStyle": {"color": "red"}}}]}
 -/
 #guard_msgs in
-#spytial.spec sRB with [atomColor {x : SRB | sum[SRB.key] > 2} "red"]
+#spytial.spec sRB with [atomStyle {x : SRB | sum[SRB.key] > 2} (borderStyle "red")]
 
 /--
 info: {"directives":
- [{"atomColor":
-   {"value": "red", "selector": "{x : SRB | min[@num:(SRB.key)] <= 3}"}}]}
+ [{"atomStyle":
+   {"selector": "{x : SRB | min[@num:(SRB.key)] <= 3}",
+    "borderStyle": {"color": "red"}}}]}
 -/
 #guard_msgs in
-#spytial.spec sRB with [atomColor {x : SRB | min[SRB.key] <= 3} "red"]
+#spytial.spec sRB with [atomStyle {x : SRB | min[SRB.key] <= 3} (borderStyle "red")]
 
 /--
 info: {"directives":
- [{"atomColor":
-   {"value": "red", "selector": "{x : SRB | max[@num:(SRB.key)] >= 3}"}}]}
+ [{"atomStyle":
+   {"selector": "{x : SRB | max[@num:(SRB.key)] >= 3}",
+    "borderStyle": {"color": "red"}}}]}
 -/
 #guard_msgs in
-#spytial.spec sRB with [atomColor {x : SRB | max[SRB.key] >= 3} "red"]
+#spytial.spec sRB with [atomStyle {x : SRB | max[SRB.key] >= 3} (borderStyle "red")]
 
 /-! ## Integer-layer type errors — one per class -/
 
@@ -741,15 +761,16 @@ info: {"directives":
 -- constructor-label reading, rejected because Bool cannot occur in SBDD.
 /--
 info: {"directives":
- [{"atomColor":
-   {"value": "red", "selector": "{x : SBDD | @bool:(x.v) = true}"}}]}
+ [{"atomStyle":
+   {"selector": "{x : SBDD | @bool:(x.v) = true}",
+    "borderStyle": {"color": "red"}}}]}
 -/
 #guard_msgs in
-#spytial.spec sExample with [atomColor {x : SBDD | @bool:(x.v) = true} "red"]
+#spytial.spec sExample with [atomStyle {x : SBDD | @bool:(x.v) = true} (borderStyle "red")]
 
 /-- error: constructor 'Bool.true' belongs to 'Bool', which cannot occur in values of 'SBDD' -/
 #guard_msgs in
-#spytial.spec sExample with [atomColor {x : SBDD | @:x = true} "red"]
+#spytial.spec sExample with [atomStyle {x : SBDD | @:x = true} (borderStyle "red")]
 
 /-- error: cannot compare a label value with this operand; a label value compares against a nullary constructor or a string literal — for a numeric label, project with `@num:` -/
 #guard_msgs in
@@ -759,12 +780,12 @@ info: {"directives":
 -- lowers doubly-quoted, escaped per SGQ's string grammar.
 /--
 info: {"directives":
- [{"atomColor":
-   {"value": "red",
-    "selector": "{x : SBDD | @str:(x.v) = \"\\\"a\\\"b\\\\c\\nd\\\"\"}"}}]}
+ [{"atomStyle":
+   {"selector": "{x : SBDD | @str:(x.v) = \"\\\"a\\\"b\\\\c\\nd\\\"\"}",
+    "borderStyle": {"color": "red"}}}]}
 -/
 #guard_msgs in
-#spytial.spec sExample with [atomColor {x : SBDD | @str:(x.v) = "a\"b\\c\nd"} "red"]
+#spytial.spec sExample with [atomStyle {x : SBDD | @str:(x.v) = "a\"b\\c\nd"} (borderStyle "red")]
 
 /-- error: string literal contains U+0001 — SGQ's string syntax has no escape for it, and it cannot ride raw through the spec -/
 #guard_msgs in
