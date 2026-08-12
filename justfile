@@ -16,3 +16,11 @@ demos:
 widget-reload:
     cd widget && pnpm run build
     lake build
+
+# regenerate the SGQ lowering tables from simple-graph-query's manifest
+gen-sgq:
+    lake exe sgqCodegen
+
+# fail if the checked-in tables no longer match the manifest
+check-sgq:
+    lake exe sgqCodegen --check

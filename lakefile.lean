@@ -136,5 +136,12 @@ lean_lib SpytialTests where
   roots := #[`WalkCanon, `TypeShapeTest, `CoverageTest, `TacticTest, `SelectorTest,
              `IdentityTest, `IdentityWalkTest, `RelationShapeTest]
 
+/-- Regenerates `SpytialLean/SelectorGenerated.lean` from simple-graph-query's
+    language manifest (`just gen-sgq`); `--check` fails if the checked-in file
+    is stale. -/
+lean_exe sgqCodegen where
+  srcDir := "codegen"
+  root := `SgqCodegen
+
 require proofwidgets from
   git "https://github.com/leanprover-community/ProofWidgets4" @ "v0.0.105"

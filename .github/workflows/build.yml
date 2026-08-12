@@ -45,6 +45,9 @@ jobs:
       - name: Build, test, demos
         run: just build test demos
 
+      - name: Check generated tables are current
+        run: just check-sgq
+
       - name: Create GitHub Release
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2

@@ -2,6 +2,17 @@ packages:
   - widget
   - render
 
+# simple-graph-query is a build-time input, not a runtime one: the root package
+# depends on it so `lake exe sgqCodegen` can read docs/sgq-language.json from a
+# stable path. spytial-core embeds its own prebuilt sgq bundle, so nothing here
+# changes what the widget evaluates.
+#
+# TEMPORARY: the manifest only exists on an unreleased branch, so the override
+# points at a local checkout. Drop it once a published sgq carries the file, and
+# the `^3.1.0` pin in package.json takes over.
+overrides:
+  simple-graph-query: file:/home/ironmoon/workspace/spytial/simple-graph-query
+
 # Pinned to stay consistent with the infoview bundle.
 catalog:
   '@rollup/plugin-commonjs': ^28.0.1
@@ -16,5 +27,5 @@ catalog:
   '@playwright/test': 1.62.0
 
 minimumReleaseAgeExclude:
-  - spytial-core@5.0.0
+  - spytial-core@5.0.1
   - simple-graph-query@3.1.0
