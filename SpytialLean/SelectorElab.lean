@@ -25,8 +25,8 @@ or integer. Each position accepts specific kinds. This rejects SGQ's silent
 scalar/tuple confusion (`some #e`) at compile time.
 
 A scope is strict when the vocabulary is closed: a monomorphic type built from
-monomorphic fields. A type parameter, function-typed field, custom
-relationalizer, or non-inductive in the closure makes the scope lenient. The
+monomorphic fields. A type parameter, a function field that does not tabulate,
+a custom relationalizer, or a non-inductive in the closure makes it lenient. The
 walker can then emit names no static analysis predicts, so unknown names warn
 and pass through.
 -/
@@ -39,8 +39,9 @@ meta structure SelScope where
   root : Name
   /-- Lean type name → sig string, over the reachable field-type closure. -/
   types : Std.HashMap Name String := {}
-  /-- Relation name → the type whose constructor field emits it. -/
-  rels : Std.HashMap String Name := {}
+  /-- Relation name → the emitting type and the walker's arity; `none`
+      (`FieldShape.arity?`) leaves the name known and its width unchecked. -/
+  rels : Std.HashMap String (Name × Option Nat) := {}
   /-- Nullary-constructor label → constructor, for `@:x = tt` literals. -/
   ctorLabels : Std.HashMap String Name := {}
   /-- Names introduced by earlier ops in the same spec (group names arity 1,
@@ -59,8 +60,8 @@ private meta def scalarTypes : List Name :=
 meta def SelScope.ofType (root : Name) : MetaM SelScope := do
   let env ← getEnv
   let mut scope : SelScope := { root }
-  -- Stuck-match nodes can appear in any open value, typed at the scrutinized type.
-  scope := { scope with rels := scope.rels.insert scrutineeRel root }
+  -- stuck matches appear in any open value; the walker emits one ternary
+  scope := { scope with rels := scope.rels.insert "scrutinee" (root, some 3) }
   let mut queue : Array Name := #[root]
   let mut seen : NameSet := {}
   while !queue.isEmpty do
@@ -84,10 +85,11 @@ meta def SelScope.ofType (root : Name) : MetaM SelScope := do
           scope := { scope with ctorLabels := scope.ctorLabels.insert c.ctorShort c.ctorName }
         for f in c.fields do
           unless f.isProofLike do
-            scope := { scope with rels := scope.rels.insert f.relName t }
-            match f.typeHead with
-            | some ft => queue := queue.push ft
-            | none => scope := { scope with lenient := true }
+            scope := { scope with rels := scope.rels.insert f.relName (t, f.arity?) }
+            match f.table, f.typeHead with
+            | some tbl, _ => queue := queue ++ tbl.columnHeads
+            | none, some ft => queue := queue.push ft
+            | none, none => scope := { scope with lenient := true }
   return scope
 
 meta def SelScope.introduce (scope : SelScope) (name : String) (arity : Nat) : SelScope :=
@@ -608,7 +610,7 @@ private meta partial def resolveExprIdent (scope : SelScope) (env : LEnv)
   if let some v ← resolveCtorLit? scope stx then
     return .val v
   let s := name.toString
-  if scope.rels.contains s then return .rel (.rel s) (some 2)
+  if let some (_, arity?) := scope.rels.get? s then return .rel (.rel s) arity?
   if let some arity := scope.introduced.get? s then
     warnGraphSideName stx s
     return .rel (.rel s) (some arity)

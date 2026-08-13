@@ -133,8 +133,8 @@ expectations: `hideAtom` and `atomStyle` select atoms (arity 1),
 `orientation` and `align` select pairs. `hideAtom left` is a compile error.
 
 Checking is **strict** exactly when the vocabulary is closed: a monomorphic
-type built from monomorphic fields. A type parameter, function-typed field,
-or custom relationalizer makes the scope lenient. Unknown names then warn,
+type built from monomorphic fields. A type parameter, a function field that
+does not tabulate, or a custom relationalizer makes the scope lenient. Unknown names then warn,
 and resolved types (like `Nat` in a `Tree α` spec) pass without a warning.
 
 Derived type and field names are **short names** (`T` for `A.T`, `left` for a

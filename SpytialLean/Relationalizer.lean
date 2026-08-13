@@ -554,12 +554,11 @@ private meta def tabulate? (cfg : WalkConfig) (recurse : Expr → StateT WalkSta
   let some plan ← tabulationPlan? (← inferType value) | return false
   unless plan.size ≤ cfg.maxTableTuples do return false
   let fn@(.lam ..) ← Meta.whnf value | return false
-  let keyTypes := #[ownerSig] ++ (← plan.binders.mapM (sigOfType ·.domain))
+  let types := #[ownerSig] ++ (← plan.tailTypes.mapM (sigOfType ·))
   let columns := plan.binders.map (·.elems.map (·.2))
   let points := plan.points
   match plan.kind with
   | .data =>
-    let types := keyTypes.push (← sigOfType plan.codomain)
     modify (·.addRelation relName types)
     let ids ← columns.mapM (·.mapM recurse)
     for pt in points do
@@ -574,7 +573,7 @@ private meta def tabulate? (cfg : WalkConfig) (recurse : Expr → StateT WalkSta
     for pt in points do
       let some verdict ← decideProp? (mkAppN fn (pick columns pt)) | return false
       if verdict then holds := holds.push pt
-    modify (·.addRelation relName keyTypes)
+    modify (·.addRelation relName types)
     -- walk only elements a true tuple names; the two-pass reference prunes
     -- orphans
     let mut ids := columns.map (·.map fun _ => (none : Option String))
@@ -589,7 +588,7 @@ private meta def tabulate? (cfg : WalkConfig) (recurse : Expr → StateT WalkSta
             ids := ids.set! col (ids[col]!.set! i (some id))
             pure id
         atoms := atoms.push id
-      modify fun s => s.addTuple relName keyTypes { atoms, types := keyTypes }
+      modify fun s => s.addTuple relName types { atoms, types }
     return true
 
 /-- Emit the atom for `e` (already whnf'd; id already allocated) and walk its

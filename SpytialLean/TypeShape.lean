@@ -48,10 +48,6 @@ public meta def fieldRelName (ctorShort : String) (binderNames : Array Name) (i 
   else
     s!"{ctorShort}_{i}"
 
-/-- The relation a stuck match's edges live in: one ternary `scrutinee`
-    (match, position, discriminant) whatever the discriminant count. -/
-public meta def scrutineeRel : String := "scrutinee"
-
 /-- The label the relationalizer assigns to a hole (an unassigned metavariable):
     `?` when anonymous, `?name` for a user-named hole. Macro-scoped names count as
     anonymous — they are synthetic, not something the user wrote. -/
@@ -135,6 +131,21 @@ public meta structure TabulationPlan where
 public meta def TabulationPlan.size (p : TabulationPlan) : Nat :=
   p.binders.foldl (fun n b => n * b.elems.size) 1
 
+/-- The columns after the owner: the binders, then a data codomain's result
+    (a proposition's extension has none). -/
+public meta def TabulationPlan.tailTypes (p : TabulationPlan) : Array Expr :=
+  let domains := p.binders.map (·.domain)
+  match p.kind with
+  | .data => domains.push p.codomain
+  | .prop => domains
+
+public meta def TabulationPlan.arity (p : TabulationPlan) : Nat :=
+  1 + p.tailTypes.size
+
+/-- Column type heads, standing in for the function type no atom ever gets. -/
+public meta def TabulationPlan.columnHeads (p : TabulationPlan) : MetaM (Array Name) :=
+  p.tailTypes.filterMapM typeHead?
+
 private meta partial def peelBinders (ty : Expr) (acc : Array TabulationBinder) :
     MetaM (Option TabulationPlan) := do
   match ← Meta.whnf ty with
@@ -155,6 +166,16 @@ private meta partial def peelBinders (ty : Expr) (acc : Array TabulationBinder) 
 public meta def tabulationPlan? (ty : Expr) : MetaM (Option TabulationPlan) :=
   peelBinders ty #[]
 
+/-- What a tabulating field's type emits, as a static checker needs it. -/
+public meta structure FieldTable where
+  arity : Nat
+  columnHeads : Array Name
+  deriving Repr, Inhabited
+
+public meta def FieldTable.of? (ty : Expr) : MetaM (Option FieldTable) := do
+  let some plan ← tabulationPlan? ty | return none
+  return some { arity := plan.arity, columnHeads := ← plan.columnHeads }
+
 public meta structure FieldShape where
   relName : String
   typeSig : Option String
@@ -163,6 +184,13 @@ public meta structure FieldShape where
   typeHead : Option Name := none
   /-- The walker drops this field: it is `Prop`- or `Sort`-typed. -/
   isProofLike : Bool
+  /-- Set when the field's type tabulates: its columns, not its type head, are
+      the vocabulary its values contribute. -/
+  table : Option FieldTable := none
+  /-- The emitted relation's arity, when the declaration fixes it. A function
+      type over the inductive's own parameters fixes nothing: only the
+      instantiation decides leaf or table. -/
+  arity? : Option Nat := some 2
   deriving Repr, Inhabited
 
 public meta structure CtorShape where
@@ -195,8 +223,12 @@ public meta def TypeShape.ofInductive (typeName : Name) : MetaM (Option TypeShap
           match (← Meta.whnf xty).getAppFn with
           | .const n _ => pure (some (shortName n), some n)
           | _          => pure (none, none)
+        let table ← FieldTable.of? xty
+        let arity? ← match table with
+          | some t => pure (some t.arity)
+          | none => pure (if (← Meta.whnf xty).isForall && xty.hasFVar then none else some 2)
         fs := fs.push { relName := fieldRelName ctorShort binderNames i,
-                        typeSig, typeHead, isProofLike }
+                        typeSig, typeHead, isProofLike, table, arity? }
       return fs
     ctors := ctors.push { ctorName, ctorShort, fields }
   return some { typeName, sig := shortName typeName, ctors }
