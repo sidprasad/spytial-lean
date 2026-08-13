@@ -30,3 +30,19 @@ public meta def assertCanon (label : String) (di : JsonDataInstance) (expected :
   let got := canonInstance di
   unless got == expected do
     throwError "{label}: canon mismatch\n-- got --\n{got}\n-- expected --\n{expected}"
+
+/-- Differential oracle: the fused walker must agree with the literal two-pass
+    reference (fresh atoms, then merge by `(type, identity)`). -/
+public meta def assertMatchesReference (label : String) (e : Expr) (cfg : WalkConfig := {}) :
+    MetaM Unit := do
+  let (rootF, stF) ← (walkExpr cfg e).run {}
+  let diF := stF.toDataInstance
+  let (rootR, diR) ← referenceRelationalize e cfg
+  let cF := canonInstance diF
+  let cR := canonInstance diR
+  unless cF == cR do
+    throwError "{label}: fused ≠ reference\n-- fused --\n{cF}\n-- reference --\n{cR}"
+  let idxOf (di : JsonDataInstance) (id : String) : Option Nat :=
+    di.atoms.findIdx? (·.id == id)
+  unless idxOf diF rootF == idxOf diR rootR do
+    throwError "{label}: root atoms disagree"

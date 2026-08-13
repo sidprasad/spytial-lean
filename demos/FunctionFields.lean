@@ -4,8 +4,10 @@ open SpytialLean
 
 /-! # Function Fields
 
-Structures with function-valued fields should decompose into mapping
-graphs rather than rendering as opaque lambda blobs.
+Structures with function-valued fields over enumerable domains decompose
+into flat n-ary relations rather than rendering as opaque lambda blobs: the
+field keeps its name, the owner is column 0, and every domain value becomes
+a column atom.
 -/
 
 /-! ## Lightweight category theory structures -/
@@ -38,8 +40,7 @@ def myObjMap : ThreeObj → TwoObj
 def myFunctor : SimpleFunctor threeStruct twoStruct :=
   { obj := myObjMap }
 
--- This should show a mapping graph: myObjMap node with edges a→x, b→y, c→x
--- Before the fix, this renders `obj` as an opaque lambda blob.
+-- `obj` tabulates: (myFunctor, a, x), (myFunctor, b, y), (myFunctor, c, x)
 #spytial myFunctor
 
 
@@ -55,7 +56,7 @@ structure Transform where
 def myTransform : Transform :=
   { f := fun b => if b then 42 else 0 }
 
--- `f` is a function Bool → Nat — should enumerate true→42, false→0
+-- `f` tabulates: (myTransform, false, 0), (myTransform, true, 42)
 #spytial myTransform
 
 /-! ## Non-finite function field (graceful fallback) -/
@@ -66,5 +67,5 @@ structure Processor where
 def myProcessor : Processor :=
   { process := fun n => n + 1 }
 
--- Nat is not finite — should show a labeled node, not an opaque blob
+-- Nat is not finite — a labeled node under a binary `process` edge
 #spytial myProcessor
