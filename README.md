@@ -207,6 +207,43 @@ Operations are constructors of `SpytialOp`. Pass them as a list to `with [...]` 
 
 3. **Widget** (`widget/src/spytialWidget.tsx`) — A ProofWidgets4 widget module that loads spytial-core, generates a layout from the relational data + spec, and renders via the `webcola-cnd-graph` web component.
 
+### Identity
+
+When do two sub-values map to the same atom? The walker uses a short ladder, most
+trusted source first:
+
+1. **Syntactic** — repeated occurrences of the same (whnf'd) subterm always share one
+   atom. The memo is hash-bucketed but confirmed with structural equality, so a hash
+   collision cannot merge distinct values.
+2. **Declared equality** — if the type has a `BEq` instance (including one derived
+   from `DecidableEq`), closed subterms the instance calls equal collapse onto the
+   first representative's atom, and that representative's structure is what gets
+   drawn. A `DecidableEq`-derived instance is lawful (`a == b = true` implies
+   `a = b`), so atoms merged through it are provably equal values.
+   For `deriving BEq` this coincides with structural equality; it becomes
+   visible with hand-written instances (case-insensitive wrappers, quotient-like
+   types). When the type also has `Hashable`, comparisons are bucketed by evaluated
+   hash — assumed consistent with `==` — so unequal values rarely pay a compiled
+   comparison. The hash only skips comparisons; it never causes a merge.
+   Types registered with `spytial_relationalizer` are exempt — a custom
+   relationalizer owns its type's identity.
+3. Everything else keeps one atom per distinct spelling: sound, if conservative.
+
+Caveats: the syntactic memo wins over declared equality, observable only for
+reflexivity-breaking instances (`Float`'s `NaN == NaN` is `false`, but two occurrences
+of the same `NaN` expression still merge — the memo merges only occurrences of the
+same term, the identity-before-equality rule containers use); quotient types without `DecidableEq` show
+representatives, not quotient classes; and `Repr` is for labels, never identity — a
+non-injective `Repr` would merge atoms the way a hash collision does. Select the
+level with `WalkConfig.identityMode` (`.syntactic`, or the default `.declared`).
+
+An opt-in third level, `.defeq`, additionally merges definitionally equal subterms
+via `isDefEq` — the only notion that reaches open terms (with a hypothesis `k`, the
+stuck leaves `f (id k)` and `f k` become one atom). It pays pairwise unification
+cost per subterm and is sensitive to transparency settings, hence not the default.
+(Closed representatives a lawful `BEq` already rejected are not re-checked; an
+unlawful instance can therefore suppress a defeq merge between closed terms.)
+
 ### Relation naming
 
 Relations are named after the constructor parameter names you define:
