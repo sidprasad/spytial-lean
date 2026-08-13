@@ -539,6 +539,15 @@ private meta def customDispatch? (eOrig e tyKey : Expr)
   modify fun s => { s with customSeen := s.customSeen.insert ⟨e⟩ id }
   return some id
 
+/-- The type sig of a relation's target column: the child's own, named exactly
+    as the child atom's `type` is. Falls back to the owner's on any meta
+    failure, so no value that walked before fails now. -/
+private meta def columnSig (owner : String) (child : Expr) : MetaM String := do
+  try
+    return (← sigOfType (← inferType child))
+  catch _ =>
+    return owner
+
 /-- Emit the atom for `e` (already whnf'd; id already allocated) and walk its
     children through `recurse` — the display dispatch shared by the fused
     walker and the two-pass reference. `recurse` closes over the child walk
@@ -569,8 +578,9 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
       for (elemLabel, elemExpr) in elems do
         let result ← Meta.whnf (Expr.app e elemExpr)
         let childId ← recurse result
-        modify fun s => s.addTuple elemLabel #[typeName, typeName]
-          { atoms := #[atomId, childId], types := #[typeName, typeName] }
+        let types := #[typeName, ← columnSig typeName result]
+        modify fun s => s.addTuple elemLabel types
+          { atoms := #[atomId, childId], types := types }
     | none => pure ()  -- non-finite domain, just a labeled node
 
   | _ => do
@@ -595,8 +605,9 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
           unless isProof do
             let childId ← recurse arg
             let fieldName := fieldRelName ctorShortName binderNames i
-            modify fun s => s.addTuple fieldName #[typeName, typeName]
-              { atoms := #[atomId, childId], types := #[typeName, typeName] }
+            let types := #[typeName, ← columnSig typeName arg]
+            modify fun s => s.addTuple fieldName types
+              { atoms := #[atomId, childId], types := types }
       -- stuck match (iota can't fire on a hole/hypothesis discriminant):
       -- ternary scrutinee edges; motive and alternatives are plumbing
       else if let some minfo := getMatcherInfoCore? env fnName then
@@ -609,7 +620,7 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
             unless isProof do
               let posId ← recurse (mkRawNatLit i)
               let childId ← recurse discr
-              let types := #[typeName, "Nat", ← sigOfType (← inferType discr)]
+              let types := #[typeName, "Nat", ← columnSig typeName discr]
               modify fun s => s.addTuple "scrutinee" types
                 { atoms := #[atomId, posId, childId], types := types }
         else
@@ -629,8 +640,9 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
             let projReduced ← Meta.whnf proj
             let childId ← recurse projReduced
             let fn := toString fieldName
-            modify fun s => s.addTuple fn #[typeName, typeName]
-              { atoms := #[atomId, childId], types := #[typeName, typeName] }
+            let types := #[typeName, ← columnSig typeName projReduced]
+            modify fun s => s.addTuple fn types
+              { atoms := #[atomId, childId], types := types }
       else do
         -- Generic function application or unknown — leaf atom
         let label ← ppLabel e

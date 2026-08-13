@@ -8,8 +8,8 @@ open SpytialLean Lean
 
 Two walks allocate different atom ids but emit surviving atoms in the same DFS
 order, so renaming ids by atoms-array position makes their instances directly
-comparable. Relations are sorted by name (the state stores them in hash
-order). -/
+comparable. Relations are sorted by name (the state stores them in hash order)
+and carry their declared column types. -/
 
 public meta def canonInstance (di : JsonDataInstance) : String := Id.run do
   let mut idx : Std.HashMap String Nat := {}
@@ -20,7 +20,7 @@ public meta def canonInstance (di : JsonDataInstance) : String := Id.run do
   let relsS := rels.map fun r =>
     let ts := r.tuples.map fun t =>
       String.intercalate "," (t.atoms.map (fun a => toString (idx.getD a 9999))).toList
-    s!"{r.name}:{String.intercalate ";" ts.toList}"
+    s!"{r.name}[{String.intercalate "," r.types.toList}]:{String.intercalate ";" ts.toList}"
   return String.intercalate "\n" (atomsS ++ relsS).toList
 
 /-- Exact-shape golden over the whole canonical form. -/
