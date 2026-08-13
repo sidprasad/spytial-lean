@@ -700,8 +700,9 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
             let fieldName := fieldRelName ctorShortName binderNames i
             modify fun s => s.addTuple fieldName #[typeName, typeName]
               { atoms := #[atomId, childId], types := #[typeName, typeName] }
-      -- stuck match (iota can't fire on a hole/hypothesis discriminant): edges
-      -- into the discriminants only; motive and alternatives are plumbing
+      -- stuck match (iota can't fire on a hole/hypothesis discriminant): one
+      -- ternary `scrutinee` (match, position, discriminant) whatever the
+      -- discriminant count; motive and alternatives are plumbing
       else if let some minfo := getMatcherInfoCore? env fnName then
         let args := e.getAppArgs
         if args.size == minfo.arity then
@@ -710,10 +711,11 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
             let discr := args[minfo.getFirstDiscrPos + i]!
             let isProof ← if cfg.filterProofs then isProofArg discr else pure false
             unless isProof do
+              let posId ← recurse (mkRawNatLit i)
               let childId ← recurse discr
-              let relName := if minfo.numDiscrs == 1 then "scrutinee" else s!"scrutinee_{i}"
-              modify fun s => s.addTuple relName #[typeName, typeName]
-                { atoms := #[atomId, childId], types := #[typeName, typeName] }
+              let types := #[typeName, "Nat", ← sigOfType (← inferType discr)]
+              modify fun s => s.addTuple "scrutinee" types
+                { atoms := #[atomId, posId, childId], types := types }
         else
           -- partially/over-applied matcher: generic leaf
           let label ← ppLabel e

@@ -120,6 +120,6 @@ Elaborated here exactly as a synthesized term containing `match` would be. -/
     Lean.Elab.Term.synthesizeSyntheticMVarsNoPostponing
     let e ← instantiateMVars e
     let di ← relationalize e
-    assertEq "match.labels" (di.atoms.map (·.label)) #["match", "t"]
-    assertEq "match.types"  (di.atoms.map (·.type))  #["Nat", "Tree"]
+    assertEq "match.labels" (di.atoms.map (·.label)) #["match", "0", "t"]
+    assertEq "match.types"  (di.atoms.map (·.type))  #["Nat", "Nat", "Tree"]
     assertEq "match.rels"   (di.relations.map (·.name)) #["scrutinee"]
