@@ -85,21 +85,6 @@ private meta def checkMetaMatchesRuntime (label : String) (val : Expr) : MetaM U
   unless mkey == rkey do
     throwError "{label}: meta key {repr mkey} ≠ runtime key {repr rkey}"
 
-/-- Differential oracle: the fused walker must agree with the literal two-pass
-    reference (fresh atoms, then merge by `(type, identity)`). -/
-private meta def assertMatchesReference (label : String) (e : Expr) : MetaM Unit := do
-  let (rootF, stF) ← (walkExpr {} e).run {}
-  let diF := stF.toDataInstance
-  let (rootR, diR) ← referenceRelationalize e
-  let cF := canonInstance diF
-  let cR := canonInstance diR
-  unless cF == cR do
-    throwError "{label}: fused ≠ reference\n-- fused --\n{cF}\n-- reference --\n{cR}"
-  let idxOf (di : JsonDataInstance) (id : String) : Option Nat :=
-    di.atoms.findIdx? (·.id == id)
-  unless idxOf diF rootF == idxOf diR rootR do
-    throwError "{label}: root atoms disagree"
-
 /-! ## As-written default: no instance ⇒ no merging, literals included -/
 
 #eval show MetaM Unit from do
