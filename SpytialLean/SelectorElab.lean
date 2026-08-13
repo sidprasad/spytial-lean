@@ -59,8 +59,7 @@ private meta def scalarTypes : List Name :=
 meta def SelScope.ofType (root : Name) : MetaM SelScope := do
   let env ← getEnv
   let mut scope : SelScope := { root }
-  -- The bare name rides in `rels` for the suggestion vocabulary; the indexed
-  -- family resolves via `knowsRel`.
+  -- Stuck-match nodes can appear in any open value, typed at the scrutinized type.
   scope := { scope with rels := scope.rels.insert scrutineeRel root }
   let mut queue : Array Name := #[root]
   let mut seen : NameSet := {}
@@ -93,10 +92,6 @@ meta def SelScope.ofType (root : Name) : MetaM SelScope := do
 
 meta def SelScope.introduce (scope : SelScope) (name : String) (arity : Nat) : SelScope :=
   { scope with introduced := scope.introduced.insert name arity }
-
-/-- A relation the walker can emit: a predicted field or a scrutinee edge. -/
-meta def SelScope.knowsRel (scope : SelScope) (s : String) : Bool :=
-  scope.rels.contains s || isScrutineeRelName s
 
 /-! ## Diagnostics -/
 
@@ -613,7 +608,7 @@ private meta partial def resolveExprIdent (scope : SelScope) (env : LEnv)
   if let some v ← resolveCtorLit? scope stx then
     return .val v
   let s := name.toString
-  if scope.knowsRel s then return .rel (.rel s) (some 2)
+  if scope.rels.contains s then return .rel (.rel s) (some 2)
   if let some arity := scope.introduced.get? s then
     warnGraphSideName stx s
     return .rel (.rel s) (some arity)
@@ -827,7 +822,7 @@ meta def elabSelector (scope : SelScope) (expect : ArityExpect)
 
 meta def elabFieldName (scope : SelScope) (stx : TSyntax `ident) : TermElabM String := do
   let s := stx.getId.toString
-  if scope.knowsRel s || scope.introduced.contains s then
+  if scope.rels.contains s || scope.introduced.contains s then
     return s
   unknownName scope stx s!"relation '{s}'" s
 

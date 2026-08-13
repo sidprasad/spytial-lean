@@ -214,23 +214,21 @@ info: {"directives": [{"hideField": {"field": "val"}}],
 
 /-! ## Stuck-match vocabulary
 
-The walker emits `scrutinee` (one discriminant) or `scrutinee_i` (several), so
-strict scopes accept the whole family — in selector and field positions. -/
+The walker emits one ternary `scrutinee` whatever the discriminant count, so
+strict scopes accept it — in selector and field positions. -/
 
 /--
 info: {"directives":
  [{"edgeStyle":
    {"lineStyle": {"pattern": "dashed", "color": "gray"},
-    "field": "scrutinee_0"}}],
+    "field": "scrutinee"}}],
  "constraints":
- [{"orientation": {"selector": "scrutinee", "directions": ["below"]}},
-  {"orientation": {"selector": "scrutinee_1", "directions": ["right"]}}]}
+ [{"orientation": {"selector": "scrutinee", "directions": ["below"]}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [
   orientation scrutinee below,
-  orientation scrutinee_1 right,
-  edgeStyle scrutinee_0 (lineStyle "gray" dashed)
+  edgeStyle scrutinee (lineStyle "gray" dashed)
 ]
 
 /-! ## Checker errors — one per class -/
