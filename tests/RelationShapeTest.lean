@@ -86,6 +86,7 @@ public structure BoolF where
 public def boolFVal : BoolF := { f := fun b => if b then 1 else 0 }
 
 public inductive Q where | q0 | q1 | q2
+  deriving DecidableEq
 
 public structure QStep where
   step : Q → Q
@@ -115,11 +116,6 @@ public structure Proc where
 
 public def procVal : Proc := { process := fun s => s.length }
 
-public structure PropRel where
-  rel : Q → Q → Prop
-
-public def propRelVal : PropRel := { rel := fun a b => a = b }
-
 /-- One enumerable binder, one not: all-or-nothing, no partial trie. -/
 public structure Mixed where
   m : Bool → String → Nat
@@ -144,9 +140,8 @@ public def mixedVal : Mixed := { m := fun b s => if b then s.length else 0 }
 
 /-! ## What stays a labeled λ leaf
 
-A non-enumerable domain — in any binder position — a domain product over
-`maxTableTuples`, and (until decidable enumeration lands) a `Prop` codomain
-all keep the λ atom and the binary owner→field edge. -/
+A non-enumerable domain — in any binder position — and a domain product over
+`maxTableTuples` keep the λ atom and the binary owner→field edge. -/
 
 #eval show MetaM Unit from do
   assertCanon "table.nonenum" (← relationalize (mkConst ``procVal))
@@ -160,10 +155,6 @@ all keep the λ atom and the binary owner→field edge. -/
   assertCanon "table.cap" (← relationalize (mkConst ``daVal) { maxTableTuples := 3 })
     "DA|mk\nQ → Bool → Q|λ q\ntr[DA,Q → Bool → Q]:0,1"
 
-#eval show MetaM Unit from do
-  assertCanon "table.prop" (← relationalize (mkConst ``propRelVal))
-    "PropRel|mk\nQ → Q → Prop|λ a\nrel[PropRel,Q → Q → Prop]:0,1"
-
 /-! ## Root-level functions tabulate under `maps`
 
 No field owns them, so the λ atom is column 0. -/
@@ -176,10 +167,100 @@ private meta def boolLam : MetaM Expr :=
   assertCanon "table.root" (← relationalize (← boolLam))
     "Bool → Nat|λ b\nBool|false\nBool|true\nNat|0\nNat|1\nmaps[Bool → Nat,Bool,Nat]:0,1,3;0,2,4"
 
+/-! ## Decidable `Prop` codomains are relation tuples
+
+No result column; a tuple exactly where the proposition decides true. One
+undecided point bails the whole table. -/
+
+public structure PropRel where
+  rel : Q → Q → Prop
+
+public def propRelVal : PropRel :=
+  { rel := fun a b => a = b ∨ (a = Q.q0 ∧ b = Q.q2) }
+
+/-- One true point out of nine: elements no tuple names never become atoms. -/
+public structure Sparse where
+  rel : Q → Q → Prop
+
+public def sparseVal : Sparse := { rel := fun a b => a = Q.q0 ∧ b = Q.q1 }
+
+/-- Decidably never: registered with no tuples. -/
+public structure Never where
+  rel : Q → Q → Prop
+
+public def neverVal : Never := { rel := fun _ _ => False }
+
+opaque myProp : Q → Prop
+
+/-- Nothing decides `myProp`: the field keeps its λ leaf. -/
+public structure Undec where
+  p : Q → Prop
+
+public def undecVal : Undec := { p := fun q => myProp q }
+
+#eval show MetaM Unit from do
+  assertCanon "prop.table" (← relationalize (mkConst ``propRelVal))
+    "PropRel|mk\nQ|q0\nQ|q0\nQ|q2\nQ|q1\nQ|q1\nQ|q2\nrel[PropRel,Q,Q]:0,1,2;0,1,3;0,4,5;0,6,3"
+
+#eval show MetaM Unit from do
+  assertCanon "prop.sparse" (← relationalize (mkConst ``sparseVal))
+    "Sparse|mk\nQ|q0\nQ|q1\nrel[Sparse,Q,Q]:0,1,2"
+
+#eval show MetaM Unit from do
+  assertCanon "prop.empty" (← relationalize (mkConst ``neverVal))
+    "Never|mk\nrel[Never,Q,Q]:"
+
+#eval show MetaM Unit from do
+  assertCanon "prop.undecidable" (← relationalize (mkConst ``undecVal))
+    "Undec|mk\nQ → Prop|λ q\np[Undec,Q → Prop]:0,1"
+
+/-! ### A set is the same table
+
+`Set α` is `α → Prop` (defined here; Mathlib is not on this path). An
+`Insert`/`Singleton` literal whnfs to a lambda, but `Decidable` does not
+synthesize through the residual membership, so it stays a leaf; sets written
+as a decidable predicate tabulate. -/
+
+@[expose] public def Set (α : Type) : Type := α → Prop
+
+public instance : Membership α (Set α) := ⟨fun s a => s a⟩
+public instance : Singleton α (Set α) := ⟨fun a x => x = a⟩
+public instance : Insert α (Set α) := ⟨fun a s x => x = a ∨ x ∈ s⟩
+
+public structure NA where
+  accept : Set Q
+
+public def naVal : NA := { accept := fun q => q = Q.q0 ∨ q = Q.q2 }
+
+public structure NALit where
+  accept : Set Q
+
+public def naLitVal : NALit := { accept := {Q.q0, Q.q2} }
+
+#eval show MetaM Unit from do
+  assertCanon "prop.set" (← relationalize (mkConst ``naVal))
+    "NA|mk\nQ|q0\nQ|q2\naccept[NA,Q]:0,1;0,2"
+
+#eval show MetaM Unit from do
+  assertCanon "prop.set.literal" (← relationalize (mkConst ``naLitVal))
+    "NALit|mk\nQ → Prop|insert\naccept[NALit,Set Q]:0,1"
+
+/-! ## An empty domain registers the relation -/
+
+public structure EmptyDom where
+  f : Empty → Nat
+  g : Empty → Prop
+
+public def emptyDomVal : EmptyDom := { f := fun e => e.elim, g := fun e => e.elim }
+
+#eval show MetaM Unit from do
+  assertCanon "table.emptydom" (← relationalize (mkConst ``emptyDomVal))
+    "EmptyDom|mk\nf[EmptyDom,Empty,Nat]:\ng[EmptyDom,Empty]:"
+
 /-! ## Identity decides whether a domain value and a result are one atom -/
 
 public inductive QI where | q0 | q1 | q2
-  deriving SpytialIdentity
+  deriving DecidableEq, SpytialIdentity
 
 public structure DAI where
   tr : QI → Bool → QI
@@ -193,9 +274,19 @@ public def daiVal : DAI :=
       | .q2, false => .q1
       | .q2, true  => .q2 }
 
+public structure PropRelI where
+  rel : QI → QI → Prop
+
+public def propRelIVal : PropRelI :=
+  { rel := fun a b => a = b ∨ (a = QI.q0 ∧ b = QI.q2) }
+
 #eval show MetaM Unit from do
   assertCanon "table.identity" (← relationalize (mkConst ``daiVal))
     "DAI|mk\nQI|q0\nQI|q1\nQI|q2\nBool|false\nBool|true\ntr[DAI,QI,Bool,QI]:0,1,4,1;0,1,5,2;0,2,4,3;0,2,5,1;0,3,4,2;0,3,5,3"
+
+#eval show MetaM Unit from do
+  assertCanon "prop.identity" (← relationalize (mkConst ``propRelIVal))
+    "PropRelI|mk\nQI|q0\nQI|q2\nQI|q1\nrel[PropRelI,QI,QI]:0,1,1;0,1,2;0,3,3;0,2,2"
 
 /-! ## The two-pass reference walks the same tables -/
 
@@ -208,3 +299,9 @@ public def daiVal : DAI :=
   assertMatchesReference "diff.table.maps" (mkConst ``parity)
   assertMatchesReference "diff.table.identity" (mkConst ``daiVal)
   assertMatchesReference "diff.table.root" (← boolLam)
+  assertMatchesReference "diff.prop.table" (mkConst ``propRelVal)
+  assertMatchesReference "diff.prop.sparse" (mkConst ``sparseVal)
+  assertMatchesReference "diff.prop.empty" (mkConst ``neverVal)
+  assertMatchesReference "diff.table.emptydom" (mkConst ``emptyDomVal)
+  assertMatchesReference "diff.prop.set" (mkConst ``naVal)
+  assertMatchesReference "diff.prop.identity" (mkConst ``propRelIVal)
