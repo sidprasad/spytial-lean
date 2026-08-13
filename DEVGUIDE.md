@@ -54,6 +54,11 @@ with `just demos`, or directly with lake:
 lake build Demos
 ```
 
+### Snapshot renders
+
+`#spytial_snapshot` dumps widget props from any Lean file; a pinned container
+renders the dumps to PNGs. See `render/README.md`.
+
 ### Widget reload
 
 The built JS's hash is part of the `widgetJsAll` trace, so `just build`

@@ -1,6 +1,9 @@
 .lake/
 lake-packages/
-widget/node_modules/
+node_modules/
 widget/dist/
 .direnv
 .envrc
+render/cases/
+render/out/
+render/dist/

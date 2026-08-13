@@ -1,0 +1,20 @@
+packages:
+  - widget
+  - render
+
+# Pinned to stay consistent with the infoview bundle.
+catalog:
+  '@rollup/plugin-commonjs': ^28.0.1
+  '@rollup/plugin-node-resolve': ^15.0.2
+  '@rollup/plugin-replace': ^6.0.1
+  react: ^18.2.0
+  react-dom: ^18.2.0
+  rollup: ^4.17.2
+
+  # No caret: Playwright rejects browsers that don't match the npm package.
+  # Bump with the image tag in render/Dockerfile.
+  '@playwright/test': 1.62.0
+
+minimumReleaseAgeExclude:
+  - spytial-core@4.4.3
+  - simple-graph-query@3.1.0

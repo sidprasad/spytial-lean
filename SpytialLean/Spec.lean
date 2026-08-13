@@ -89,6 +89,11 @@ private meta def EdgeStyle.toYaml : EdgeStyle → String
 private meta def directionsToYaml (ds : List Direction) : String :=
   "[" ++ ", ".intercalate (ds.map Direction.toYaml) ++ "]"
 
+/-- A double-quoted YAML scalar. Escapes `\` and `"` — a selector carries `"`
+    whenever it compares against a label literal (sgq 3.0 quoted strings). -/
+private meta def yamlStr (s : String) : String :=
+  "\"" ++ (s.replace "\\" "\\\\").replace "\"" "\\\"" ++ "\""
+
 /-- Is this op a constraint (affects layout geometry)? -/
 private meta def SpytialOp.isConstraint : SpytialOp → Bool
   | .orientation .. | .align .. | .cyclic .. | .group .. => true
@@ -98,43 +103,43 @@ private meta def SpytialOp.isConstraint : SpytialOp → Bool
 /-- Render a single constraint op as a YAML list item. -/
 private meta def constraintToYaml : SpytialOp → String
   | .orientation sel dirs =>
-    s!"  - orientation: \{selector: \"{sel}\", directions: {directionsToYaml dirs}}"
+    s!"  - orientation: \{selector: {yamlStr sel}, directions: {directionsToYaml dirs}}"
   | .align sel dir =>
-    s!"  - align: \{selector: \"{sel}\", direction: {dir.toYaml}}"
+    s!"  - align: \{selector: {yamlStr sel}, direction: {dir.toYaml}}"
   | .cyclic sel dir =>
-    s!"  - cyclic: \{selector: \"{sel}\", direction: {dir.toYaml}}"
+    s!"  - cyclic: \{selector: {yamlStr sel}, direction: {dir.toYaml}}"
   | .group sel name addEdge =>
     let ae := if addEdge then ", addEdge: true" else ""
-    s!"  - group: \{selector: \"{sel}\", name: \"{name}\"{ae}}"
+    s!"  - group: \{selector: {yamlStr sel}, name: {yamlStr name}{ae}}"
   | .hideAtom sel =>
-    s!"  - hideAtom: \{selector: \"{sel}\"}"
+    s!"  - hideAtom: \{selector: {yamlStr sel}}"
   | .size sel w h =>
-    s!"  - size: \{selector: \"{sel}\", width: {w}, height: {h}}"
+    s!"  - size: \{selector: {yamlStr sel}, width: {w}, height: {h}}"
   | _ => ""
 
 /-- Render a single directive op as a YAML list item. -/
 private meta def directiveToYaml : SpytialOp → String
   | .atomColor sel val =>
-    s!"  - atomColor: \{selector: \"{sel}\", value: \"{val}\"}"
+    s!"  - atomColor: \{selector: {yamlStr sel}, value: {yamlStr val}}"
   | .edgeColor field val style =>
-    s!"  - edgeColor: \{field: \"{field}\", value: \"{val}\", style: {style.toYaml}}"
+    s!"  - edgeColor: \{field: {yamlStr field}, value: {yamlStr val}, style: {style.toYaml}}"
   | .hideField field =>
-    s!"  - hideField: \{field: \"{field}\"}"
+    s!"  - hideField: \{field: {yamlStr field}}"
   | .attribute field =>
-    s!"  - attribute: \{field: \"{field}\"}"
+    s!"  - attribute: \{field: {yamlStr field}}"
   | .icon sel path showLabels =>
     let sl := if showLabels then ", showLabels: true" else ""
-    s!"  - icon: \{selector: \"{sel}\", path: \"{path}\"{sl}}"
+    s!"  - icon: \{selector: {yamlStr sel}, path: {yamlStr path}{sl}}"
   | .tag toTag name value =>
-    s!"  - tag: \{toTag: \"{toTag}\", name: \"{name}\", value: \"{value}\"}"
+    s!"  - tag: \{toTag: {yamlStr toTag}, name: {yamlStr name}, value: {yamlStr value}}"
   | .inferredEdge name sel color style =>
-    s!"  - inferredEdge: \{name: \"{name}\", selector: \"{sel}\", color: \"{color}\", style: {style.toYaml}}"
+    s!"  - inferredEdge: \{name: {yamlStr name}, selector: {yamlStr sel}, color: {yamlStr color}, style: {style.toYaml}}"
   | .flag name =>
     s!"  - flag: {name}"
   | .hideAtom sel =>
-    s!"  - hideAtom: \{selector: \"{sel}\"}"
+    s!"  - hideAtom: \{selector: {yamlStr sel}}"
   | .size sel w h =>
-    s!"  - size: \{selector: \"{sel}\", width: {w}, height: {h}}"
+    s!"  - size: \{selector: {yamlStr sel}, width: {w}, height: {h}}"
   | _ => ""
 
 /-- Convert a `SpytialSpec` to a YAML string consumable by `parseLayoutSpec`. -/

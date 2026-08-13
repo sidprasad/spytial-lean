@@ -10,19 +10,19 @@
   },
   "dependencies": {
     "@leanprover/infoview": "~0.8.3",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "spytial-core": "^2.8.1"
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "spytial-core": "~4.4.3"
   },
   "devDependencies": {
-    "@rollup/plugin-commonjs": "^28.0.1",
-    "@rollup/plugin-node-resolve": "^15.0.2",
-    "@rollup/plugin-replace": "^6.0.1",
+    "@rollup/plugin-commonjs": "catalog:",
+    "@rollup/plugin-node-resolve": "catalog:",
+    "@rollup/plugin-replace": "catalog:",
     "@rollup/plugin-terser": "^0.4.0",
     "@rollup/plugin-virtual": "^3.0.2",
     "@types/react": "^18.0.33",
     "@types/react-dom": "^18.0.11",
-    "rollup": "^4.17.2",
+    "rollup": "catalog:",
     "tslib": "^2.5.0",
     "typescript": "^5.0.3"
   }
