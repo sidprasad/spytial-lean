@@ -137,6 +137,24 @@ public meta structure TabulationPlan where
 public meta def TabulationPlan.size (p : TabulationPlan) : Nat :=
   p.binders.foldl (fun n b => n * b.elems.size) 1
 
+/-- The table's columns after the owner: one per binder, then the result when
+    the codomain is data (a proposition's extension has no result column). The
+    row the walker stamps, the arity the checker predicts, and the vocabulary
+    the table contributes are all views of this one list. -/
+public meta def TabulationPlan.tailTypes (p : TabulationPlan) : Array Expr :=
+  let domains := p.binders.map (·.domain)
+  match p.kind with
+  | .data => domains.push p.codomain
+  | .prop => domains
+
+public meta def TabulationPlan.arity (p : TabulationPlan) : Nat :=
+  1 + p.tailTypes.size
+
+/-- The types the table's columns range over, for a static vocabulary: these
+    stand in for the field's own (function) type, which no atom ever gets. -/
+public meta def TabulationPlan.columnHeads (p : TabulationPlan) : MetaM (Array Name) :=
+  p.tailTypes.filterMapM typeHead?
+
 private meta partial def peelBinders (ty : Expr) (acc : Array TabulationBinder) :
     MetaM (Option TabulationPlan) := do
   match ← Meta.whnf ty with
@@ -158,6 +176,16 @@ private meta partial def peelBinders (ty : Expr) (acc : Array TabulationBinder) 
 public meta def tabulationPlan? (ty : Expr) : MetaM (Option TabulationPlan) :=
   peelBinders ty #[]
 
+/-- What a tabulating field's type emits, as a static checker needs it. -/
+public meta structure FieldTable where
+  arity : Nat
+  columnHeads : Array Name
+  deriving Repr, Inhabited
+
+public meta def FieldTable.of? (ty : Expr) : MetaM (Option FieldTable) := do
+  let some plan ← tabulationPlan? ty | return none
+  return some { arity := plan.arity, columnHeads := ← plan.columnHeads }
+
 public meta structure FieldShape where
   relName : String
   typeSig : Option String
@@ -166,6 +194,16 @@ public meta structure FieldShape where
   typeHead : Option Name := none
   /-- The walker drops this field: it is `Prop`- or `Sort`-typed. -/
   isProofLike : Bool
+  /-- Set when the field's type tabulates: the walker emits a table over the
+      domain product rather than one edge to one value, so the field's own type
+      head is not the vocabulary its values contribute. -/
+  table : Option FieldTable := none
+  /-- The arity of the relation the walker emits, when the declaration fixes
+      it. A function type built over the inductive's own parameters fixes
+      nothing: `tr : State → Label → State` is a binary edge to a λ leaf at
+      `State := String` and a 4-ary table at `State := Fin 3`, and only the
+      walked value knows which. -/
+  arity? : Option Nat := some 2
   deriving Repr, Inhabited
 
 public meta structure CtorShape where
@@ -198,8 +236,12 @@ public meta def TypeShape.ofInductive (typeName : Name) : MetaM (Option TypeShap
           match (← Meta.whnf xty).getAppFn with
           | .const n _ => pure (some (shortName n), some n)
           | _          => pure (none, none)
+        let table ← FieldTable.of? xty
+        let arity? ← match table with
+          | some t => pure (some t.arity)
+          | none => pure (if (← Meta.whnf xty).isForall && xty.hasFVar then none else some 2)
         fs := fs.push { relName := fieldRelName ctorShort binderNames i,
-                        typeSig, typeHead, isProofLike }
+                        typeSig, typeHead, isProofLike, table, arity? }
       return fs
     ctors := ctors.push { ctorName, ctorShort, fields }
   return some { typeName, sig := shortName typeName, ctors }

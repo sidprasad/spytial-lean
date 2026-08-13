@@ -25,8 +25,8 @@ or integer. Each position accepts specific kinds. This rejects SGQ's silent
 scalar/tuple confusion (`some #e`) at compile time.
 
 A scope is strict when the vocabulary is closed: a monomorphic type built from
-monomorphic fields. A type parameter, function-typed field, custom
-relationalizer, or non-inductive in the closure makes the scope lenient. The
+monomorphic fields. A type parameter, a function field that does not tabulate,
+a custom relationalizer, or a non-inductive in the closure makes it lenient. The
 walker can then emit names no static analysis predicts, so unknown names warn
 and pass through.
 -/
@@ -39,9 +39,12 @@ meta structure SelScope where
   root : Name
   /-- Lean type name → sig string, over the reachable field-type closure. -/
   types : Std.HashMap Name String := {}
-  /-- Relation name → the type whose constructor field emits it. Proof-like
-      fields (`Prop`- or `Sort`-typed) are excluded — the walker drops them. -/
-  rels : Std.HashMap String Name := {}
+  /-- Relation name → the type whose constructor field emits it, and the arity
+      the walker emits it at — `none` where the declaration does not fix one
+      (`FieldShape.arity?`), which leaves the name known and its width
+      unchecked. Proof-like fields (`Prop`- or `Sort`-typed) are excluded — the
+      walker drops them. -/
+  rels : Std.HashMap String (Name × Option Nat) := {}
   /-- Nullary-constructor label → constructor, for `@:x = tt` literals. -/
   ctorLabels : Std.HashMap String Name := {}
   /-- Names introduced by earlier ops in the same spec (group names arity 1,
@@ -61,8 +64,10 @@ private meta def scalarTypes : List Name :=
 meta def SelScope.ofType (root : Name) : MetaM SelScope := do
   let env ← getEnv
   let mut scope : SelScope := { root }
-  -- Stuck-match nodes can appear in any open value, typed at the scrutinized type.
-  scope := { scope with rels := scope.rels.insert "scrutinee" root }
+  -- Stuck-match nodes can appear in any open value, typed at the scrutinized
+  -- type; one ternary `(match, position, discriminant)` whatever the
+  -- discriminant count.
+  scope := { scope with rels := scope.rels.insert "scrutinee" (root, some 3) }
   let mut queue : Array Name := #[root]
   let mut seen : NameSet := {}
   while !queue.isEmpty do
@@ -86,10 +91,13 @@ meta def SelScope.ofType (root : Name) : MetaM SelScope := do
           scope := { scope with ctorLabels := scope.ctorLabels.insert c.ctorShort c.ctorName }
         for f in c.fields do
           unless f.isProofLike do
-            scope := { scope with rels := scope.rels.insert f.relName t }
-            match f.typeHead with
-            | some ft => queue := queue.push ft
-            | none => scope := { scope with lenient := true }
+            scope := { scope with rels := scope.rels.insert f.relName (t, f.arity?) }
+            -- a tabulated field's values are its columns'; the function type
+            -- itself never reaches an atom
+            match f.table, f.typeHead with
+            | some tbl, _ => queue := queue ++ tbl.columnHeads
+            | none, some ft => queue := queue.push ft
+            | none, none => scope := { scope with lenient := true }
   return scope
 
 meta def SelScope.introduce (scope : SelScope) (name : String) (arity : Nat) : SelScope :=
@@ -582,19 +590,18 @@ where
   joinRest (sel : Sel) (arity : Option Nat) (rest : List Name) : TermElabM EExpr := do
     let s ← rest.foldlM (init := (sel, arity)) fun (sel, arity) comp => do
       let compStr := comp.toString
-      let compArity? : Option Nat :=
-        if scope.rels.contains compStr then some 2
-        else scope.introduced.get? compStr
-      match compArity? with
-      | some ca =>
-        unless scope.rels.contains compStr do warnGraphSideName stx compStr
+      match scope.rels.get? compStr, scope.introduced.get? compStr with
+      | some (_, ca?), _ => return (.join sel (.rel compStr), ← joinArity stx arity ca?)
+      | none, some ca =>
+        warnGraphSideName stx compStr
         return (.join sel (.rel compStr), ← joinArity stx arity (some ca))
-      | none => unknownName scope stx s!"relation '{compStr}'" (Sel.join sel (.rel compStr), none)
+      | none, none =>
+        unknownName scope stx s!"relation '{compStr}'" (Sel.join sel (.rel compStr), none)
     return .rel s.1 s.2
   resolveHead (idStx : Syntax) (head : Name) (rest : List Name) :
       TermElabM (Sel × Option Nat × List Name) := do
     let s := head.toString
-    if scope.rels.contains s then return (.rel s, some 2, rest)
+    if let some (_, arity?) := scope.rels.get? s then return (.rel s, arity?, rest)
     if let some arity := scope.introduced.get? s then
       warnGraphSideName idStx s
       return (.rel s, some arity, rest)
