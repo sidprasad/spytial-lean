@@ -688,6 +688,44 @@ info: {"constraints":
   hideAtom {x : SBDD | let a = lo | all a : SBDD | some a}
 ]
 
+-- A glued `x.v` is the same join as a spaced `x . v`, so a tail component
+-- resolves through the same ladder as a head: `let`-bindings and type sigs
+-- included, and with a real arity rather than an unknown one.
+/--
+info: {"constraints":
+ [{"hideAtom": {"selector": "{x : SBDD | some x.^(lo + hi)}"}},
+  {"hideAtom": {"selector": "{x : SBDD | some x.^(lo + hi)}"}},
+  {"hideAtom": {"selector": "lo.SBDD"}},
+  {"hideAtom": {"selector": "lo.SBDD"}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [
+  hideAtom {x : SBDD | let sub = ^(lo + hi) | some x.sub},
+  hideAtom {x : SBDD | let sub = ^(lo + hi) | some x . sub},
+  hideAtom (lo.SBDD),
+  hideAtom (lo . SBDD)
+]
+
+/-- error: this position selects atoms (arity 1), but the selector has arity 2 -/
+#guard_msgs in
+#spytial.spec sExample with [atomColor (lo.hi) "#111"]
+
+/-- error: join of arity 1 and arity 1 has no columns left -/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom (lo.SBDD.SBDD)]
+
+/-- error: unknown name 'nope'; vocabulary of 'SBDD': SBDD, String, hi, lo, scrutinee, v -/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom (lo.nope)]
+
+/-- error: 'tt' is a value; it has no fields to join -/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom (lo.tt)]
+
+/-- error: cannot use let-bound 'e' here: it refers to 'x', which a nearer binder shadows — the substitution would be captured; rename the inner binder -/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom {x : SBDD | let e = x.lo | all x : SBDD | some x.e}]
+
 /-! ## Integer layer — `#`, `@num:`, builtins, aggregators, box join, counting -/
 
 /--

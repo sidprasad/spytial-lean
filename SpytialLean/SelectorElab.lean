@@ -587,16 +587,14 @@ private meta partial def resolveExprIdent (scope : SelScope) (env : LEnv)
     let (sel, arity, unconsumed) ← resolveHead stx head rest
     joinRest sel arity unconsumed
 where
+  -- A glued `a.b` is the spaced `a . b`, so each tail component elaborates as
+  -- the standalone ident it stands for rather than assuming a field relation.
   joinRest (sel : Sel) (arity : Option Nat) (rest : List Name) : TermElabM EExpr := do
     let s ← rest.foldlM (init := (sel, arity)) fun (sel, arity) comp => do
-      let compStr := comp.toString
-      match scope.rels.get? compStr, scope.introduced.get? compStr with
-      | some (_, ca?), _ => return (.join sel (.rel compStr), ← joinArity stx arity ca?)
-      | none, some ca =>
-        warnGraphSideName stx compStr
-        return (.join sel (.rel compStr), ← joinArity stx arity (some ca))
-      | none, none =>
-        unknownName scope stx s!"relation '{compStr}'" (Sel.join sel (.rel compStr), none)
+      match ← resolveExprIdent scope env (mkIdentFrom stx comp) with
+      | .rel cs ca => return (.join sel cs, ← joinArity stx arity ca)
+      | e => throwErrorAt stx m!"'{comp}' is a \
+          {if let .int _ := e then "integer" else "value"}; it has no fields to join"
     return .rel s.1 s.2
   resolveHead (idStx : Syntax) (head : Name) (rest : List Name) :
       TermElabM (Sel × Option Nat × List Name) := do
