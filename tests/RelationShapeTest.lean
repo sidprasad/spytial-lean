@@ -300,6 +300,36 @@ public def propRelIVal : PropRelI :=
 `referenceRelationalize` shares `emitNode`, so this checks the identity
 plumbing over the new shapes — the goldens above are the emission detector. -/
 
+/-! ## A DA reaches its table through its parent subobject
+
+cslib's `DA` extends an `FLTS`, so `tr`'s owner column is the subobject atom
+rather than the automaton, whose own `start` edge points into a state the table
+already walked. The `Fin` instance is derived here and not at the top of the
+file: `table.fin` above keeps the unmerged atoms it pins, and the same domain
+merges below. -/
+
+deriving instance SpytialIdentity for Fin
+
+public structure FLTS (State Label : Type) where
+  tr : State → Label → State
+
+public structure SubDA (State Symbol : Type) extends FLTS State Symbol where
+  start : State
+
+public def subDAFin : SubDA (Fin 3) Bool where
+  tr
+    | 0, false => 0
+    | 0, true  => 1
+    | 1, false => 1
+    | 1, true  => 2
+    | 2, false => 2
+    | 2, true  => 0
+  start := 0
+
+#eval show MetaM Unit from do
+  assertCanon "table.subobject" (← relationalize (mkConst ``subDAFin))
+    "SubDA|mk\nFLTS|mk\nFin|mk\nNat|0\nFin|mk\nNat|1\nFin|mk\nNat|2\nBool|false\nBool|true\nstart[SubDA,Fin]:0,2\ntoFLTS[SubDA,FLTS]:0,1\ntr[FLTS,Fin,Bool,Fin]:1,2,8,2;1,2,9,4;1,4,8,4;1,4,9,6;1,6,8,6;1,6,9,2\nval[Fin,Nat]:2,3;4,5;6,7"
+
 #eval show MetaM Unit from do
   assertMatchesReference "diff.table.bool" (mkConst ``boolFVal)
   assertMatchesReference "diff.table.enum" (mkConst ``qStepVal)
@@ -314,3 +344,4 @@ plumbing over the new shapes — the goldens above are the emission detector. -/
   assertMatchesReference "diff.prop.empty" (mkConst ``neverVal)
   assertMatchesReference "diff.prop.set" (mkConst ``naVal)
   assertMatchesReference "diff.prop.identity" (mkConst ``propRelIVal)
+  assertMatchesReference "diff.table.subobject" (mkConst ``subDAFin)
