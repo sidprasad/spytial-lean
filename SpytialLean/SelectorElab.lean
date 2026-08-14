@@ -624,6 +624,17 @@ private meta partial def elabRelBinary (scope : SelScope) (env : LEnv)
 
 private meta partial def elabClosure (scope : SelScope) (env : LEnv) (stx : Syntax)
     (mk : Sel → Sel) (op : String) (a : TSyntax `spytial_sel) : TermElabM EExpr := do
+  -- Lean lexes `a.b` as one identifier and SGQ does not, so the same source text
+  -- binds as `op (a.b)` here and `(op a).b` there. Both readings are arity-2 and
+  -- neither warns, so refuse the spelling rather than diverge quietly.
+  match a with
+  | `(spytial_sel| $x:ident) =>
+    if let head :: _ :: _ := x.getId.components then
+      let spaced := " . ".intercalate (x.getId.components.map toString)
+      throwErrorAt a m!"'{op}{x.getId}' is ambiguous: it binds as \
+        '{op}({x.getId})' here, but SGQ reads the same text as '({op}{head}). …'. \
+        Write '{op}{spaced}' for SGQ's reading, or '{op}({x.getId})' for this one"
+  | _ => pure ()
   let (sa, aa) ← elabRel scope env a
   checkArity stx s!"the operand of {op}" aa 2
   return .rel (mk sa) (some 2)
