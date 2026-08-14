@@ -347,7 +347,7 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
       let a := mkArgs "inferredEdge <name> <selector> (lineStyle <color> \
         [solid|dashed|dotted] [<weight>])?"
       let n := (← a.ident 0 "an edge name").getId.toString
-      let s ← sel a 1 .pair
+      let s ← sel a 1 .edge
       let p ← collectStyleArgs a 2 ["lineStyle"]
       return (.inferredEdge n s p.line, scope.introduce n 2)
     | "flag" => do

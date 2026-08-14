@@ -786,10 +786,13 @@ end
 /-! ## Entry points -/
 
 /-- `pair` positions project first/last at runtime, so a wider selector warns
-    rather than errors. -/
+    rather than errors. An `edge` position reads the whole tuple — endpoints
+    first and last, the middle columns folded into the edge label — so width
+    there is the point, not a loss. -/
 meta inductive ArityExpect where
   | unary
   | pair
+  | edge
   | unaryOrPair
   deriving Repr, Inhabited
 
@@ -812,6 +815,11 @@ meta def elabSelector (scope : SelScope) (expect : ArityExpect)
       else if a > 2 then
         logWarningAt stx m!"arity-{a} selector in a pair position: only the \
           first and last columns of each tuple are used"
+    | .edge =>
+      if a < 2 then
+        throwErrorAt stx m!"this position selects edges (arity 2 or wider: \
+          source, then label columns, then target), but the selector has \
+          arity {a}"
     | .unaryOrPair =>
       unless a == 1 || a == 2 do
         throwErrorAt stx m!"this position selects atoms or pairs (arity 1 or \
