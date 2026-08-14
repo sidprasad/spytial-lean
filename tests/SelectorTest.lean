@@ -722,6 +722,34 @@ info: {"constraints":
 #guard_msgs in
 #spytial.spec sExample with [hideAtom (lo.tt)]
 
+-- Lean glues `a.b` into one ident and SGQ does not, so a glued join under a
+-- unary operator means different things in the two languages, with no arity
+-- mismatch to catch it. Rejected; both disambiguated spellings still lower.
+/--
+error: '^lo.hi' is ambiguous: it binds as '^(lo.hi)' here, but SGQ reads the same text as '(^lo). …'. Write '^lo . hi' for SGQ's reading, or '^(lo.hi)' for this one
+-/
+#guard_msgs in
+#spytial.spec sExample with [orientation ^lo.hi directlyBelow]
+
+/--
+error: '~lo.hi' is ambiguous: it binds as '~(lo.hi)' here, but SGQ reads the same text as '(~lo). …'. Write '~lo . hi' for SGQ's reading, or '~(lo.hi)' for this one
+-/
+#guard_msgs in
+#spytial.spec sExample with [orientation ~lo.hi directlyBelow]
+
+/--
+info: {"constraints":
+ [{"orientation": {"selector": "^lo.hi", "directions": ["directlyBelow"]}},
+  {"orientation": {"selector": "^(lo.hi)", "directions": ["directlyBelow"]}},
+  {"orientation": {"selector": "^lo", "directions": ["directlyBelow"]}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [
+  orientation ^lo . hi directlyBelow,
+  orientation ^(lo.hi) directlyBelow,
+  orientation ^lo directlyBelow
+]
+
 /-- error: cannot use let-bound 'e' here: it refers to 'x', which a nearer binder shadows — the substitution would be captured; rename the inner binder -/
 #guard_msgs in
 #spytial.spec sExample with [hideAtom {x : SBDD | let e = x.lo | all x : SBDD | some x.e}]
