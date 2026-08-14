@@ -131,6 +131,10 @@ that the relationalizer can emit. It checks every identifier and every
 operator's arity against this vocabulary. Op positions have arity
 expectations: `hideAtom` and `atomStyle` select atoms (arity 1),
 `orientation` and `align` select pairs. `hideAtom left` is a compile error.
+A wider selector in a pair position warns, because the engine keeps only the
+first and last column there. `inferredEdge` takes any arity from 2 up without
+a warning: it draws the first column to the last and folds the columns
+between them into the edge label.
 
 Checking is **strict** exactly when the vocabulary is closed: a monomorphic
 type built from monomorphic fields. A type parameter, a function field that

@@ -510,6 +510,20 @@ info: {"constraints":
 #guard_msgs in
 #spytial.spec sLTS with [orientation step below]
 
+/-- info: {"directives": [{"inferredEdge": {"selector": "tr", "name": "e"}}]} -/
+#guard_msgs in
+#spytial.spec sDA with [inferredEdge e tr]
+
+/-- info: {"directives": [{"inferredEdge": {"selector": "SDA.tr", "name": "e"}}]} -/
+#guard_msgs in
+#spytial.spec sDA with [inferredEdge e SDA.tr]
+
+/--
+error: this position selects edges (arity 2 or wider: source, then label columns, then target), but the selector has arity 1
+-/
+#guard_msgs in
+#spytial.spec sDA with [inferredEdge e SQ]
+
 /--
 warning: arity-3 selector in a pair position: only the first and last columns of each tuple are used
 ---
