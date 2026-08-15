@@ -1,49 +1,17 @@
 import SpytialLean
 import Showcase
 
-/-! # Render-test case dumper
+/-! # Render-test cases
 
-`#spytial_snapshot "<name>" <term> (with [...])?` writes `cases/<name>/props.json`
-for `render.spec.mjs` to screenshot and diff. The props come from
+`#spytial_snapshot` (`SpytialLean.Snapshot`) writes `cases/<name>/props.json` for
+`render.spec.mjs` to screenshot and diff. The props come from
 `spytialPayloadProps`, so a case cannot drift from what the infoview receives.
 
 Run via `just render`. Deliberately a plain (non-`module`) file, like the demos,
 so it can use the library's meta surface without module-system ceremony.
 -/
 
-open Lean Elab Command SpytialLean
-
-syntax (name := snapshotCmd)
-  "#spytial_snapshot " str ppSpace term (" with " "[" spytial_op,* "]")? : command
-
-/-- `cases/` beside this source file, so the dump location doesn't depend on cwd. -/
-private def casesDir : CommandElabM System.FilePath := do
-  let src := System.FilePath.mk (← getFileName)
-  return (src.parent.getD ".") / "cases"
-
-/-- Atom/relation counts for the dump log, read back out of the props JSON. -/
-private def instanceStats (props : Json) : String :=
-  ((do
-    let di ← props.getObjVal? "dataInstance"
-    let atoms ← (← di.getObjVal? "atoms").getArr?
-    let rels ← (← di.getObjVal? "relations").getArr?
-    pure s!"{atoms.size} atoms, {rels.size} relations") : Except String String)
-  |>.toOption.getD "unreadable props"
-
-private def dumpSnapshot (name : TSyntax `str) (t : Term)
-    (ops? : Option (Array (TSyntax `spytial_op))) : CommandElabM Unit := do
-  let props ← liftTermElabM <| spytialPayloadProps t ops?
-  let dir := (← casesDir) / name.getString
-  IO.FS.createDirAll dir
-  IO.FS.writeFile (dir / "props.json") (props.pretty ++ "\n")
-  logInfo m!"snapshot case '{name.getString}': {instanceStats props}"
-
-@[command_elab snapshotCmd]
-def elabSnapshot : CommandElab := fun
-  | `(#spytial_snapshot $name:str $t:term) => dumpSnapshot name t none
-  | `(#spytial_snapshot $name:str $t:term with [$ops,*]) =>
-    dumpSnapshot name t (some ops.getElems)
-  | _ => throwUnsupportedSyntax
+open SpytialLean
 
 /-! ## Cases
 

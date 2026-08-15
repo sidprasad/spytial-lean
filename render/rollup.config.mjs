@@ -8,7 +8,7 @@ import { fileURLToPath } from 'url';
 import { nodeResolve } from '@rollup/plugin-node-resolve';
 import commonjs from '@rollup/plugin-commonjs';
 import replace from '@rollup/plugin-replace';
-import { cssNoop, spytialCoreVirtualModules } from '../../widget/rollup.virtual.mjs';
+import { cssNoop, spytialCoreVirtualModules } from '../widget/rollup.virtual.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 

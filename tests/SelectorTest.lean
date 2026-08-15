@@ -42,13 +42,6 @@ public inductive STree (α : Type) where
 
 public def sTree : STree Nat := .node (.leaf 1) (.leaf 2)
 
-/-- Container field: the closure follows `List`'s type argument, so `SBDD`'s
-    relation names are known here; the scope stays lenient (`List`'s α). -/
-public structure SForest where
-  trees : List SBDD
-
-public def sForest : SForest := ⟨[sExample]⟩
-
 public section
 
 /-- Dump the stored spec of a type (tests attach + storage + lowering). -/
@@ -70,7 +63,8 @@ public meta def elabStoredSpec : CommandElab := fun
 /--
 info: {"directives":
  [{"edgeStyle":
-   {"lineStyle": {"pattern": "dashed", "color": "orange"}, "field": "lo"}},
+   {"lineStyle": {"weight": 2, "pattern": "dashed", "color": "orange"},
+    "field": "lo"}},
   {"atomStyle":
    {"selector": "{x : SBDD | @:x = \"ff\"}", "borderStyle": {"color": "red"}}},
   {"attribute": {"field": "v"}},
@@ -78,10 +72,10 @@ info: {"directives":
    {"selector": "lo.hi",
     "name": "shortcut",
     "lineStyle": {"pattern": "dotted", "color": "#123456"}}},
-  {"icon":
-   {"showLabels": true,
+  {"atomStyle":
+   {"showLabel": true,
     "selector": "{x : SBDD | @:x = \"tt\"}",
-    "path": "tt.png"}},
+    "iconStyle": {"placement": "badge", "path": "tt.png"}}},
   {"tag": {"value": "bdd", "toTag": "SBDD", "name": "kind"}},
   {"flag": "hideDisconnected"},
   {"hideField": {"field": "hi"}},
@@ -112,18 +106,18 @@ info: {"directives":
   orientation lo - SBDD->{b : SBDD | @:b = tt} - SBDD->{b : SBDD | @:b = ff} left,
   align {x, y : SBDD | (x != y) && (x.v) = (y.v)} horizontal,
   group {vr : String, y : SBDD | @:vr = @:(y.v)} nodes,
-  edgeColor lo "orange" dashed,
-  atomColor {x : SBDD | @:x = ff} "red",
+  edgeStyle lo (lineStyle "orange" dashed 2),
+  atomStyle {x : SBDD | @:x = ff} (borderStyle "red"),
   attribute v,
   hideAtom String,
   size SBDD 120 80,
   cyclic {x, y : SBDD | x->y in lo} counterclockwise,
-  inferredEdge shortcut lo.hi "#123456" dotted,
-  icon {x : SBDD | @:x = tt} "tt.png" labels,
+  inferredEdge shortcut lo.hi (lineStyle "#123456" dotted),
+  atomStyle {x : SBDD | @:x = tt} (iconStyle "tt.png" badge) labels,
   tag SBDD "kind" "bdd",
   flag hideDisconnected,
   hideField hi,
-  atomColor "raw & unchecked \"quoted\"" "green"
+  atomStyle "raw & unchecked \"quoted\"" (borderStyle "green")
 ]
 
 -- The surface only admits a raw string as a *whole* selector, but `Sel` is
@@ -139,7 +133,7 @@ spytial_spec SRB [
   orientation left - SRB->{x : SRB | @:x = nil} left below,
   orientation right - SRB->{x : SRB | @:x = nil} right below,
   hideAtom SColor + Nat,
-  atomColor {x : SRB | @:(x.color) = red} "red",
+  atomStyle {x : SRB | @:(x.color) = red} (borderStyle "red"),
   attribute key
 ]
 
@@ -193,7 +187,7 @@ info: {"constraints":
 ]
 
 /--
-warning: unknown name 'lft' (did you mean 'Nat', 'left'?) — the vocabulary of 'STree' is open (a custom relationalizer, type parameter, or function field makes it unpredictable), so the name passes through unchecked
+warning: unknown name 'lft' (did you mean 'left'?) — the vocabulary of 'STree' is open (a custom relationalizer, type parameter, or function field makes it unpredictable), so the name passes through unchecked
 ---
 info: {"constraints": [{"orientation": {"selector": "lft", "directions": ["below"]}}]}
 -/
@@ -202,18 +196,26 @@ info: {"constraints": [{"orientation": {"selector": "lft", "directions": ["below
   orientation lft below
 ]
 
-/-! Element relations through a container field resolve silently: `lo` is
-    `SBDD` vocabulary, reachable only via `trees : List SBDD`'s type argument. -/
+/-! ## Scalar closures stay in the vocabulary
+
+The walker decomposes `Int`/`Char`/`UInt*` into constructor chains
+(`Char → UInt32 → BitVec → Fin → Nat`), so their relations and types are
+selectable; only `Nat`/`String` (literal atoms) and `Float` (opaque) stop
+the closure walk. -/
+
+public inductive SScalar where
+  | mk (i : Int) (c : Char)
+
+public def sScalar : SScalar := .mk (-3) 'x'
 
 /--
-info: {"constraints":
- [{"orientation": {"selector": "lo", "directions": ["below"]}},
-  {"hideAtom": {"selector": "List"}}]}
+info: {"directives": [{"hideField": {"field": "val"}}],
+ "constraints": [{"hideAtom": {"selector": "BitVec + UInt32"}}]}
 -/
 #guard_msgs in
-#spytial.spec sForest with [
-  orientation lo below,
-  hideAtom List
+#spytial.spec sScalar with [
+  hideAtom BitVec + UInt32,
+  hideField val
 ]
 
 /-! ## Checker errors — one per class -/
@@ -228,11 +230,11 @@ info: {"constraints":
 
 /-- error: unknown constructor label 'ttt'; known labels of 'SBDD': ff, tt -/
 #guard_msgs in
-#spytial.spec sExample with [atomColor {x : SBDD | @:x = ttt} "red"]
+#spytial.spec sExample with [atomStyle {x : SBDD | @:x = ttt} (borderStyle "red")]
 
 /-- error: constructor 'SRB.nil' belongs to 'SRB', which cannot occur in values of 'SBDD' -/
 #guard_msgs in
-#spytial.spec sExample with [atomColor {x : SBDD | @:x = SRB.nil} "red"]
+#spytial.spec sExample with [atomStyle {x : SBDD | @:x = SRB.nil} (borderStyle "red")]
 
 /-- error: this position selects atoms (arity 1), but the selector has arity 2 -/
 #guard_msgs in
@@ -260,21 +262,23 @@ info: {"constraints":
 
 /-- error: unknown relation 'lof' (did you mean 'lo'?) -/
 #guard_msgs in
-#spytial.spec sExample with [edgeColor lof "red"]
+#spytial.spec sExample with [edgeStyle lof (lineStyle "red")]
 
 /-- error: unknown direction 'sideways' (expected above, below, left, right, directlyAbove, directlyBelow, directlyLeft, directlyRight) -/
 #guard_msgs in
 #spytial.spec sExample with [orientation lo sideways]
 
 /--
-error: unknown Spytial op 'orientate'; known ops: align, atomColor, attribute, cyclic, edgeColor, flag, group, hideAtom, hideField, icon, inferredEdge, orientation, size, tag
+error: unknown Spytial op 'orientate'; known ops: align, atomStyle, attribute, cyclic, edgeStyle, flag, group, hideAtom, hideField, inferredEdge, orientation, size, tag
 -/
 #guard_msgs in
 #spytial.spec sExample with [orientate lo below]
 
-/-- error: missing argument 2; usage: atomColor <selector> <css-color> -/
+/--
+error: atomStyle sets nothing; usage: atomStyle <selector> (borderStyle <color> [<width>])? (fillStyle <color>)? (iconStyle <path> [full|badge])? [labels|noLabels]
+-/
 #guard_msgs in
-#spytial.spec sExample with [atomColor SBDD]
+#spytial.spec sExample with [atomStyle SBDD]
 
 /-- error: unexpected extra argument; usage: hideAtom <selector> -/
 #guard_msgs in
@@ -288,19 +292,15 @@ error: unknown Spytial op 'orientate'; known ops: align, atomColor, attribute, c
 
 /--
 info: {"directives":
- [{"inferredEdge":
-   {"selector": "lo.hi",
-    "name": "hop",
-    "lineStyle": {"pattern": "solid", "color": "#000000"}}},
-  {"edgeStyle":
-   {"lineStyle": {"pattern": "solid", "color": "purple"}, "field": "hop"}}],
+ [{"inferredEdge": {"selector": "lo.hi", "name": "hop"}},
+  {"edgeStyle": {"lineStyle": {"color": "purple"}, "field": "hop"}}],
  "constraints": [{"group": {"selector": "SBDD", "name": "cluster"}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [
   group SBDD cluster,
   inferredEdge hop lo.hi,
-  edgeColor hop "purple"
+  edgeStyle hop (lineStyle "purple")
 ]
 
 /-! ## Dotted-selector resolution
@@ -333,17 +333,13 @@ error: join of arity 1 and arity 1 has no columns left
 
 Groups and inferred edges join the drawn graph, not the data instance the
 engine evaluates selectors against — a constraint or directive selector
-naming one selects nothing at render. Field-name positions (`edgeColor hop`
+naming one selects nothing at render. Field-name positions (`edgeStyle hop`
 above) stay silent: they act on drawn edges, where the names do exist. -/
 
 /--
 warning: spec-introduced 'hop' exists only in the drawn graph — the engine evaluates selectors against the data instance, so this reference selects nothing at render (engine limitation)
 ---
-info: {"directives":
- [{"inferredEdge":
-   {"selector": "lo.hi",
-    "name": "hop",
-    "lineStyle": {"pattern": "solid", "color": "#000000"}}}],
+info: {"directives": [{"inferredEdge": {"selector": "lo.hi", "name": "hop"}}],
  "constraints": [{"orientation": {"selector": "hop", "directions": ["below"]}}]}
 -/
 #guard_msgs in
@@ -361,6 +357,13 @@ info: {"constraints":
 -/
 #guard_msgs in
 #spytial.spec sExample with [group SBDD cluster, hideAtom cluster]
+
+/--
+info: {"constraints":
+ [{"group": {"selector": "SBDD", "name": "cluster", "addEdge": "togroup"}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [group SBDD cluster (addEdge togroup)]
 
 namespace SelQual
 public structure Inner where
@@ -415,31 +418,8 @@ info: {"directives":
 -/
 #guard_msgs in
 #spytial.spec sRB with [
-  atomColor {x : SRB | @num:(x.key) = 1} "red"
+  atomStyle {x : SRB | @num:(x.key) = 1} (borderStyle "red")
 ]
-
-/-! ## String literals
-
-The relationalizer labels a `String` atom with its Lean spelling, quotes
-included, so a literal matching one lowers to a doubly-quoted SGQ string. -/
-
-/--
-info: {"directives":
- [{"atomStyle":
-   {"selector": "{x : SBDD | @str:(x.v) = \"\\\"x\\\"\"}",
-    "borderStyle": {"color": "red"}}}],
- "constraints":
- [{"hideAtom": {"selector": "{vr : String | @:vr = \"\\\"x\\\"\"}"}}]}
--/
-#guard_msgs in
-#spytial.spec sExample with [
-  atomColor {x : SBDD | @str:(x.v) = "x"} "red",
-  hideAtom {vr : String | @:vr = "x"}
-]
-
-/-- error: string literal contains U+0001 — SGQ's string syntax has no escape for it, and it cannot ride raw through the spec -/
-#guard_msgs in
-#spytial.spec sExample with [hideAtom {vr : String | @:vr = "a\x01b"}]
 
 /-! ## Sort-typed field: dropped from vocabulary, scope stays strict -/
 
@@ -454,6 +434,178 @@ public def sCarrier : SCarrier := { carrier := Nat, tag := 0 }
 /-- error: unknown name 'carrier' (did you mean 'SCarrier'?) -/
 #guard_msgs in
 #spytial.spec sCarrier with [hideAtom carrier]
+
+/-! ## Relation arity — tabulated fields and `scrutinee`
+
+A field whose type tabulates emits one flat table rather than an edge to one
+value: `tr : SQ → Bool → SQ` is `(owner, q, b, q')`, and a decidable `Prop`
+codomain is the relation itself, `(owner, q, r)` with no result column. The
+scope reads both widths — and the column types, which are the vocabulary in
+place of the function type no atom ever gets — from the same `tabulationPlan?`
+the walker emits from. A stuck `match` is the other non-binary relation: one
+ternary `(match, position, discriminant)`. -/
+
+public inductive SQ where | q0 | q1 | q2
+  deriving DecidableEq
+
+public structure SDA where
+  tr : SQ → Bool → SQ
+
+public def sDA : SDA := { tr := fun q _ => q }
+
+public structure SLTS where
+  step : SQ → SQ → Prop
+
+public def sLTS : SLTS := { step := fun a b => a = b }
+
+/-- `String` does not enumerate, so this field keeps its λ leaf, its binary
+    edge, and its hold on the scope's open world. -/
+public structure SProc where
+  handler : String → Nat
+
+public def sProc : SProc := { handler := String.length }
+
+/-- A function field over the type's own parameters: `tr` is a binary edge to a
+    λ leaf at `State := String` and a 4-ary table at `State := SQ`. The
+    declaration fixes no arity, so the checker predicts none. -/
+public structure SPoly (State Label : Type) where
+  tr : State → Label → State
+
+public def sPoly : SPoly SQ Bool := { tr := fun q _ => q }
+
+/-- error: unknown name 'bogus'; vocabulary of 'SDA': Bool, SDA, SQ, scrutinee, tr -/
+#guard_msgs in
+#spytial.spec sDA with [hideAtom bogus]
+
+-- The whole table at its real width: any other predicted arity fails `in`.
+/--
+info: {"constraints":
+ [{"hideAtom": {"selector": "{x : SDA | tr in SDA->SQ->Bool->SQ}"}}]}
+-/
+#guard_msgs in
+#spytial.spec sDA with [hideAtom {x : SDA | tr in SDA->SQ->Bool->SQ}]
+
+/--
+info: {"constraints":
+ [{"hideAtom": {"selector": "{x : SLTS | step in SLTS->SQ->SQ}"}}]}
+-/
+#guard_msgs in
+#spytial.spec sLTS with [hideAtom {x : SLTS | step in SLTS->SQ->SQ}]
+
+-- A join off the table drops the owner column.
+/-- error: this position selects atoms (arity 1), but the selector has arity 3 -/
+#guard_msgs in
+#spytial.spec sDA with [hideAtom SDA.tr]
+
+-- A pair position takes the first and last column of a wider tuple — a warning
+-- the checker could not raise while it believed every relation binary.
+/--
+warning: arity-4 selector in a pair position: only the first and last columns of each tuple are used
+---
+info: {"constraints": [{"orientation": {"selector": "tr", "directions": ["below"]}}]}
+-/
+#guard_msgs in
+#spytial.spec sDA with [orientation tr below]
+
+/--
+warning: arity-3 selector in a pair position: only the first and last columns of each tuple are used
+---
+info: {"constraints":
+ [{"orientation": {"selector": "step", "directions": ["below"]}}]}
+-/
+#guard_msgs in
+#spytial.spec sLTS with [orientation step below]
+
+-- An edge position reads every column, so the same table draws silently there.
+/-- info: {"directives": [{"inferredEdge": {"selector": "tr", "name": "e"}}]} -/
+#guard_msgs in
+#spytial.spec sDA with [inferredEdge e tr]
+
+/-- info: {"directives": [{"inferredEdge": {"selector": "SDA.tr", "name": "e"}}]} -/
+#guard_msgs in
+#spytial.spec sDA with [inferredEdge e SDA.tr]
+
+/--
+error: this position selects edges (arity 2 or wider: source, then label columns, then target), but the selector has arity 1
+-/
+#guard_msgs in
+#spytial.spec sDA with [inferredEdge e SQ]
+
+/--
+warning: arity-3 selector in a pair position: only the first and last columns of each tuple are used
+---
+info: {"constraints":
+ [{"orientation": {"selector": "scrutinee", "directions": ["below"]}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [orientation scrutinee below]
+
+/-- error: this position selects atoms (arity 1), but the selector has arity 3 -/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom scrutinee]
+
+-- Negative control: a field that does not tabulate keeps its binary edge and
+-- its open vocabulary.
+/--
+info: {"constraints":
+ [{"orientation": {"selector": "handler", "directions": ["below"]}}]}
+-/
+#guard_msgs in
+#spytial.spec sProc with [orientation handler below]
+
+/--
+warning: unknown name 'bogus'; vocabulary of 'SProc': SProc, handler, scrutinee — the vocabulary of 'SProc' is open (a custom relationalizer, type parameter, or function field makes it unpredictable), so the name passes through unchecked
+---
+info: {"constraints": [{"hideAtom": {"selector": "bogus"}}]}
+-/
+#guard_msgs in
+#spytial.spec sProc with [hideAtom bogus]
+
+-- Open vocabulary is not open arity: a monomorphic domain that does not
+-- enumerate still fixes the width at 2.
+/-- error: this position selects atoms (arity 1), but the selector has arity 2 -/
+#guard_msgs in
+#spytial.spec sProc with [hideAtom handler]
+
+-- A parametric field's width is the instantiation's business, so a join off it
+-- passes unchecked instead of being scored against a width nobody predicted.
+/-- info: {"directives": [{"inferredEdge": {"selector": "SPoly.tr", "name": "e"}}]} -/
+#guard_msgs in
+#spytial.spec sPoly with [inferredEdge e SPoly.tr]
+
+/--
+info: {"constraints": [{"orientation": {"selector": "tr", "directions": ["below"]}}]}
+-/
+#guard_msgs in
+#spytial.spec sPoly with [orientation tr below]
+
+-- The goldens above pin what the scope predicts; these pin it against what the
+-- walker emits: every monomorphic prediction matches the emitted width, and the
+-- parametric fixture predicts nothing while emitting at the instantiation's width.
+#eval show Lean.Meta.MetaM Unit from do
+  for (root, value) in [(``SDA, ``sDA), (``SLTS, ``sLTS), (``SProc, ``sProc)] do
+    let scope ← SelScope.ofType root
+    for r in (← relationalize (mkConst value)).relations do
+      let some (_, predicted?) := scope.rels.get? r.name
+        | throwError "{root}: walker emitted '{r.name}', unknown to the scope"
+      let some predicted := predicted?
+        | throwError "{root}: scope predicts no arity for '{r.name}'"
+      for t in r.tuples do
+        unless t.atoms.size == predicted do
+          throwError "{root}: scope predicts arity {predicted} for '{r.name}', \
+            walker emitted {t.atoms.size}"
+
+#eval show Lean.Meta.MetaM Unit from do
+  let scope ← SelScope.ofType ``SPoly
+  let some (_, predicted?) := scope.rels.get? "tr"
+    | throwError "SPoly: 'tr' missing from the scope"
+  if let some k := predicted? then
+    throwError "SPoly: parametric 'tr' predicts arity {k}"
+  let some r := (← relationalize (mkConst ``sPoly)).relations.find? (·.name == "tr")
+    | throwError "SPoly: walker emitted no 'tr'"
+  for t in r.tuples do
+    unless t.atoms.size == 4 do
+      throwError "SPoly: expected 4-ary 'tr' at SQ×Bool, got {t.atoms.size}"
 
 /-! ## Precedence battery — the Forge re-tier
 
@@ -536,72 +688,6 @@ info: {"constraints":
   hideAtom {x : SBDD | let a = lo | all a : SBDD | some a}
 ]
 
--- A glued `x.v` is the same join as a spaced `x . v`, so a tail component
--- resolves through the same ladder as a head: `let`-bindings and type sigs
--- included, and with a real arity rather than an unknown one.
-/--
-info: {"constraints":
- [{"hideAtom": {"selector": "{x : SBDD | some x.^(lo + hi)}"}},
-  {"hideAtom": {"selector": "{x : SBDD | some x.^(lo + hi)}"}},
-  {"hideAtom": {"selector": "lo.SBDD"}},
-  {"hideAtom": {"selector": "lo.SBDD"}}]}
--/
-#guard_msgs in
-#spytial.spec sExample with [
-  hideAtom {x : SBDD | let sub = ^(lo + hi) | some x.sub},
-  hideAtom {x : SBDD | let sub = ^(lo + hi) | some x . sub},
-  hideAtom (lo.SBDD),
-  hideAtom (lo . SBDD)
-]
-
-/-- error: this position selects atoms (arity 1), but the selector has arity 2 -/
-#guard_msgs in
-#spytial.spec sExample with [atomColor (lo.hi) "#111"]
-
-/-- error: join of arity 1 and arity 1 has no columns left -/
-#guard_msgs in
-#spytial.spec sExample with [hideAtom (lo.SBDD.SBDD)]
-
-/-- error: unknown name 'nope'; vocabulary of 'SBDD': SBDD, String, hi, lo, scrutinee, v -/
-#guard_msgs in
-#spytial.spec sExample with [hideAtom (lo.nope)]
-
-/-- error: 'tt' is a value; it has no fields to join -/
-#guard_msgs in
-#spytial.spec sExample with [hideAtom (lo.tt)]
-
--- Lean glues `a.b` into one ident and SGQ does not, so a glued join under a
--- unary operator means different things in the two languages, with no arity
--- mismatch to catch it. Rejected; both disambiguated spellings still lower.
-/--
-error: '^lo.hi' is ambiguous: it binds as '^(lo.hi)' here, but SGQ reads the same text as '(^lo). …'. Write '^lo . hi' for SGQ's reading, or '^(lo.hi)' for this one
--/
-#guard_msgs in
-#spytial.spec sExample with [orientation ^lo.hi directlyBelow]
-
-/--
-error: '~lo.hi' is ambiguous: it binds as '~(lo.hi)' here, but SGQ reads the same text as '(~lo). …'. Write '~lo . hi' for SGQ's reading, or '~(lo.hi)' for this one
--/
-#guard_msgs in
-#spytial.spec sExample with [orientation ~lo.hi directlyBelow]
-
-/--
-info: {"constraints":
- [{"orientation": {"selector": "^lo.hi", "directions": ["directlyBelow"]}},
-  {"orientation": {"selector": "^(lo.hi)", "directions": ["directlyBelow"]}},
-  {"orientation": {"selector": "^lo", "directions": ["directlyBelow"]}}]}
--/
-#guard_msgs in
-#spytial.spec sExample with [
-  orientation ^lo . hi directlyBelow,
-  orientation ^(lo.hi) directlyBelow,
-  orientation ^lo directlyBelow
-]
-
-/-- error: cannot use let-bound 'e' here: it refers to 'x', which a nearer binder shadows — the substitution would be captured; rename the inner binder -/
-#guard_msgs in
-#spytial.spec sExample with [hideAtom {x : SBDD | let e = x.lo | all x : SBDD | some x.e}]
-
 /-! ## Integer layer — `#`, `@num:`, builtins, aggregators, box join, counting -/
 
 /--
@@ -614,13 +700,17 @@ info: {"directives":
     "borderStyle": {"color": "red"}}},
   {"atomStyle":
    {"selector": "{x : SRB | abs[@num:(x.key)] >= 1}",
+    "borderStyle": {"color": "red"}}},
+  {"atomStyle":
+   {"selector": "{x : SRB | min[@num:(SRB.key)] <= 3}",
     "borderStyle": {"color": "red"}}}]}
 -/
 #guard_msgs in
 #spytial.spec sRB with [
-  atomColor {x : SRB | @num:(x.key) < 5} "red",
-  atomColor {x : SRB | add[@num:(x.key), 1] > 2} "red",
-  atomColor {x : SRB | abs[@num:(x.key)] >= 1} "red"
+  atomStyle {x : SRB | @num:(x.key) < 5} (borderStyle "red"),
+  atomStyle {x : SRB | add[@num:(x.key), 1] > 2} (borderStyle "red"),
+  atomStyle {x : SRB | abs[@num:(x.key)] >= 1} (borderStyle "red"),
+  atomStyle {x : SRB | min[SRB.key] <= 3} (borderStyle "red")
 ]
 
 -- Counting idiom and relational box join (`a[b] ≡ b.a`).
@@ -637,10 +727,8 @@ info: {"constraints":
 
 /-! ## `sum x : A | ie` integer aggregation quantifier
 
-Unlike the `sum[e]` aggregator (broken → ∅, warning golden below), SGQ
-evaluates the quantifier form correctly (probed against the pinned engine), so
-it carries no warning. Lowering parenthesizes it — SGQ extends the body
-maximally right, so `(sum …) > 2` needs the parens the surface omits. -/
+Lowering parenthesizes it — SGQ extends the body maximally right, so
+`(sum …) > 2` needs the parens the surface omits. -/
 
 /--
 info: {"directives":
@@ -650,13 +738,13 @@ info: {"directives":
 -/
 #guard_msgs in
 #spytial.spec sRB with [
-  atomColor {x : SRB | (sum y : SRB | @num:(y.key)) > 2} "red"
+  atomStyle {x : SRB | (sum y : SRB | @num:(y.key)) > 2} (borderStyle "red")
 ]
 
 -- The binder domain is checked like the other quantifiers' (arity 1).
 /-- error: a sum-quantifier binder domain must have arity 1, got 2 -/
 #guard_msgs in
-#spytial.spec sRB with [atomColor {x : SRB | (sum y : left | @num:(y.key)) > 2} "red"]
+#spytial.spec sRB with [atomStyle {x : SRB | (sum y : left | @num:(y.key)) > 2} (borderStyle "red")]
 
 /-! ## Negated comparisons (`!in`, `not in` — both lower to `!in`) -/
 
@@ -671,16 +759,13 @@ info: {"constraints":
   hideAtom {x : SBDD | x.lo not in x.hi}
 ]
 
-/-! ## `ni` desugars to a flipped subset
-
-Forge's `a ni b ≡ b in a`, so `ni` lowers to a real subset with operands
-swapped (no warning); the negated `a !ni b` / `a not ni b` are `b !in a`. -/
+/-! ## `ni` lowers verbatim — the engine owns its semantics -/
 
 /--
 info: {"constraints":
- [{"hideAtom": {"selector": "{x : SBDD | x.hi in x.lo}"}},
-  {"hideAtom": {"selector": "{x : SBDD | x.hi !in x.lo}"}},
-  {"hideAtom": {"selector": "{x : SBDD | x.hi !in x.lo}"}}]}
+ [{"hideAtom": {"selector": "{x : SBDD | x.lo ni x.hi}"}},
+  {"hideAtom": {"selector": "{x : SBDD | x.lo !ni x.hi}"}},
+  {"hideAtom": {"selector": "{x : SBDD | x.lo !ni x.hi}"}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [
@@ -689,19 +774,13 @@ info: {"constraints":
   hideAtom {x : SBDD | x.lo not ni x.hi}
 ]
 
-/-! ## `none` is the empty relation -/
-
-/--
-info: {"constraints": [{"hideAtom": {"selector": "{x : SBDD | no none}"}}]}
--/
+/-- info: {"constraints": [{"hideAtom": {"selector": "{x : SBDD | no none}"}}]} -/
 #guard_msgs in
 #spytial.spec sExample with [hideAtom {x : SBDD | no none}]
 
-/-! ## Engine-bug forms — accepted, lowered verbatim, warned (upstream SGQ issues) -/
+/-! ## Restriction, override, arrow-mult, atom-literal, aggregator forms -/
 
 /--
-warning: the SGQ engine currently throws on `<:` (domain restriction) at render — in a constraint position this kills the render (upstream bug)
----
 info: {"constraints":
  [{"orientation": {"selector": "SBDD <: lo", "directions": ["below"]}}]}
 -/
@@ -709,8 +788,6 @@ info: {"constraints":
 #spytial.spec sExample with [orientation SBDD <: lo below]
 
 /--
-warning: the SGQ engine currently throws on `:>` (range restriction) at render — in a constraint position this kills the render (upstream bug)
----
 info: {"constraints":
  [{"orientation": {"selector": "lo :> SBDD", "directions": ["below"]}}]}
 -/
@@ -718,8 +795,6 @@ info: {"constraints":
 #spytial.spec sExample with [orientation lo :> SBDD below]
 
 /--
-warning: the SGQ engine currently throws on `++` (override) at render — in a constraint position this kills the render (upstream bug)
----
 info: {"constraints":
  [{"orientation": {"selector": "lo ++ hi", "directions": ["below"]}}]}
 -/
@@ -727,8 +802,6 @@ info: {"constraints":
 #spytial.spec sExample with [orientation lo ++ hi below]
 
 /--
-warning: the SGQ engine silently drops arrow-multiplicity annotations — `A one -> lone B` evaluates as the plain product `A -> B` (upstream bug)
----
 info: {"constraints":
  [{"orientation":
    {"selector": "SBDD one -> lone SBDD", "directions": ["below"]}}]}
@@ -736,46 +809,36 @@ info: {"constraints":
 #guard_msgs in
 #spytial.spec sExample with [orientation SBDD one -> lone SBDD below]
 
-/--
-warning: the SGQ engine does not evaluate backquote atom literals — it renders an `UNIMPLEMENTED` placeholder (upstream bug)
----
-info: {"constraints": [{"hideAtom": {"selector": "{x : SBDD | x = `a0}"}}]}
--/
+/-- info: {"constraints": [{"hideAtom": {"selector": "{x : SBDD | x = `a0}"}}]} -/
 #guard_msgs in
 #spytial.spec sExample with [hideAtom {x : SBDD | x = `a0}]
 
 /--
-warning: the SGQ engine evaluates `sum[e]` to the empty set rather than summing its atoms (upstream bug)
----
 info: {"directives":
  [{"atomStyle":
-   {"selector": "{x : SRB | sum[SRB.key] > 2}",
+   {"selector": "{x : SRB | sum[@num:(SRB.key)] > 2}",
     "borderStyle": {"color": "red"}}}]}
 -/
 #guard_msgs in
-#spytial.spec sRB with [atomColor {x : SRB | sum[SRB.key] > 2} "red"]
+#spytial.spec sRB with [atomStyle {x : SRB | sum[SRB.key] > 2} (borderStyle "red")]
 
 /--
-warning: the SGQ engine currently throws on `min[e]` at render (it compares atom ids, never their numeric labels) — in a constraint position this kills the render (upstream bug)
----
 info: {"directives":
  [{"atomStyle":
-   {"selector": "{x : SRB | min[SRB.key] <= 3}",
+   {"selector": "{x : SRB | min[@num:(SRB.key)] <= 3}",
     "borderStyle": {"color": "red"}}}]}
 -/
 #guard_msgs in
-#spytial.spec sRB with [atomColor {x : SRB | min[SRB.key] <= 3} "red"]
+#spytial.spec sRB with [atomStyle {x : SRB | min[SRB.key] <= 3} (borderStyle "red")]
 
 /--
-warning: the SGQ engine currently throws on `max[e]` at render (it compares atom ids, never their numeric labels) — in a constraint position this kills the render (upstream bug)
----
 info: {"directives":
  [{"atomStyle":
-   {"selector": "{x : SRB | max[SRB.key] >= 3}",
+   {"selector": "{x : SRB | max[@num:(SRB.key)] >= 3}",
     "borderStyle": {"color": "red"}}}]}
 -/
 #guard_msgs in
-#spytial.spec sRB with [atomColor {x : SRB | max[SRB.key] >= 3} "red"]
+#spytial.spec sRB with [atomStyle {x : SRB | max[SRB.key] >= 3} (borderStyle "red")]
 
 /-! ## Integer-layer type errors — one per class -/
 
@@ -810,19 +873,20 @@ info: {"directives":
     "borderStyle": {"color": "red"}}}]}
 -/
 #guard_msgs in
-#spytial.spec sExample with [atomColor {x : SBDD | @bool:(x.v) = true} "red"]
+#spytial.spec sExample with [atomStyle {x : SBDD | @bool:(x.v) = true} (borderStyle "red")]
 
 /-- error: constructor 'Bool.true' belongs to 'Bool', which cannot occur in values of 'SBDD' -/
 #guard_msgs in
-#spytial.spec sExample with [atomColor {x : SBDD | @:x = true} "red"]
+#spytial.spec sExample with [atomStyle {x : SBDD | @:x = true} (borderStyle "red")]
 
 -- A label value opposite an integer literal points at `@num:`.
 /-- error: cannot compare a label value with this operand; a label value compares against a nullary constructor or a string literal — for a numeric label, project with `@num:` -/
 #guard_msgs in
 #spytial.spec sExample with [hideAtom {x : SBDD | @:x = 5}]
 
--- A string literal quote-wraps to match the walker's label convention, then
--- escapes per SGQ's string grammar (`\"` `\\` `\n` `\t` `\r` `\0`).
+-- The relationalizer labels a `String` atom with its Lean spelling, quotes
+-- included, so a literal matching one lowers to a doubly-quoted SGQ string,
+-- escaped per SGQ's string grammar (`\"` `\\` `\n` `\t` `\r` `\0`).
 /--
 info: {"directives":
  [{"atomStyle":
@@ -830,7 +894,11 @@ info: {"directives":
     "borderStyle": {"color": "red"}}}]}
 -/
 #guard_msgs in
-#spytial.spec sExample with [atomColor {x : SBDD | @str:(x.v) = "a\"b\\c\nd"} "red"]
+#spytial.spec sExample with [atomStyle {x : SBDD | @str:(x.v) = "a\"b\\c\nd"} (borderStyle "red")]
+
+/-- error: string literal contains U+0001 — SGQ's string syntax has no escape for it, and it cannot ride raw through the spec -/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom {vr : String | @:vr = "a\x01b"}]
 
 -- A quantifier binder domain says "quantifier", not "comprehension".
 /-- error: a quantifier binder domain must have arity 1, got 2 -/
@@ -951,3 +1019,81 @@ example : Nat := let univ := 3; univ
 example : Nat := let iden := 4; iden
 example : Nat := let sum := hygieneSum; sum
 example : Nat := let none := 7; none
+
+/-! ## Grammar tripwire — `docs/selectors.md` pins the surface grammar
+
+A rule added, removed, or reshaped in the selector categories changes a kind
+name here; update the EBNF alongside this golden. -/
+
+/--
+info: spytial_sel:
+SpytialLean.selAtomLit
+SpytialLean.selBox
+SpytialLean.selCard
+SpytialLean.selIden
+SpytialLean.selIdent
+SpytialLean.selNegNum
+SpytialLean.selNone
+SpytialLean.selNum
+SpytialLean.selProdOp
+SpytialLean.selProjBoolOp
+SpytialLean.selProjNumOp
+SpytialLean.selProjPlainOp
+SpytialLean.selProjStrOp
+SpytialLean.selStr
+SpytialLean.selSum
+SpytialLean.selUniv
+SpytialLean.«spytial_sel(_)»
+SpytialLean.«spytial_sel*_»
+SpytialLean.«spytial_sel^_»
+SpytialLean.«spytial_sel_&_»
+SpytialLean.«spytial_sel_++_»
+SpytialLean.«spytial_sel_+_»
+SpytialLean.«spytial_sel_-_»
+SpytialLean.«spytial_sel_._»
+SpytialLean.«spytial_sel_:>_»
+SpytialLean.«spytial_sel_<:_»
+SpytialLean.«spytial_sel{_,|_}»
+SpytialLean.«spytial_sel~_»
+---
+info: spytial_sel_form:
+SpytialLean.selAndOp
+SpytialLean.selIffOp
+SpytialLean.selImpOp
+SpytialLean.selIteOp
+SpytialLean.selLet
+SpytialLean.selNiOp
+SpytialLean.selNotInOp
+SpytialLean.selNotNiOp
+SpytialLean.selOrOp
+SpytialLean.selQAll
+SpytialLean.selQLone
+SpytialLean.selQNo
+SpytialLean.selQOne
+SpytialLean.selQSome
+SpytialLean.selXorOp
+SpytialLean.spytial_sel_form!_
+SpytialLean.spytial_sel_formLone_
+SpytialLean.spytial_sel_formNo_
+SpytialLean.spytial_sel_formNot_
+SpytialLean.spytial_sel_formOne_
+SpytialLean.spytial_sel_formSome_
+SpytialLean.spytial_sel_form_!In_
+SpytialLean.spytial_sel_form_In_
+SpytialLean.«spytial_sel_form(_)»
+SpytialLean.«spytial_sel_form_!=_»
+SpytialLean.«spytial_sel_form_<=_»
+SpytialLean.«spytial_sel_form_<_»
+SpytialLean.«spytial_sel_form_=<_»
+SpytialLean.«spytial_sel_form_=_»
+SpytialLean.«spytial_sel_form_>=_»
+SpytialLean.«spytial_sel_form_>_»
+-/
+#guard_msgs in
+open Lean Parser in
+run_cmd do
+  let cats := (parserExtension.getState (← getEnv)).categories
+  for cat in [`spytial_sel, `spytial_sel_form] do
+    let some c := cats.find? cat | throwError "no category {cat}"
+    let kinds := (c.kinds.toList.map (toString ·.1)).toArray.qsort (· < ·)
+    Lean.logInfo (m!"{cat}:\n" ++ m!"{"\n".intercalate kinds.toList}")

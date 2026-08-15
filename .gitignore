@@ -4,6 +4,8 @@ node_modules/
 widget/dist/
 .direnv
 .envrc
+render/dist/
+render/cases/
+render/out/
 tests/render/cases/
 tests/render/out/
-tests/render/dist/

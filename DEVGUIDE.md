@@ -8,11 +8,10 @@ spytial-lean has two build systems that feed into each other:
 2. **Lean** (lake) — compiles the Lean library, embedding the widget JS via `include_str`
 
 The Lean build depends on the widget JS through the `widgetJsAll` lake target,
-which runs `pnpm install --frozen-lockfile` at the workspace root and
-`pnpm -C widget run build` whenever its tracked inputs (sources, rollup
-configs, `package.json`, `pnpm-lock.yaml`) change. The lockfile is committed;
-change a member's deps with `pnpm -C widget add` / `pnpm -C widget remove`
-and shared versions by editing the `pnpm-workspace.yaml` catalog.
+which runs `pnpm install --frozen-lockfile` and `pnpm run build` in `widget/`
+whenever its tracked inputs (sources, rollup configs, `package.json`,
+`pnpm-lock.yaml`) change. The lockfile is committed; dependency changes go
+through `pnpm add` / `pnpm remove` in `widget/`.
 
 ## Prerequisites
 
@@ -35,8 +34,7 @@ lake build
 
 The first build also fetches the Lean dependencies (ProofWidgets4) pinned in
 `lake-manifest.json`. Under the hood `just build` runs `pnpm install
---frozen-lockfile` at the workspace root and `pnpm -C widget run build`
-before compiling Lean.
+--frozen-lockfile` and `pnpm run build` in `widget/` before compiling Lean.
 
 ### Tests
 
@@ -47,12 +45,11 @@ checking) with `just test`, or directly with lake:
 lake build SpytialTests
 ```
 
-`tests/SelectorTest.lean` is the behavioral contract for the selector DSL: it
-pins the SGQ lowering (compiled JSON) of every surface form — the Forge
-precedence battery, word/symbolic connectives, quantifiers and `let`, the
-integer layer, box join, negated comparisons (`!in`, `not in`, `ni`, `!ni`) —
-plus one diagnostic per checker error class and a warning golden for each
-engine-bug form (`<:`, `:>`, `++`, arrow-multiplicity, backquote, `sum[e]`).
+`tests/SelectorTest.lean` is the behavioral contract for the selector DSL. It
+pins the SGQ lowering of every surface form: the Forge precedence battery,
+word and symbolic connectives, quantifiers and `let`, the integer layer, box
+join, and the negated comparisons. It also pins one diagnostic per checker
+error class.
 
 ### Demos
 
@@ -63,22 +60,10 @@ with `just demos`, or directly with lake:
 lake build Demos
 ```
 
-### Render tests
+### Snapshot renders
 
-Image-snapshot tests of the widget in headless Chromium: each case in
-`tests/render/Cases.lean` dumps real widget props, a rollup harness mounts the
-compiled component on them, and Playwright pixel-compares against
-`tests/render/baseline/`. See [tests/render/README.md](tests/render/README.md).
-
-```sh
-just render            # full suite (`just render -g rbtree` filters by case)
-just render-update     # re-bless baselines — inspect the PNGs first!
-just render-review     # kitty terminals: re-blessed baselines vs HEAD, side by side
-```
-
-Browser, font and rasterization flags all come from `tests/render/Dockerfile`,
-which is what makes a baseline comparable on a machine that didn't bless it — and
-lets CI run the same recipe. Needs `docker` (or `SPYTIAL_CONTAINER=podman`).
+`#spytial_snapshot` dumps widget props from any Lean file; a pinned container
+renders the dumps to PNGs. See `render/README.md`.
 
 ### Widget reload
 
@@ -97,8 +82,7 @@ Server"**) to pick up the new widget.
 ### Changed spytial-core
 
 spytial-core is a registry dependency (`spytial-core` in `widget/package.json`).
-Bump the version and run `pnpm install` at the workspace root; the next
-`just build`
+Bump the version and run `pnpm install` in `widget/`; the next `just build`
 re-embeds it. For an unreleased core, point the dependency at a local checkout
 (`"spytial-core": "file:../../spytial-core"`) and use `just widget-reload`
 after each core rebuild.
@@ -128,8 +112,8 @@ dagre, etc.) — this is why the final widget JS is ~3MB.
 
 ```
 widget/src/spytialWidget.tsx
-  → (tsc)    widget/dist/spytialWidget.js      ← render harness mounts this
-  → (rollup) .lake/build/js/spytialWidget.js   ← include_str embeds this
+  → (tsc)    widget/dist/spytialWidget.js
+  → (rollup) .lake/build/js/spytialWidget.js
 ```
 
 The final `.lake/build/js/spytialWidget.js` is what `include_str` embeds into
@@ -154,9 +138,8 @@ To add a new layout operation:
 #spytial.datum myValue
 ```
 
-Shows the JSON data instance — atoms and relations with their names. The spec
-elaborator checks selector names against the same vocabulary, so this is for
-seeing the data, not for guessing names.
+Shows the JSON data instance: atoms and relations with their names. The spec
+elaborator checks selector names against the same vocabulary.
 
 ### Inspect the generated spec
 
@@ -164,12 +147,8 @@ seeing the data, not for guessing names.
 #spytial.spec myValue with [orientation left below]
 ```
 
-Shows the spec string (JSON, which is valid YAML) that gets passed to
-`parseLayoutSpec`.
+Shows the spec string that gets passed to `parseLayoutSpec`.
 
 ### Widget console errors
 
-In VS Code, open the Developer Tools (**Help → Toggle Developer Tools**) and
-check the Console tab for `SpytialWidget render error` messages. Outside VS
-Code, `just render` surfaces the same component's errors headlessly (widget
-error state and `constraint-error` events fail the test).
+In VS Code, open the Developer Tools (**Help → Toggle Developer Tools**) and check the Console tab for `SpytialWidget render error` messages.

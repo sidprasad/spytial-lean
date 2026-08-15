@@ -5,23 +5,14 @@ package spytialLean where
   preferReleaseBuild := true
   buildArchive? := "SpytialLean.tar.gz"
   releaseRepo := "https://github.com/sidprasad/spytial-lean"
-  -- The include_str'd widget bundle is minified JS; silence the cosmetic C
-  -- warnings its size and stray bidi chars trigger when Widget.c is compiled
-  -- (no effect on the infoview, which reads the string from oleans, not C).
-  moreLeancArgs := #["-Wno-bidi-chars", "-Wno-overlength-strings"]
 
 /-! ## JS build targets
 
-The repo is one pnpm workspace: `widget/` bundles the infoview component and
-`tests/render/` bundles the headless render harness, with every shared version
-pinned once in the root `pnpm-workspace.yaml` catalog. pnpm therefore always
-runs from the package root — the workspace root, where the single lockfile
-lives — and `-C` picks the member to act on. `--filter` would read better but
-exits 0 when no package matches its name, so a renamed member would silently
-build nothing. -/
+pnpm runs from the workspace root and `-C` picks the member; `--filter` exits 0
+when no package matches, so a rename would silently build nothing. -/
 
 def widgetDir : FilePath := "widget"
-def renderDir : FilePath := "tests" / "render"
+def renderDir : FilePath := "render"
 
 nonrec def Lake.Package.widgetDir (pkg : Package) : FilePath :=
   pkg.dir / widgetDir
@@ -102,7 +93,7 @@ target widgetJsAll pkg : Unit := do
     -- the job's trace is the built JS itself, so out-of-band rebuilds re-embed
     setTrace (← computeTrace (pkg.buildDir / "js" / "spytialWidget.js"))
 
-/-! ## Render-test harness (tests/render/) -/
+/-! ## Render harness (render/) -/
 
 input_file renderEntry where
   path := renderDir / "entry.mjs"
@@ -112,9 +103,8 @@ input_file renderRollupConfig where
   path := renderDir / "rollup.config.mjs"
   text := true
 
-/-- Self-contained browser bundle for the headless render tests: the real
-    widget component + react + the spytial-core virtual modules. Built into
-    `tests/render/dist/harness.js`; consumed by `tests/render/render.spec.mjs`. -/
+/-- Browser bundle for snapshot renders: widget component + react + the
+    spytial-core virtual modules, into `render/dist/harness.js`. -/
 target renderHarnessJs pkg : Unit := do
   let inputs := (← widgetJsAll.fetch)
     |>.mix (← fetchPnpmWorkspaceFiles)
@@ -122,11 +112,8 @@ target renderHarnessJs pkg : Unit := do
     |>.mix (← renderRollupConfig.fetch)
     |>.mix (← widgetRollupVirtual.fetch)
   inputs.mapM fun _ => do
-    -- `entry.mjs` imports `widget/dist/spytialWidget.js`, the *tsc* output,
-    -- while `widgetJsAll` traces the *rollup* output under `.lake`. Depending
-    -- on that target is what gets the file written (one `pnpm run build`
-    -- produces both), but only mixing its trace in here makes the harness
-    -- rebuild when the component changes.
+    -- widgetJsAll traces the rollup output; entry.mjs imports the tsc one, so
+    -- only this trace rebuilds the harness when the component changes.
     addTrace (← computeTrace (pkg.widgetDir / "dist" / "spytialWidget.js"))
     let harnessJs := pkg.renderDir / "dist" / "harness.js"
     buildUnlessUpToDate harnessJs (← getTrace) (pkg.buildDir / "renderHarness.trace") do
@@ -139,15 +126,15 @@ lean_lib SpytialLean where
 lean_lib Demos where
   srcDir := "demos"
   roots := #[`Showcase, `ProofFieldFiltering, `FunctionFields, `TypeClassInstances,
-             `CustomRelationalizer, `HoareLogic, `OperationalSemantics, `ProofTerms,
-             `PartialTerms, `BDD]
+             `CustomRelationalizer, `ProofTerms, `HoareLogic, `OperationalSemantics,
+             `PartialTerms, `BDD, `Automata]
   needs := #[widgetJsAll]
 
 /-- Headless unit tests: `lake build SpytialTests`. -/
 lean_lib SpytialTests where
   srcDir := "tests"
-  roots := #[`TypeShapeTest, `CoverageTest, `TacticTest, `SelectorTest,
-             `IdentityTest, `IdentityWalkTest]
+  roots := #[`WalkCanon, `TypeShapeTest, `CoverageTest, `TacticTest, `SelectorTest,
+             `IdentityTest, `IdentityWalkTest, `RelationShapeTest]
 
 require proofwidgets from
   git "https://github.com/leanprover-community/ProofWidgets4" @ "v0.0.105"

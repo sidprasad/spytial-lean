@@ -23,13 +23,13 @@ function pageHtml(props) {
 <html>
 <head><meta charset="utf-8"><title>spytial-render-case</title>
 <!-- No font-family here on purpose: the captured region is the diagram SVG,
-     whose typeface spytial-core sets itself (see ./Dockerfile). -->
+     whose typeface spytial-core sets itself (see ../../render/Dockerfile). -->
 <style>body { margin: 8px; background: #ffffff; }</style>
 </head>
 <body>
 <script>window.__CASE__ = ${json};</script>
 <div id="root"></div>
-<script src="../../dist/harness.js"></script>
+<script src="../../../../render/dist/harness.js"></script>
 </body>
 </html>
 `;

@@ -1,9 +1,8 @@
-// Mounts the infoview's own widget component on the case props in
-// `window.__CASE__`. The page stays passive — all waiting and asserting lives
-// in render.spec.mjs, because headless Chromium throttles in-page timers.
+// Passive: waiting and reporting live in render.mjs, because headless
+// Chromium throttles in-page timers.
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
-import SpytialWidget from '../../widget/dist/spytialWidget.js';
+import SpytialWidget from '../widget/dist/spytialWidget.js';
 
 // webcola-cnd-graph dispatches these on itself; layout-complete does not
 // bubble, but capture-phase listeners on document still see it.
@@ -17,8 +16,6 @@ function round(x) {
   return Math.round(x * 100) / 100;
 }
 
-// Geometry read back through real layout APIs — the part no jsdom-style harness
-// can see.
 function metricsOf(svg) {
   const nodes = [...svg.querySelectorAll('g.node, g.error-node')].map(g => {
     const r = g.getBoundingClientRect();

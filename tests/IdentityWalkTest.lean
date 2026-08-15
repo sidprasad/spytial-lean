@@ -4,6 +4,7 @@ public import SpytialLean.Identity
 meta import SpytialLean.Identity
 public meta import SpytialLean.Relationalizer
 meta import SpytialLean.Command
+meta import WalkCanon
 
 open SpytialLean Lean Meta
 
@@ -86,40 +87,6 @@ private meta def checkMetaMatchesRuntime (label : String) (val : Expr) : MetaM U
     | throwError "{label}: runtime classifier absent"
   unless mkey == rkey do
     throwError "{label}: meta key {repr mkey} ≠ runtime key {repr rkey}"
-
-/-! ## Canonical comparison
-
-The fused walker and the two-pass reference allocate different atom ids, but
-emit surviving atoms in the same DFS order — so renaming ids by atoms-array
-position makes the instances directly comparable. Relations are sorted by name
-(the state stores them in hash order). -/
-
-private meta def canonInstance (di : JsonDataInstance) : String := Id.run do
-  let mut idx : Std.HashMap String Nat := {}
-  for a in di.atoms do
-    idx := idx.insert a.id idx.size
-  let atomsS := di.atoms.map fun a => s!"{a.type}|{a.label}"
-  let rels := di.relations.qsort (·.name < ·.name)
-  let relsS := rels.map fun r =>
-    let ts := r.tuples.map fun t =>
-      String.intercalate "," (t.atoms.map (fun a => toString (idx.getD a 9999))).toList
-    s!"{r.name}:{String.intercalate ";" ts.toList}"
-  return String.intercalate "\n" (atomsS ++ relsS).toList
-
-/-- Differential oracle: the fused walker must agree with the literal two-pass
-    reference (fresh atoms, then merge by `(type, identity)`). -/
-private meta def assertMatchesReference (label : String) (e : Expr) : MetaM Unit := do
-  let (rootF, stF) ← (walkExpr {} e).run {}
-  let diF := stF.toDataInstance
-  let (rootR, diR) ← referenceRelationalize e
-  let cF := canonInstance diF
-  let cR := canonInstance diR
-  unless cF == cR do
-    throwError "{label}: fused ≠ reference\n-- fused --\n{cF}\n-- reference --\n{cR}"
-  let idxOf (di : JsonDataInstance) (id : String) : Option Nat :=
-    di.atoms.findIdx? (·.id == id)
-  unless idxOf diF rootF == idxOf diR rootR do
-    throwError "{label}: root atoms disagree"
 
 /-! ## As-written default: no instance ⇒ no merging, literals included -/
 
@@ -238,33 +205,3 @@ spytial_relationalizer Boxy boxyRel
                           mkApp (mkConst ``Boxy.mk) (mkRawNatLit 1)])
   let hole ← mkFreshExprMVar (some (mkConst ``WTree))
   assertMatchesReference "diff.hole" (wnode (wleaf 1) hole)
-
-/-! ## Leaf labels through `Repr`: a stuck-but-closed leaf reads as its
-evaluated value when its type declares `Repr`; `Repr` never feeds identity -/
-
-@[irreducible] public def opaque97 : Nat := 90 + 7
-
-/-- Opaque, with both `SpytialIdentity` and `Repr`: spelling decides identity,
-    `Repr` decides the label. -/
-public inductive Coin where
-  | heads | tails
-  deriving SpytialIdentity, Repr
-
-@[irreducible] public def hiddenCoin : Coin := .heads
-
-#eval show MetaM Unit from do
-  let di ← relationalize (mkConst ``opaque97)
-  assertEq "leaflabel.repr" (di.atoms.map (·.label)) #["97"]
-  -- no `SpytialIdentity Nat`: identical labels, still two atoms — the label
-  -- never feeds identity
-  let di ← relationalize (← mkAppM ``Prod.mk #[mkConst ``opaque97, mkConst ``opaque97])
-  assertEq "leaflabel.not-identity" (di.atoms.map (·.label)) #["mk", "97", "97"]
-  -- spelling merges the occurrences, `Repr` labels the one atom
-  let di ← relationalize (← mkAppM ``Prod.mk #[mkConst ``hiddenCoin, mkConst ``hiddenCoin])
-  assertEq "leaflabel.opaque.merged" (di.atoms.map (·.label)) #["mk", "Coin.heads"]
-  let di ← relationalize (mkConst ``hiddenTree)
-  assertEq "leaflabel.no-repr" (di.atoms.map (·.label)) #["hiddenTree"]
-  assertMatchesReference "diff.leaflabel"
-    (← mkAppM ``Prod.mk #[mkConst ``opaque97, mkConst ``opaque97])
-  assertMatchesReference "diff.leaflabel.merged"
-    (← mkAppM ``Prod.mk #[mkConst ``hiddenCoin, mkConst ``hiddenCoin])

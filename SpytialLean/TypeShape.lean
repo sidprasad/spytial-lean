@@ -23,18 +23,6 @@ public meta def typeHead? (ty : Expr) : MetaM (Option Name) := do
   | .const n _ => return some n
   | _          => return none
 
-/-- Const heads of a type application's *type* arguments, recursively
-    (`List (Node GraderKind)` → `#[Node, GraderKind]`), so scope closures can
-    see through polymorphic containers even where a field's type is a bare
-    parameter of the container. Value arguments (`Fin 3`'s `3`) and anything
-    without a constant head contribute no vocabulary and are skipped. -/
-public meta partial def typeConstArgHeads (ty : Expr) : MetaM (Array Name) := do
-  ty.getAppArgs.flatMapM fun arg => do
-    let arg ← Meta.whnf arg
-    let inner ← typeConstArgHeads arg
-    let .const n _ := arg.getAppFn | return inner
-    return if (← Meta.inferType arg).isSort then #[n] ++ inner else inner
-
 public meta def sigOfType (ty : Expr) : MetaM String := do
   match ← typeHead? ty with
   | some n => return shortName n
@@ -80,18 +68,142 @@ public meta def hypLabel (userName : Name) : String :=
 public meta def isProofLikeType (ty : Expr) : MetaM Bool := do
   return (← Meta.isProp ty) || ty.isSort
 
+/-! ## Function tabulation
+
+Which function types the walker turns into flat n-ary tables, and the columns
+those tables get. Shared with the static checkers, so a predicted relation
+cannot drift from an emitted one. -/
+
+/-- Try to enumerate all elements of a finite type.
+    Returns `some [(label, expr)]` for finite types, `none` otherwise. -/
+public meta def tryEnumerateDomain (ty : Expr) : MetaM (Option (Array (String × Expr))) := do
+  let ty ← Meta.whnf ty
+  match ty.getAppFn with
+  | .const ``Fin _ =>
+    let args := ty.getAppArgs
+    if h : args.size = 1 then
+      let nExpr ← Meta.whnf args[0]
+      match nExpr with
+      | .lit (.natVal n) =>
+        if n ≤ 20 then
+          let mut result : Array (String × Expr) := #[]
+          for i in [:n] do
+            -- Use OfNat instance to construct Fin element
+            let iExpr := mkNatLit i
+            let finExpr ← Meta.mkAppOptM ``OfNat.ofNat #[some ty, some iExpr, none]
+            result := result.push (toString i, finExpr)
+          return some result
+        else return none
+      | _ => return none
+    else return none
+  | .const ``Bool _ =>
+    return some #[("false", mkConst ``Bool.false), ("true", mkConst ``Bool.true)]
+  | .const indName _ =>
+    -- Check for zero-arity enumerative inductives
+    let env ← getEnv
+    if let some (.inductInfo ii) := env.find? indName then
+      if ii.numIndices == 0 && ii.numParams == 0 then
+        let allZeroArity := ii.ctors.all fun ctorName =>
+          match env.find? ctorName with
+          | some (.ctorInfo ci) => ci.numFields == 0
+          | _ => false
+        if allZeroArity then
+          let result := ii.ctors.toArray.map fun ctorName =>
+            (shortName ctorName, mkConst ctorName)
+          return some result
+        else return none
+      else return none
+    else return none
+  | _ => return none
+
+/-- Whether a tabulated function yields data or a proposition. -/
+public meta inductive CodomainKind where
+  | data
+  | prop
+  deriving BEq, Repr, Inhabited
+
+/-- One tabulated binder: its domain type and that domain's elements. -/
+public meta structure TabulationBinder where
+  domain : Expr
+  elems : Array (String × Expr)
+
+/-- How a function type tabulates: one column per binder, then the codomain. -/
+public meta structure TabulationPlan where
+  binders : Array TabulationBinder
+  codomain : Expr
+  kind : CodomainKind
+
+/-- Points in the domain product — the tuple count of the emitted table. -/
+public meta def TabulationPlan.size (p : TabulationPlan) : Nat :=
+  p.binders.foldl (fun n b => n * b.elems.size) 1
+
+/-- The table's columns after the owner: one per binder, then the result when
+    the codomain is data (a proposition's extension has no result column). The
+    row the walker stamps, the arity the checker predicts, and the vocabulary
+    the table contributes are all views of this one list. -/
+public meta def TabulationPlan.tailTypes (p : TabulationPlan) : Array Expr :=
+  let domains := p.binders.map (·.domain)
+  match p.kind with
+  | .data => domains.push p.codomain
+  | .prop => domains
+
+public meta def TabulationPlan.arity (p : TabulationPlan) : Nat :=
+  1 + p.tailTypes.size
+
+/-- The types the table's columns range over, for a static vocabulary: these
+    stand in for the field's own (function) type, which no atom ever gets. -/
+public meta def TabulationPlan.columnHeads (p : TabulationPlan) : MetaM (Array Name) :=
+  p.tailTypes.filterMapM typeHead?
+
+private meta partial def peelBinders (ty : Expr) (acc : Array TabulationBinder) :
+    MetaM (Option TabulationPlan) := do
+  match ← Meta.whnf ty with
+  | .forallE _ dom body _ =>
+    -- a dependent telescope has no rectangular table
+    if body.hasLooseBVar 0 then return none
+    let some elems ← tryEnumerateDomain dom | return none
+    peelBinders body (acc.push { domain := dom, elems })
+  | cod =>
+    if acc.isEmpty then return none
+    -- the codomain of a relation is the sort `Prop`, not a proposition
+    let kind := match cod with
+      | .sort l => if l.isZero then CodomainKind.prop else .data
+      | _ => .data
+    return some { binders := acc, codomain := cod, kind }
+
+/-- The table a function type tabulates into, or `none` when it does not: a
+    non-function, a dependent telescope, or a domain that does not enumerate. -/
+public meta def tabulationPlan? (ty : Expr) : MetaM (Option TabulationPlan) :=
+  peelBinders ty #[]
+
+/-- What a tabulating field's type emits, as a static checker needs it. -/
+public meta structure FieldTable where
+  arity : Nat
+  columnHeads : Array Name
+  deriving Repr, Inhabited
+
+public meta def FieldTable.of? (ty : Expr) : MetaM (Option FieldTable) := do
+  let some plan ← tabulationPlan? ty | return none
+  return some { arity := plan.arity, columnHeads := ← plan.columnHeads }
+
 public meta structure FieldShape where
   relName : String
   typeSig : Option String
   /-- Head constant of the field type, when it has one; `none` for a type
       parameter or function type (unpredictable vocabulary). -/
   typeHead : Option Name := none
-  /-- Const heads of the field type's type arguments (`deps : List Node` →
-      `#[Node]`); the scope closure follows these so a container's element
-      vocabulary is known. -/
-  typeArgHeads : Array Name := #[]
   /-- The walker drops this field: it is `Prop`- or `Sort`-typed. -/
   isProofLike : Bool
+  /-- Set when the field's type tabulates: the walker emits a table over the
+      domain product rather than one edge to one value, so the field's own type
+      head is not the vocabulary its values contribute. -/
+  table : Option FieldTable := none
+  /-- The arity of the relation the walker emits, when the declaration fixes
+      it. A function type built over the inductive's own parameters fixes
+      nothing: `tr : State → Label → State` is a binary edge to a λ leaf at
+      `State := String` and a 4-ary table at `State := Fin 3`, and only the
+      walked value knows which. -/
+  arity? : Option Nat := some 2
   deriving Repr, Inhabited
 
 public meta structure CtorShape where
@@ -120,14 +232,16 @@ public meta def TypeShape.ofInductive (typeName : Name) : MetaM (Option TypeShap
       for i in [:dataXs.size] do
         let xty ← Meta.inferType dataXs[i]!
         let isProofLike ← isProofLikeType xty
-        let xty ← Meta.whnf xty
         let (typeSig, typeHead) ←
-          match xty.getAppFn with
+          match (← Meta.whnf xty).getAppFn with
           | .const n _ => pure (some (shortName n), some n)
           | _          => pure (none, none)
+        let table ← FieldTable.of? xty
+        let arity? ← match table with
+          | some t => pure (some t.arity)
+          | none => pure (if (← Meta.whnf xty).isForall && xty.hasFVar then none else some 2)
         fs := fs.push { relName := fieldRelName ctorShort binderNames i,
-                        typeSig, typeHead,
-                        typeArgHeads := ← typeConstArgHeads xty, isProofLike }
+                        typeSig, typeHead, isProofLike, table, arity? }
       return fs
     ctors := ctors.push { ctorName, ctorShort, fields }
   return some { typeName, sig := shortName typeName, ctors }

@@ -1,11 +1,12 @@
 packages:
   - widget
+  - render
   - tests/render
 
 # Versions shared by the two rollup builds — widget/rollup.config.js (infoview
-# bundle) and tests/render/rollup.config.mjs (render-test harness). The harness
-# only tests what the infoview runs if both resolve spytial-core through the
-# same plugin versions, so they are pinned once here rather than per package.
+# bundle) and render/rollup.config.mjs (snapshot harness). The harness only
+# renders what the infoview runs if both resolve spytial-core through the same
+# plugin versions, so they are pinned once here rather than per package.
 catalog:
   '@rollup/plugin-commonjs': ^28.0.1
   '@rollup/plugin-node-resolve': ^15.0.2
@@ -14,8 +15,12 @@ catalog:
   react-dom: ^18.2.0
   rollup: ^4.17.2
 
-  # Exact version, no caret: the render tests run against the browser binaries
-  # baked into mcr.microsoft.com/playwright:v1.62.0-noble, and Playwright hard
-  # fails when the npm package and the image disagree. Bump this and the image
-  # tag in tests/render/Dockerfile together.
+  # Exact version, no caret: renders run against the browser binaries baked into
+  # mcr.microsoft.com/playwright:v1.62.0-noble, and Playwright hard fails when
+  # the npm package and the image disagree. Bump this and the image tag in
+  # render/Dockerfile together.
   '@playwright/test': 1.62.0
+
+minimumReleaseAgeExclude:
+  - spytial-core@4.4.3
+  - simple-graph-query@3.1.0

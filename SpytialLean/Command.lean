@@ -21,28 +21,24 @@ public section
 
 /-! ## The op DSL
 
-An op is a keyword ident followed by juxtaposed arguments — selectors, relation
-names, direction/style idents, strings, numbers:
-
-```
-spytial_spec BDD [
-  orientation {x, y : BDD | x->y in (lo + hi)} below,
-  edgeColor lo "orange" dashed,
-  atomColor {x : BDD | @:x = ff} "red",
-  hideAtom String
-]
-```
-
 The head ident dispatches interpretation, so op keywords need no token-table
-entries; arguments are parsed uniformly (`spytial_sel` or a numeral) and each
-position is interpreted per op — selector positions elaborate against the
-target's `SelScope` with the op's arity expectation, field positions must name
-known relations, and enumerated idents (directions, styles) are validated by
-value. -/
+entries. -/
 
 declare_syntax_cat spytial_op
+declare_syntax_cat spytial_block_arg
+declare_syntax_cat spytial_op_block
 
-syntax spytialOpArg := num <|> spytial_sel
+syntax str : spytial_block_arg
+syntax num : spytial_block_arg
+syntax ident : spytial_block_arg
+syntax spytial_op_block : spytial_block_arg
+
+/-- `(blockName arg…)`: `atomic` through the first argument, so a
+    parenthesized selector (`(lo)`, `(a + b)`) backtracks out to `spytial_sel`. -/
+syntax (name := spytialBlockStx)
+  atomic("(" ident spytial_block_arg) spytial_block_arg* ")" : spytial_op_block
+
+syntax spytialOpArg := num <|> spytial_op_block <|> spytial_sel
 
 syntax (name := spytialOpStx) ident spytialOpArg* : spytial_op
 /-- `attribute` is a reserved Lean keyword, so it cannot arrive as the head
@@ -51,41 +47,12 @@ syntax (name := spytialAttrOp) "attribute " spytialOpArg* : spytial_op
 
 /-! ### Argument interpretation -/
 
-private meta def Direction.parse? : String → Option Direction
-  | "above" => some .above
-  | "below" => some .below
-  | "left" => some .left
-  | "right" => some .right
-  | "directlyAbove" => some .directlyAbove
-  | "directlyBelow" => some .directlyBelow
-  | "directlyLeft" => some .directlyLeft
-  | "directlyRight" => some .directlyRight
-  | _ => none
-
-private meta def EdgeStyle.parse? : String → Option EdgeStyle
-  | "solid" => some .solid
-  | "dashed" => some .dashed
-  | "dotted" => some .dotted
-  | _ => none
-
-private meta def AlignDir.parse? : String → Option AlignDir
-  | "horizontal" => some .horizontal
-  | "vertical" => some .vertical
-  | _ => none
-
-private meta def RotationDir.parse? : String → Option RotationDir
-  | "clockwise" => some .clockwise
-  | "counterclockwise" => some .counterclockwise
-  | _ => none
-
-/-- Positional arguments of one op, with op-usage-aware accessors. -/
 private meta structure OpArgs where
   opName : Syntax
   usage : String
   args : Array (TSyntax `spytialOpArg)
 
-/-- The content node of an op argument (a numeral, or a `spytial_sel` — bare
-    idents and string literals arrive as the named selector rules). -/
+/-- Bare idents and string literals arrive as the named selector rules. -/
 private meta def argInner (arg : TSyntax `spytialOpArg) : Syntax := arg.raw[0]
 
 private meta def OpArgs.get (a : OpArgs) (i : Nat) : TermElabM Syntax := do
@@ -136,43 +103,147 @@ private meta def OpArgs.nat (a : OpArgs) (i : Nat) (what : String) : TermElabM N
   | some n => return n
   | none => throwErrorAt inner m!"expected {what} (a numeral); usage: {a.usage}"
 
-private meta def parseEnum {α} (what : String) (parse : String → Option α)
-    (values : String) (x : Ident) : TermElabM α := do
-  match parse x.getId.toString with
-  | some v => return v
-  | none => throwErrorAt x m!"unknown {what} '{x.getId}' (expected {values})"
+private meta def enumValues (typeName : Name) : TermElabM String := do
+  return ", ".intercalate ((← getConstInfoInduct typeName).ctors.map (·.getString!))
 
-private meta def directionValues : String :=
-  "above, below, left, right, directlyAbove, directlyBelow, directlyLeft, directlyRight"
+private meta def parseEnum {α} [FromJson α] (what : String) (typeName : Name)
+    (x : Ident) : TermElabM α := do
+  match fromJson? (Json.str x.getId.toString) with
+  | .ok v => return v
+  | .error _ =>
+    throwErrorAt x m!"unknown {what} '{x.getId}' (expected {← enumValues typeName})"
 
-/-- An optional trailing style ident (`solid`/`dashed`/`dotted`). -/
-private meta def OpArgs.style (a : OpArgs) (i : Nat) : TermElabM EdgeStyle := do
-  match a.ident? i with
-  | some x => parseEnum "edge style" EdgeStyle.parse? "solid, dashed, dotted" x
-  | none => do
-    if (a.get? i).isSome then
-      throwErrorAt (← a.get i) m!"expected an edge style (solid, dashed, dotted); \
-        usage: {a.usage}"
-    return .solid
+/-! ### Style blocks -/
 
-/-- An optional trailing bare-ident flag (e.g. `edge`, `labels`). -/
-private meta def OpArgs.flagIdent (a : OpArgs) (i : Nat) (flagName : String) :
-    TermElabM Bool := do
-  match a.ident? i with
-  | some x =>
-    if x.getId.toString == flagName then
-      return true
+/-- One `(name arg…)` block, args classified by kind; block-argument order is
+    free (a color is the string, a pattern the ident, a weight the numeral). -/
+private meta structure BlockArgs where
+  ref : Syntax
+  name : String
+  strs : Array (Syntax × String) := #[]
+  nums : Array (Syntax × Nat) := #[]
+  idents : Array (Syntax × Name) := #[]
+  blocks : Array Syntax := #[]
+
+/-- Node shape: `["(", ident, firstArg, args*, ")"]` (see `spytialBlockStx`). -/
+private meta def BlockArgs.ofStx (stx : Syntax) : BlockArgs := Id.run do
+  let mut b : BlockArgs := { ref := stx, name := stx[1].getId.toString }
+  for arg in #[stx[2]] ++ stx[3].getArgs do
+    let inner := arg[0]
+    if let some s := inner.isStrLit? then b := { b with strs := b.strs.push (inner, s) }
+    else if let some n := inner.isNatLit? then b := { b with nums := b.nums.push (inner, n) }
+    else if inner.isIdent then b := { b with idents := b.idents.push (inner, inner.getId) }
+    else b := { b with blocks := b.blocks.push inner }
+  return b
+
+private meta def atMostOne {α} (b : BlockArgs) (what : String)
+    (xs : Array (Syntax × α)) : TermElabM (Option (Syntax × α)) := do
+  if h : 1 < xs.size then
+    throwErrorAt xs[1].1 m!"duplicate {what} in ({b.name} …)"
+  return xs[0]?
+
+private meta def rejectArgs {α} (b : BlockArgs) (kind : String)
+    (xs : Array (Syntax × α)) : TermElabM Unit := do
+  if h : 0 < xs.size then
+    throwErrorAt xs[0].1 m!"({b.name} …) takes no {kind}"
+
+private meta def rejectNested (b : BlockArgs) : TermElabM Unit := do
+  if h : 0 < b.blocks.size then
+    throwErrorAt b.blocks[0] m!"({b.name} …) takes no nested blocks"
+
+private meta def parseBorderStyle (b : BlockArgs) : TermElabM BorderStyle := do
+  rejectArgs b "idents" b.idents; rejectNested b
+  let color ← atMostOne b "color" b.strs
+  let width ← atMostOne b "width" b.nums
+  return { color := color.map (·.2), width := width.map (·.2) }
+
+private meta def parseFillStyle (b : BlockArgs) : TermElabM FillStyle := do
+  rejectArgs b "idents" b.idents; rejectArgs b "numerals" b.nums; rejectNested b
+  let color ← atMostOne b "color" b.strs
+  return { color := color.map (·.2) }
+
+private meta def parseIconStyle (b : BlockArgs) : TermElabM IconStyle := do
+  rejectArgs b "numerals" b.nums; rejectNested b
+  let some path ← atMostOne b "path" b.strs
+    | throwErrorAt b.ref m!"(iconStyle …) needs a path string"
+  let placement ← match ← atMostOne b "placement" b.idents with
+    | some (stx, _) => some <$> parseEnum "icon placement" ``IconPlacement ⟨stx⟩
+    | none => pure none
+  return { path := path.2, placement }
+
+private meta def parseLineStyle (b : BlockArgs) : TermElabM LineStyle := do
+  rejectNested b
+  let color ← atMostOne b "color" b.strs
+  let weight ← atMostOne b "weight" b.nums
+  let pattern ← match ← atMostOne b "pattern" b.idents with
+    | some (stx, _) => some <$> parseEnum "line pattern" ``LinePattern ⟨stx⟩
+    | none => pure none
+  return { color := color.map (·.2), pattern, weight := weight.map (·.2) }
+
+private meta def parseGroupEdge (b : BlockArgs) : TermElabM GroupEdge := do
+  rejectArgs b "strings" b.strs; rejectArgs b "numerals" b.nums
+  let some dir ← atMostOne b "direction" b.idents
+    | throwErrorAt b.ref m!"(addEdge …) needs a direction \
+        ({← enumValues ``GroupEdgeDirection})"
+  let direction ← parseEnum "group-edge direction" ``GroupEdgeDirection ⟨dir.1⟩
+  let lineStyle ← match ← atMostOne b "nested block" (b.blocks.map ((·, ()))) with
+    | some (stx, _) =>
+      let nb := BlockArgs.ofStx stx
+      unless nb.name == "lineStyle" do
+        throwErrorAt stx m!"(addEdge …) nests only (lineStyle …)"
+      some <$> parseLineStyle nb
+    | none => pure none
+  return { direction, lineStyle }
+
+/-- The style pieces an op's trailing arguments can carry. -/
+private meta structure StyleParts where
+  border : Option BorderStyle := none
+  fill : Option FillStyle := none
+  icon : Option IconStyle := none
+  line : Option LineStyle := none
+  addEdge : Option GroupEdge := none
+  showLabel : Option Bool := none
+
+/-- Fold the arguments from `start` on: `(block …)`s from `allowed`, plus the
+    `labels`/`noLabels` flags when `flags` is set. -/
+private meta def collectStyleArgs (a : OpArgs) (start : Nat)
+    (allowed : List String) (flags : Bool := false) : TermElabM StyleParts := do
+  let dup {α} (stx : Syntax) (what : String) : Option α → TermElabM Unit := fun
+    | some _ => throwErrorAt stx m!"duplicate {what}; usage: {a.usage}"
+    | none => pure ()
+  let mut parts : StyleParts := {}
+  for i in [start:a.args.size] do
+    let inner := argInner a.args[i]!
+    if inner.isOfKind ``spytialBlockStx then
+      let b := BlockArgs.ofStx inner
+      unless allowed.contains b.name do
+        throwErrorAt inner m!"unknown block '({b.name} …)'; expected \
+          {", ".intercalate (allowed.map (s!"({·} …)"))}; usage: {a.usage}"
+      match b.name with
+      | "borderStyle" => dup inner "(borderStyle …)" parts.border
+                         parts := { parts with border := some (← parseBorderStyle b) }
+      | "fillStyle"   => dup inner "(fillStyle …)" parts.fill
+                         parts := { parts with fill := some (← parseFillStyle b) }
+      | "iconStyle"   => dup inner "(iconStyle …)" parts.icon
+                         parts := { parts with icon := some (← parseIconStyle b) }
+      | "lineStyle"   => dup inner "(lineStyle …)" parts.line
+                         parts := { parts with line := some (← parseLineStyle b) }
+      | "addEdge"     => dup inner "(addEdge …)" parts.addEdge
+                         parts := { parts with addEdge := some (← parseGroupEdge b) }
+      | _ => throwErrorAt inner "unexpected block"
+    else if flags && inner.isOfKind ``selIdent &&
+        (inner[0].getId.toString == "labels" || inner[0].getId.toString == "noLabels") then
+      dup inner "label flag" parts.showLabel
+      parts := { parts with showLabel := some (inner[0].getId.toString == "labels") }
     else
-      throwErrorAt x m!"expected '{flagName}'; usage: {a.usage}"
-  | none => do
-    if (a.get? i).isSome then
-      throwErrorAt (← a.get i) m!"expected '{flagName}'; usage: {a.usage}"
-    return false
+      throwErrorAt inner m!"expected a style block\
+        {if flags then " or labels|noLabels" else ""}; usage: {a.usage}"
+  return parts
 
 /-! ### Op elaboration -/
 
-/-- Elaborate one op against the scope; returns the op plus the scope extended
-    with any name the op introduces (groups, inferred edges). -/
+/-- Returns the scope extended with any name the op introduces (groups,
+    inferred edges). -/
 meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
     TermElabM (SpytialOp × SelScope) := do
   let (name, head) ←
@@ -196,13 +267,13 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
         throwErrorAt head m!"missing direction; usage: {a.usage}"
       for i in [1:a.args.size] do
         let x ← a.ident i "a direction"
-        dirs := dirs ++ [← parseEnum "direction" Direction.parse? directionValues x]
+        dirs := dirs ++ [← parseEnum "direction" ``Direction x]
       return (.orientation s dirs, scope)
     | "align" => do
       let a := mkArgs "align <selector> horizontal|vertical"
       let s ← sel a 0 .pair
       let x ← a.ident 1 "an alignment direction"
-      let d ← parseEnum "alignment direction" AlignDir.parse? "horizontal, vertical" x
+      let d ← parseEnum "alignment direction" ``AlignDir x
       a.checkNoExtra 2
       return (.align s d, scope)
     | "cyclic" => do
@@ -210,24 +281,23 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
       let s ← sel a 0 .pair
       let d ← match a.ident? 1 with
         | some x =>
-          parseEnum "rotation direction" RotationDir.parse? "clockwise, counterclockwise" x
+          parseEnum "rotation direction" ``RotationDir x
         | none => do
           if (a.get? 1).isSome then
-            throwErrorAt (← a.get 1) m!"expected a rotation direction (clockwise, \
-              counterclockwise); usage: {a.usage}"
+            throwErrorAt (← a.get 1) m!"expected a rotation direction \
+              ({← enumValues ``RotationDir}); usage: {a.usage}"
           pure RotationDir.clockwise
       a.checkNoExtra 2
       return (.cyclic s d, scope)
     | "group" => do
-      let a := mkArgs "group <selector> <name> [edge]"
+      let a := mkArgs "group <selector> <name> [(addEdge togroup|fromgroup (lineStyle …)?)]"
       let s ← sel a 0 .unaryOrPair
       let gname ← match a.ident? 1, a.str? 1 with
         | some x, _ => pure x.getId.toString
         | _, some s => pure s
         | _, _ => throwErrorAt head m!"missing group name; usage: {a.usage}"
-      let addEdge ← a.flagIdent 2 "edge"
-      a.checkNoExtra 3
-      return (.group s gname addEdge, scope.introduce gname 1)
+      let p ← collectStyleArgs a 2 ["addEdge"]
+      return (.group s gname p.addEdge, scope.introduce gname 1)
     | "hideAtom" => do
       let a := mkArgs "hideAtom <selector>"
       let s ← sel a 0 .unary
@@ -240,19 +310,22 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
       let h ← a.nat 2 "a height"
       a.checkNoExtra 3
       return (.size s w h, scope)
-    | "atomColor" => do
-      let a := mkArgs "atomColor <selector> <css-color>"
+    | "atomStyle" => do
+      let a := mkArgs "atomStyle <selector> (borderStyle <color> [<width>])? \
+        (fillStyle <color>)? (iconStyle <path> [full|badge])? [labels|noLabels]"
       let s ← sel a 0 .unary
-      let c ← a.str 1 "a CSS color"
-      a.checkNoExtra 2
-      return (.atomColor s c, scope)
-    | "edgeColor" => do
-      let a := mkArgs "edgeColor <field> <css-color> [solid|dashed|dotted]"
+      let p ← collectStyleArgs a 1 ["borderStyle", "fillStyle", "iconStyle"] (flags := true)
+      if p.border.isNone && p.fill.isNone && p.icon.isNone && p.showLabel.isNone then
+        throwErrorAt head m!"atomStyle sets nothing; usage: {a.usage}"
+      return (.atomStyle s p.border p.fill p.icon p.showLabel, scope)
+    | "edgeStyle" => do
+      let a := mkArgs "edgeStyle <field> (lineStyle <color> [solid|dashed|dotted] \
+        [<weight>])? [labels|noLabels]"
       let f ← elabFieldName scope (← a.ident 0 "a relation name")
-      let c ← a.str 1 "a CSS color"
-      let st ← a.style 2
-      a.checkNoExtra 3
-      return (.edgeColor f c st, scope)
+      let p ← collectStyleArgs a 1 ["lineStyle"] (flags := true)
+      if p.line.isNone && p.showLabel.isNone then
+        throwErrorAt head m!"edgeStyle sets nothing; usage: {a.usage}"
+      return (.edgeStyle f p.line p.showLabel, scope)
     | "hideField" => do
       let a := mkArgs "hideField <field>"
       let f ← elabFieldName scope (← a.ident 0 "a relation name")
@@ -263,13 +336,6 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
       let f ← elabFieldName scope (← a.ident 0 "a relation name")
       a.checkNoExtra 1
       return (.attribute f, scope)
-    | "icon" => do
-      let a := mkArgs "icon <selector> <path> [labels]"
-      let s ← sel a 0 .unary
-      let p ← a.str 1 "an icon path"
-      let labels ← a.flagIdent 2 "labels"
-      a.checkNoExtra 3
-      return (.icon s p labels, scope)
     | "tag" => do
       let a := mkArgs "tag <selector> <name> <value>"
       let s ← sel a 0 .unary
@@ -278,25 +344,22 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
       a.checkNoExtra 3
       return (.tag s n v, scope)
     | "inferredEdge" => do
-      let a := mkArgs "inferredEdge <name> <selector> [<css-color>] [solid|dashed|dotted]"
+      let a := mkArgs "inferredEdge <name> <selector> (lineStyle <color> \
+        [solid|dashed|dotted] [<weight>])?"
       let n := (← a.ident 0 "an edge name").getId.toString
-      let s ← sel a 1 .pair
-      let colorGiven := (a.str? 2).isSome
-      let c := (a.str? 2).getD "#000000"
-      let st ← a.style (if colorGiven then 3 else 2)
-      a.checkNoExtra (if colorGiven then 4 else 3)
-      return (.inferredEdge n s c st, scope.introduce n 2)
+      let s ← sel a 1 .edge
+      let p ← collectStyleArgs a 2 ["lineStyle"]
+      return (.inferredEdge n s p.line, scope.introduce n 2)
     | "flag" => do
       let a := mkArgs "flag <name>"
       let n := (← a.ident 0 "a flag name").getId.toString
       a.checkNoExtra 1
       return (.flag n, scope)
     | _ =>
-      throwErrorAt head m!"unknown Spytial op '{name}'; known ops: align, atomColor, \
-        attribute, cyclic, edgeColor, flag, group, hideAtom, hideField, icon, \
+      throwErrorAt head m!"unknown Spytial op '{name}'; known ops: align, atomStyle, \
+        attribute, cyclic, edgeStyle, flag, group, hideAtom, hideField, \
         inferredEdge, orientation, size, tag"
 
-/-- Elaborate an op list left to right, threading spec-introduced names. -/
 meta def elabSpytialOps (scope : SelScope) (ops : Array (TSyntax `spytial_op)) :
     TermElabM SpytialSpec := do
   let mut scope := scope
@@ -307,15 +370,11 @@ meta def elabSpytialOps (scope : SelScope) (ops : Array (TSyntax `spytial_op)) :
     scope := scope'
   return spec.toList
 
-/-- The scope for a `with [...]` op list: the head of the term's type when it
-    has one — seeded with the type's own arguments, so a `List Node` root
-    admits `Node`'s vocabulary — else a fully lenient scope (everything warns,
-    nothing errors). -/
+/-- A term whose type has no head constant gets a fully lenient scope. -/
 meta def scopeForExpr (e : Expr) : MetaM SelScope := do
-  let ty ← Meta.whnf (← inferType e)
-  match ty.getAppFn with
-  | .const n _ => SelScope.ofType n (seeds := ← typeConstArgHeads ty)
-  | _ => return { root := `_anonymous, lenient := true }
+  match ← typeHead? (← inferType e) with
+  | some n => SelScope.ofType n
+  | none => return { root := `_anonymous, lenient := true }
 
 /-! ## Widget payload
 
@@ -332,19 +391,16 @@ private meta def lookupTypeSpec (e : Expr) : MetaM (Option SpytialSpec) := do
   | .const n _ => do
     let env ← getEnv
     if isStructure env n then
-      -- Walk the structure parent chain (C3 linearization, nearest-first)
+      -- parents come nearest-first; compose root-first, self last
       let parents ← getAllParentStructures n
-      -- Root-first order, self last
       let allNames := parents.reverse.toList ++ [n]
       match allNames.filterMap (getSpytialSpec? env ·) with
       | [] => return none
       | specs => return some specs.flatten
     else
-      -- Plain inductive — direct lookup
       return getSpytialSpec? env n
   | _ => return none
 
-/-- Elaborate a term to a fully instantiated expression. -/
 private meta def elabTermInstantiated (t : Syntax) : TermElabM Expr := do
   let e ← Term.elabTerm t none
   Term.synthesizeSyntheticMVarsNoPostponing
@@ -356,31 +412,15 @@ private meta def elabRelationalized (t : Syntax) (cfg : WalkConfig := {}) :
   let e ← elabTermInstantiated t
   return (e, ← relationalize e cfg)
 
-/-- Seed relations the type declares but this value happens not to exercise,
-    as empty. A selector naming an absent constructor's field (`err` in a trace
-    with no internal errors) then evaluates to the empty set instead of
-    tripping the engine's unresolved-name warning — so one spec serves every
-    value of the type. -/
-private meta def seedDeclaredRelations (scope : SelScope)
-    (di : JsonDataInstance) : JsonDataInstance :=
-  let present := di.relations.map (·.name)
-  let missing := scope.rels.toArray.filter fun (r, _) =>
-    r != "scrutinee" && !present.contains r
-  let seeded := missing.map fun (r, owner) =>
-    let sig := shortName owner
-    { id := r, name := r, types := #[sig, sig], tuples := #[] : JsonRelation }
-  { di with relations := di.relations ++ seeded }
-
-/-- Elaborate a term and resolve its layout spec: an explicit `with [<ops>]`
-    overrides a spec attached to the term's type. The composed spec is rendered
-    once here, at payload-build time. -/
+/-- An explicit `with [<ops>]` overrides the type's attached spec. The spec is
+    rendered to its wire string once, here. -/
 private meta def elabSpytialPayload (t : Syntax) (ops? : Option (Array (TSyntax `spytial_op)))
     (cfg : WalkConfig) : TermElabM (JsonDataInstance × Option String) := do
   let (e, di) ← elabRelationalized t cfg
-  let scope ← scopeForExpr e
-  let di := seedDeclaredRelations scope di
   let spec? ← match ops? with
-    | some ops => pure (some (← elabSpytialOps scope ops))
+    | some ops => do
+      let scope ← scopeForExpr e
+      pure (some (← elabSpytialOps scope ops))
     | none => lookupTypeSpec e
   return (di, spec?.map SpytialSpec.render)
 
@@ -393,15 +433,13 @@ private meta def spytialProps (di : JsonDataInstance) (cndSpec? : Option String)
     | none => []
 
 /-- The payload `#spytial` hands the infoview. Public so out-of-tree frontends
-    (the render tests, document backends) render what the infoview does rather
-    than reassembling it. -/
+    render what the infoview does rather than reassembling it. -/
 public meta def spytialPayloadProps (t : Syntax)
     (ops? : Option (Array (TSyntax `spytial_op)) := none) (cfg : WalkConfig := {}) :
     TermElabM Json := do
   let (di, cndSpec?) ← elabSpytialPayload t ops? cfg
   return spytialProps di cndSpec?
 
-/-- Decompose an optional `(" with " "[" spytial_op,* "]")?` node into its ops. -/
 private meta def optionalOps (stx : Syntax) : Option (Array (TSyntax `spytial_op)) :=
   if stx.getNumArgs == 0 then none
   else some (stx[2].getSepArgs.map (⟨·⟩))
@@ -414,7 +452,7 @@ private meta def optionalOps (stx : Syntax) : Option (Array (TSyntax `spytial_op
     ```
     #spytial myTree with [
       orientation left left below,
-      atomColor leaf "#0066ff"
+      atomStyle leaf "#0066ff"
     ]
     ```
 
@@ -444,10 +482,9 @@ meta def elabSpytialCmd : CommandElab := fun
     ]
     ```
 
-    Selectors and field names are checked against the type's data vocabulary
-    (its reachable constructors, fields, and field types), and the target name
-    resolves like any Lean name — `open` works, and renaming the type or a
-    field breaks the spec loudly at compile time. -/
+    Selectors and field names are checked against the type's data vocabulary.
+    The target resolves like any Lean name, so `open` works and renaming the
+    type or a field causes a compile error. -/
 syntax (name := spytialSpecCmd) "spytial_spec " ident " [" spytial_op,* "]" : command
 
 @[command_elab spytialSpecCmd]
@@ -494,9 +531,8 @@ meta def elabSpytialRelationalizerCmd : CommandElab := fun
 
 /-! ## Debugging commands -/
 
-/-- `#spytial.spec <term> with [<ops>]` prints the generated spec string (JSON,
-    which is valid YAML for spytial-core's parser). Useful for debugging whether
-    the spec is what you expect. -/
+/-- `#spytial.spec <term> with [<ops>]` prints the spec string handed to
+    spytial-core. Useful for debugging whether the spec is what you expect. -/
 syntax (name := spytialSpecDebug) "#spytial.spec " term " with " "[" spytial_op,* "]" : command
 
 @[command_elab spytialSpecDebug]

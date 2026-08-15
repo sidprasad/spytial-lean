@@ -80,9 +80,6 @@ public meta structure WalkState where
   /-- Exact-occurrence shortcut for `.eqv` types: a structurally identical
       subterm rejoins its group without re-evaluating the relation. -/
   eqvSeen : ExprStructMap String := {}
-  /-- Per-walk cache: whnf'd type → its `Repr` instance, when usable for leaf
-      labels (`none` records both "no instance" and "failed to evaluate"). -/
-  reprInstCache : ExprStructMap (Option Expr) := {}
 
 /-- Generate a fresh atom ID. -/
 public meta def WalkState.freshId (s : WalkState) : String × WalkState :=
@@ -99,6 +96,14 @@ public meta def WalkState.addTuple (s : WalkState) (relName : String) (types : A
   let existing := s.relations.getD relName (types, #[])
   { s with relations := s.relations.insert relName (existing.1, existing.2.push tuple) }
 
+/-- Register a relation with no tuples, leaving an existing one alone. An empty
+    extension is content — a relation that decidably never holds — not the same
+    thing as a relation nobody computed. -/
+public meta def WalkState.addRelation (s : WalkState) (relName : String)
+    (types : Array String) : WalkState :=
+  if s.relations.contains relName then s
+  else { s with relations := s.relations.insert relName (types, #[]) }
+
 /-- Convert accumulated state to a JsonDataInstance. -/
 public meta def WalkState.toDataInstance (s : WalkState) : JsonDataInstance :=
   let relations := s.relations.toArray.map fun (name, types, tuples) =>
@@ -109,6 +114,9 @@ public meta def WalkState.toDataInstance (s : WalkState) : JsonDataInstance :=
 public meta structure WalkConfig where
   /-- When true, skip Prop-typed fields (data mode). When false, show them (proof mode). -/
   filterProofs : Bool := true
+  /-- Largest domain product a function tabulates into; over it, the function
+      stays a leaf. -/
+  maxTableTuples : Nat := 512
 
 /-- The ambient walk mode (the doc's walk-modes table). Identity is per-type
     and declared; the mode is per-subtree and contextual — it decides only
@@ -133,8 +141,7 @@ public meta structure WalkCtx where
       equality only, never bare hash. -/
   ancestors : Array (Expr × String) := #[]
 
-/-- Whether an argument is erased at runtime — a proof or a type. Delegates to
-    the shared `isProofLikeType`, so the walker and the static checker agree. -/
+/-- Whether an argument is erased at runtime — a proof or a type. -/
 public meta def isProofArg (e : Expr) : MetaM Bool := do
   isProofLikeType (← inferType e)
 
@@ -164,11 +171,9 @@ public meta def getSpytialRelationalizerName? (env : Environment) (typeName : Na
 public meta def setSpytialRelationalizer (typeName declName : Name) : CoreM Unit :=
   modifyEnv fun env => spytialRelationalizerExt.addEntry env (typeName, declName)
 
-/-- Session-local cache of *compiled* relationalizer functions keyed by def name
-    together with a hash of the def's body, so a def is compiled once per distinct
-    body per process: an interactive body edit (same name, new body) recompiles
-    rather than serving the stale closure. The persistent extension is the source
-    of truth; this only memoizes the `evalExpr`. -/
+/-- Session-local memo of compiled relationalizers, keyed by def name + body
+    hash so an interactive body edit recompiles instead of serving the stale
+    closure. -/
 public meta initialize spytialRelationalizerCache :
     IO.Ref (Std.HashMap Name (UInt64 × CustomRelationalizer)) ← IO.mkRef {}
 
@@ -176,9 +181,8 @@ public meta initialize spytialRelationalizerCache :
 public meta unsafe def getSpytialRelationalizerImpl (typeName : Name) :
     MetaM (Option CustomRelationalizer) := do
   let some declName := getSpytialRelationalizerName? (← getEnv) typeName | return none
-  -- Key on the def's body hash, not just its name. A def with no accessible body
-  -- (`value? = none` — opaque, and `partial` defs' fixpoint wrappers) falls back
-  -- to hash 0, i.e. name-only caching with no edit detection.
+  -- `value? = none` (opaque, `partial` fixpoint wrappers) falls back to hash 0:
+  -- name-only caching, no edit detection
   let bodyHash := ((← getConstInfo declName).value?.map Expr.hash).getD 0
   if let some (h, fn) := (← spytialRelationalizerCache.get).get? declName then
     if h == bodyHash then return some fn
@@ -190,48 +194,6 @@ public meta unsafe def getSpytialRelationalizerImpl (typeName : Name) :
     persistent name registry, then evaluates the named def (memoized per process). -/
 @[implemented_by getSpytialRelationalizerImpl]
 public meta opaque getSpytialRelationalizer? (typeName : Name) : MetaM (Option CustomRelationalizer)
-
-/-- Try to enumerate all elements of a finite type.
-    Returns `some [(label, expr)]` for finite types, `none` otherwise. -/
-public meta def tryEnumerateDomain (ty : Expr) : MetaM (Option (Array (String × Expr))) := do
-  let ty ← Meta.whnf ty
-  match ty.getAppFn with
-  | .const ``Fin _ =>
-    let args := ty.getAppArgs
-    if h : args.size = 1 then
-      let nExpr ← Meta.whnf args[0]
-      match nExpr with
-      | .lit (.natVal n) =>
-        if n ≤ 20 then
-          let mut result : Array (String × Expr) := #[]
-          for i in [:n] do
-            -- Use OfNat instance to construct Fin element
-            let iExpr := mkNatLit i
-            let finExpr ← Meta.mkAppOptM ``OfNat.ofNat #[some ty, some iExpr, none]
-            result := result.push (toString i, finExpr)
-          return some result
-        else return none
-      | _ => return none
-    else return none
-  | .const ``Bool _ =>
-    return some #[("false", mkConst ``Bool.false), ("true", mkConst ``Bool.true)]
-  | .const indName _ =>
-    -- Check for zero-arity enumerative inductives
-    let env ← getEnv
-    if let some (.inductInfo ii) := env.find? indName then
-      if ii.numIndices == 0 && ii.numParams == 0 then
-        let allZeroArity := ii.ctors.all fun ctorName =>
-          match env.find? ctorName with
-          | some (.ctorInfo ci) => ci.numFields == 0
-          | _ => false
-        if allZeroArity then
-          let result := ii.ctors.toArray.map fun ctorName =>
-            (shortName ctorName, mkConst ctorName)
-          return some result
-        else return none
-      else return none
-    else return none
-  | _ => return none
 
 /-! ## Identity resolution
 
@@ -649,50 +611,108 @@ private meta def customDispatch? (eOrig e tyKey : Expr)
   modify fun s => { s with customSeen := s.customSeen.insert ⟨e⟩ id }
   return some id
 
-/-! ### Instance-evaluated leaf labels
+/-- The type sig of a relation's target column: the child's own, named exactly
+    as the child atom's `type` is. Falls back to the owner's on any meta
+    failure, so no value that walked before fails now. -/
+private meta def columnSig (owner : String) (child : Expr) : MetaM String := do
+  try
+    return (← sigOfType (← inferType child))
+  catch _ =>
+    return owner
 
-`Repr` is for labels, never identity: a non-injective `Repr` merging atoms
-would be the hash-collision bug all over again. But when a leaf's type
-declares `Repr` and the term is closed, the evaluated rendering beats the
-pretty-printed spelling. -/
+/-- The domain product as index tuples, lexicographic with the first binder
+    outermost. -/
+private meta def TabulationPlan.points (plan : TabulationPlan) : Array (Array Nat) := Id.run do
+  let mut points := #[(#[] : Array Nat)]
+  for b in plan.binders do
+    let mut next := #[]
+    for pt in points do
+      for i in [:b.elems.size] do
+        next := next.push (pt.push i)
+    points := next
+  return points
 
-private meta unsafe def evalFormatUnsafe (e : Expr) : MetaM Std.Format :=
-  Meta.evalExpr Std.Format (mkConst ``Std.Format) e
+/-- Read a point off the columns it indexes. -/
+private meta def pick [Inhabited α] (columns : Array (Array α)) (pt : Array Nat) : Array α :=
+  Id.run do
+    let mut picked := #[]
+    for col in [:pt.size] do
+      picked := picked.push columns[col]![pt[col]!]!
+    return picked
 
-/-- Evaluate a closed `Std.Format`-valued expression (leaf labels via `Repr`). -/
-@[implemented_by evalFormatUnsafe]
-private meta opaque evalFormat (e : Expr) : MetaM Std.Format
+/-- The verdict of a closed proposition: synthesize `Decidable p` and reduce the
+    instance to its constructor. Compiled evaluation of `decide p` is the one
+    fallback for an instance `whnf` leaves stuck. `none` — no instance, or
+    neither route settles it — is a genuine "undecided", never a guess. -/
+private meta def decideProp? (p : Expr) : MetaM (Option Bool) := do
+  try
+    let some inst ← Meta.synthInstance? (← mkAppM ``Decidable #[p]) | return none
+    match (← Meta.whnf inst).getAppFn with
+    | .const ``Decidable.isTrue _ => return some true
+    | .const ``Decidable.isFalse _ => return some false
+    | _ => evalBool? (← mkAppOptM ``Decidable.decide #[some p, some inst])
+  catch _ => return none
 
-/-- The `Repr` instance for the (whnf'd) type, synthesized at most once per
-    walk per type. -/
-private meta def getReprInst? (tyKey : Expr) : StateT WalkState MetaM (Option Expr) := do
-  if let some cached := (← get).reprInstCache[(⟨tyKey⟩ : ExprStructEq)]? then
-    return cached
-  let inst? ← try
-      synthInstance? (← mkAppM ``Repr #[tyKey])
-    catch _ => pure none
-  modify fun s => { s with reprInstCache := s.reprInstCache.insert ⟨tyKey⟩ inst? }
-  return inst?
+/-- Emit `relName` as the flat table over the enumerable domain product, in
+    lexicographic order with the first binder outermost; report whether it
+    fired.
 
-/-- Label for a leaf atom: `repr` evaluated when the term is closed and its
-    type declares it, otherwise the pretty-printed expression. A failing
-    evaluation disables `Repr` labels for the type for the rest of the walk. -/
-private meta def leafLabel (e tyKey : Expr) : StateT WalkState MetaM String := do
-  if isClosedValue e then
-    if let some inst ← getReprInst? tyKey then
-      try
-        let fmt ← evalFormat (← mkAppOptM ``repr #[none, some inst, some e])
-        return fmt.pretty
-      catch _ =>
-        modify fun s => { s with reprInstCache := s.reprInstCache.insert ⟨tyKey⟩ none }
-  ppLabel e
+    A data codomain gives `(owner, d₁, …, dₖ, result)`, every point a tuple. A
+    `Prop` codomain gives `(owner, d₁, …, dₖ)` — a proposition-valued function
+    *is* a relation, so its extension is where it decidably holds and there is
+    no result column. Domain elements are walked once per column and their ids
+    repeat across tuples, so whether a domain value and a result end up one atom
+    stays the identity layer's decision. -/
+private meta def tabulate? (cfg : WalkConfig) (recurse : Expr → StateT WalkState MetaM String)
+    (relName ownerSig ownerId : String) (value : Expr) : StateT WalkState MetaM Bool := do
+  let some plan ← tabulationPlan? (← inferType value) | return false
+  unless plan.size ≤ cfg.maxTableTuples do return false
+  -- an opaque or stuck function keeps its leaf
+  let fn@(.lam ..) ← Meta.whnf value | return false
+  let types := #[ownerSig] ++ (← plan.tailTypes.mapM (sigOfType ·))
+  let columns := plan.binders.map (·.elems.map (·.2))
+  let points := plan.points
+  match plan.kind with
+  | .data =>
+    let ids ← columns.mapM (·.mapM recurse)
+    for pt in points do
+      let resId ← recurse (← Meta.whnf (mkAppN fn (pick columns pt)))
+      let atoms := #[ownerId] ++ pick ids pt ++ #[resId]
+      modify fun s => s.addTuple relName types { atoms, types }
+    return true
+  | .prop =>
+    -- every point decides before any atom is walked, so an undecided point
+    -- bails the whole table without a trace: a missing tuple would assert a
+    -- non-relatedness nothing established
+    let mut holds := #[]
+    for pt in points do
+      let some verdict ← decideProp? (mkAppN fn (pick columns pt)) | return false
+      if verdict then holds := holds.push pt
+    modify (·.addRelation relName types)
+    -- only elements some true tuple names get walked: an element reachable
+    -- through no tuple is an orphan the two-pass reference prunes, and the
+    -- differential would split
+    let mut ids := columns.map (·.map fun _ => (none : Option String))
+    for pt in holds do
+      let mut atoms := #[ownerId]
+      for col in [:pt.size] do
+        let i := pt[col]!
+        let id ← match ids[col]![i]! with
+          | some id => pure id
+          | none => do
+            let id ← recurse columns[col]![i]!
+            ids := ids.set! col (ids[col]!.set! i (some id))
+            pure id
+        atoms := atoms.push id
+      modify fun s => s.addTuple relName types { atoms, types }
+    return true
 
 /-- Emit the atom for `e` (already whnf'd; id already allocated) and walk its
     children through `recurse` — the display dispatch shared by the fused
     walker and the two-pass reference. `recurse` closes over the child walk
     context (ambient mode, unfold-guard ancestors). -/
 private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkState MetaM String)
-    (e ty tyKey : Expr) (origName : Option Name) (atomId : String) :
+    (e ty : Expr) (origName : Option Name) (atomId : String) :
     StateT WalkState MetaM Unit := do
   match e with
   -- Nat literal
@@ -703,23 +723,15 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
   | .lit (.strVal str) =>
     modify fun s => s.addAtom { id := atomId, type := "String", label := s!"\"{str}\"" }
 
-  -- Lambda — try to enumerate finite domain, otherwise labeled node
-  | .lam binderName binderType _body _bi => do
+  -- Lambda — tabulate over an enumerable domain, otherwise labeled node
+  | .lam binderName _ _ _ => do
     let typeName ← sigOfType ty
     let label := match origName with
       | some n => shortName n
       | none => s!"λ {binderName}"
     modify fun s => s.addAtom { id := atomId, type := typeName, label := label }
-    -- Try finite enumeration of the domain
-    let domainElems ← tryEnumerateDomain binderType
-    match domainElems with
-    | some elems =>
-      for (elemLabel, elemExpr) in elems do
-        let result ← Meta.whnf (Expr.app e elemExpr)
-        let childId ← recurse result
-        modify fun s => s.addTuple elemLabel #[typeName, typeName]
-          { atoms := #[atomId, childId], types := #[typeName, typeName] }
-    | none => pure ()  -- non-finite domain, just a labeled node
+    -- no owning field here, so the function itself is column 0
+    let _ ← tabulate? cfg recurse "maps" typeName atomId e
 
   | _ => do
     -- Try to get the type name
@@ -741,15 +753,15 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
           let arg := dataArgs[i]!
           let isProof ← if cfg.filterProofs then isProofArg arg else pure false
           unless isProof do
-            let childId ← recurse arg
             let fieldName := fieldRelName ctorShortName binderNames i
-            modify fun s => s.addTuple fieldName #[typeName, typeName]
-              { atoms := #[atomId, childId], types := #[typeName, typeName] }
-      -- Is it a stuck match? (whnf left a matcher application in place because the
-      -- discriminant is a hole or hypothesis, so iota could not fire.) Render a
-      -- `match` node with edges into the discriminants — the parts that carry data —
-      -- instead of one opaque pretty-printed blob. Motive and alternatives are
-      -- elaboration plumbing and are skipped.
+            unless ← tabulate? cfg recurse fieldName typeName atomId arg do
+              let childId ← recurse arg
+              let types := #[typeName, ← columnSig typeName arg]
+              modify fun s => s.addTuple fieldName types
+                { atoms := #[atomId, childId], types := types }
+      -- stuck match (iota can't fire on a hole/hypothesis discriminant): one
+      -- ternary `scrutinee` (match, position, discriminant) whatever the
+      -- discriminant count; motive and alternatives are plumbing
       else if let some minfo := getMatcherInfoCore? env fnName then
         let args := e.getAppArgs
         if args.size == minfo.arity then
@@ -758,12 +770,13 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
             let discr := args[minfo.getFirstDiscrPos + i]!
             let isProof ← if cfg.filterProofs then isProofArg discr else pure false
             unless isProof do
+              let posId ← recurse (mkRawNatLit i)
               let childId ← recurse discr
-              let relName := if minfo.numDiscrs == 1 then "scrutinee" else s!"scrutinee_{i}"
-              modify fun s => s.addTuple relName #[typeName, typeName]
-                { atoms := #[atomId, childId], types := #[typeName, typeName] }
+              let types := #[typeName, "Nat", ← columnSig typeName discr]
+              modify fun s => s.addTuple "scrutinee" types
+                { atoms := #[atomId, posId, childId], types := types }
         else
-          -- Partially applied (or over-applied) matcher — keep the generic-leaf path.
+          -- partially/over-applied matcher: generic leaf
           let label ← ppLabel e
           modify fun s => s.addAtom { id := atomId, type := typeName, label := label }
       -- Is it a structure projection?
@@ -777,17 +790,19 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
           let isProof ← if cfg.filterProofs then isProofArg proj else pure false
           unless isProof do
             let projReduced ← Meta.whnf proj
-            let childId ← recurse projReduced
             let fn := toString fieldName
-            modify fun s => s.addTuple fn #[typeName, typeName]
-              { atoms := #[atomId, childId], types := #[typeName, typeName] }
+            unless ← tabulate? cfg recurse fn typeName atomId projReduced do
+              let childId ← recurse projReduced
+              let types := #[typeName, ← columnSig typeName projReduced]
+              modify fun s => s.addTuple fn types
+                { atoms := #[atomId, childId], types := types }
       else do
         -- Generic function application or unknown — leaf atom
-        let label ← leafLabel e tyKey
+        let label ← ppLabel e
         modify fun s => s.addAtom { id := atomId, type := typeName, label := label }
     | _ => do
       -- Not a const application — leaf atom
-      let label ← leafLabel e tyKey
+      let label ← ppLabel e
       modify fun s => s.addAtom { id := atomId, type := typeName, label := label }
 
 /-- Walk a Lean expression and produce atoms + relations.
@@ -840,7 +855,7 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
   -- this atom.
   registerIdentity verdict e atomId
   emitNode cfg (fun c => walkExpr cfg c { mode, ancestors := ctx.ancestors.push (e, atomId) })
-    e ty tyKey origName atomId
+    e ty origName atomId
   return atomId
 
 /-- Walk an expression and produce a complete JsonDataInstance. -/
@@ -893,7 +908,7 @@ public meta partial def referenceRelationalize (e : Expr) (cfg : WalkConfig := {
     set s
     records.modify (·.push { atomId, expr := e, tyKey, mode })
     emitNode cfg (fun c => refWalk c { mode, ancestors := ctx.ancestors.push (e, atomId) })
-      e ty tyKey origName atomId
+      e ty origName atomId
     return atomId
   let (rootId, s) ← (refWalk e {}).run {}
   -- Pass 2: group occurrences by (type, identity), first occurrence the
@@ -920,7 +935,9 @@ public meta partial def referenceRelationalize (e : Expr) (cfg : WalkConfig := {
       | some src => if mapId src != src then none
                     else some { t with atoms := t.atoms.map mapId }
       | none => some t
-    if ts.isEmpty then none else some { r with tuples := ts }
+    -- a relation born empty (a decidable table that never holds) is content;
+    -- only one emptied by the merge is a casualty
+    if ts.isEmpty && !r.tuples.isEmpty then none else some { r with tuples := ts }
   -- Collect atoms orphaned by the merge: keep what is reachable from the root
   -- (source → endpoints per tuple). Note a deliberately-disconnected atom a
   -- custom relationalizer might emit would be dropped here; the oracle does
@@ -942,7 +959,7 @@ public meta partial def referenceRelationalize (e : Expr) (cfg : WalkConfig := {
   let atoms' := di.atoms.filter fun a => mapId a.id == a.id && reach.contains a.id
   let rels' := rels1.filterMap fun r =>
     let ts := r.tuples.filter fun t => (t.atoms[0]?.map reach.contains).getD true
-    if ts.isEmpty then none else some { r with tuples := ts }
+    if ts.isEmpty && !r.tuples.isEmpty then none else some { r with tuples := ts }
   return (root', { atoms := atoms', relations := rels' })
 
 end SpytialLean

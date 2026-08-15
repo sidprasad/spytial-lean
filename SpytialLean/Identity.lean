@@ -131,8 +131,9 @@ public inductive IdentityVia (α : Type u) where
   /-- Decider: reuse your equality, e.g. `(· == ·)`. Must be an equivalence
       relation — reflexive, symmetric, transitive. (Deliberately not
       `LawfulBEq`, which demands agreement with `=` and would outlaw exactly
-      the coarser-than-structural quotients this design exists for.) Cost: one
-      comparison per existing group of the type, vs one lookup. -/
+      the coarser-than-structural quotients this design exists for.) Cost: up
+      to one comparison per existing group of the type — linear in the group
+      count, worst case — vs one lookup. -/
   | eqv (r : α → α → Bool)
 
 /-- The classifier, when this presentation has one. Derived instances dispatch

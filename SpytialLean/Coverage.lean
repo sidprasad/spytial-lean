@@ -56,9 +56,8 @@ meta def coverageReport (root : Name) : MetaM (Array (Name × Bool)) := do
     unless (← isDataType ii) do continue
     let directlyCovered := (getSpytialSpec? env n).isSome || (getSpytialOptOut? env n).isSome
       || (getSpytialRelationalizerName? env n).isSome
-    -- A structure also renders — and so counts — via an inherited spec, mirroring
-    -- `lookupTypeSpec`'s parent walk (Command.lean). Spec inheritance only:
-    -- relationalizers and opt-outs do not inherit.
+    -- mirrors `lookupTypeSpec`'s parent walk; spec inheritance only —
+    -- relationalizers and opt-outs do not inherit
     let covered ← do
       if directlyCovered || !isStructure env n then
         pure directlyCovered
@@ -105,8 +104,7 @@ meta def elabSpytialCoverageCmd : CommandElab := fun stx => do
   let uncovered := (report.filterMap fun (n, c) => if c then none else some n)
     |>.qsort (fun a b => decide (toString a < toString b))
   if total == 0 then
-    -- Nothing matched the root: a mistyped, renamed, or unimported namespace
-    -- must not silently pass — reporting 0/0 as "covered" is a false gate.
+    -- 0/0 must not pass as covered: the root may be mistyped or unimported
     let msg := m!"no Spytial coverage data types found under '{root}' — check the \
       spelling and that the namespace is imported"
     if strict then throwError msg else logWarning msg

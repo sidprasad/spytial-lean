@@ -15,12 +15,16 @@ cases/<name>/props.json          -- via spytialPayloadProps, the same entry
     │                               point #spytial hands the infoview
     │  lake build renderHarnessJs
     ▼
-dist/harness.js                  -- entry.mjs + widget/dist/spytialWidget.js
+render/dist/harness.js           -- render/entry.mjs + widget/dist/spytialWidget.js
     │                               + react + the spytial-core bundles
-    │  render.spec.mjs (Playwright, in ./Dockerfile's container)
+    │  render.spec.mjs (Playwright, in render/Dockerfile's container)
     ▼
 baseline/<name>.png (committed)  +  out/<name>/{page.html,render.svg,metrics.json}
 ```
+
+The harness itself — bundle, container, and the standalone `render.mjs` renderer
+— is `render/`, which downstream repos consume against their own case dumps.
+Only the cases, the baselines, and the Playwright layer live here.
 
 The harness mounts the compiled component the infoview embeds, resolves
 spytial-core through the same `widget/rollup.virtual.mjs`, and builds props from
@@ -69,7 +73,7 @@ case here really does retire its test.
 
 ## Settle protocol
 
-`entry.mjs` is passive: it mounts the widget and records the graph element's
+`render/entry.mjs` is passive: it mounts the widget and records the graph element's
 `layout-complete` / `constraint-error` / `layout-generation-error` events on a
 document capture listener. The spec polls for those from the node side, because
 headless Chromium throttles in-page timers while CDP evaluates always run, then

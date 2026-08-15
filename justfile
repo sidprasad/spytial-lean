@@ -17,7 +17,7 @@ demos:
 
 # build the render container (layer-cached; a no-op once warm)
 render-image:
-    {{container}} build -q -t {{render_image}} tests/render
+    {{container}} build -q -t {{render_image}} render
 
 # image-snapshot render tests (containerized; see tests/render/README.md)
 render *args: render-image

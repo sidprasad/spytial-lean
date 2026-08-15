@@ -81,12 +81,11 @@ def t := Tree.node (.leaf 1) (.node (.leaf 2) (.leaf 3))
 ]
 ```
 
-Every name is **checked at elaboration time** against the type's data
-vocabulary: `left`/`right` must be relations the relationalizer can emit for
-`Tree` (they come from your constructor parameter names), and `Nat` resolves
-like any Lean name. A typo is a compile error with a suggestion —
-`unknown name 'lft' (did you mean 'left'?)` — not a silently empty selection
-at render time.
+The elaborator checks each name against the data vocabulary of the type.
+`left` and `right` must be relations of `Tree`; relation names come from the
+constructor parameter names. `Nat` resolves like a Lean name. A wrong name
+causes a compile error with a suggestion: `unknown name 'lft' (did you mean
+'left'?)`.
 
 ### Attaching specs to types
 
@@ -103,8 +102,8 @@ spytial_spec Tree [
 #spytial t
 ```
 
-The target resolves like any Lean name (`open` works), and the spec is stored
-structurally in the environment, so it survives into downstream modules. An
+The target resolves like a Lean name, so `open` works. The spec is stored
+structurally in the environment and survives into downstream modules. An
 explicit `with [...]` overrides the attached spec.
 
 ### Red-Black Tree example
@@ -125,8 +124,8 @@ spytial_spec RBNode [
   orientation left left below,
   orientation right right below,
   hideAtom Color + Nat,
-  atomColor {x : RBNode | @:(x.color) = red} "red",
-  atomColor {x : RBNode | @:(x.color) = black} "black"
+  atomStyle {x : RBNode | @:(x.color) = red} (borderStyle "red"),
+  atomStyle {x : RBNode | @:(x.color) = black} (borderStyle "black")
 ]
 
 def myRBTree : RBNode :=
@@ -141,9 +140,9 @@ def myRBTree : RBNode :=
 #spytial myRBTree
 ```
 
-Note `red` and `black` in the label comparisons: those are the actual
-`Color.red`/`Color.black` constructors, resolved and checked — renaming a
-constructor breaks the spec loudly at compile time.
+The `red` and `black` in the label comparisons are the `Color.red` and
+`Color.black` constructors, resolved and checked. Renaming a constructor
+causes a compile error in the spec.
 
 ### Debugging
 
@@ -177,102 +176,14 @@ type nobody has visualized yet.
 
 ## The selector language
 
-Selectors replicate Forge's relational expression/formula grammar, embedded as
-Lean syntax (categories `spytial_sel` and `spytial_sel_form`).
+Selectors replicate Forge's relational expression/formula grammar, embedded
+as Lean syntax: `hideAtom {x : RBNode | @:(x.color) = red}` is checked
+syntax, not a string. Every name resolves against the target type's data
+vocabulary and every operator's arity is checked, so a typo or a renamed
+field is a compile error, not an empty selection at render time.
 
-**Expressions** (`spytial_sel`):
-
-| Form | Meaning |
-|------|---------|
-| `left`, `app_0` | a field relation (arity 2: parent → child) |
-| `RBNode`, `String` | a type sig (arity 1: all atoms of that type) |
-| `a + b`, `a - b`, `a & b` | union, difference, intersection |
-| `a->b` | product |
-| `a . b` (or a glued `x.v`) | relational join |
-| `a[b, …]` | box join (`a[b] ≡ b.a`) |
-| `^a`, `*a`, `~a` | transitive/reflexive-transitive closure, transpose |
-| `{x, y : T \| φ}` | set comprehension (arity = number of binders) |
-| `@:e`, `@str:e`, `@bool:e` | label projections (string/bool value reads) |
-| `univ`, `iden` | the universe and identity relations |
-
-**Formulas** (comprehension/quantifier bodies). Every connective has a symbolic
-and a word spelling; both lower identically:
-
-| Tier (loosest → tightest) | Spellings |
-|---|---|
-| disjunction | `\|\|` / `or` |
-| exclusive or | `xor` |
-| bi-implication | `<=>` / `iff` |
-| implication (+ `else`) | `=>` / `implies` |
-| conjunction | `&&` / `and` |
-| negation | `!` / `not` |
-| comparison | `in`, `=`, `!=`, `!in`, `not in`, `ni`, `!ni`, `not ni`; int-only `< > <= >= =<` |
-| multiplicity | `some`/`no`/`lone`/`one <sel>` |
-
-Note the **Forge precedence**: implication binds *tighter* than `or`/`iff` (so
-`a \|\| b => c` means `a \|\| (b => c)`) and is the only right-associative
-connective (`a => b => c` is `a => (b => c)`).
-
-**Quantifiers** bind variables over a domain: `all/no/some/lone/one [disj]
-x, y : A, z : B | φ` (comma name-groups, comma typed-groups, a leading `disj`).
-Longest-match separates the quantifier `some x : A | φ` from the multiplicity
-`some e`.
-
-**`let x = e, … | φ`** is desugared by substitution at elaboration (a later
-comprehension/quantifier binder shadows the `let`, and a substitution an inner
-binder would capture is a compile error), so the engine never sees a `let`.
-
-**Integer layer.** `#e` (cardinality), integer literals (with `-`), `@num:e`
-(numeric projection), the builtins `add subtract multiply divide remainder abs
-sign` and aggregators `min[e] max[e]` (arity-1 int column, applied through box
-join), the `sum x : A | ie` aggregation quantifier, and the int comparisons
-form a small typed sub-language: integer-typed positions accept exactly these,
-and tuple positions reject them with a type error — so counting selectors like
-`#{x : T | φ} = 2` and `@num:(x.key) < 5` work, while `some #e` is a compile
-error rather than a silent falsehood.
-
-Label comparisons accept nullary constructors (`@:x = nil`), string/numeric
-literals, another projection (`@:vr = @:(y.v)`), or — opposite a `@bool:`
-projection — the boolean literals `true`/`false`. A comparison is exact equality
-against the label the relationalizer gave the atom, and each literal form lowers
-to the spelling that makes that equality hold for the value written: `@:x = nil`
-matches the atoms built by the `nil` constructor, and `@str:(x.v) = "abc"` the
-`String` atom holding `abc`. (A string literal carrying a character SGQ cannot
-spell — a control character — is a compile error.) `ni` and its negations desugar
-to Forge's flipped subset (`a ni b ≡ b in a`, `a !ni b ≡ b !in a`), so they lower
-to ordinary subset constraints.
-
-### Accepted, but currently warns (upstream engine issues)
-
-A few forms Forge parses are mislowered by the current spytial-core (SGQ)
-evaluator. They are accepted and emitted with the Forge semantics, but the
-elaborator attaches a warning naming the engine bug: `<:` / `:>` / `++` (the
-engine throws at render), `A one -> lone B` arrow-multiplicity annotations
-(silently dropped), `` `atom `` backquote literals (a placeholder marker), and
-`sum[e]` (evaluates to `∅`).
-
-### What gets checked
-
-The elaborator computes the target type's **data vocabulary** — the reachable
-closure of type sigs, field-relation names, and nullary-constructor labels
-that the relationalizer can emit — and checks every identifier and every
-operator's arity against it. Op positions have arity expectations too:
-`hideAtom`/`atomColor` select atoms (arity 1), `orientation`/`align` select
-pairs, so `hideAtom left` is a compile error rather than a diagram that
-silently hides nothing.
-
-Checking is **strict** exactly when the vocabulary is closed (a monomorphic
-type built from monomorphic fields). A type parameter, function-typed field,
-or custom relationalizer opens the world: unknown names downgrade to warnings
-there, and resolved types (like `Nat` in a `Tree α` spec) pass silently.
-
-Derived type and field names are **short names** (the last component — `T` for
-`A.T`, `left` for a `left` field), a convention shared with the Rust and Python
-Spytial implementations. At render time a selector like `hideField left` matches
-*every* relation with that short name, so two constructors that each have a
-`left` field are styled together. The compile-time checker, by contrast, resolves
-and hovers one specific declaration — so on a short-name collision the runtime
-over-matches relative to what the checker points at.
+The grammar (EBNF), the integer/value typing rules, and the checking
+semantics are in [docs/selectors.md](docs/selectors.md).
 
 ## Available operations
 
@@ -286,7 +197,7 @@ Ops go in a bracketed, comma-separated list after `spytial_spec <Type>` or
 | `orientation <sel> <dir>+` | Position edge targets relative to sources |
 | `align <sel> horizontal\|vertical` | Align selected pairs |
 | `cyclic <sel> [clockwise\|counterclockwise]` | Arrange elements in a circle |
-| `group <sel> <name> [edge]` | Group elements with a bounding box |
+| `group <sel> <name> [(addEdge <dir> [(lineStyle …)])]` | Group elements with a bounding box |
 | `hideAtom <sel>` | Hide elements matching the selector |
 | `size <sel> <width> <height>` | Set node dimensions |
 
@@ -294,14 +205,25 @@ Ops go in a bracketed, comma-separated list after `spytial_spec <Type>` or
 
 | Operation | Description |
 |-----------|-------------|
-| `atomColor <sel> <css-color>` | Color nodes |
-| `edgeColor <field> <css-color> [style]` | Color a relation's edges |
+| `atomStyle <sel> <block>+ [labels\|noLabels]` | Style nodes |
+| `edgeStyle <field> (lineStyle …) [labels\|noLabels]` | Style a relation's edges |
 | `hideField <field>` | Hide all edges for a relation |
 | `attribute <field>` | Display a relation as a node label instead of an edge |
-| `icon <sel> <path> [labels]` | Set a custom icon on nodes |
 | `tag <sel> <name> <value>` | Add computed attributes to nodes |
-| `inferredEdge <name> <sel> [<css-color>] [style]` | Add edges that don't exist in the data |
+| `inferredEdge <name> <sel> [(lineStyle …)]` | Add edges that don't exist in the data |
 | `flag <name>` | Set a boolean flag (e.g., `hideDisconnected`) |
+
+Style ops take parenthesized blocks, matching the rest of the Spytial
+ecosystem; block arguments are order-free (a string is the color or path, an
+ident the pattern or placement, a numeral the width or weight):
+
+- `(borderStyle <css-color> [<width>])` and `(fillStyle <css-color>)` — node
+  border and interior
+- `(iconStyle <path> [full\|badge])` — node icon; `full` fills the box,
+  `badge` is a corner marker; `labels`/`noLabels` controls the node label
+- `(lineStyle <css-color> [solid\|dashed\|dotted] [<weight>])` — edge lines
+- `(addEdge togroup\|fromgroup [(lineStyle …)])` — a drawn edge between a
+  group and its key
 
 `<field>` positions take a bare relation name, checked against the vocabulary.
 Group and inferred-edge names are in scope for later ops in the same spec.
@@ -310,14 +232,14 @@ Group and inferred-edge names are in scope for later ops in the same spec.
 
 Directions: `above`, `below`, `left`, `right`, `directlyAbove`,
 `directlyBelow`, `directlyLeft`, `directlyRight` · Alignment: `horizontal`,
-`vertical` · Rotation: `clockwise`, `counterclockwise` · Edge styles:
+`vertical` · Rotation: `clockwise`, `counterclockwise` · Line patterns:
 `solid`, `dashed`, `dotted`
 
 ## How it works
 
 1. **Relationalizer** (`SpytialLean/Relationalizer.lean`) — Walks the Lean `Expr` tree after WHNF reduction. Constructors become atoms (nodes), data arguments become relations (edges). Type and proof arguments are skipped.
 
-2. **Selector DSL** (`SpytialLean/Selector.lean`, `SelectorElab.lean`) — Selectors elaborate to a reified AST, checked against the vocabulary derived from `TypeShape` (the same naming logic the relationalizer uses, so the checker predicts exactly what the walker emits). Specs are stored structurally; the SGQ strings spytial-core evaluates are produced only in the widget payload.
+2. **Selector DSL** (`SpytialLean/Selector.lean`, `SelectorElab.lean`) — Selectors elaborate to a reified AST, checked against the vocabulary derived from `TypeShape`. The checker and the relationalizer share the naming logic, so the checker predicts what the walker emits. Specs are stored structurally; the SGQ strings are produced only in the widget payload.
 
 3. **Widget** (`widget/src/spytialWidget.tsx`) — A ProofWidgets4 widget module that loads spytial-core, generates a layout from the relational data + spec, and renders via the `webcola-cnd-graph` web component.
 
@@ -333,7 +255,7 @@ inductive Tree (α : Type) where
 
 This produces relations named `value`, `left`, `right`. Structure fields use their declared field names directly.
 
-If constructor arguments are unnamed (positional style `| node : Tree α → Tree α → Tree α`), the relationalizer falls back to `ctorName_index` (e.g., `node_0`, `node_1`). Either way the spec elaborator knows the real names — a wrong one is a compile error listing the vocabulary.
+If constructor arguments are unnamed (positional style `| node : Tree α → Tree α → Tree α`), the relationalizer falls back to `ctorName_index` (e.g., `node_0`, `node_1`). The spec elaborator knows the real names either way; a wrong one is a compile error that lists the vocabulary.
 
 ### Error handling
 
@@ -344,8 +266,8 @@ When constraints are unsatisfiable, the widget:
 - Reports selector evaluation errors separately
 
 This uses spytial-core's `ErrorMessageModal` component directly. Static
-selector errors (unknown names, arity mismatches) never reach the widget —
-they are Lean elaboration errors.
+selector errors (unknown names, arity mismatches) are Lean elaboration errors
+and never reach the widget.
 
 ## Project structure
 
@@ -365,7 +287,6 @@ tests/
   TypeShapeTest.lean  -- Naming + walker unit tests
   SelectorTest.lean   -- Golden lowering + checker diagnostics tests
   CoverageTest.lean   -- #spytial.coverage diagnostics tests
-  render/             -- Image-snapshot tests of the widget in headless Chromium
 widget/
   src/spytialWidget.tsx  -- React component rendering the diagram
   rollup.config.js       -- Bundles spytial-core into the widget
@@ -393,7 +314,7 @@ structure ElectricCar extends Vehicle where
 
 spytial_spec ElectricCar [
   attribute range,
-  atomColor ElectricCar "#2196F3"
+  atomStyle ElectricCar (borderStyle "#2196F3")
 ]
 
 -- Effective spec = Vehicle's ops ++ ElectricCar's ops
