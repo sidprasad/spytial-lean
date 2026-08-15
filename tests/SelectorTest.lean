@@ -234,7 +234,7 @@ info: {"directives": [{"hideField": {"field": "val"}}],
 
 /-- error: constructor 'SRB.nil' belongs to 'SRB', which cannot occur in values of 'SBDD' -/
 #guard_msgs in
-#spytial.spec sExample with [atomStyle {x : SBDD | @:x = SRB.nil} (borderStyle "red")]
+#spytial.spec sExample with [atomStyle {x : SBDD | @:x = «SRB.nil»} (borderStyle "red")]
 
 /-- error: this position selects atoms (arity 1), but the selector has arity 2 -/
 #guard_msgs in
@@ -374,20 +374,20 @@ end SelQual
 
 public def selQualOuter : SelQual.Outer := { inner := { someField := 0 } }
 
--- A qualified, un-opened type name resolves (the whole name is the type).
+-- A qualified, un-opened type name resolves when escaped: the dot is the join
+-- operator, so a dotted Lean name arrives as one escaped component.
 /--
 info: {"constraints": [{"hideAtom": {"selector": "Inner"}}]}
 -/
 #guard_msgs in
-#spytial.spec selQualOuter with [hideAtom SelQual.Inner]
+#spytial.spec selQualOuter with [hideAtom «SelQual.Inner»]
 
--- A glued join through a qualified type — leading `SelQual.Inner` is the type,
--- trailing `someField` folds as a join.
+-- Joining off an escaped qualified type.
 /--
 info: {"constraints": [{"hideAtom": {"selector": "Inner.someField"}}]}
 -/
 #guard_msgs in
-#spytial.spec selQualOuter with [hideAtom SelQual.Inner.someField]
+#spytial.spec selQualOuter with [hideAtom «SelQual.Inner».someField]
 
 /-! ## Multiplicity formulas -/
 
@@ -718,24 +718,27 @@ info: {"constraints":
 #guard_msgs in
 #spytial.spec sExample with [hideAtom (lo.nope)]
 
-/-- error: 'tt' is a value; it has no fields to join -/
+/-- error: this position expects a relational expression, but the selector is a label/literal value -/
 #guard_msgs in
 #spytial.spec sExample with [hideAtom (lo.tt)]
 
--- Lean glues `a.b` into one ident and SGQ does not, so a glued join under a
--- unary operator means different things in the two languages, with no arity
--- mismatch to catch it. Rejected; both disambiguated spellings still lower.
+-- A selector ident is one component, so the dot is always the join operator and
+-- a unary operator binds tighter — `^lo.hi` is `(^lo).hi`, which is how SGQ
+-- reads the same text. Spacing carries no meaning.
 /--
-error: '^lo.hi' is ambiguous: it binds as '^(lo.hi)' here, but SGQ reads the same text as '(^lo). …'. Write '^lo . hi' for SGQ's reading, or '^(lo.hi)' for this one
+info: {"constraints":
+ [{"orientation": {"selector": "^lo.hi", "directions": ["directlyBelow"]}},
+  {"orientation": {"selector": "^lo.hi", "directions": ["directlyBelow"]}},
+  {"orientation": {"selector": "~lo.hi", "directions": ["directlyBelow"]}},
+  {"orientation": {"selector": "^(lo.hi)", "directions": ["directlyBelow"]}}]}
 -/
 #guard_msgs in
-#spytial.spec sExample with [orientation ^lo.hi directlyBelow]
-
-/--
-error: '~lo.hi' is ambiguous: it binds as '~(lo.hi)' here, but SGQ reads the same text as '(~lo). …'. Write '~lo . hi' for SGQ's reading, or '~(lo.hi)' for this one
--/
-#guard_msgs in
-#spytial.spec sExample with [orientation ~lo.hi directlyBelow]
+#spytial.spec sExample with [
+  orientation ^lo.hi directlyBelow,
+  orientation ^lo . hi directlyBelow,
+  orientation ~lo.hi directlyBelow,
+  orientation ^(lo.hi) directlyBelow
+]
 
 /--
 info: {"constraints":
@@ -994,10 +997,10 @@ public def sWeird : SWeird := .leaf
 
 The `.both` flip added `univ`/`iden`/`none`/`sum` keyword rules to the expression
 category. `sum` is only ever the long-form quantifier — bare `sum` fails the rule
-and falls to the ident, so a field named `sum` parses both glued (`x.sum`) and
-spaced (`X . sum`). A nullary `univ` would tie with the ident, so it wins by
-priority; a field named `univ` stays reachable via the glued join `x.univ` (one
-ident token the keyword never matches). -/
+and falls to the ident, so a field named `sum` needs nothing. A nullary `univ`
+would tie with the ident and wins by priority, so a field named `univ` is
+escaped: `nonReservedSymbol` compares raw source text, which `«univ»` changes.
+Spacing is not an escape — the dot is the join operator either way. -/
 
 public inductive SVocab where
   | mk (sum univ : SVocab)
@@ -1013,7 +1016,7 @@ public def sVocab : SVocab := .leaf
 #guard_msgs in
 #spytial.spec sVocab with [
   hideAtom {x : SVocab | some x.sum},
-  hideAtom {x : SVocab | some x.univ},
+  hideAtom {x : SVocab | some x.«univ»},
   hideAtom SVocab . sum
 ]
 
