@@ -228,7 +228,9 @@ meta def identComponentFn : ParserFn := fun c s =>
       else
         let stopPart := s.pos
         let s := s.next' c s.pos h
-        mkIdResult startPos none (.str .anonymous (c.extract startPart stopPart)) true c s
+        -- the escape spells a Lean name whole, so its dots are the name's
+        mkIdResult startPos none
+          ((c.extract startPart stopPart).splitOn "." |>.foldl Name.mkStr .anonymous) true c s
     else if isIdFirst curr then
       let s := takeWhileFn isIdRest c (s.next c startPos)
       mkIdResult startPos none (.str .anonymous (c.extract startPos s.pos)) true c s
@@ -412,21 +414,6 @@ private meta def IntBuiltin.arity : IntBuiltin → Nat
 
 private meta def intAggOf? : String → Option IntAgg
   | "sum" => some .sum | "min" => some .min | "max" => some .max | _ => none
-
-/-- The bare text of a selector ident: one component, so never guillemeted. -/
-private meta def identText (n : Name) : String :=
-  match n with
-  | .str _ s => s
-  | _ => n.toString
-
-/-- The Lean name an ident spells. A selector ident is one component, so a
-    qualified name reaches the elaborator escaped — `«Untyped.Term»`, one
-    component whose text holds the dots — and this splits it back apart. -/
-private meta def spelledName (n : Name) : Name :=
-  let s := identText n
-  if s.any (· == '.') then
-    s.splitOn "." |>.foldl (fun acc part => Name.mkStr acc part) Name.anonymous
-  else n
 
 /-- The nullary-constructor label a bare ident denotes, with hover info. -/
 private meta def resolveCtorLit? (scope : SelScope) (stx : Syntax) : TermElabM (Option SelVal) := do
@@ -633,7 +620,7 @@ private meta partial def resolveExprIdent (scope : SelScope) (env : LEnv)
       return e
   if let some v ← resolveCtorLit? scope stx then
     return .val v
-  let s := identText name
+  let s := name.toString
   if let some (_, arity?) := scope.rels.get? s then return .rel (.rel s) arity?
   if let some arity := scope.introduced.get? s then
     warnGraphSideName stx s
@@ -642,7 +629,7 @@ private meta partial def resolveExprIdent (scope : SelScope) (env : LEnv)
   unknownName scope stx s!"name '{s}'" (.rel (Sel.rel s) none)
 where
   resolveTypeRef? : TermElabM (Option (Sel × Option Nat)) := do
-    let some constName ← resolveGlobal? (mkIdentFrom stx (spelledName stx.getId)) | return none
+    let some constName ← resolveGlobal? stx | return none
     match (← getEnv).find? constName with
     | some (.inductInfo _) =>
       if scope.types.contains constName then
@@ -664,8 +651,8 @@ private meta partial def coerceVal (scope : SelScope) (stx : Syntax) :
   match stx with
   | `(spytial_sel| $x:ident) =>
     if let some v ← resolveCtorLit? scope x then return v
-    let some constName ← resolveGlobal? (mkIdentFrom x (spelledName x.getId))
-      | throwErrorAt x m!"unknown constructor label '{spelledName x.getId}'; known labels of \
+    let some constName ← resolveGlobal? x
+      | throwErrorAt x m!"unknown constructor label '{x.getId}'; known labels of \
           '{scope.root}': {", ".intercalate (sortDedup (scope.ctorLabels.toList.map (·.1)).toArray).toList}"
     match (← getEnv).find? constName with
     | some (.ctorInfo ci) =>
