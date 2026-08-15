@@ -215,6 +215,10 @@ syntax:100 (name := selNegNum) "-" noWs num : spytial_sel
 /-- Backquote atom literal (`` `a0 ``), spelled with Lean's `name` literal. -/
 syntax:100 (name := selAtomLit) name : spytial_sel
 
+-- `priority := high` breaks the same-span longest-match tie with `selIdent` (a
+-- bare nullary keyword and a bare ident each span one token), picking the
+-- constant; a field literally named `univ` stays reachable via the glued join
+-- `x.univ`, one ident token the keyword never matches.
 syntax:100 (name := selUniv) (priority := high) "univ" : spytial_sel
 syntax:100 (name := selIden) (priority := high) "iden" : spytial_sel
 syntax:100 (name := selNone) (priority := high) "none" : spytial_sel
