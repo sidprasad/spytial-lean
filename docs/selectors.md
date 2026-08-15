@@ -69,6 +69,13 @@ space before a box-join `[`, and none between `-` and an integer literal. A
 string is the raw, unchecked SGQ escape hatch as a whole selector, and an
 ordinary string literal as a comparison operand.
 
+An identifier is a single component. The selector lexer stops at a `.`, so the
+dot is always the join operator and `a.b` and `a . b` are the same selector,
+read as SGQ reads them — spacing carries no meaning, and a unary operator binds
+tighter (`^a.b` is `(^a).b`). A name that must contain a dot, or one that
+collides with a keyword, is escaped with guillemets: `«Untyped.Term»` for a
+qualified Lean type, `«univ»` for a field named after a nullary constant.
+
 Relative to Forge, the label projections (`@:`, `@str:`, `@bool:`, `@num:`)
 and the raw-string escape hatch are SGQ/Spytial extensions, and atom literals
 are spelled as Lean name literals (`` `a0 ``). The fragment omits Forge's

@@ -193,7 +193,47 @@ syntax:70 "~" spytial_sel:70 : spytial_sel
   leadingNode `selProjBool 100 (symbol "@bool:" >> categoryParser `spytial_sel 100)
 @[spytial_sel_parser] meta def selProjNumOp : Parser :=
   leadingNode `selProjNum 100 (symbol "@num:" >> categoryParser `spytial_sel 100)
-syntax:100 (name := selIdent) ident : spytial_sel
+/-- One identifier component: `identFnAux` without its `isIdCont` recursion.
+    SGQ's identifier token cannot contain a `.`, so here the dot is only ever
+    the join operator — `a.b` lexes as `a . b`, and both grammars read the same
+    text the same way with no spacing convention to remember.
+
+    An escaped component still holds dots, which is how a qualified Lean name is
+    written (`«Untyped.Term»`), and how a field whose name collides with a
+    keyword stays reachable (`«univ»`) — `nonReservedSymbol` compares raw source
+    text, which the escape changes. -/
+meta def identComponentFn : ParserFn := fun c s =>
+  let startPos := s.pos
+  if h : c.atEnd startPos then s.mkEOIError
+  else
+    let curr := c.get' startPos h
+    if isIdBeginEscape curr then
+      let startPart := c.next' startPos h
+      let s := takeUntilFn isIdEndEscape c (s.setPos startPart)
+      if h : c.atEnd s.pos then
+        s.mkUnexpectedErrorAt "unterminated identifier escape" startPart
+      else
+        let stopPart := s.pos
+        let s := s.next' c s.pos h
+        -- the escape spells a Lean name whole, so its dots are the name's
+        mkIdResult startPos none
+          ((c.extract startPart stopPart).splitOn "." |>.foldl Name.mkStr .anonymous) true c s
+    else if isIdFirst curr then
+      let s := takeWhileFn isIdRest c (s.next c startPos)
+      mkIdResult startPos none (.str .anonymous (c.extract startPos s.pos)) true c s
+    else
+      s.mkErrorAt "identifier" startPos
+
+-- `ident`'s antiquotation kind, so `$x:ident` still matches in a quotation.
+meta def identComponent : Parser :=
+  withAntiquot (mkAntiquot "ident" identKind)
+    { fn := identComponentFn, info := mkAtomicInfo "ident" }
+@[combinator_formatter identComponent] meta def identComponent.formatter :=
+  Parser.ident.formatter
+@[combinator_parenthesizer identComponent] meta def identComponent.parenthesizer :=
+  Parser.ident.parenthesizer
+
+syntax:100 (name := selIdent) identComponent : spytial_sel
 syntax:100 "(" spytial_sel ")" : spytial_sel
 syntax:100 "{" sepBy1(spytialSelBinderGroup, ", ") " | " spytial_sel_form "}" : spytial_sel
 syntax:100 (name := selStr) str : spytial_sel
@@ -202,13 +242,8 @@ syntax:100 (name := selNegNum) "-" noWs num : spytial_sel
 /-- Backquote atom literal (`` `a0 ``), spelled with Lean's `name` literal. -/
 syntax:100 (name := selAtomLit) name : spytial_sel
 
--- `priority := high` breaks the same-span longest-match tie with `selIdent` (a
--- bare nullary keyword and a bare ident each span one token), picking the
--- constant; a field literally named `univ` stays reachable via the glued join
--- `x.univ`, one ident token the keyword never matches.
-syntax:100 (name := selUniv) (priority := high) "univ" : spytial_sel
-syntax:100 (name := selIden) (priority := high) "iden" : spytial_sel
-syntax:100 (name := selNone) (priority := high) "none" : spytial_sel
+-- `univ`/`iden`/`none` have no rules of their own: an atom-keyed rule never
+-- fires on an unspaced `univ.lo`, so `resolveExprIdent` reads them off the ident.
 
 -- Bare `sum` fails the rule and falls to `selIdent`, so a field named `sum`
 -- still parses.
@@ -383,9 +418,6 @@ private meta partial def elabExpr (scope : SelScope) (env : LEnv) :
     return .val (.strLit s.getString)
   | `(spytial_sel| $n:num) => return .int (.lit (Int.ofNat n.getNat))
   | `(spytial_sel| -$n:num) => return .int (.lit (-(Int.ofNat n.getNat)))
-  | `(spytial_sel| univ) => return .rel .univ (some 1)
-  | `(spytial_sel| iden) => return .rel .iden (some 2)
-  | `(spytial_sel| none) => return .rel .none_ (some 1)
   | `(spytial_sel| sum $x:ident : $dom | $body) => do
     let (domSel, domArity) ← elabRel scope env dom
     checkArity dom "a sum-quantifier binder domain" domArity 1
@@ -543,70 +575,48 @@ private meta partial def elabLabel (scope : SelScope) (env : LEnv)
   checkArity e "a label projection's operand" arity 1
   return .label proj sel
 
-/-- Resolution order: local binding, nullary-constructor label, vocabulary.
-    Dotted components fold as joins unless a prefix names a type. -/
+/-- Resolution order: local binding, nullary-constructor label, vocabulary. -/
 private meta partial def resolveExprIdent (scope : SelScope) (env : LEnv)
     (stx : TSyntax `ident) : TermElabM EExpr := do
-  match stx.getId.components with
-  | [] => throwErrorAt stx "empty selector name"
-  | head :: rest =>
-    if let some bind := env.lookup head then
-      match bind with
-      | .binder => return ← joinRest (.var head) (some 1) rest
-      | .letE e =>
-        -- Lowering is name-based, so a binder introduced after the `let` would
-        -- silently capture the substituted expression's free variables.
-        let fvs := match e with
-          | .rel s _ => s.freeVars
-          | .val v => v.freeVars
-          | .int i => i.freeVars
-        for (n, b) in env do
-          if n == head then break
-          if b matches .binder then
-            if fvs.contains n then
-              throwErrorAt stx m!"cannot use let-bound '{head}' here: it refers \
-                to '{n}', which a nearer binder shadows — the substitution would \
-                be captured; rename the inner binder"
-        if rest.isEmpty then return e
-        match e with
-        | .rel s a => return ← joinRest s a rest
-        | _ => throwErrorAt stx m!"'{head}' is a let-bound \
-            {if let .int _ := e then "integer" else "value"}; it has no fields to join"
-    if rest.isEmpty then
-      if let some v ← resolveCtorLit? scope stx then
-        return .val v
-    let (sel, arity, unconsumed) ← resolveHead stx head rest
-    joinRest sel arity unconsumed
+  -- Source text, not the name, decides: `«univ»` is a field spelled differently
+  -- that parses to the same `Name`.
+  if let .ident _ raw _ _ := stx.raw then
+    match raw.toString with
+    | "univ" => return .rel .univ (some 1)
+    | "iden" => return .rel .iden (some 2)
+    | "none" => return .rel .none_ (some 1)
+    | _ => pure ()
+  let name := stx.getId
+  if let some bind := env.lookup name then
+    match bind with
+    | .binder => return .rel (.var name) (some 1)
+    | .letE e =>
+      -- Lowering is name-based, so a binder introduced after the `let` would
+      -- silently capture the substituted expression's free variables.
+      let fvs := match e with
+        | .rel s _ => s.freeVars
+        | .val v => v.freeVars
+        | .int i => i.freeVars
+      for (n, b) in env do
+        if n == name then break
+        if b matches .binder then
+          if fvs.contains n then
+            throwErrorAt stx m!"cannot use let-bound '{name}' here: it refers \
+              to '{n}', which a nearer binder shadows — the substitution would \
+              be captured; rename the inner binder"
+      return e
+  if let some v ← resolveCtorLit? scope stx then
+    return .val v
+  let s := name.toString
+  if scope.rels.contains s then return .rel (.rel s) (some 2)
+  if let some arity := scope.introduced.get? s then
+    warnGraphSideName stx s
+    return .rel (.rel s) (some arity)
+  if let some (sel, arity) ← resolveTypeRef? then return .rel sel arity
+  unknownName scope stx s!"name '{s}'" (.rel (Sel.rel s) none)
 where
-  joinRest (sel : Sel) (arity : Option Nat) (rest : List Name) : TermElabM EExpr := do
-    let s ← rest.foldlM (init := (sel, arity)) fun (sel, arity) comp => do
-      let compStr := comp.toString
-      let compArity? : Option Nat :=
-        if scope.rels.contains compStr then some 2
-        else scope.introduced.get? compStr
-      match compArity? with
-      | some ca =>
-        unless scope.rels.contains compStr do warnGraphSideName stx compStr
-        return (.join sel (.rel compStr), ← joinArity stx arity (some ca))
-      | none => unknownName scope stx s!"relation '{compStr}'" (Sel.join sel (.rel compStr), none)
-    return .rel s.1 s.2
-  resolveHead (idStx : Syntax) (head : Name) (rest : List Name) :
-      TermElabM (Sel × Option Nat × List Name) := do
-    let s := head.toString
-    if scope.rels.contains s then return (.rel s, some 2, rest)
-    if let some arity := scope.introduced.get? s then
-      warnGraphSideName idStx s
-      return (.rel s, some arity, rest)
-    -- Longest prefix that names a type wins (`SelQual.Inner.someField`): try
-    -- the full name, then shorter prefixes; the unconsumed tail folds as joins.
-    let total := rest.length + 1
-    for i in [0:total] do
-      let prefixName := Nat.repeat Name.getPrefix i idStx.getId
-      if let some (sel, arity) ← resolveTypeRef? (mkIdentFrom idStx prefixName) then
-        return (sel, arity, rest.drop (total - 1 - i))
-    unknownName scope idStx s!"name '{s}'" (Sel.rel s, none, rest)
-  resolveTypeRef? (idStx : Syntax) : TermElabM (Option (Sel × Option Nat)) := do
-    let some constName ← resolveGlobal? idStx | return none
+  resolveTypeRef? : TermElabM (Option (Sel × Option Nat)) := do
+    let some constName ← resolveGlobal? stx | return none
     match (← getEnv).find? constName with
     | some (.inductInfo _) =>
       if scope.types.contains constName then

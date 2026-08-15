@@ -225,7 +225,7 @@ info: {"directives": [{"hideField": {"field": "val"}}],
 
 /-- error: constructor 'SRB.nil' belongs to 'SRB', which cannot occur in values of 'SBDD' -/
 #guard_msgs in
-#spytial.spec sExample with [atomColor {x : SBDD | @:x = SRB.nil} "red"]
+#spytial.spec sExample with [atomColor {x : SBDD | @:x = «SRB.nil»} "red"]
 
 /-- error: this position selects atoms (arity 1), but the selector has arity 2 -/
 #guard_msgs in
@@ -352,20 +352,17 @@ end SelQual
 
 public def selQualOuter : SelQual.Outer := { inner := { someField := 0 } }
 
--- A qualified, un-opened type name resolves (the whole name is the type).
 /--
 info: {"constraints": [{"hideAtom": {"selector": "Inner"}}]}
 -/
 #guard_msgs in
-#spytial.spec selQualOuter with [hideAtom SelQual.Inner]
+#spytial.spec selQualOuter with [hideAtom «SelQual.Inner»]
 
--- A glued join through a qualified type — leading `SelQual.Inner` is the type,
--- trailing `someField` folds as a join.
 /--
 info: {"constraints": [{"hideAtom": {"selector": "Inner.someField"}}]}
 -/
 #guard_msgs in
-#spytial.spec selQualOuter with [hideAtom SelQual.Inner.someField]
+#spytial.spec selQualOuter with [hideAtom «SelQual.Inner».someField]
 
 /-! ## Multiplicity formulas -/
 
@@ -490,6 +487,73 @@ info: {"constraints":
   hideAtom {x : SBDD | let a = x.lo, b = x.hi | some a and no b},
   hideAtom {x : SBDD | let a = lo | all a : SBDD | some a}
 ]
+
+-- A join tail resolves through the same ladder as a head: `let`-bindings and
+-- type sigs included.
+/--
+info: {"constraints":
+ [{"hideAtom": {"selector": "{x : SBDD | some x.^(lo + hi)}"}},
+  {"hideAtom": {"selector": "{x : SBDD | some x.^(lo + hi)}"}},
+  {"hideAtom": {"selector": "lo.SBDD"}},
+  {"hideAtom": {"selector": "lo.SBDD"}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [
+  hideAtom {x : SBDD | let sub = ^(lo + hi) | some x.sub},
+  hideAtom {x : SBDD | let sub = ^(lo + hi) | some x . sub},
+  hideAtom (lo.SBDD),
+  hideAtom (lo . SBDD)
+]
+
+/-- error: this position selects atoms (arity 1), but the selector has arity 2 -/
+#guard_msgs in
+#spytial.spec sExample with [atomColor (lo.hi) "#111"]
+
+/-- error: join of arity 1 and arity 1 has no columns left -/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom (lo.SBDD.SBDD)]
+
+/-- error: unknown name 'nope'; vocabulary of 'SBDD': SBDD, String, hi, lo, scrutinee, v -/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom (lo.nope)]
+
+/-- error: this position expects a relational expression, but the selector is a label/literal value -/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom (lo.tt)]
+
+-- The dot is always the join operator and a unary operator binds tighter —
+-- `^lo.hi` is `(^lo).hi`, which is how SGQ reads the same text.
+/--
+info: {"constraints":
+ [{"orientation": {"selector": "^lo.hi", "directions": ["directlyBelow"]}},
+  {"orientation": {"selector": "^lo.hi", "directions": ["directlyBelow"]}},
+  {"orientation": {"selector": "~lo.hi", "directions": ["directlyBelow"]}},
+  {"orientation": {"selector": "^(lo.hi)", "directions": ["directlyBelow"]}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [
+  orientation ^lo.hi directlyBelow,
+  orientation ^lo . hi directlyBelow,
+  orientation ~lo.hi directlyBelow,
+  orientation ^(lo.hi) directlyBelow
+]
+
+/--
+info: {"constraints":
+ [{"orientation": {"selector": "^lo.hi", "directions": ["directlyBelow"]}},
+  {"orientation": {"selector": "^(lo.hi)", "directions": ["directlyBelow"]}},
+  {"orientation": {"selector": "^lo", "directions": ["directlyBelow"]}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [
+  orientation ^lo . hi directlyBelow,
+  orientation ^(lo.hi) directlyBelow,
+  orientation ^lo directlyBelow
+]
+
+/-- error: cannot use let-bound 'e' here: it refers to 'x', which a nearer binder shadows — the substitution would be captured; rename the inner binder -/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom {x : SBDD | let e = x.lo | all x : SBDD | some x.e}]
 
 /-! ## Integer layer — `#`, `@num:`, builtins, aggregators, box join, counting -/
 
@@ -712,12 +776,10 @@ public def sWeird : SWeird := .leaf
 
 /-! ## Vocabulary shadowing — fields literally named `sum` / `univ`
 
-The `.both` flip added `univ`/`iden`/`none`/`sum` keyword rules to the expression
-category. `sum` is only ever the long-form quantifier — bare `sum` fails the rule
-and falls to the ident, so a field named `sum` parses both glued (`x.sum`) and
-spaced (`X . sum`). A nullary `univ` would tie with the ident, so it wins by
-priority; a field named `univ` stays reachable via the glued join `x.univ` (one
-ident token the keyword never matches). -/
+Bare `sum` fails the quantifier rule and falls to the ident, so a field named
+`sum` needs nothing. `univ`/`iden`/`none` are read off the ident's source
+text, so a field named `univ` takes the escape (`«univ»`); spacing is not an
+escape — the dot is the join operator either way. -/
 
 public inductive SVocab where
   | mk (sum univ : SVocab)
@@ -733,7 +795,7 @@ public def sVocab : SVocab := .leaf
 #guard_msgs in
 #spytial.spec sVocab with [
   hideAtom {x : SVocab | some x.sum},
-  hideAtom {x : SVocab | some x.univ},
+  hideAtom {x : SVocab | some x.«univ»},
   hideAtom SVocab . sum
 ]
 
@@ -816,10 +878,8 @@ info: spytial_sel:
 SpytialLean.selAtomLit
 SpytialLean.selBox
 SpytialLean.selCard
-SpytialLean.selIden
 SpytialLean.selIdent
 SpytialLean.selNegNum
-SpytialLean.selNone
 SpytialLean.selNum
 SpytialLean.selProdOp
 SpytialLean.selProjBoolOp
@@ -828,7 +888,6 @@ SpytialLean.selProjPlainOp
 SpytialLean.selProjStrOp
 SpytialLean.selStr
 SpytialLean.selSum
-SpytialLean.selUniv
 SpytialLean.«spytial_sel(_)»
 SpytialLean.«spytial_sel*_»
 SpytialLean.«spytial_sel^_»
