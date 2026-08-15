@@ -735,11 +735,22 @@ private meta def getReprInst? (tyKey : Expr) : StateT WalkState MetaM (Option Ex
   modify fun s => { s with reprInstCache := s.reprInstCache.insert ⟨tyKey⟩ inst? }
   return inst?
 
+/-- Whether the term reaches a constant with no runtime value. Compiling one
+    yields its type's default instead of failing, so `0` would be reported for
+    an `opaque n : Nat` as confidently as for a real zero. `@[irreducible]` is
+    not this: it has a body, and evaluating it is the point. -/
+private meta def hasValuelessConst (e : Expr) : MetaM Bool := do
+  let env ← getEnv
+  return e.getUsedConstants.any fun n =>
+    match env.find? n with
+    | some (.opaqueInfo _) | some (.axiomInfo _) => true
+    | _ => false
+
 /-- Label for a leaf atom: `repr` evaluated when the term is closed and its
     type declares it, otherwise the pretty-printed expression. A failing
     evaluation disables `Repr` labels for the type for the rest of the walk. -/
 private meta def leafLabel (e tyKey : Expr) : StateT WalkState MetaM String := do
-  if isClosedValue e then
+  if isClosedValue e && !(← hasValuelessConst e) then
     if let some inst ← getReprInst? tyKey then
       try
         let fmt ← evalFormat (← mkAppOptM ``repr #[none, some inst, some e])
