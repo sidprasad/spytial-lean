@@ -708,7 +708,7 @@ info: {"constraints":
 
 /-- error: this position selects atoms (arity 1), but the selector has arity 2 -/
 #guard_msgs in
-#spytial.spec sExample with [atomColor (lo.hi) "#111"]
+#spytial.spec sExample with [atomStyle (lo.hi) (borderStyle "#111")]
 
 /-- error: join of arity 1 and arity 1 has no columns left -/
 #guard_msgs in

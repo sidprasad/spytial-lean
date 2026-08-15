@@ -30,7 +30,7 @@ snapshots track what a user of the demo files actually sees (exception:
 #spytial_snapshot "tree-inline" myTree with [
   orientation left above,
   orientation right above,
-  atomColor Tree "#0066ff",
+  atomStyle Tree (borderStyle "#0066ff"),
   hideAtom Nat
 ]
 
@@ -38,7 +38,7 @@ snapshots track what a user of the demo files actually sees (exception:
 #spytial_snapshot "person" alice with [
   attribute name,
   attribute age,
-  atomColor Person "#4CAF50"
+  atomStyle Person (borderStyle "#4CAF50")
 ]
 
 -- Spec inheritance: Vehicle ops ++ ElectricCar ops.
@@ -64,7 +64,7 @@ def duo : TreePair := { left := .node (.leaf 1) (.leaf 2), right := .leaf 3 }
 #spytial_snapshot "group-align" duo with [
   group Tree grove,
   align {x, y : Tree | x != y} horizontal,
-  edgeColor left "#e91e63",
-  edgeColor right "#0066ff",
+  edgeStyle left (lineStyle "#e91e63" solid),
+  edgeStyle right (lineStyle "#0066ff" solid),
   hideAtom Nat
 ]
