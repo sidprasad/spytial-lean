@@ -1099,10 +1099,8 @@ info: spytial_sel:
 SpytialLean.selAtomLit
 SpytialLean.selBox
 SpytialLean.selCard
-SpytialLean.selIden
 SpytialLean.selIdent
 SpytialLean.selNegNum
-SpytialLean.selNone
 SpytialLean.selNum
 SpytialLean.selProdOp
 SpytialLean.selProjBoolOp
@@ -1111,7 +1109,6 @@ SpytialLean.selProjPlainOp
 SpytialLean.selProjStrOp
 SpytialLean.selStr
 SpytialLean.selSum
-SpytialLean.selUniv
 SpytialLean.«spytial_sel(_)»
 SpytialLean.«spytial_sel*_»
 SpytialLean.«spytial_sel^_»

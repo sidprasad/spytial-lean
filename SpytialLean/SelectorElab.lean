@@ -255,13 +255,11 @@ syntax:100 (name := selNegNum) "-" noWs num : spytial_sel
 /-- Backquote atom literal (`` `a0 ``), spelled with Lean's `name` literal. -/
 syntax:100 (name := selAtomLit) name : spytial_sel
 
--- `priority := high` breaks the same-span longest-match tie with `selIdent` (a
--- bare nullary keyword and a bare ident each span one token), picking the
--- constant; a field literally named `univ` is escaped as `«univ»`, which
--- `nonReservedSymbol` does not match because it compares raw source text.
-syntax:100 (name := selUniv) (priority := high) "univ" : spytial_sel
-syntax:100 (name := selIden) (priority := high) "iden" : spytial_sel
-syntax:100 (name := selNone) (priority := high) "none" : spytial_sel
+-- `univ`/`iden`/`none` have no rules of their own: `resolveExprIdent` reads them
+-- off the ident. A keyword rule is keyed on an atom, and the pratt parser peeks
+-- the leading token through `tokenFn`, which glues `univ.lo` into one dotted
+-- ident — so the rule would never fire on an unspaced join and `univ.lo` would
+-- not mean `univ . lo`.
 
 -- Bare `sum` fails the rule and falls to `selIdent`, so a field named `sum`
 -- still parses.
@@ -436,9 +434,6 @@ private meta partial def elabExpr (scope : SelScope) (env : LEnv) :
     return .val (.strLit s.getString)
   | `(spytial_sel| $n:num) => return .int (.lit (Int.ofNat n.getNat))
   | `(spytial_sel| -$n:num) => return .int (.lit (-(Int.ofNat n.getNat)))
-  | `(spytial_sel| univ) => return .rel .univ (some 1)
-  | `(spytial_sel| iden) => return .rel .iden (some 2)
-  | `(spytial_sel| none) => return .rel .none_ (some 1)
   | `(spytial_sel| sum $x:ident : $dom | $body) => do
     let (domSel, domArity) ← elabRel scope env dom
     checkArity dom "a sum-quantifier binder domain" domArity 1
@@ -599,6 +594,14 @@ private meta partial def elabLabel (scope : SelScope) (env : LEnv)
 /-- Resolution order: local binding, nullary-constructor label, vocabulary. -/
 private meta partial def resolveExprIdent (scope : SelScope) (env : LEnv)
     (stx : TSyntax `ident) : TermElabM EExpr := do
+  -- Source text, not the name, decides: `«univ»` is a field spelled differently
+  -- that parses to the same `Name`.
+  if let .ident _ raw _ _ := stx.raw then
+    match raw.toString with
+    | "univ" => return .rel .univ (some 1)
+    | "iden" => return .rel .iden (some 2)
+    | "none" => return .rel .none_ (some 1)
+    | _ => pure ()
   let name := stx.getId
   if let some bind := env.lookup name then
     match bind with
