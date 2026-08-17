@@ -48,6 +48,34 @@ public meta def fieldRelName (ctorShort : String) (binderNames : Array Name) (i 
   else
     s!"{ctorShort}_{i}"
 
+/-- The relation a stuck match's edges live in: `scrutinee` for a single
+    discriminant, `scrutinee_i` positionally otherwise. -/
+public meta def scrutineeRel : String := "scrutinee"
+
+public meta def scrutineeRelName (numDiscrs i : Nat) : String :=
+  if numDiscrs == 1 then scrutineeRel else s!"{scrutineeRel}_{i}"
+
+/-- Membership in the `scrutineeRelName` family. The static checker cannot know
+    a stuck match's discriminant count, so it accepts every indexed form. -/
+public meta def isScrutineeRelName (s : String) : Bool :=
+  let idx := s.drop (scrutineeRel.length + 1)
+  s == scrutineeRel ||
+    (s.startsWith (scrutineeRel ++ "_") && !idx.isEmpty && idx.all (·.isDigit))
+
+/-- The label the relationalizer assigns to a hole (an unassigned metavariable):
+    `?` when anonymous, `?name` for a user-named hole. Macro-scoped names count as
+    anonymous — they are synthetic, not something the user wrote. -/
+public meta def holeLabel (userName : Name) : String :=
+  if userName.isAnonymous || userName.hasMacroScopes then "?"
+  else s!"?{userName}"
+
+/-- The label the relationalizer assigns to a hypothesis (`fvar`) leaf: its user name
+    with macro scopes erased (so inaccessible names render without the dagger),
+    falling back to `?` for genuinely anonymous binders. -/
+public meta def hypLabel (userName : Name) : String :=
+  let n := userName.eraseMacroScopes
+  if n.isAnonymous then "?" else toString n
+
 /-- Whether the walker erases a value of this type — proofs (`Prop`) and types
     (`Sort`) — and so drops fields of it. -/
 public meta def isProofLikeType (ty : Expr) : MetaM Bool := do

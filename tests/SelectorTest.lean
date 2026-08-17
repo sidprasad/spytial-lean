@@ -209,6 +209,25 @@ info: {"directives": [{"hideField": {"field": "val"}}],
   hideField val
 ]
 
+/-! ## Stuck-match vocabulary
+
+The walker emits `scrutinee` (one discriminant) or `scrutinee_i` (several), so
+strict scopes accept the whole family — in selector and field positions. -/
+
+/--
+info: {"directives":
+ [{"edgeColor": {"value": "gray", "style": "dashed", "field": "scrutinee_0"}}],
+ "constraints":
+ [{"orientation": {"selector": "scrutinee", "directions": ["below"]}},
+  {"orientation": {"selector": "scrutinee_1", "directions": ["right"]}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [
+  orientation scrutinee below,
+  orientation scrutinee_1 right,
+  edgeColor scrutinee_0 "gray" dashed
+]
+
 /-! ## Checker errors — one per class -/
 
 /-- error: unknown name 'lof' (did you mean 'lo'?) -/
