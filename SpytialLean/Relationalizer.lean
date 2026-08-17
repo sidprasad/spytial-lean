@@ -47,12 +47,9 @@ public meta structure WalkConfig where
   /-- When true, skip Prop-typed fields (data mode). When false, show them (proof mode). -/
   filterProofs : Bool := true
 
-/-- Check if an expression is a proof or type (erased at runtime). -/
+/-- Whether an argument is erased at runtime — a proof or a type. -/
 public meta def isProofArg (e : Expr) : MetaM Bool := do
-  let ty ← inferType e
-  -- Use Meta.isProp for proper sort-level check (handles ∀-typed proofs)
-  let isProp ← Meta.isProp ty
-  return isProp || ty.isSort
+  isProofLikeType (← inferType e)
 
 /-- A custom relationalizer function.
     Receives the expression to decompose and the default walker for recursion. -/
@@ -80,20 +77,23 @@ public meta def getSpytialRelationalizerName? (env : Environment) (typeName : Na
 public meta def setSpytialRelationalizer (typeName declName : Name) : CoreM Unit :=
   modifyEnv fun env => spytialRelationalizerExt.addEntry env (typeName, declName)
 
-/-- Session-local cache of *compiled* relationalizer functions keyed by def name, so a
-    registered def is evaluated at most once per process. The persistent extension is
-    the source of truth; this only memoizes the `evalExpr`. -/
+/-- Session-local memo of compiled relationalizers, keyed by def name + body
+    hash so an interactive body edit recompiles instead of serving the stale
+    closure. -/
 public meta initialize spytialRelationalizerCache :
-    IO.Ref (Std.HashMap Name CustomRelationalizer) ← IO.mkRef {}
+    IO.Ref (Std.HashMap Name (UInt64 × CustomRelationalizer)) ← IO.mkRef {}
 
 /-- Compile (with memoization) the custom relationalizer registered for `typeName`. -/
 public meta unsafe def getSpytialRelationalizerImpl (typeName : Name) :
     MetaM (Option CustomRelationalizer) := do
   let some declName := getSpytialRelationalizerName? (← getEnv) typeName | return none
-  if let some fn := (← spytialRelationalizerCache.get).get? declName then
-    return some fn
+  -- `value? = none` (opaque, `partial` fixpoint wrappers) falls back to hash 0:
+  -- name-only caching, no edit detection
+  let bodyHash := ((← getConstInfo declName).value?.map Expr.hash).getD 0
+  if let some (h, fn) := (← spytialRelationalizerCache.get).get? declName then
+    if h == bodyHash then return some fn
   let fn ← Meta.evalExpr CustomRelationalizer (mkConst ``CustomRelationalizer) (mkConst declName)
-  spytialRelationalizerCache.modify (·.insert declName fn)
+  spytialRelationalizerCache.modify (·.insert declName (bodyHash, fn))
   return some fn
 
 /-- Look up the custom relationalizer registered for a type name, if any. Reads the
@@ -169,7 +169,11 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr) : State
   let tyWhnfForLookup ← Meta.whnf ty
   if let .const typeConstName _ := tyWhnfForLookup.getAppFn then
     if let some relFn ← getSpytialRelationalizer? typeConstName then
-      return ← relFn eOrig (walkExpr cfg)
+      -- reconcile `seen[hash]` to the relationalizer's own root id — the
+      -- pre-allocated one is never emitted; the pre-mark still bounds re-walks
+      let rootId ← relFn eOrig (walkExpr cfg)
+      modify (·.markSeen hash rootId)
+      return rootId
 
   -- Dispatch by expression form
   match e with

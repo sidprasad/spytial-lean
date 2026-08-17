@@ -38,12 +38,18 @@ The first build also fetches the Lean dependencies (ProofWidgets4) pinned in
 
 ### Tests
 
-Run the headless unit tests (relationalizer naming, coverage checking) with
-`just test`, or directly with lake:
+Run the headless unit tests (relationalizer naming, selector checking, coverage
+checking) with `just test`, or directly with lake:
 
 ```sh
 lake build SpytialTests
 ```
+
+`tests/SelectorTest.lean` is the behavioral contract for the selector DSL. It
+pins the SGQ lowering of every surface form: the Forge precedence battery,
+word and symbolic connectives, quantifiers and `let`, the integer layer, box
+join, and the negated comparisons. It also pins one diagnostic per checker
+error class.
 
 ### Demos
 
@@ -119,9 +125,10 @@ To add a new layout operation:
 
 1. Add the constructor to `SpytialOp` in `SpytialLean/Spec.lean`
 2. Add it to `isConstraint` (if it's a constraint) or leave it as a directive
-3. Add a YAML serialization case in `constraintToYaml` or `directiveToYaml`
-4. Add an example in `Demo.lean`
-5. Rebuild: `lake build Demo`
+3. Add a JSON serialization case in `SpytialOp.toJson` (in `SpytialLean/Spec.lean`)
+4. Add a keyword case to `elabSpytialOp` in `SpytialLean/Command.lean`, giving each selector position its `ArityExpect` and interpreting the other arguments
+5. Add an example in a `demos/` file and a golden in `tests/SelectorTest.lean`
+6. Rebuild: `lake build Demos SpytialTests`
 
 ## Debugging
 
@@ -131,15 +138,16 @@ To add a new layout operation:
 #spytial.datum myValue
 ```
 
-Shows the JSON data instance — atoms and relations with their names. Use this to find the correct selector strings for your spec.
+Shows the JSON data instance: atoms and relations with their names. The spec
+elaborator checks selector names against the same vocabulary.
 
-### Inspect generated YAML
+### Inspect the generated spec
 
 ```lean
-#spytial.spec myValue with [.orientation (selector := "left") (directions := [.below])]
+#spytial.spec myValue with [orientation left below]
 ```
 
-Shows the YAML that gets passed to `parseLayoutSpec`.
+Shows the spec string that gets passed to `parseLayoutSpec`.
 
 ### Widget console errors
 

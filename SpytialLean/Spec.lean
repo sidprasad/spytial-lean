@@ -1,49 +1,53 @@
 module
 
 public import Lean
+public meta import SpytialLean.Selector
 
 namespace SpytialLean
+
+open Lean (Json ToJson FromJson toJson)
 
 /-- Relative positioning directions for orientation constraints. -/
 public meta inductive Direction where
   | above | below | left | right
   | directlyAbove | directlyBelow | directlyLeft | directlyRight
-  deriving Repr, DecidableEq, Inhabited
+  deriving Repr, DecidableEq, Inhabited, ToJson, FromJson
 
 /-- Alignment direction. -/
 public meta inductive AlignDir where
   | horizontal | vertical
-  deriving Repr, DecidableEq, Inhabited
+  deriving Repr, DecidableEq, Inhabited, ToJson, FromJson
 
 /-- Rotation direction for cyclic constraints. -/
 public meta inductive RotationDir where
   | clockwise | counterclockwise
-  deriving Repr, DecidableEq, Inhabited
+  deriving Repr, DecidableEq, Inhabited, ToJson, FromJson
 
 /-- Edge line style. -/
 public meta inductive EdgeStyle where
   | solid | dashed | dotted
-  deriving Repr, DecidableEq, Inhabited
+  deriving Repr, DecidableEq, Inhabited, ToJson, FromJson
 
-/-- A single Spytial operation — either a constraint (layout geometry) or a
-    directive (visual styling). This matches the flat decorator lists used
-    by spytial-py and caraspace (Rust). -/
+public meta instance : ToJson Sel := ⟨fun s => Json.str s.toSGQ⟩
+
+/-- Selector positions carry checked `Sel`s; `field` positions carry relation
+    names validated against the target type's vocabulary. -/
 public meta inductive SpytialOp where
   -- Layout constraints
-  | orientation (selector : String) (directions : List Direction)
-  | align (selector : String) (direction : AlignDir)
-  | cyclic (selector : String) (direction : RotationDir := .clockwise)
-  | group (selector : String) (name : String) (addEdge : Bool := false)
-  | hideAtom (selector : String)
-  | size (selector : String) (width : Nat := 100) (height : Nat := 60)
+  | orientation (selector : Sel) (directions : List Direction)
+  | align (selector : Sel) (direction : AlignDir)
+  | cyclic (selector : Sel) (direction : RotationDir := .clockwise)
+  | group (selector : Sel) (name : String) (addEdge : Bool := false)
+  | hideAtom (selector : Sel)
+  | size (selector : Sel) (width : Nat := 100) (height : Nat := 60)
   -- Visual directives
-  | atomColor (selector : String) (value : String)
+  | atomColor (selector : Sel) (value : String)
   | edgeColor (field : String) (value : String) (style : EdgeStyle := .solid)
   | hideField (field : String)
   | attribute (field : String)
-  | icon (selector : String) (path : String) (showLabels : Bool := false)
-  | tag (toTag : String) (name : String) (value : String)
-  | inferredEdge (name : String) (selector : String)
+  | icon (selector : Sel) (path : String) (showLabels : Bool := false)
+  | tag (toTag : Sel) (name : String) (value : String)
+  | inferredEdge (name : String) (selector : Sel)
       (color : String := "#000000") (style : EdgeStyle := .solid)
   | flag (name : String)
   deriving Repr, Inhabited
@@ -51,48 +55,20 @@ public meta inductive SpytialOp where
 /-- A list of Spytial operations forming a complete layout specification. -/
 public meta abbrev SpytialSpec := List SpytialOp
 
-/-! ## YAML serialization
+/-! ## Spec serialization
 
-`parseLayoutSpec` in spytial-core accepts YAML with two top-level keys:
-```yaml
-constraints:
-  - orientation: { selector: "...", directions: [above, below] }
-directives:
-  - atomColor: { selector: "...", value: "#ff0000" }
+`parseLayoutSpec` in spytial-core is js-yaml's `yaml.load`, and JSON is valid
+YAML, so we emit the spec as `Lean.Json`, escape-safe.
+The shape has two optional top-level keys:
+```json
+{"constraints": [{"orientation": {"selector": "…", "directions": ["above"]}}],
+ "directives":  [{"atomColor": {"selector": "…", "value": "#ff0000"}}]}
 ```
-We partition `SpytialOp`s into constraints vs directives and emit this format.
+`SpytialOp`s partition into constraints vs directives; each lowers to a single
+`{opName: …}` object. Selectors lower through `Sel.toSGQ` here — the
+environment stores the structured spec, and the wire string exists only in the
+widget payload.
 -/
-
-private meta def Direction.toYaml : Direction → String
-  | .above => "above"
-  | .below => "below"
-  | .left => "left"
-  | .right => "right"
-  | .directlyAbove => "directlyAbove"
-  | .directlyBelow => "directlyBelow"
-  | .directlyLeft => "directlyLeft"
-  | .directlyRight => "directlyRight"
-
-private meta def AlignDir.toYaml : AlignDir → String
-  | .horizontal => "horizontal"
-  | .vertical => "vertical"
-
-private meta def RotationDir.toYaml : RotationDir → String
-  | .clockwise => "clockwise"
-  | .counterclockwise => "counterclockwise"
-
-private meta def EdgeStyle.toYaml : EdgeStyle → String
-  | .solid => "solid"
-  | .dashed => "dashed"
-  | .dotted => "dotted"
-
-private meta def directionsToYaml (ds : List Direction) : String :=
-  "[" ++ ", ".intercalate (ds.map Direction.toYaml) ++ "]"
-
-/-- A double-quoted YAML scalar. Escapes `\` and `"` — a selector carries `"`
-    whenever it compares against a label literal (sgq 3.0 quoted strings). -/
-private meta def yamlStr (s : String) : String :=
-  "\"" ++ (s.replace "\\" "\\\\").replace "\"" "\\\"" ++ "\""
 
 /-- Is this op a constraint (affects layout geometry)? -/
 private meta def SpytialOp.isConstraint : SpytialOp → Bool
@@ -100,85 +76,21 @@ private meta def SpytialOp.isConstraint : SpytialOp → Bool
   | .hideAtom .. | .size .. => true
   | _ => false
 
-/-- Render a single constraint op as a YAML list item. -/
-private meta def constraintToYaml : SpytialOp → String
-  | .orientation sel dirs =>
-    s!"  - orientation: \{selector: {yamlStr sel}, directions: {directionsToYaml dirs}}"
-  | .align sel dir =>
-    s!"  - align: \{selector: {yamlStr sel}, direction: {dir.toYaml}}"
-  | .cyclic sel dir =>
-    s!"  - cyclic: \{selector: {yamlStr sel}, direction: {dir.toYaml}}"
-  | .group sel name addEdge =>
-    let ae := if addEdge then ", addEdge: true" else ""
-    s!"  - group: \{selector: {yamlStr sel}, name: {yamlStr name}{ae}}"
-  | .hideAtom sel =>
-    s!"  - hideAtom: \{selector: {yamlStr sel}}"
-  | .size sel w h =>
-    s!"  - size: \{selector: {yamlStr sel}, width: {w}, height: {h}}"
-  | _ => ""
+deriving instance ToJson for SpytialOp
 
-/-- Render a single directive op as a YAML list item. -/
-private meta def directiveToYaml : SpytialOp → String
-  | .atomColor sel val =>
-    s!"  - atomColor: \{selector: {yamlStr sel}, value: {yamlStr val}}"
-  | .edgeColor field val style =>
-    s!"  - edgeColor: \{field: {yamlStr field}, value: {yamlStr val}, style: {style.toYaml}}"
-  | .hideField field =>
-    s!"  - hideField: \{field: {yamlStr field}}"
-  | .attribute field =>
-    s!"  - attribute: \{field: {yamlStr field}}"
-  | .icon sel path showLabels =>
-    let sl := if showLabels then ", showLabels: true" else ""
-    s!"  - icon: \{selector: {yamlStr sel}, path: {yamlStr path}{sl}}"
-  | .tag toTag name value =>
-    s!"  - tag: \{toTag: {yamlStr toTag}, name: {yamlStr name}, value: {yamlStr value}}"
-  | .inferredEdge name sel color style =>
-    s!"  - inferredEdge: \{name: {yamlStr name}, selector: {yamlStr sel}, color: {yamlStr color}, style: {style.toYaml}}"
-  | .flag name =>
-    s!"  - flag: {name}"
-  | .hideAtom sel =>
-    s!"  - hideAtom: \{selector: {yamlStr sel}}"
-  | .size sel w h =>
-    s!"  - size: \{selector: {yamlStr sel}, width: {w}, height: {h}}"
-  | _ => ""
+public meta instance : ToJson SpytialOp where
+  toJson
+    -- core matches flags by string, so the payload is the bare name
+    | .flag name => Json.mkObj [("flag", toJson name)]
+    | op => instToJsonSpytialOp.toJson op
 
-/-- Convert a `SpytialSpec` to a YAML string consumable by `parseLayoutSpec`. -/
-public meta def SpytialSpec.toYaml (spec : SpytialSpec) : String :=
-  let constraints := spec.filter SpytialOp.isConstraint
-  let directives := spec.filter (! SpytialOp.isConstraint ·)
-  let parts : List String := []
-  let parts := if constraints.isEmpty then parts else
-    parts ++ ["constraints:"] ++ constraints.map constraintToYaml
-  let parts := if directives.isEmpty then parts else
-    parts ++ ["directives:"] ++ directives.map directiveToYaml
-  "\n".intercalate parts
-
-/-- Extract constraint and directive lines from a YAML spec string.
-    Returns `(constraintLines, directiveLines)`. -/
-private meta def extractSpecLines (yaml : String) : List String × List String :=
-  let lines := yaml.splitOn "\n"
-  let rec go (lines : List String) (inConstraints : Bool)
-      (cs : List String) (ds : List String) : List String × List String :=
-    match lines with
-    | [] => (cs.reverse, ds.reverse)
-    | l :: rest =>
-      if l == "constraints:" then go rest true cs ds
-      else if l == "directives:" then go rest false cs ds
-      else if l.startsWith "  - " then
-        if inConstraints then go rest inConstraints (l :: cs) ds
-        else go rest inConstraints cs (l :: ds)
-      else go rest inConstraints cs ds
-  go lines true [] []
-
-/-- Merge multiple YAML spec strings (parent-first order) into a single YAML spec.
-    Constraints and directives from all specs are concatenated in order. -/
-public meta def mergeSpecYamls (yamls : List String) : String :=
-  let (allCs, allDs) := yamls.foldl (fun (cs, ds) yaml =>
-    let (c, d) := extractSpecLines yaml
-    (cs ++ c, ds ++ d)) ([], [])
-  let parts : List String := []
-  let parts := if allCs.isEmpty then parts else parts ++ ["constraints:"] ++ allCs
-  let parts := if allDs.isEmpty then parts else parts ++ ["directives:"] ++ allDs
-  "\n".intercalate parts
+/-- A spec with no ops renders as the empty string, not `{}`. -/
+public meta def SpytialSpec.render (spec : SpytialSpec) : String :=
+  let mkSection (key : String) (ops : SpytialSpec) : List (String × Json) :=
+    if ops.isEmpty then [] else [(key, toJson ops)]
+  let (constraints, directives) := spec.partition SpytialOp.isConstraint
+  match mkSection "constraints" constraints ++ mkSection "directives" directives with
+  | [] => ""
+  | kvs => (Json.mkObj kvs).pretty
 
 end SpytialLean
