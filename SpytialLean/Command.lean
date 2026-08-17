@@ -25,8 +25,20 @@ The head ident dispatches interpretation, so op keywords need no token-table
 entries. -/
 
 declare_syntax_cat spytial_op
+declare_syntax_cat spytial_block_arg
+declare_syntax_cat spytial_op_block
 
-syntax spytialOpArg := num <|> spytial_sel
+syntax str : spytial_block_arg
+syntax num : spytial_block_arg
+syntax ident : spytial_block_arg
+syntax spytial_op_block : spytial_block_arg
+
+/-- `(blockName arg…)`: `atomic` through the first argument, so a
+    parenthesized selector (`(lo)`, `(a + b)`) backtracks out to `spytial_sel`. -/
+syntax (name := spytialBlockStx)
+  atomic("(" ident spytial_block_arg) spytial_block_arg* ")" : spytial_op_block
+
+syntax spytialOpArg := num <|> spytial_op_block <|> spytial_sel
 
 syntax (name := spytialOpStx) ident spytialOpArg* : spytial_op
 /-- `attribute` is a Lean keyword, so it gets its own rule with the keyword as the atom. -/
@@ -100,27 +112,132 @@ private meta def parseEnum {α} [FromJson α] (what : String) (typeName : Name)
   | .error _ =>
     throwErrorAt x m!"unknown {what} '{x.getId}' (expected {← enumValues typeName})"
 
-private meta def OpArgs.style (a : OpArgs) (i : Nat) : TermElabM EdgeStyle := do
-  match a.ident? i with
-  | some x => parseEnum "edge style" ``EdgeStyle x
-  | none => do
-    if (a.get? i).isSome then
-      throwErrorAt (← a.get i) m!"expected an edge style ({← enumValues ``EdgeStyle}); \
-        usage: {a.usage}"
-    return .solid
+/-! ### Style blocks -/
 
-private meta def OpArgs.flagIdent (a : OpArgs) (i : Nat) (flagName : String) :
-    TermElabM Bool := do
-  match a.ident? i with
-  | some x =>
-    if x.getId.toString == flagName then
-      return true
+/-- One `(name arg…)` block, args classified by kind; block-argument order is
+    free (a color is the string, a pattern the ident, a weight the numeral). -/
+private meta structure BlockArgs where
+  ref : Syntax
+  name : String
+  strs : Array (Syntax × String) := #[]
+  nums : Array (Syntax × Nat) := #[]
+  idents : Array (Syntax × Name) := #[]
+  blocks : Array Syntax := #[]
+
+/-- Node shape: `["(", ident, firstArg, args*, ")"]` (see `spytialBlockStx`). -/
+private meta def BlockArgs.ofStx (stx : Syntax) : BlockArgs := Id.run do
+  let mut b : BlockArgs := { ref := stx, name := stx[1].getId.toString }
+  for arg in #[stx[2]] ++ stx[3].getArgs do
+    let inner := arg[0]
+    if let some s := inner.isStrLit? then b := { b with strs := b.strs.push (inner, s) }
+    else if let some n := inner.isNatLit? then b := { b with nums := b.nums.push (inner, n) }
+    else if inner.isIdent then b := { b with idents := b.idents.push (inner, inner.getId) }
+    else b := { b with blocks := b.blocks.push inner }
+  return b
+
+private meta def atMostOne {α} (b : BlockArgs) (what : String)
+    (xs : Array (Syntax × α)) : TermElabM (Option (Syntax × α)) := do
+  if h : 1 < xs.size then
+    throwErrorAt xs[1].1 m!"duplicate {what} in ({b.name} …)"
+  return xs[0]?
+
+private meta def rejectArgs {α} (b : BlockArgs) (kind : String)
+    (xs : Array (Syntax × α)) : TermElabM Unit := do
+  if h : 0 < xs.size then
+    throwErrorAt xs[0].1 m!"({b.name} …) takes no {kind}"
+
+private meta def rejectNested (b : BlockArgs) : TermElabM Unit := do
+  if h : 0 < b.blocks.size then
+    throwErrorAt b.blocks[0] m!"({b.name} …) takes no nested blocks"
+
+private meta def parseBorderStyle (b : BlockArgs) : TermElabM BorderStyle := do
+  rejectArgs b "idents" b.idents; rejectNested b
+  let color ← atMostOne b "color" b.strs
+  let width ← atMostOne b "width" b.nums
+  return { color := color.map (·.2), width := width.map (·.2) }
+
+private meta def parseFillStyle (b : BlockArgs) : TermElabM FillStyle := do
+  rejectArgs b "idents" b.idents; rejectArgs b "numerals" b.nums; rejectNested b
+  let color ← atMostOne b "color" b.strs
+  return { color := color.map (·.2) }
+
+private meta def parseIconStyle (b : BlockArgs) : TermElabM IconStyle := do
+  rejectArgs b "numerals" b.nums; rejectNested b
+  let some path ← atMostOne b "path" b.strs
+    | throwErrorAt b.ref m!"(iconStyle …) needs a path string"
+  let placement ← match ← atMostOne b "placement" b.idents with
+    | some (stx, _) => some <$> parseEnum "icon placement" ``IconPlacement ⟨stx⟩
+    | none => pure none
+  return { path := path.2, placement }
+
+private meta def parseLineStyle (b : BlockArgs) : TermElabM LineStyle := do
+  rejectNested b
+  let color ← atMostOne b "color" b.strs
+  let weight ← atMostOne b "weight" b.nums
+  let pattern ← match ← atMostOne b "pattern" b.idents with
+    | some (stx, _) => some <$> parseEnum "line pattern" ``LinePattern ⟨stx⟩
+    | none => pure none
+  return { color := color.map (·.2), pattern, weight := weight.map (·.2) }
+
+private meta def parseGroupEdge (b : BlockArgs) : TermElabM GroupEdge := do
+  rejectArgs b "strings" b.strs; rejectArgs b "numerals" b.nums
+  let some dir ← atMostOne b "direction" b.idents
+    | throwErrorAt b.ref m!"(addEdge …) needs a direction \
+        ({← enumValues ``GroupEdgeDirection})"
+  let direction ← parseEnum "group-edge direction" ``GroupEdgeDirection ⟨dir.1⟩
+  let lineStyle ← match ← atMostOne b "nested block" (b.blocks.map ((·, ()))) with
+    | some (stx, _) =>
+      let nb := BlockArgs.ofStx stx
+      unless nb.name == "lineStyle" do
+        throwErrorAt stx m!"(addEdge …) nests only (lineStyle …)"
+      some <$> parseLineStyle nb
+    | none => pure none
+  return { direction, lineStyle }
+
+/-- The style pieces an op's trailing arguments can carry. -/
+private meta structure StyleParts where
+  border : Option BorderStyle := none
+  fill : Option FillStyle := none
+  icon : Option IconStyle := none
+  line : Option LineStyle := none
+  addEdge : Option GroupEdge := none
+  showLabel : Option Bool := none
+
+/-- Fold the arguments from `start` on: `(block …)`s from `allowed`, plus the
+    `labels`/`noLabels` flags when `flags` is set. -/
+private meta def collectStyleArgs (a : OpArgs) (start : Nat)
+    (allowed : List String) (flags : Bool := false) : TermElabM StyleParts := do
+  let dup {α} (stx : Syntax) (what : String) : Option α → TermElabM Unit := fun
+    | some _ => throwErrorAt stx m!"duplicate {what}; usage: {a.usage}"
+    | none => pure ()
+  let mut parts : StyleParts := {}
+  for i in [start:a.args.size] do
+    let inner := argInner a.args[i]!
+    if inner.isOfKind ``spytialBlockStx then
+      let b := BlockArgs.ofStx inner
+      unless allowed.contains b.name do
+        throwErrorAt inner m!"unknown block '({b.name} …)'; expected \
+          {", ".intercalate (allowed.map (s!"({·} …)"))}; usage: {a.usage}"
+      match b.name with
+      | "borderStyle" => dup inner "(borderStyle …)" parts.border
+                         parts := { parts with border := some (← parseBorderStyle b) }
+      | "fillStyle"   => dup inner "(fillStyle …)" parts.fill
+                         parts := { parts with fill := some (← parseFillStyle b) }
+      | "iconStyle"   => dup inner "(iconStyle …)" parts.icon
+                         parts := { parts with icon := some (← parseIconStyle b) }
+      | "lineStyle"   => dup inner "(lineStyle …)" parts.line
+                         parts := { parts with line := some (← parseLineStyle b) }
+      | "addEdge"     => dup inner "(addEdge …)" parts.addEdge
+                         parts := { parts with addEdge := some (← parseGroupEdge b) }
+      | _ => throwErrorAt inner "unexpected block"
+    else if flags && inner.isOfKind ``selIdent &&
+        (inner[0].getId.toString == "labels" || inner[0].getId.toString == "noLabels") then
+      dup inner "label flag" parts.showLabel
+      parts := { parts with showLabel := some (inner[0].getId.toString == "labels") }
     else
-      throwErrorAt x m!"expected '{flagName}'; usage: {a.usage}"
-  | none => do
-    if (a.get? i).isSome then
-      throwErrorAt (← a.get i) m!"expected '{flagName}'; usage: {a.usage}"
-    return false
+      throwErrorAt inner m!"expected a style block\
+        {if flags then " or labels|noLabels" else ""}; usage: {a.usage}"
+  return parts
 
 /-! ### Op elaboration -/
 
@@ -172,15 +289,14 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
       a.checkNoExtra 2
       return (.cyclic s d, scope)
     | "group" => do
-      let a := mkArgs "group <selector> <name> [edge]"
+      let a := mkArgs "group <selector> <name> [(addEdge togroup|fromgroup (lineStyle …)?)]"
       let s ← sel a 0 .unaryOrPair
       let gname ← match a.ident? 1, a.str? 1 with
         | some x, _ => pure x.getId.toString
         | _, some s => pure s
         | _, _ => throwErrorAt head m!"missing group name; usage: {a.usage}"
-      let addEdge ← a.flagIdent 2 "edge"
-      a.checkNoExtra 3
-      return (.group s gname addEdge, scope.introduce gname 1)
+      let p ← collectStyleArgs a 2 ["addEdge"]
+      return (.group s gname p.addEdge, scope.introduce gname 1)
     | "hideAtom" => do
       let a := mkArgs "hideAtom <selector>"
       let s ← sel a 0 .unary
@@ -193,19 +309,22 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
       let h ← a.nat 2 "a height"
       a.checkNoExtra 3
       return (.size s w h, scope)
-    | "atomColor" => do
-      let a := mkArgs "atomColor <selector> <css-color>"
+    | "atomStyle" => do
+      let a := mkArgs "atomStyle <selector> (borderStyle <color> [<width>])? \
+        (fillStyle <color>)? (iconStyle <path> [full|badge])? [labels|noLabels]"
       let s ← sel a 0 .unary
-      let c ← a.str 1 "a CSS color"
-      a.checkNoExtra 2
-      return (.atomColor s c, scope)
-    | "edgeColor" => do
-      let a := mkArgs "edgeColor <field> <css-color> [solid|dashed|dotted]"
+      let p ← collectStyleArgs a 1 ["borderStyle", "fillStyle", "iconStyle"] (flags := true)
+      if p.border.isNone && p.fill.isNone && p.icon.isNone && p.showLabel.isNone then
+        throwErrorAt head m!"atomStyle sets nothing; usage: {a.usage}"
+      return (.atomStyle s p.border p.fill p.icon p.showLabel, scope)
+    | "edgeStyle" => do
+      let a := mkArgs "edgeStyle <field> (lineStyle <color> [solid|dashed|dotted] \
+        [<weight>])? [labels|noLabels]"
       let f ← elabFieldName scope (← a.ident 0 "a relation name")
-      let c ← a.str 1 "a CSS color"
-      let st ← a.style 2
-      a.checkNoExtra 3
-      return (.edgeColor f c st, scope)
+      let p ← collectStyleArgs a 1 ["lineStyle"] (flags := true)
+      if p.line.isNone && p.showLabel.isNone then
+        throwErrorAt head m!"edgeStyle sets nothing; usage: {a.usage}"
+      return (.edgeStyle f p.line p.showLabel, scope)
     | "hideField" => do
       let a := mkArgs "hideField <field>"
       let f ← elabFieldName scope (← a.ident 0 "a relation name")
@@ -216,13 +335,6 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
       let f ← elabFieldName scope (← a.ident 0 "a relation name")
       a.checkNoExtra 1
       return (.attribute f, scope)
-    | "icon" => do
-      let a := mkArgs "icon <selector> <path> [labels]"
-      let s ← sel a 0 .unary
-      let p ← a.str 1 "an icon path"
-      let labels ← a.flagIdent 2 "labels"
-      a.checkNoExtra 3
-      return (.icon s p labels, scope)
     | "tag" => do
       let a := mkArgs "tag <selector> <name> <value>"
       let s ← sel a 0 .unary
@@ -231,22 +343,20 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
       a.checkNoExtra 3
       return (.tag s n v, scope)
     | "inferredEdge" => do
-      let a := mkArgs "inferredEdge <name> <selector> [<css-color>] [solid|dashed|dotted]"
+      let a := mkArgs "inferredEdge <name> <selector> (lineStyle <color> \
+        [solid|dashed|dotted] [<weight>])?"
       let n := (← a.ident 0 "an edge name").getId.toString
       let s ← sel a 1 .pair
-      let colorGiven := (a.str? 2).isSome
-      let c := (a.str? 2).getD "#000000"
-      let st ← a.style (if colorGiven then 3 else 2)
-      a.checkNoExtra (if colorGiven then 4 else 3)
-      return (.inferredEdge n s c st, scope.introduce n 2)
+      let p ← collectStyleArgs a 2 ["lineStyle"]
+      return (.inferredEdge n s p.line, scope.introduce n 2)
     | "flag" => do
       let a := mkArgs "flag <name>"
       let n := (← a.ident 0 "a flag name").getId.toString
       a.checkNoExtra 1
       return (.flag n, scope)
     | _ =>
-      throwErrorAt head m!"unknown Spytial op '{name}'; known ops: align, atomColor, \
-        attribute, cyclic, edgeColor, flag, group, hideAtom, hideField, icon, \
+      throwErrorAt head m!"unknown Spytial op '{name}'; known ops: align, atomStyle, \
+        attribute, cyclic, edgeStyle, flag, group, hideAtom, hideField, \
         inferredEdge, orientation, size, tag"
 
 meta def elabSpytialOps (scope : SelScope) (ops : Array (TSyntax `spytial_op)) :
@@ -341,7 +451,7 @@ private meta def optionalOps (stx : Syntax) : Option (Array (TSyntax `spytial_op
     ```
     #spytial myTree with [
       orientation left left below,
-      atomColor leaf "#0066ff"
+      atomStyle leaf "#0066ff"
     ]
     ```
 
