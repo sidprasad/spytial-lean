@@ -127,13 +127,14 @@ lean_lib Demos where
   srcDir := "demos"
   roots := #[`Showcase, `ProofFieldFiltering, `FunctionFields, `TypeClassInstances,
              `CustomRelationalizer, `ProofTerms, `HoareLogic, `OperationalSemantics,
-             `PartialTerms]
+             `PartialTerms, `BDD]
   needs := #[widgetJsAll]
 
 /-- Headless unit tests: `lake build SpytialTests`. -/
 lean_lib SpytialTests where
   srcDir := "tests"
-  roots := #[`TypeShapeTest, `CoverageTest, `TacticTest, `SelectorTest]
+  roots := #[`TypeShapeTest, `CoverageTest, `TacticTest, `SelectorTest,
+             `IdentityTest, `IdentityWalkTest]
 
 require proofwidgets from
   git "https://github.com/leanprover-community/ProofWidgets4" @ "v0.0.105"
