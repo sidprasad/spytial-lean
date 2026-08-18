@@ -43,6 +43,8 @@ syntax spytialOpArg := num <|> spytial_op_block <|> spytial_sel
 syntax (name := spytialOpStx) ident spytialOpArg* : spytial_op
 /-- `attribute` is a Lean keyword, so it gets its own rule with the keyword as the atom. -/
 syntax (name := spytialAttrOp) "attribute " spytialOpArg* : spytial_op
+/-- In a use-site `with [...]`, `..` splices the type's attached spec at that position. -/
+syntax (name := spytialSpliceStx) ".." : spytial_op
 
 /-! ### Argument interpretation -/
 
@@ -241,10 +243,8 @@ private meta def collectStyleArgs (a : OpArgs) (start : Nat)
 
 /-! ### Op elaboration -/
 
-/-- Returns the scope extended with any name the op introduces (groups,
-    inferred edges). -/
 meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
-    TermElabM (SpytialOp × SelScope) := do
+    TermElabM SpytialOp := do
   let (name, head) ←
     if op.raw.isOfKind ``spytialOpStx then
       pure (op.raw[0].getId.toString, op.raw[0])
@@ -267,14 +267,14 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
       for i in [1:a.args.size] do
         let x ← a.ident i "a direction"
         dirs := dirs ++ [← parseEnum "direction" ``Direction x]
-      return (.orientation s dirs, scope)
+      return .orientation s dirs
     | "align" => do
       let a := mkArgs "align <selector> horizontal|vertical"
       let s ← sel a 0 .pair
       let x ← a.ident 1 "an alignment direction"
       let d ← parseEnum "alignment direction" ``AlignDir x
       a.checkNoExtra 2
-      return (.align s d, scope)
+      return .align s d
     | "cyclic" => do
       let a := mkArgs "cyclic <selector> [clockwise|counterclockwise]"
       let s ← sel a 0 .pair
@@ -287,7 +287,7 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
               ({← enumValues ``RotationDir}); usage: {a.usage}"
           pure RotationDir.clockwise
       a.checkNoExtra 2
-      return (.cyclic s d, scope)
+      return .cyclic s d
     | "group" => do
       let a := mkArgs "group <selector> <name> [(addEdge togroup|fromgroup (lineStyle …)?)]"
       let s ← sel a 0 .unaryOrPair
@@ -296,19 +296,19 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
         | _, some s => pure s
         | _, _ => throwErrorAt head m!"missing group name; usage: {a.usage}"
       let p ← collectStyleArgs a 2 ["addEdge"]
-      return (.group s gname p.addEdge, scope.introduce gname 1)
+      return .group s gname p.addEdge
     | "hideAtom" => do
       let a := mkArgs "hideAtom <selector>"
       let s ← sel a 0 .unary
       a.checkNoExtra 1
-      return (.hideAtom s, scope)
+      return .hideAtom s
     | "size" => do
       let a := mkArgs "size <selector> <width> <height>"
       let s ← sel a 0 .unary
       let w ← a.nat 1 "a width"
       let h ← a.nat 2 "a height"
       a.checkNoExtra 3
-      return (.size s w h, scope)
+      return .size s w h
     | "atomStyle" => do
       let a := mkArgs "atomStyle <selector> (borderStyle <color> [<width>])? \
         (fillStyle <color>)? (iconStyle <path> [full|badge])? [labels|noLabels]"
@@ -316,7 +316,7 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
       let p ← collectStyleArgs a 1 ["borderStyle", "fillStyle", "iconStyle"] (flags := true)
       if p.border.isNone && p.fill.isNone && p.icon.isNone && p.showLabel.isNone then
         throwErrorAt head m!"atomStyle sets nothing; usage: {a.usage}"
-      return (.atomStyle s p.border p.fill p.icon p.showLabel, scope)
+      return .atomStyle s p.border p.fill p.icon p.showLabel
     | "edgeStyle" => do
       let a := mkArgs "edgeStyle <field> (lineStyle <color> [solid|dashed|dotted] \
         [<weight>])? [labels|noLabels]"
@@ -324,49 +324,67 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
       let p ← collectStyleArgs a 1 ["lineStyle"] (flags := true)
       if p.line.isNone && p.showLabel.isNone then
         throwErrorAt head m!"edgeStyle sets nothing; usage: {a.usage}"
-      return (.edgeStyle f p.line p.showLabel, scope)
+      return .edgeStyle f p.line p.showLabel
     | "hideField" => do
       let a := mkArgs "hideField <field>"
       let f ← elabFieldName scope (← a.ident 0 "a relation name")
       a.checkNoExtra 1
-      return (.hideField f, scope)
+      return .hideField f
     | "attribute" => do
       let a := mkArgs "attribute <field>"
       let f ← elabFieldName scope (← a.ident 0 "a relation name")
       a.checkNoExtra 1
-      return (.attribute f, scope)
+      return .attribute f
     | "tag" => do
       let a := mkArgs "tag <selector> <name> <value>"
       let s ← sel a 0 .unary
       let n ← a.str 1 "a tag name"
       let v ← a.str 2 "a tag value"
       a.checkNoExtra 3
-      return (.tag s n v, scope)
+      return .tag s n v
     | "inferredEdge" => do
       let a := mkArgs "inferredEdge <name> <selector> (lineStyle <color> \
         [solid|dashed|dotted] [<weight>])?"
       let n := (← a.ident 0 "an edge name").getId.toString
       let s ← sel a 1 .edge
       let p ← collectStyleArgs a 2 ["lineStyle"]
-      return (.inferredEdge n s p.line, scope.introduce n 2)
+      return .inferredEdge n s p.line
     | "flag" => do
       let a := mkArgs "flag <name>"
       let n := (← a.ident 0 "a flag name").getId.toString
       a.checkNoExtra 1
-      return (.flag n, scope)
+      return .flag n
     | _ =>
       throwErrorAt head m!"unknown Spytial op '{name}'; known ops: align, atomStyle, \
         attribute, cyclic, edgeStyle, flag, group, hideAtom, hideField, \
         inferredEdge, orientation, size, tag"
 
-meta def elabSpytialOps (scope : SelScope) (ops : Array (TSyntax `spytial_op)) :
-    TermElabM SpytialSpec := do
+/-- Elaborate an op list, bringing each op's introduced names (groups, inferred
+    edges) into scope for the ops after it. A `..` element splices `attached?`
+    at that position; `none` means the context has no attached spec to splice. -/
+meta def elabSpytialOps (scope : SelScope) (ops : Array (TSyntax `spytial_op))
+    (attached? : Option SpytialSpec := none) : TermElabM SpytialSpec := do
+  let introduce (scope : SelScope) (op : SpytialOp) : SelScope :=
+    match op.introduces? with
+    | some (n, arity) => scope.introduce n arity
+    | none => scope
   let mut scope := scope
   let mut spec : Array SpytialOp := #[]
+  let mut spliced := false
   for op in ops do
-    let (o, scope') ← elabSpytialOp scope op
-    spec := spec.push o
-    scope := scope'
+    if op.raw.isOfKind ``spytialSpliceStx then
+      let some attached := attached?
+        | throwErrorAt op "`..` splices the type's attached spec; \
+            only a use-site `with [...]` has one"
+      if spliced then
+        throwErrorAt op "duplicate `..`"
+      spliced := true
+      spec := spec ++ attached
+      scope := attached.foldl introduce scope
+    else
+      let o ← elabSpytialOp scope op
+      spec := spec.push o
+      scope := introduce scope o
   return spec.toList
 
 /-- A term whose type has no head constant gets a fully lenient scope. -/
@@ -411,15 +429,25 @@ private meta def elabRelationalized (t : Syntax) (cfg : WalkConfig := {}) :
   let e ← elabTermInstantiated t
   return (e, ← relationalize e cfg)
 
-/-- An explicit `with [<ops>]` overrides the type's attached spec. The spec is
-    rendered to its wire string once, here. -/
+/-- Elaborate a use-site `with [...]` for `e`. Without `..` the list replaces
+    `e`'s attached spec; a `..` element splices the attached spec at that
+    position, its introduced names in scope for the ops after it. -/
+private meta def elabUseSiteOps (e : Expr) (ops : Array (TSyntax `spytial_op)) :
+    TermElabM SpytialSpec := do
+  let attached? ← lookupTypeSpec e
+  if attached?.isNone then
+    if let some splice := ops.find? (·.raw.isOfKind ``spytialSpliceStx) then
+      logWarningAt splice m!"`..` splices the attached spec, but {← inferType e} has none"
+  elabSpytialOps (← scopeForExpr e) ops (some (attached?.getD []))
+
+/-- An explicit `with [<ops>]` overrides the type's attached spec, unless a
+    `..` element splices it back in. The spec is rendered to its wire string
+    once, here. -/
 private meta def elabSpytialPayload (t : Syntax) (ops? : Option (Array (TSyntax `spytial_op)))
     (cfg : WalkConfig) : TermElabM (JsonDataInstance × Option String) := do
   let (e, di) ← elabRelationalized t cfg
   let spec? ← match ops? with
-    | some ops => do
-      let scope ← scopeForExpr e
-      pure (some (← elabSpytialOps scope ops))
+    | some ops => some <$> elabUseSiteOps e ops
     | none => lookupTypeSpec e
   return (di, spec?.map SpytialSpec.render)
 
@@ -456,7 +484,11 @@ private meta def optionalOps (stx : Syntax) : Option (Array (TSyntax `spytial_op
     ```
 
     If the type has an attached spec (via `spytial_spec`), it is used as the
-    default. An explicit `with [...]` overrides it. -/
+    default. An explicit `with [...]` overrides it; a `..` element in the list
+    splices the attached spec at that position:
+    ```
+    #spytial myTree with [.., hideAtom Nat]
+    ``` -/
 syntax (name := spytialCmd) "#spytial " term (" with " "[" spytial_op,* "]")? : command
 
 @[command_elab spytialCmd]
@@ -534,8 +566,7 @@ syntax (name := spytialSpecDebug) "#spytial.spec " term " with " "[" spytial_op,
 meta def elabSpytialSpecDebug : CommandElab := fun
   | `(#spytial.spec $t:term with [$ops,*]) => do
     let specStr ← liftTermElabM do
-      let scope ← scopeForExpr (← elabTermInstantiated t)
-      let spec ← elabSpytialOps scope ops.getElems
+      let spec ← elabUseSiteOps (← elabTermInstantiated t) ops.getElems
       return spec.render
     logInfo m!"{specStr}"
   | stx => throwError "Unexpected syntax {stx}."
