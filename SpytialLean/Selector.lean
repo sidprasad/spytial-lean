@@ -1,6 +1,7 @@
 module
 
 public import Lean
+public meta import SpytialLean.SelectorGenerated
 
 namespace SpytialLean
 
@@ -128,64 +129,65 @@ public meta instance : Inhabited SelInt := ⟨.lit 0⟩
 public meta instance : Inhabited SelVal := ⟨.strLit ""⟩
 public meta instance : Inhabited SelForm := ⟨.some_ .univ⟩
 
-namespace Sel
-
-/-- Forge's tight-end cascade (Expr8–Expr18), re-scaled. -/
-public meta def prec : Sel → Nat
-  | raw .. => 0
-  | union .. | diff .. => 30
-  | override .. => 36
-  | inter .. => 40
-  | prod .. | prodMult .. => 50
-  | restrictDom .. | restrictRan .. => 55
-  | join .. => 60
-  | trans .. | reflTrans .. | transpose .. => 70
-  | _ => 100
-
-end Sel
-
 private meta def parenIf (needed : Bool) (s : String) : String :=
   if needed then s!"({s})" else s
 
-/-- Mirrors `RESERVED_KEYWORDS` in simple-graph-query. -/
-private meta def sgqReserved : List String :=
-  ["open", "as", "var", "abstract", "sig", "extends", "in",
-   "lone", "some", "one", "two", "set", "func", "pfunc", "disj",
-   "wheat", "pred", "fun", "assert", "run", "check", "for", "but",
-   "exactly", "none", "univ", "iden", "is", "sat", "unsat", "theorem",
-   "forge_error", "checked", "test", "expect", "suite", "all",
-   "sufficient", "necessary", "consistent", "inconsistent", "with",
-   "let", "bind", "or", "xor", "iff", "implies", "else", "and",
-   "until", "release", "since", "triggered", "not", "always",
-   "eventually", "after", "before", "once", "historically", "this",
-   "sexpr", "inst", "eval", "example", "ni", "no", "sum", "Int", "option"]
+/-! ## Rendering against the engine's cascade
 
-/-- SGQ's bare-identifier rule is `[a-zA-Z_$/][a-zA-Z_0-9$/]*` (ForgeLexer.g4);
-    outside it the lexer fails open — `s₁` silently evaluates the prefix `s`,
-    `x'` becomes a temporal prime, `σ` is a lexer error. Backtick-quoted
-    identifiers accept any character, with `\`-escapes for `` ` `` and `\`. -/
+`Sgq.Op` carries the level each operand slot descends to, so an operand is
+parenthesized exactly when its own construct binds looser than its slot
+accepts. Those levels are the engine's, not a local re-scaling: `+` takes its
+right operand two levels in, which no single precedence number can say. -/
+
+private meta def Sgq.Op.slot (o : Sgq.Op) (i : Nat) : Nat := o.operands[i]!
+
+/-- `lhs op rhs`, with `sep` around the operator (empty for `.` and `->`). -/
+private meta def infixSGQ (o : Sgq.Op) (ctx : Nat) (lhs rhs : Nat → String)
+    (sep : String := " ") : String :=
+  parenIf (o.prec < ctx) s!"{lhs (o.slot 0)}{sep}{o.text}{sep}{rhs (o.slot 1)}"
+
+/-- A word-spelled operator would glue to its operand (`nota`), so it takes a
+    space; a symbolic one (`^r`, `@num:e`) does not. The test is the engine's
+    own bare-identifier rule, so it follows the spelling rather than a list. -/
+private meta def gap (text : String) : String :=
+  if Sgq.bareRest text.back then " " else ""
+
+/-- `op operand`. Prefixes bind tightest and never need wrapping themselves. -/
+private meta def prefixSGQ (o : Sgq.Op) (render : Nat → String) : String :=
+  s!"{o.text}{gap o.text}{render (o.slot 0)}"
+
+/-- `a !in b` and friends: the comparison's negation attaches to the operator
+    rather than wrapping the formula. -/
+private meta def negated (o : Sgq.Op) : Sgq.Op :=
+  { o with text := Sgq.comparison.negation ++ o.text }
+
+/-- Outside SGQ's bare-identifier rule the lexer fails open — `s₁` silently
+    evaluates the prefix `s`, `σ` is a lexer error — so anything the rule does
+    not cover is backquoted instead.
+
+    FIXME: the empty name has no spelling at all (`Sgq.quoteMinLength` is 1),
+    and this still emits the invalid `` `` `` for it. Nothing produces one
+    today: sigs and relations come from resolved Lean names and binders from
+    binder names. Fixing it properly means an error path through every caller. -/
 private meta def quoteIfNeeded (s : String) : String :=
-  let bareHead (c : Char) := c.isAlpha || c == '_' || c == '$' || c == '/'
   let bare := match s.toList with
-    | c :: cs => bareHead c && cs.all fun c => bareHead c || c.isDigit
+    | c :: cs => Sgq.bareHead c && cs.all Sgq.bareRest
     | [] => false
-  if bare && !sgqReserved.contains s then s
+  if bare && s.length ≥ Sgq.bareMinLength && !Sgq.reserved.contains s then s
   else
     let esc := s.foldl (init := "") fun acc c =>
-      if c == '`' || c == '\\' then (acc.push '\\').push c else acc.push c
-    s!"`{esc}`"
+      if Sgq.quoteMustEscape.contains c then (acc.push Sgq.quoteEscape).push c else acc.push c
+    s!"{Sgq.quoteDelimiter}{esc}{Sgq.quoteDelimiter}"
 
-/-- How SGQ spells `c` inside a double-quoted literal: these six escapes are
-    the whole alphabet (any other backslash is dropped), everything else rides
-    raw. `none` = no spelling at all (C0/DEL, which the JSON hop mangles). -/
-private meta def sgqStringChar? : Char → Option String
-  | '\\' => some "\\\\"
-  | '"' => some "\\\""
-  | '\n' => some "\\n"
-  | '\t' => some "\\t"
-  | '\r' => some "\\r"
-  | '\x00' => some "\\0"
-  | c => if c.val < 0x20 || c.val == 0x7f then none else some c.toString
+/-- How SGQ spells `c` inside a double-quoted literal. `none` = no spelling at
+    all (C0/DEL without a readable escape, which the JSON hop mangles). -/
+private meta def sgqStringChar? (c : Char) : Option String :=
+  if let some spelled := Sgq.stringEscapeSpelling c then
+    some s!"{Sgq.stringEscape}{spelled}"
+  else if Sgq.stringMustEscape.contains c then
+    some s!"{Sgq.stringEscape}{c}"
+  else if c.val < 0x20 || c.val == 0x7f then none
+  else some c.toString
 
 /-- The first character of `s` that SGQ's string syntax cannot spell, for the
     elaborator to reject before it reaches a lowering. -/
@@ -196,23 +198,42 @@ public meta def sgqUnspellableChar? (s : String) : Option Char :=
     rides raw — the elaborator has already rejected that case. -/
 public meta def sgqStringLit (s : String) : String :=
   let body := s.toList.map fun c => (sgqStringChar? c).getD c.toString
-  s!"\"{String.join body}\""
+  s!"{Sgq.stringDelimiter}{String.join body}{Sgq.stringDelimiter}"
 
 private meta def ArrowMult.toSGQ : ArrowMult → String
   | .lone => "lone" | .one => "one" | .some => "some" | .set => "set"
 
+/-- A builtin's SGQ name, checked against the list the engine dispatches on so
+    a rename upstream is a build error rather than an unresolved call. -/
+private meta def builtinNamed (available : List String) (name : String) : String :=
+  if available.contains name then name
+  else panic! s!"simple-graph-query no longer has the builtin `{name}`; run `just gen-sgq`"
+
 private meta def IntBuiltin.toSGQ : IntBuiltin → String
-  | .add => "add" | .subtract => "subtract" | .multiply => "multiply"
-  | .divide => "divide" | .remainder => "remainder" | .abs => "abs" | .sign => "sign"
+  | .add => builtinNamed Sgq.binaryBuiltins "add"
+  | .subtract => builtinNamed Sgq.binaryBuiltins "subtract"
+  | .multiply => builtinNamed Sgq.binaryBuiltins "multiply"
+  | .divide => builtinNamed Sgq.binaryBuiltins "divide"
+  | .remainder => builtinNamed Sgq.binaryBuiltins "remainder"
+  | .abs => builtinNamed Sgq.unaryBuiltins "abs"
+  | .sign => builtinNamed Sgq.unaryBuiltins "sign"
 
 private meta def IntAgg.toSGQ : IntAgg → String
-  | .sum => "sum" | .min => "min" | .max => "max"
+  | .sum => builtinNamed Sgq.setBuiltins "sum"
+  | .min => builtinNamed Sgq.setBuiltins "min"
+  | .max => builtinNamed Sgq.setBuiltins "max"
 
 private meta def IntCmp.toSGQ : IntCmp → String
-  | .eq => "=" | .ne => "!=" | .lt => "<" | .gt => ">" | .le => "<=" | .ge => ">="
+  | .eq => Sgq.equal.text
+  | .ne => Sgq.comparison.negation ++ Sgq.equal.text
+  | .lt => Sgq.lessThan.text
+  | .gt => Sgq.greaterThan.text
+  | .le => Sgq.atMost.text
+  | .ge => Sgq.atLeast.text
 
 private meta def Quant.toSGQ : Quant → String
-  | .all => "all" | .no => "no" | .some => "some" | .lone => "lone" | .one => "one"
+  | .all => Sgq.all.text | .no => Sgq.no.text | .some => Sgq.«some».text
+  | .lone => Sgq.lone.text | .one => Sgq.one.text
 
 private meta def bindersToSGQ (binders : Array (Name × Sel)) (domToSGQ : Sel → String) :
     String :=
@@ -221,56 +242,68 @@ private meta def bindersToSGQ (binders : Array (Name × Sel)) (domToSGQ : Sel �
     | some (xs, dom') =>
       if dom' == dom then gs.set! (gs.size - 1) (xs.push x, dom') else gs.push (#[x], dom)
     | none => gs.push (#[x], dom)
-  ", ".intercalate <| groups.toList.map fun (xs, dom) =>
-    let names := ", ".intercalate (xs.toList.map (quoteIfNeeded <| toString ·))
-    s!"{names} : {domToSGQ dom}"
+  let sep := Sgq.quantifier.separator ++ " "
+  sep.intercalate <| groups.toList.map fun (xs, dom) =>
+    let names := sep.intercalate (xs.toList.map (quoteIfNeeded <| toString ·))
+    s!"{names} {Sgq.quantifier.colon} {domToSGQ dom}"
 
 mutual
 
-/-- `ctx` is the binding strength of the enclosing position. -/
+/-- `ctx` is the level the enclosing position accepts. -/
 public meta partial def Sel.toSGQCtx (ctx : Nat) : Sel → String
   | .sig _ s => quoteIfNeeded s
   | .rel r => quoteIfNeeded r
   | .var x => quoteIfNeeded (toString x)
-  | .univ => "univ"
-  | .iden => "iden"
-  | .none_ => "none"
-  | .atomLit a => s!"`{a}"
-  | e@(.union a b) => parenIf (e.prec < ctx) s!"{a.toSGQCtx 30} + {b.toSGQCtx 31}"
-  | e@(.diff a b) => parenIf (e.prec < ctx) s!"{a.toSGQCtx 30} - {b.toSGQCtx 31}"
-  | e@(.override a b) => parenIf (e.prec < ctx) s!"{a.toSGQCtx 36} ++ {b.toSGQCtx 37}"
-  | e@(.inter a b) => parenIf (e.prec < ctx) s!"{a.toSGQCtx 40} & {b.toSGQCtx 41}"
-  | e@(.prod a b) => parenIf (e.prec < ctx) s!"{a.toSGQCtx 50}->{b.toSGQCtx 51}"
-  | e@(.prodMult a lm rm b) =>
+  | .univ => Sgq.«universe».text
+  | .iden => Sgq.identity.text
+  | .none_ => Sgq.emptySet.text
+  | .atomLit a => s!"{Sgq.atomLiteral.text}{a}"
+  | .union a b => infixSGQ Sgq.union ctx a.toSGQCtx b.toSGQCtx
+  | .diff a b => infixSGQ Sgq.difference ctx a.toSGQCtx b.toSGQCtx
+  | .override a b => infixSGQ Sgq.override ctx a.toSGQCtx b.toSGQCtx
+  | .inter a b => infixSGQ Sgq.intersection ctx a.toSGQCtx b.toSGQCtx
+  | .prod a b => infixSGQ Sgq.product ctx a.toSGQCtx b.toSGQCtx (sep := "")
+  | .prodMult a lm rm b =>
     let mul (m : Option ArrowMult) := match m with | some m => s!"{m.toSGQ} " | none => ""
-    parenIf (e.prec < ctx) s!"{a.toSGQCtx 50} {mul lm}-> {mul rm}{b.toSGQCtx 51}"
-  | e@(.restrictDom a b) => parenIf (e.prec < ctx) s!"{a.toSGQCtx 55} <: {b.toSGQCtx 56}"
-  | e@(.restrictRan a b) => parenIf (e.prec < ctx) s!"{a.toSGQCtx 55} :> {b.toSGQCtx 56}"
-  | e@(.join a b) => parenIf (e.prec < ctx) s!"{a.toSGQCtx 60}.{b.toSGQCtx 61}"
-  | .trans a => s!"^{a.toSGQCtx 71}"
-  | .reflTrans a => s!"*{a.toSGQCtx 71}"
-  | .transpose a => s!"~{a.toSGQCtx 71}"
+    let o := Sgq.product
+    parenIf (o.prec < ctx)
+      s!"{a.toSGQCtx (o.slot 0)} {mul lm}{o.text} {mul rm}{b.toSGQCtx (o.slot 1)}"
+  | .restrictDom a b => infixSGQ Sgq.domainRestriction ctx a.toSGQCtx b.toSGQCtx
+  | .restrictRan a b => infixSGQ Sgq.rangeRestriction ctx a.toSGQCtx b.toSGQCtx
+  | .join a b => infixSGQ Sgq.join ctx a.toSGQCtx b.toSGQCtx (sep := "")
+  | .trans a => prefixSGQ Sgq.transitiveClosure a.toSGQCtx
+  | .reflTrans a => prefixSGQ Sgq.reflexiveTransitiveClosure a.toSGQCtx
+  | .transpose a => prefixSGQ Sgq.transpose a.toSGQCtx
   | .compr binders body =>
-    s!"\{{bindersToSGQ binders (·.toSGQCtx 0)} | {body.toSGQ}}"
-  | e@(.raw s) => parenIf (e.prec < ctx) s
+    let binders := bindersToSGQ binders (·.toSGQCtx Sgq.loosest)
+    Sgq.comprehension.«open» ++ binders ++ " " ++ Sgq.comprehension.bar ++ " " ++
+      body.toSGQ ++ Sgq.comprehension.close
+  -- Raw SGQ is arbitrary, so it binds looser than anything the cascade names.
+  | .raw s => parenIf (Sgq.loosest < ctx) s
 
 public meta partial def SelInt.toSGQ : SelInt → String
   | .lit n => toString n
-  -- 34: tighter than union/difference, looser than the rest (`#(a + b)`, bare `#a.b`)
-  | .card e => s!"#{e.toSGQCtx 34}"
-  | .proj e => s!"@num:{e.toSGQCtx 100}"
-  | .builtin op args => s!"{op.toSGQ}[{", ".intercalate (args.toList.map SelInt.toSGQ)}]"
+  | .card e => prefixSGQ Sgq.cardinality e.toSGQCtx
+  | .proj e => prefixSGQ Sgq.labelNumber e.toSGQCtx
+  | .builtin op args =>
+    let sep := Sgq.application.separator ++ " "
+    op.toSGQ ++ Sgq.application.«open» ++ sep.intercalate (args.toList.map SelInt.toSGQ) ++
+      Sgq.application.close
   -- Aggregators read numeric values; walker atom ids are opaque (`atom_N`),
   -- the value is the label — decode via the engine's numeric projection.
-  | .agg op e => s!"{op.toSGQ}[@num:({e.toSGQCtx 0})]"
+  | .agg op e =>
+    op.toSGQ ++ Sgq.application.«open» ++ Sgq.labelNumber.text ++
+      s!"({e.toSGQCtx Sgq.loosest})" ++ Sgq.application.close
   -- the body extends maximally right; always wrap (`(sum …) > 2`)
   | .sumQuant x dom body =>
-    s!"(sum {quoteIfNeeded (toString x)} : {dom.toSGQCtx 0} | {body.toSGQ})"
+    s!"({Sgq.sum.text} {quoteIfNeeded (toString x)} {Sgq.quantifier.colon} " ++
+      s!"{dom.toSGQCtx Sgq.loosest} {Sgq.quantifier.bar} {body.toSGQ})"
 
 public meta partial def SelVal.toSGQ : SelVal → String
   | .label proj e =>
-    let tok := match proj with | .plain => "@:" | .str => "@str:" | .bool => "@bool:"
-    s!"{tok}{e.toSGQCtx 100}"
+    let o := match proj with
+      | .plain => Sgq.label | .str => Sgq.labelString | .bool => Sgq.labelBoolean
+    prefixSGQ o e.toSGQCtx
   | .ctorLit _ label => sgqStringLit label
   -- The relationalizer labels a `String` atom with its Lean spelling, quotes
   -- included (`Relationalizer.lean`), so matching one takes a literal whose
@@ -278,36 +311,41 @@ public meta partial def SelVal.toSGQ : SelVal → String
   | .strLit s => sgqStringLit s!"\"{s}\""
   | .boolLit b => toString b
 
-/-- Forge's loose-end cascade (`or` < `xor` < `iff` < `implies` < `and` <
-    `not`); `implies` is right-associative. -/
+/-- Formulas and relational expressions are one cascade in the engine, so both
+    layers render against the same levels. -/
 public meta partial def SelForm.toSGQCtx (ctx : Nat) : SelForm → String
-  | .subset a b => s!"{a.toSGQCtx 0} in {b.toSGQCtx 0}"
-  | .notSubset a b => s!"{a.toSGQCtx 0} !in {b.toSGQCtx 0}"
-  | .ni a b => s!"{a.toSGQCtx 0} ni {b.toSGQCtx 0}"
-  | .notNi a b => s!"{a.toSGQCtx 0} !ni {b.toSGQCtx 0}"
-  | .eq a b => s!"{a.toSGQCtx 0} = {b.toSGQCtx 0}"
-  | .neq a b => s!"{a.toSGQCtx 0} != {b.toSGQCtx 0}"
-  | .veq a b => s!"{a.toSGQ} = {b.toSGQ}"
-  | .vneq a b => s!"{a.toSGQ} != {b.toSGQ}"
+  | .subset a b => infixSGQ Sgq.subset ctx a.toSGQCtx b.toSGQCtx
+  | .notSubset a b => infixSGQ (negated Sgq.subset) ctx a.toSGQCtx b.toSGQCtx
+  | .ni a b => infixSGQ Sgq.contains ctx a.toSGQCtx b.toSGQCtx
+  | .notNi a b => infixSGQ (negated Sgq.contains) ctx a.toSGQCtx b.toSGQCtx
+  | .eq a b => infixSGQ Sgq.equal ctx a.toSGQCtx b.toSGQCtx
+  | .neq a b => infixSGQ (negated Sgq.equal) ctx a.toSGQCtx b.toSGQCtx
+  | .veq a b => s!"{a.toSGQ} {Sgq.equal.text} {b.toSGQ}"
+  | .vneq a b => s!"{a.toSGQ} {(negated Sgq.equal).text} {b.toSGQ}"
   | .icmp op a b => s!"{a.toSGQ} {op.toSGQ} {b.toSGQ}"
-  | .or a b => parenIf (10 < ctx) s!"{a.toSGQCtx 10} or {b.toSGQCtx 11}"
-  | .xor a b => parenIf (13 < ctx) s!"{a.toSGQCtx 13} xor {b.toSGQCtx 14}"
-  | .iff a b => parenIf (16 < ctx) s!"{a.toSGQCtx 16} iff {b.toSGQCtx 17}"
-  | .implies a b => parenIf (20 < ctx) s!"{a.toSGQCtx 21} implies {b.toSGQCtx 20}"
+  | .or a b => infixSGQ Sgq.or ctx a.toSGQCtx b.toSGQCtx
+  | .xor a b => infixSGQ Sgq.xor ctx a.toSGQCtx b.toSGQCtx
+  | .iff a b => infixSGQ Sgq.iff ctx a.toSGQCtx b.toSGQCtx
+  | .implies a b => infixSGQ Sgq.implies ctx a.toSGQCtx b.toSGQCtx
   | .ite c t e =>
-    parenIf (20 < ctx) s!"{c.toSGQCtx 21} implies {t.toSGQCtx 21} else {e.toSGQCtx 20}"
-  | .and a b => parenIf (30 < ctx) s!"{a.toSGQCtx 30} and {b.toSGQCtx 31}"
-  | .not a => s!"not {a.toSGQCtx 40}"
-  | .some_ a => s!"some {a.toSGQCtx 0}"
-  | .no a => s!"no {a.toSGQCtx 0}"
-  | .lone a => s!"lone {a.toSGQCtx 0}"
-  | .one a => s!"one {a.toSGQCtx 0}"
+    let o := Sgq.implies
+    parenIf (o.prec < ctx)
+      s!"{c.toSGQCtx (o.slot 0)} {o.text} {t.toSGQCtx (o.slot 1)} \
+         {Sgq.implies.«else»} {e.toSGQCtx (o.slot 2)}"
+  | .and a b => infixSGQ Sgq.and ctx a.toSGQCtx b.toSGQCtx
+  | .not a => prefixSGQ Sgq.not a.toSGQCtx
+  | .some_ a => prefixSGQ Sgq.nonEmpty a.toSGQCtx
+  | .no a => prefixSGQ Sgq.empty a.toSGQCtx
+  | .lone a => prefixSGQ Sgq.atMostOne a.toSGQCtx
+  | .one a => prefixSGQ Sgq.exactlyOne a.toSGQCtx
   -- body extends maximally right; parenthesize under any connective
   | .quant q disj binders body =>
-    let d := if disj then "disj " else ""
-    parenIf (5 < ctx) s!"{q.toSGQ} {d}{bindersToSGQ binders (·.toSGQCtx 0)} | {body.toSGQ}"
+    let d := if disj then Sgq.quantifier.disjoint ++ " " else ""
+    parenIf (Sgq.loosest < ctx)
+      s!"{q.toSGQ} {d}{bindersToSGQ binders (·.toSGQCtx Sgq.loosest)} \
+         {Sgq.quantifier.bar} {body.toSGQ}"
 
-public meta partial def SelForm.toSGQ (f : SelForm) : String := f.toSGQCtx 0
+public meta partial def SelForm.toSGQ (f : SelForm) : String := f.toSGQCtx Sgq.loosest
 
 end
 
