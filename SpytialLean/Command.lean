@@ -390,8 +390,12 @@ meta def elabSpytialOps (scope : SelScope) (ops : Array (TSyntax `spytial_op))
 
 /-- A term whose type has no head constant gets a fully lenient scope. -/
 meta def scopeForExpr (e : Expr) : MetaM SelScope := do
-  match ← typeHead? (← inferType e) with
-  | some n => SelScope.ofType n
+  let ty ← inferType e
+  match ← typeHead? ty with
+  | some n =>
+    let seeds ← ty.getAppArgs.filterMapM fun a => do
+      if (← Meta.whnf (← inferType a)) matches .sort _ then typeHead? a else pure none
+    SelScope.ofType n seeds
   | none => return { root := `_anonymous, lenient := true }
 
 /-! ## Widget payload

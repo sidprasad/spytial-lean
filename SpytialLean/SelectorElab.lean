@@ -57,12 +57,16 @@ meta structure SelScope where
 private meta def scalarTypes : List Name :=
   [``Nat, ``String, ``Float]
 
-meta def SelScope.ofType (root : Name) : MetaM SelScope := do
+/-- `seeds` are extra types the value is known to contain — a container's type
+    arguments, which the head constant alone cannot predict: `DA.FinAcc Seen2
+    Letter` emits `Seen2`'s fields, but `DA.FinAcc`'s `tr` is a function over
+    its own parameters and fixes no head to follow. -/
+meta def SelScope.ofType (root : Name) (seeds : Array Name := #[]) : MetaM SelScope := do
   let env ← getEnv
   let mut scope : SelScope := { root }
   -- stuck matches appear in any open value; the walker emits one ternary
   scope := { scope with rels := scope.rels.insert "scrutinee" (root, some 3) }
-  let mut queue : Array Name := #[root]
+  let mut queue : Array Name := #[root] ++ seeds
   let mut seen : NameSet := {}
   while !queue.isEmpty do
     let t := queue.back!
