@@ -533,12 +533,22 @@ private meta def pick [Inhabited α] (columns : Array (Array α)) (pt : Array Na
       picked := picked.push columns[col]![pt[col]!]!
     return picked
 
+/-- The proposition paired with its `Decidable` instance. Synthesis reduces
+    beta but not delta, so a proposition behind a definition matches no
+    instance head: `a ∈ ({x | p x} : Set α)` is `setOf p a`, and nothing is
+    declared about `setOf`. -/
+private meta def decidableFor? (p : Expr) : MetaM (Option (Expr × Expr)) := do
+  if let some inst ← Meta.synthInstance? (← mkAppM ``Decidable #[p]) then
+    return some (p, inst)
+  let p ← Meta.whnf p
+  return (← Meta.synthInstance? (← mkAppM ``Decidable #[p])).map ((p, ·))
+
 /-- Decide a closed proposition: `whnf` the `Decidable` instance to a
     constructor, compiled `decide p` when that sticks. `none` is undecided,
     never a guess. -/
 private meta def decideProp? (p : Expr) : MetaM (Option Bool) := do
   try
-    let some inst ← Meta.synthInstance? (← mkAppM ``Decidable #[p]) | return none
+    let some (p, inst) ← decidableFor? p | return none
     match (← Meta.whnf inst).getAppFn with
     | .const ``Decidable.isTrue _ => return some true
     | .const ``Decidable.isFalse _ => return some false
