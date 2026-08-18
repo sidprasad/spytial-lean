@@ -185,6 +185,9 @@ syntax:40 spytial_sel:40 " & " spytial_sel:41 : spytial_sel
 syntax:55 spytial_sel:55 " <: " spytial_sel:56 : spytial_sel
 syntax:55 spytial_sel:55 " :> " spytial_sel:56 : spytial_sel
 syntax:60 spytial_sel:60 " . " spytial_sel:61 : spytial_sel
+-- Lean's token table owns `.(`, so maximal munch takes it before the join's
+-- `.` and an unspaced `a.(b)` would not parse. Same join, second spelling.
+syntax:60 spytial_sel:60 ".(" spytial_sel ")" : spytial_sel
 syntax:60 (name := selBox) spytial_sel:60 noWs "[" sepBy(spytial_sel, ", ") "]" : spytial_sel
 syntax:70 "^" spytial_sel:70 : spytial_sel
 syntax:70 "*" spytial_sel:70 : spytial_sel
@@ -444,7 +447,7 @@ private meta partial def elabExpr (scope : SelScope) (env : LEnv) :
     let (sa, aa) ← elabRel scope env a
     let (sb, _) ← elabRel scope env b
     return .rel (.restrictRan sa sb) aa
-  | stx@`(spytial_sel| $a . $b) => do
+  | stx@`(spytial_sel| $a . $b) | stx@`(spytial_sel| $a.($b)) => do
     let (sa, aa) ← elabRel scope env a
     let (sb, ab) ← elabRel scope env b
     return .rel (.join sa sb) (← joinArity stx aa ab)

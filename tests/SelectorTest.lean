@@ -773,6 +773,19 @@ info: {"constraints":
   hideAtom (lo . SBDD)
 ]
 
+-- `.(` is a Lean token, so maximal munch takes it before the join's `.`; an
+-- unspaced join onto a parenthesized operand needs its own rule.
+/--
+info: {"constraints":
+ [{"hideAtom": {"selector": "{x : SBDD | some x.(lo + hi)}"}},
+  {"hideAtom": {"selector": "{x : SBDD | some x.(lo + hi)}"}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [
+  hideAtom {x : SBDD | some x.(lo + hi)},
+  hideAtom {x : SBDD | some x . (lo + hi)}
+]
+
 /-- error: this position selects atoms (arity 1), but the selector has arity 2 -/
 #guard_msgs in
 #spytial.spec sExample with [atomStyle (lo.hi) (borderStyle "#111")]
@@ -1172,6 +1185,7 @@ SpytialLean.«spytial_sel_&_»
 SpytialLean.«spytial_sel_++_»
 SpytialLean.«spytial_sel_+_»
 SpytialLean.«spytial_sel_-_»
+SpytialLean.«spytial_sel_.(_)»
 SpytialLean.«spytial_sel_._»
 SpytialLean.«spytial_sel_:>_»
 SpytialLean.«spytial_sel_<:_»
