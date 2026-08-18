@@ -1,6 +1,7 @@
 module
 
 public import Lean
+public import SpytialLean.Enum
 
 namespace SpytialLean
 
@@ -72,45 +73,17 @@ public meta def isProofLikeType (ty : Expr) : MetaM Bool := do
 Shared with the static checkers, so a predicted relation cannot drift from an
 emitted one. -/
 
-/-- Try to enumerate all elements of a finite type.
-    Returns `some [(label, expr)]` for finite types, `none` otherwise. -/
+/-- `ppExpr` may qualify a constructor; a diagram label wants the short name. -/
+private meta def elemLabel (e : Expr) : MetaM String := do
+  match e.getAppFn with
+  | .const n _ =>
+    if (← getEnv).find? n matches some (.ctorInfo _) then return shortName n else ppLabel e
+  | _ => ppLabel e
+
+/-- Every element of `ty` with its label; `none` where `enumElems?` declines. -/
 public meta def tryEnumerateDomain (ty : Expr) : MetaM (Option (Array (String × Expr))) := do
-  let ty ← Meta.whnf ty
-  match ty.getAppFn with
-  | .const ``Fin _ =>
-    let args := ty.getAppArgs
-    if h : args.size = 1 then
-      let nExpr ← Meta.whnf args[0]
-      match nExpr with
-      | .lit (.natVal n) =>
-        if n ≤ 20 then
-          let mut result : Array (String × Expr) := #[]
-          for i in [:n] do
-            let iExpr := mkNatLit i
-            let finExpr ← Meta.mkAppOptM ``OfNat.ofNat #[some ty, some iExpr, none]
-            result := result.push (toString i, finExpr)
-          return some result
-        else return none
-      | _ => return none
-    else return none
-  | .const ``Bool _ =>
-    return some #[("false", mkConst ``Bool.false), ("true", mkConst ``Bool.true)]
-  | .const indName _ =>
-    let env ← getEnv
-    if let some (.inductInfo ii) := env.find? indName then
-      if ii.numIndices == 0 && ii.numParams == 0 then
-        let allZeroArity := ii.ctors.all fun ctorName =>
-          match env.find? ctorName with
-          | some (.ctorInfo ci) => ci.numFields == 0
-          | _ => false
-        if allZeroArity then
-          let result := ii.ctors.toArray.map fun ctorName =>
-            (shortName ctorName, mkConst ctorName)
-          return some result
-        else return none
-      else return none
-    else return none
-  | _ => return none
+  let some elems ← enumElems? ty | return none
+  elems.mapM fun e => return ((← elemLabel e), e)
 
 public meta inductive CodomainKind where
   | data

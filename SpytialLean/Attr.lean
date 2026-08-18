@@ -1,5 +1,6 @@
 module
 
+public import SpytialLean.Enum
 public import Lean
 public meta import SpytialLean.Spec
 
