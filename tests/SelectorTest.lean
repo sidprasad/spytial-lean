@@ -183,7 +183,7 @@ info: {"constraints":
 ]
 
 /--
-warning: unknown name 'lft' (did you mean 'left'?) — the vocabulary of 'STree' is open (a custom relationalizer, type parameter, or function field makes it unpredictable), so the name passes through unchecked
+warning: unknown name 'lft' (did you mean 'Nat', 'left'?) — the vocabulary of 'STree' is open (a custom relationalizer, type parameter, or function field makes it unpredictable), so the name passes through unchecked
 ---
 info: {"constraints": [{"orientation": {"selector": "lft", "directions": ["below"]}}]}
 -/
