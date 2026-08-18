@@ -393,3 +393,33 @@ instance (priority := high) : SpytialIdentity ShFoo :=
   let f2 := mkApp (mkConst ``ShFoo.mk) (mkRawNatLit 2)
   let di ← relationalize (← mkAppM ``Prod.mk #[f1, f2])
   assertEq "shadow.types" (di.atoms.map (·.type)) #["Prod", "ShFoo", "Nat"]
+
+/-! ## Leaf labels through `Repr`: a stuck-but-closed leaf reads as its
+evaluated value when its type declares `Repr`; `Repr` never feeds identity -/
+
+@[irreducible] public def opaque97 : Nat := 90 + 7
+
+/-- Opaque, with both `SpytialIdentity` and `Repr`: spelling decides identity,
+    `Repr` decides the label. -/
+public inductive Coin where
+  | heads | tails
+  deriving SpytialIdentity, Repr
+
+@[irreducible] public def hiddenCoin : Coin := .heads
+
+#eval show MetaM Unit from do
+  let di ← relationalize (mkConst ``opaque97)
+  assertEq "leaflabel.repr" (di.atoms.map (·.label)) #["97"]
+  -- no `SpytialIdentity Nat`: identical labels, still two atoms — the label
+  -- never feeds identity
+  let di ← relationalize (← mkAppM ``Prod.mk #[mkConst ``opaque97, mkConst ``opaque97])
+  assertEq "leaflabel.not-identity" (di.atoms.map (·.label)) #["mk", "97", "97"]
+  -- spelling merges the occurrences, `Repr` labels the one atom
+  let di ← relationalize (← mkAppM ``Prod.mk #[mkConst ``hiddenCoin, mkConst ``hiddenCoin])
+  assertEq "leaflabel.opaque.merged" (di.atoms.map (·.label)) #["mk", "Coin.heads"]
+  let di ← relationalize (mkConst ``hiddenTree)
+  assertEq "leaflabel.no-repr" (di.atoms.map (·.label)) #["hiddenTree"]
+  assertMatchesReference "diff.leaflabel"
+    (← mkAppM ``Prod.mk #[mkConst ``opaque97, mkConst ``opaque97])
+  assertMatchesReference "diff.leaflabel.merged"
+    (← mkAppM ``Prod.mk #[mkConst ``hiddenCoin, mkConst ``hiddenCoin])
