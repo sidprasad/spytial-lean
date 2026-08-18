@@ -184,7 +184,8 @@ syntax:40 spytial_sel:40 " & " spytial_sel:41 : spytial_sel
 -- arrow-multiplicity annotations stay non-reserving.
 syntax:55 spytial_sel:55 " <: " spytial_sel:56 : spytial_sel
 syntax:55 spytial_sel:55 " :> " spytial_sel:56 : spytial_sel
-syntax:60 spytial_sel:60 " . " spytial_sel:61 : spytial_sel
+-- The join `.` is the hand-written `selJoinOp` below, so a Lean token that
+-- merely starts with a dot cannot maximal-munch it away.
 syntax:60 (name := selBox) spytial_sel:60 noWs "[" sepBy(spytial_sel, ", ") "]" : spytial_sel
 syntax:70 "^" spytial_sel:70 : spytial_sel
 syntax:70 "*" spytial_sel:70 : spytial_sel
@@ -269,6 +270,13 @@ private meta def arrowMultP : Parser :=
     (Lean.Parser.optional arrowMultP >> symbol "->" >>
       ((Lean.Parser.atomic (arrowMultP >> categoryParser `spytial_sel 51)) <|>
         (Lean.Parser.pushNone >> categoryParser `spytial_sel 51)))
+
+/-- Relational join. The dot is a raw character, not a token: Lean's token table
+    holds `.(` and `.{`, and maximal munch would take either one whole, so
+    `a.(b)` and `a.{c : T | ...}` would not parse against a token-level `.`. -/
+@[spytial_sel_parser] meta def selJoinOp : TrailingParser :=
+  trailingNode `selJoin 60 60
+    (rawCh '.' (trailingWs := true) >> categoryParser `spytial_sel 61)
 
 /-! ### Formulas (`spytial_sel_form`) -/
 
@@ -444,10 +452,6 @@ private meta partial def elabExpr (scope : SelScope) (env : LEnv) :
     let (sa, aa) ← elabRel scope env a
     let (sb, _) ← elabRel scope env b
     return .rel (.restrictRan sa sb) aa
-  | stx@`(spytial_sel| $a . $b) => do
-    let (sa, aa) ← elabRel scope env a
-    let (sb, ab) ← elabRel scope env b
-    return .rel (.join sa sb) (← joinArity stx aa ab)
   | stx@`(spytial_sel| ^$a) => elabClosure scope env stx .trans "^" a
   | stx@`(spytial_sel| *$a) => elabClosure scope env stx .reflTrans "*" a
   | stx@`(spytial_sel| ~$a) => elabClosure scope env stx .transpose "~" a
@@ -472,6 +476,11 @@ private meta partial def elabExpr (scope : SelScope) (env : LEnv) :
       checkArity stx[1] "a label projection's operand" arity 1
       return .int (.proj sel)
     | `selProd => elabProd scope env stx
+    -- node shape: `[lhs, ".", rhs]` (see `selJoinOp`)
+    | `selJoin => do
+      let (sa, aa) ← elabRel scope env stx[0]
+      let (sb, ab) ← elabRel scope env stx[2]
+      return .rel (.join sa sb) (← joinArity stx aa ab)
     | _ => elabBoxJoin? scope env stx
 
 private meta partial def elabBoxJoin? (scope : SelScope) (env : LEnv) (stx : Syntax) :
