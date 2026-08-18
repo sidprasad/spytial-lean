@@ -151,6 +151,88 @@ info: {"directives":
 #guard_msgs in
 #stored_spec SRB
 
+/-! ## Use-site composition — `..` splices the attached spec -/
+
+-- A bare splice reproduces the attached spec.
+/--
+info: {"directives":
+ [{"atomStyle":
+   {"selector": "{x : SRB | @:(x.color) = \"red\"}",
+    "borderStyle": {"color": "red"}}},
+  {"attribute": {"field": "key"}}],
+ "constraints":
+ [{"orientation":
+   {"selector": "left - SRB->{x : SRB | @:x = \"nil\"}",
+    "directions": ["left", "below"]}},
+  {"orientation":
+   {"selector": "right - SRB->{x : SRB | @:x = \"nil\"}",
+    "directions": ["right", "below"]}},
+  {"hideAtom": {"selector": "SColor + Nat"}}]}
+-/
+#guard_msgs in
+#spytial.spec sRB with [..]
+
+-- Inline ops land before or after the spliced ops per their list position
+-- (within each partition).
+/--
+info: {"directives":
+ [{"flag": "hideDisconnected"},
+  {"atomStyle":
+   {"selector": "{x : SRB | @:(x.color) = \"red\"}",
+    "borderStyle": {"color": "red"}}},
+  {"attribute": {"field": "key"}}],
+ "constraints":
+ [{"orientation":
+   {"selector": "left - SRB->{x : SRB | @:x = \"nil\"}",
+    "directions": ["left", "below"]}},
+  {"orientation":
+   {"selector": "right - SRB->{x : SRB | @:x = \"nil\"}",
+    "directions": ["right", "below"]}},
+  {"hideAtom": {"selector": "SColor + Nat"}},
+  {"hideAtom": {"selector": "SColor"}}]}
+-/
+#guard_msgs in
+#spytial.spec sRB with [flag hideDisconnected, .., hideAtom SColor]
+
+public inductive SDAG where
+  | tip
+  | node (lo hi : SDAG)
+
+public def sDAG : SDAG := .node .tip .tip
+
+spytial_spec SDAG [inferredEdge short lo.hi]
+
+-- The splice brings the attached spec's introduced names into scope.
+/--
+info: {"directives":
+ [{"inferredEdge": {"selector": "lo.hi", "name": "short"}},
+  {"edgeStyle": {"lineStyle": {"color": "red"}, "field": "short"}}]}
+-/
+#guard_msgs in
+#spytial.spec sDAG with [.., edgeStyle short (lineStyle "red")]
+
+-- Without the splice the introduced name is out of scope.
+/-- error: unknown relation 'short'; vocabulary of 'SDAG': SDAG, hi, lo, scrutinee -/
+#guard_msgs in
+#spytial.spec sDAG with [edgeStyle short (lineStyle "red")]
+
+-- A specless type warns, then composes with nothing.
+/--
+warning: `..` splices the attached spec, but SBDD has none
+---
+info: {"constraints": [{"hideAtom": {"selector": "String"}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [.., hideAtom String]
+
+/-- error: duplicate `..` -/
+#guard_msgs in
+#spytial.spec sRB with [.., ..]
+
+/-- error: `..` splices the type's attached spec; only a use-site `with [...]` has one -/
+#guard_msgs in
+spytial_spec STree [..]
+
 /-! ## Closure operators and joins -/
 
 /--
