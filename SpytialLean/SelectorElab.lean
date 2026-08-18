@@ -39,11 +39,8 @@ meta structure SelScope where
   root : Name
   /-- Lean type name → sig string, over the reachable field-type closure. -/
   types : Std.HashMap Name String := {}
-  /-- Relation name → the type whose constructor field emits it, and the arity
-      the walker emits it at — `none` where the declaration does not fix one
-      (`FieldShape.arity?`), which leaves the name known and its width
-      unchecked. Proof-like fields (`Prop`- or `Sort`-typed) are excluded — the
-      walker drops them. -/
+  /-- Relation name → the emitting type and the walker's arity; `none`
+      (`FieldShape.arity?`) leaves the name known and its width unchecked. -/
   rels : Std.HashMap String (Name × Option Nat) := {}
   /-- Nullary-constructor label → constructor, for `@:x = tt` literals. -/
   ctorLabels : Std.HashMap String Name := {}
@@ -54,19 +51,16 @@ meta structure SelScope where
   lenient : Bool := false
   deriving Inhabited
 
-/-- Stop the closure walk where the walker stops decomposing: `Nat` and
-    `String` render as literal atoms, `Float` is opaque (not an inductive).
-    Other scalar-ish types (`Int`, `Char`, `UInt*`) render as constructor
-    chains today, so their closures stay in the vocabulary. -/
+/-- Stop the closure walk where the walker stops decomposing. TODO: the walker
+    still decomposes `Int`/`Char`/`UInt*` into constructor chains, so their
+    closures must stay in the vocabulary until it treats them as scalars. -/
 private meta def scalarTypes : List Name :=
   [``Nat, ``String, ``Float]
 
 meta def SelScope.ofType (root : Name) : MetaM SelScope := do
   let env ← getEnv
   let mut scope : SelScope := { root }
-  -- Stuck-match nodes can appear in any open value, typed at the scrutinized
-  -- type; one ternary `(match, position, discriminant)` whatever the
-  -- discriminant count.
+  -- stuck matches appear in any open value; the walker emits one ternary
   scope := { scope with rels := scope.rels.insert "scrutinee" (root, some 3) }
   let mut queue : Array Name := #[root]
   let mut seen : NameSet := {}
@@ -92,8 +86,6 @@ meta def SelScope.ofType (root : Name) : MetaM SelScope := do
         for f in c.fields do
           unless f.isProofLike do
             scope := { scope with rels := scope.rels.insert f.relName (t, f.arity?) }
-            -- a tabulated field's values are its columns'; the function type
-            -- itself never reaches an atom
             match f.table, f.typeHead with
             | some tbl, _ => queue := queue ++ tbl.columnHeads
             | none, some ft => queue := queue.push ft
@@ -121,7 +113,6 @@ private meta def sortDedup (xs : Array String) : Array String :=
   xs.qsort (· < ·) |>.foldl (init := #[]) fun acc s =>
     if acc.back? == some s then acc else acc.push s
 
-/-- For error messages only. -/
 private meta def SelScope.vocabulary (scope : SelScope) : Array String := Id.run do
   let mut out : Array String := #[]
   for (r, _) in scope.rels do out := out.push r
@@ -161,28 +152,24 @@ private meta def unknownName {α} (scope : SelScope) (ref : Syntax) (what : Stri
 private meta def warnGraphSideName (ref : Syntax) (name : String) : TermElabM Unit :=
   logWarningAt ref s!"spec-introduced '{name}' exists only in the drawn graph — \
     the engine evaluates selectors against the data instance, so this reference \
-    selects nothing at render (engine limitation)"
+    selects nothing at render"
 
 /-! ## Syntax
 
-The grammar replicates Forge's expression/formula cascade over two categories.
-Both use `behavior := both`, so keyword-led rules compile to
+The grammar replicates Forge's expression/formula precedence over two
+categories. Both use `behavior := both`, so keyword-led rules compile to
 `nonReservedSymbol` and a relation named `some` still parses. Forms with a
-mandatory further token win by longest-match; the nullary constants tie with a
-bare ident, so they take `priority := high`. The precedence numbers are
-Forge's cascade re-scaled, loosest at the top. -/
+mandatory further token win by longest-match; the nullary constants tie with
+a bare ident, so they take `priority := high`. -/
 
 open Lean Parser
 
--- `nonReservedSymbol` registers no token, so an `@:`-family head would
--- maximal-munch onto the global `@`; those rules are hand-written below with
--- reserved `symbol` heads.
 declare_syntax_cat spytial_sel (behavior := both)
 declare_syntax_cat spytial_sel_form (behavior := both)
 
 syntax spytialSelBinderGroup := sepBy1(ident, ", ") " : " spytial_sel
 
-/-! ### Relational / integer expressions (`spytial_sel`), loosest → tightest -/
+/-! ### Relational / integer expressions (`spytial_sel`) -/
 
 syntax:30 spytial_sel:30 " + " spytial_sel:31 : spytial_sel
 syntax:30 spytial_sel:30 " - " spytial_sel:31 : spytial_sel
@@ -198,6 +185,8 @@ syntax:60 (name := selBox) spytial_sel:60 noWs "[" sepBy(spytial_sel, ", ") "]" 
 syntax:70 "^" spytial_sel:70 : spytial_sel
 syntax:70 "*" spytial_sel:70 : spytial_sel
 syntax:70 "~" spytial_sel:70 : spytial_sel
+-- `nonReservedSymbol` registers no token, so an `@:`-family head would
+-- maximal-munch onto the global `@` — hence reserved `symbol` heads.
 @[spytial_sel_parser] meta def selProjPlainOp : Parser :=
   leadingNode `selProjPlain 100 (symbol "@:" >> categoryParser `spytial_sel 100)
 @[spytial_sel_parser] meta def selProjStrOp : Parser :=
@@ -255,11 +244,8 @@ syntax:100 (name := selNegNum) "-" noWs num : spytial_sel
 /-- Backquote atom literal (`` `a0 ``), spelled with Lean's `name` literal. -/
 syntax:100 (name := selAtomLit) name : spytial_sel
 
--- `univ`/`iden`/`none` have no rules of their own: `resolveExprIdent` reads them
--- off the ident. A keyword rule is keyed on an atom, and the pratt parser peeks
--- the leading token through `tokenFn`, which glues `univ.lo` into one dotted
--- ident — so the rule would never fire on an unspaced join and `univ.lo` would
--- not mean `univ . lo`.
+-- `univ`/`iden`/`none` have no rules of their own: an atom-keyed rule never
+-- fires on an unspaced `univ.lo`, so `resolveExprIdent` reads them off the ident.
 
 -- Bare `sum` fails the rule and falls to `selIdent`, so a field named `sum`
 -- still parses.
@@ -280,7 +266,7 @@ private meta def arrowMultP : Parser :=
       ((Lean.Parser.atomic (arrowMultP >> categoryParser `spytial_sel 51)) <|>
         (Lean.Parser.pushNone >> categoryParser `spytial_sel 51)))
 
-/-! ### Formulas (`spytial_sel_form`), loosest → tightest -/
+/-! ### Formulas (`spytial_sel_form`) -/
 
 syntax:5 (name := selQAll)  "all "  (&" disj")? spytialSelBinderGroup,+ " | " spytial_sel_form:5 : spytial_sel_form
 syntax:5 (name := selQNo)   "no "   (&" disj")? spytialSelBinderGroup,+ " | " spytial_sel_form:5 : spytial_sel_form
@@ -804,9 +790,8 @@ end
 /-! ## Entry points -/
 
 /-- `pair` positions project first/last at runtime, so a wider selector warns
-    rather than errors. An `edge` position reads the whole tuple — endpoints
-    first and last, the middle columns folded into the edge label — so width
-    there is the point, not a loss. -/
+    rather than errors. An `edge` position reads the whole tuple, so any width
+    from 2 up passes. -/
 meta inductive ArityExpect where
   | unary
   | pair

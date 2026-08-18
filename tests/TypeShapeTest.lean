@@ -123,3 +123,17 @@ Elaborated here exactly as a synthesized term containing `match` would be. -/
     assertEq "match.labels" (di.atoms.map (·.label)) #["match", "0", "t"]
     assertEq "match.types"  (di.atoms.map (·.type))  #["Nat", "Nat", "Tree"]
     assertEq "match.rels"   (di.relations.map (·.name)) #["scrutinee"]
+
+#eval show Lean.Elab.TermElabM Unit from do
+  let treeNat := mkApp (mkConst ``Tree) (mkConst ``Nat)
+  withLocalDeclD `t treeNat fun t => do
+  withLocalDeclD `u treeNat fun u => do
+    let tStx ← Lean.Elab.Term.exprToSyntax t
+    let uStx ← Lean.Elab.Term.exprToSyntax u
+    let stx ← `(match $tStx:term, $uStx:term with | .leaf v, _ => v | _, _ => 0)
+    let e ← Lean.Elab.Term.elabTermEnsuringType stx (some (mkConst ``Nat))
+    Lean.Elab.Term.synthesizeSyntheticMVarsNoPostponing
+    let e ← instantiateMVars e
+    let di ← relationalize e
+    assertEq "match2.labels" (di.atoms.map (·.label)) #["match", "0", "t", "1", "u"]
+    assertEq "match2.rels"   (di.relations.map (·.name)) #["scrutinee"]

@@ -29,11 +29,8 @@ def fTree : BDD := expand (fun bs => bs.getD 0 false && bs.getD 2 false) 3 []
 
 def fReduced : BDD := fTree.reduce
 
-/- `lo - BDD->{x : BDD | @:x = tt or @:x = ff}` is the `lo` relation minus every
-   pair pointing at a terminal, so the rule reads "draw the low child left of
-   and below its parent, unless that child is `tt` or `ff`". Terminals have to
-   be excluded because each is a single shared atom: one `tt` reached by both a
-   `lo` and a `hi` edge cannot be left of one parent and right of another. -/
+-- Terminals are excluded from the orientations: each is one shared atom, and
+-- one `tt` cannot sit left of one parent and right of another.
 spytial_spec BDD [
   attribute var,
   orientation lo - BDD->{x : BDD | @:x = tt or @:x = ff} left below,
@@ -44,12 +41,10 @@ spytial_spec BDD [
 -- 1. As written: the expansion's full tree, every occurrence its own atom.
 #spytial (Raw.mk fTree)
 
--- 2. Declared sharing: equal sub-BDDs are one atom each — one `tt`, one `ff`,
---    equal subtrees merged. The value did not change; the lens did.
+-- 2. Declared sharing: equal sub-BDDs merge. Same value, different lens.
 #spytial fTree
 
--- 3. The ROBDD: `reduce` removed the redundant tests, the lens kept the
---    sharing. The picture is the paper's figure, from naive data.
+-- 3. The ROBDD: `reduce` removed the redundant tests, the lens kept the sharing.
 #spytial fReduced
 
 open Lean Meta in

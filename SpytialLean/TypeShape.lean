@@ -63,16 +63,14 @@ public meta def hypLabel (userName : Name) : String :=
   if n.isAnonymous then "?" else toString n
 
 /-- Whether the walker erases a value of this type — proofs (`Prop`) and types
-    (`Sort`) — and so drops fields of it. The one predicate the walker
-    (`isProofArg`) and the static checker share. -/
+    (`Sort`) — and so drops fields of it. -/
 public meta def isProofLikeType (ty : Expr) : MetaM Bool := do
   return (← Meta.isProp ty) || ty.isSort
 
 /-! ## Function tabulation
 
-Which function types the walker turns into flat n-ary tables, and the columns
-those tables get. Shared with the static checkers, so a predicted relation
-cannot drift from an emitted one. -/
+Shared with the static checkers, so a predicted relation cannot drift from an
+emitted one. -/
 
 /-- Try to enumerate all elements of a finite type.
     Returns `some [(label, expr)]` for finite types, `none` otherwise. -/
@@ -88,7 +86,6 @@ public meta def tryEnumerateDomain (ty : Expr) : MetaM (Option (Array (String ×
         if n ≤ 20 then
           let mut result : Array (String × Expr) := #[]
           for i in [:n] do
-            -- Use OfNat instance to construct Fin element
             let iExpr := mkNatLit i
             let finExpr ← Meta.mkAppOptM ``OfNat.ofNat #[some ty, some iExpr, none]
             result := result.push (toString i, finExpr)
@@ -99,7 +96,6 @@ public meta def tryEnumerateDomain (ty : Expr) : MetaM (Option (Array (String ×
   | .const ``Bool _ =>
     return some #[("false", mkConst ``Bool.false), ("true", mkConst ``Bool.true)]
   | .const indName _ =>
-    -- Check for zero-arity enumerative inductives
     let env ← getEnv
     if let some (.inductInfo ii) := env.find? indName then
       if ii.numIndices == 0 && ii.numParams == 0 then
@@ -116,13 +112,11 @@ public meta def tryEnumerateDomain (ty : Expr) : MetaM (Option (Array (String ×
     else return none
   | _ => return none
 
-/-- Whether a tabulated function yields data or a proposition. -/
 public meta inductive CodomainKind where
   | data
   | prop
   deriving BEq, Repr, Inhabited
 
-/-- One tabulated binder: its domain type and that domain's elements. -/
 public meta structure TabulationBinder where
   domain : Expr
   elems : Array (String × Expr)
@@ -137,10 +131,8 @@ public meta structure TabulationPlan where
 public meta def TabulationPlan.size (p : TabulationPlan) : Nat :=
   p.binders.foldl (fun n b => n * b.elems.size) 1
 
-/-- The table's columns after the owner: one per binder, then the result when
-    the codomain is data (a proposition's extension has no result column). The
-    row the walker stamps, the arity the checker predicts, and the vocabulary
-    the table contributes are all views of this one list. -/
+/-- The columns after the owner: the binders, then a data codomain's result
+    (a proposition's extension has none). -/
 public meta def TabulationPlan.tailTypes (p : TabulationPlan) : Array Expr :=
   let domains := p.binders.map (·.domain)
   match p.kind with
@@ -150,8 +142,7 @@ public meta def TabulationPlan.tailTypes (p : TabulationPlan) : Array Expr :=
 public meta def TabulationPlan.arity (p : TabulationPlan) : Nat :=
   1 + p.tailTypes.size
 
-/-- The types the table's columns range over, for a static vocabulary: these
-    stand in for the field's own (function) type, which no atom ever gets. -/
+/-- Column type heads, standing in for the function type no atom ever gets. -/
 public meta def TabulationPlan.columnHeads (p : TabulationPlan) : MetaM (Array Name) :=
   p.tailTypes.filterMapM typeHead?
 
@@ -171,8 +162,7 @@ private meta partial def peelBinders (ty : Expr) (acc : Array TabulationBinder) 
       | _ => .data
     return some { binders := acc, codomain := cod, kind }
 
-/-- The table a function type tabulates into, or `none` when it does not: a
-    non-function, a dependent telescope, or a domain that does not enumerate. -/
+/-- The table a function type tabulates into, or `none` when it does not. -/
 public meta def tabulationPlan? (ty : Expr) : MetaM (Option TabulationPlan) :=
   peelBinders ty #[]
 
@@ -194,15 +184,12 @@ public meta structure FieldShape where
   typeHead : Option Name := none
   /-- The walker drops this field: it is `Prop`- or `Sort`-typed. -/
   isProofLike : Bool
-  /-- Set when the field's type tabulates: the walker emits a table over the
-      domain product rather than one edge to one value, so the field's own type
-      head is not the vocabulary its values contribute. -/
+  /-- Set when the field's type tabulates: its columns, not its type head, are
+      the vocabulary its values contribute. -/
   table : Option FieldTable := none
-  /-- The arity of the relation the walker emits, when the declaration fixes
-      it. A function type built over the inductive's own parameters fixes
-      nothing: `tr : State → Label → State` is a binary edge to a λ leaf at
-      `State := String` and a 4-ary table at `State := Fin 3`, and only the
-      walked value knows which. -/
+  /-- The emitted relation's arity, when the declaration fixes it. A function
+      type over the inductive's own parameters fixes nothing: only the
+      instantiation decides leaf or table. -/
   arity? : Option Nat := some 2
   deriving Repr, Inhabited
 

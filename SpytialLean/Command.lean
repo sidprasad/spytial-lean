@@ -41,8 +41,7 @@ syntax (name := spytialBlockStx)
 syntax spytialOpArg := num <|> spytial_op_block <|> spytial_sel
 
 syntax (name := spytialOpStx) ident spytialOpArg* : spytial_op
-/-- `attribute` is a reserved Lean keyword, so it cannot arrive as the head
-    ident — give it its own rule with the keyword as the atom. -/
+/-- `attribute` is a Lean keyword, so it gets its own rule with the keyword as the atom. -/
 syntax (name := spytialAttrOp) "attribute " spytialOpArg* : spytial_op
 
 /-! ### Argument interpretation -/
@@ -52,7 +51,7 @@ private meta structure OpArgs where
   usage : String
   args : Array (TSyntax `spytialOpArg)
 
-/-- Bare idents and string literals arrive as the named selector rules. -/
+/-- Unwraps the `spytialOpArg` node to whichever of `num`/`spytial_sel` parsed. -/
 private meta def argInner (arg : TSyntax `spytialOpArg) : Syntax := arg.raw[0]
 
 private meta def OpArgs.get (a : OpArgs) (i : Nat) : TermElabM Syntax := do
@@ -481,10 +480,7 @@ meta def elabSpytialCmd : CommandElab := fun
       hideAtom Nat
     ]
     ```
-
-    Selectors and field names are checked against the type's data vocabulary.
-    The target resolves like any Lean name, so `open` works and renaming the
-    type or a field causes a compile error. -/
+-/
 syntax (name := spytialSpecCmd) "spytial_spec " ident " [" spytial_op,* "]" : command
 
 @[command_elab spytialSpecCmd]
@@ -501,8 +497,7 @@ meta def elabSpytialSpecCmd : CommandElab := fun
 
 /-- `spytial_relationalizer <TypeName> <defName>` registers a custom relationalizer
     for a type. The def must have type `CustomRelationalizer`, and — to be usable
-    from importing modules — should be `public meta def` (registration warns
-    otherwise).
+    from importing modules — should be `public meta def`.
 
     ```
     public meta def myRelationalizer : CustomRelationalizer := fun e walkExpr => do ...
@@ -636,8 +631,8 @@ syntax (name := spytialProofTactic) spytialProofKw term
 open Tactic in
 @[tactic spytialProofTactic]
 meta def elabSpytialProofTactic : Tactic := fun stx => do
-  -- Quotation patterns lex `spytial.proof` as a qualified ident and never match
-  -- the ident-matched leading atom, so extract positionally.
+  -- A quotation pattern would lex `spytial.proof` as one dotted ident and never
+  -- match; extract positionally.
   let props ← spytialPayloadProps stx[1] (optionalOps stx[2]) { filterProofs := false }
   savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
 

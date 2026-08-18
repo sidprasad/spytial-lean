@@ -2,6 +2,7 @@ module
 
 public import SpytialLean.Identity
 meta import SpytialLean.Identity
+public meta import SpytialLean.MetaEncode
 meta import SpytialLean.Relationalizer
 meta import WalkCanon
 
@@ -25,10 +26,8 @@ public def parity : Bool → Nat
 
 /-! ## Stuck matches emit one ternary `scrutinee`
 
-`scrutinee : (match, position, discriminant)` whatever the discriminant count:
-the position is a walked `Nat` atom, not part of the relation's name. The
-goldens are whole canonical instances, so a `scrutinee_i` family — or any
-other change to the emission — fails them. -/
+`(match, position, discriminant)`: the position is a walked atom, not part of
+the relation's name. -/
 
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `t (mkConst ``MTree) fun t => do
@@ -52,8 +51,7 @@ other change to the emission — fails them. -/
     let di ← relationalize (← instantiateMVars e)
     assertCanon "scrutinee.binary" di
       "Nat|match\nNat|0\nMTree|t\nNat|1\nBool|b\nscrutinee[Nat,Nat,MTree]:0,1,2;0,3,4"
-    -- the relation's row freezes at the first tuple registered; every tuple
-    -- still carries its own
+    -- the relation row freezes at the first tuple; each carries its own
     let some rel := di.relations.find? (·.name == "scrutinee")
       | throwError "scrutinee.binary: relation missing"
     let got := rel.tuples.map (·.types)
@@ -62,8 +60,7 @@ other change to the emission — fails them. -/
 
 /-! ## Every column carries its own type
 
-Constructor fields, enumerated function tables, and structure projections all
-declare the child's type, not a second copy of the owner's. -/
+The child's type, not a second copy of the owner's. -/
 
 #eval show MetaM Unit from do
   let cell := mkApp2 (mkConst ``Cell.mk) (mkRawNatLit 3) (mkStrLit "x")
@@ -80,10 +77,8 @@ declare the child's type, not a second copy of the owner's. -/
 
 /-! ## Enumerable function fields are flat n-ary tables
 
-A field `f : D₁ → … → Dₖ → C` emits one relation named by the field, arity
-k+2: `(owner, d₁, …, dₖ, result)` over the whole domain product,
-lexicographic with the first binder outermost. Domain values become column
-atoms rather than relation names, and the λ gets no atom at all. -/
+One `(owner, d₁, …, dₖ, result)` relation per field, over the whole domain
+product, lexicographic with the first binder outermost. -/
 
 public structure BoolF where
   f : Bool → Nat
@@ -121,8 +116,7 @@ public structure Proc where
 
 public def procVal : Proc := { process := fun s => s.length }
 
-/-- One enumerable binder, one that is not: tabulation is all-or-nothing, so
-    the enumerable level no longer becomes a partial trie of its own. -/
+/-- One enumerable binder, one not: all-or-nothing, no partial trie. -/
 public structure Mixed where
   m : Bool → String → Nat
 
@@ -175,11 +169,8 @@ private meta def boolLam : MetaM Expr :=
 
 /-! ## Decidable `Prop` codomains are relation tuples
 
-A `Prop`-valued function is a relation, so its table has no result column and
-carries a tuple exactly where the proposition decides true. Only the domain
-elements a true tuple names get walked. Every point decides before any atom is
-walked, so one undecided point leaves the field a labeled leaf and nothing
-else: a partial table would assert a non-relatedness nothing established. -/
+No result column; a tuple exactly where the proposition decides true. One
+undecided point bails the whole table. -/
 
 public structure PropRel where
   rel : Q → Q → Prop
@@ -187,15 +178,13 @@ public structure PropRel where
 public def propRelVal : PropRel :=
   { rel := fun a b => a = b ∨ (a = Q.q0 ∧ b = Q.q2) }
 
-/-- One true point out of nine: the domain elements no tuple names never become
-    atoms at all. -/
+/-- One true point out of nine: elements no tuple names never become atoms. -/
 public structure Sparse where
   rel : Q → Q → Prop
 
 public def sparseVal : Sparse := { rel := fun a b => a = Q.q0 ∧ b = Q.q1 }
 
-/-- Decidably never: the relation is registered with its types row and no
-    tuples, because an empty extension is the field's honest content. -/
+/-- Decidably never: registered with no tuples. -/
 public structure Never where
   rel : Q → Q → Prop
 
@@ -203,8 +192,7 @@ public def neverVal : Never := { rel := fun _ _ => False }
 
 opaque myProp : Q → Prop
 
-/-- The bail detector: nothing can decide `myProp`, so the field keeps the λ
-    leaf it had before decidable tabulation existed. -/
+/-- Nothing decides `myProp`: the field keeps its λ leaf. -/
 public structure Undec where
   p : Q → Prop
 
@@ -228,14 +216,10 @@ public def undecVal : Undec := { p := fun q => myProp q }
 
 /-! ### A set is the same table
 
-`Set α` is `α → Prop`, so a set field emits `(owner, element)` memberships with
-no directive at all. Mathlib is not on this dependency path; `Set` here is its
-definition, which is the whole of what tabulation sees through.
-
-A literal built from `Insert`/`Singleton` clears the λ gate — `whnf` does give a
-lambda — but `Decidable` never synthesizes through the residual membership, so
-the table bails and the field keeps a leaf labeled by the literal's own head.
-Sets written as a decidable predicate tabulate. -/
+`Set α` is `α → Prop` (defined here; Mathlib is not on this path). An
+`Insert`/`Singleton` literal whnfs to a lambda, but `Decidable` does not
+synthesize through the residual membership, so it stays a leaf; sets written
+as a decidable predicate tabulate. -/
 
 @[expose] public def Set (α : Type) : Type := α → Prop
 
@@ -261,10 +245,19 @@ public def naLitVal : NALit := { accept := {Q.q0, Q.q2} }
   assertCanon "prop.set.literal" (← relationalize (mkConst ``naLitVal))
     "NALit|mk\nQ → Prop|insert\naccept[NALit,Set Q]:0,1"
 
-/-! ## Identity decides whether a domain value and a result are one atom
+/-! ## An empty domain registers the relation -/
 
-The table walks each domain element once and repeats its id; merging a result
-cell into a domain atom is the identity layer's call, not the table's. -/
+public structure EmptyDom where
+  f : Empty → Nat
+  g : Empty → Prop
+
+public def emptyDomVal : EmptyDom := { f := fun e => e.elim, g := fun e => e.elim }
+
+#eval show MetaM Unit from do
+  assertCanon "table.emptydom" (← relationalize (mkConst ``emptyDomVal))
+    "EmptyDom|mk\nf[EmptyDom,Empty,Nat]:\ng[EmptyDom,Empty]:"
+
+/-! ## Identity decides whether a domain value and a result are one atom -/
 
 public inductive QI where | q0 | q1 | q2
   deriving DecidableEq, SpytialIdentity
@@ -295,18 +288,12 @@ public def propRelIVal : PropRelI :=
   assertCanon "prop.identity" (← relationalize (mkConst ``propRelIVal))
     "PropRelI|mk\nQI|q0\nQI|q2\nQI|q1\nrel[PropRelI,QI,QI]:0,1,1;0,1,2;0,3,3;0,2,2"
 
-/-! ## The two-pass reference walks the same tables
-
-`referenceRelationalize` shares `emitNode`, so this checks the identity
-plumbing over the new shapes — the goldens above are the emission detector. -/
+/-! ## The two-pass reference walks the same tables -/
 
 /-! ## A DA reaches its table through its parent subobject
 
-cslib's `DA` extends an `FLTS`, so `tr`'s owner column is the subobject atom
-rather than the automaton, whose own `start` edge points into a state the table
-already walked. The `Fin` instance is derived here and not at the top of the
-file: `table.fin` above keeps the unmerged atoms it pins, and the same domain
-merges below. -/
+`tr`'s owner column is the subobject atom, not the automaton. The `Fin`
+instance is derived mid-file so `table.fin` above stays unmerged. -/
 
 deriving instance SpytialIdentity for Fin
 
@@ -342,6 +329,7 @@ public def subDAFin : SubDA (Fin 3) Bool where
   assertMatchesReference "diff.prop.table" (mkConst ``propRelVal)
   assertMatchesReference "diff.prop.sparse" (mkConst ``sparseVal)
   assertMatchesReference "diff.prop.empty" (mkConst ``neverVal)
+  assertMatchesReference "diff.table.emptydom" (mkConst ``emptyDomVal)
   assertMatchesReference "diff.prop.set" (mkConst ``naVal)
   assertMatchesReference "diff.prop.identity" (mkConst ``propRelIVal)
   assertMatchesReference "diff.table.subobject" (mkConst ``subDAFin)

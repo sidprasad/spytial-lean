@@ -8,11 +8,8 @@ open SpytialLean Lean Elab Command
 
 /-! # Tests for the embedded selector DSL
 
-Headless, widget-free. Golden tests pin the SGQ lowering of every selector
-shape the corpus uses (`#guard_msgs` on the spec debug command and on a
-spec-storage dump); negative tests pin one diagnostic per checker error class.
-Run with `lake build SpytialTests`.
--/
+Golden `#guard_msgs` pin the SGQ lowering; negative tests pin one diagnostic
+per checker error class. -/
 
 /-! ## Fixtures -/
 
@@ -120,9 +117,8 @@ info: {"directives":
   atomStyle "raw & unchecked \"quoted\"" (borderStyle "green")
 ]
 
--- The surface only admits a raw string as a *whole* selector, but `Sel` is
--- public API: a programmatically composed raw fragment binds loosest —
--- parenthesized, never spliced into `a + b.lo`.
+-- `Sel` is public API: a composed raw fragment binds loosest — parenthesized,
+-- never spliced.
 /-- info: "(a + b).lo" -/
 #guard_msgs in
 #eval (Sel.join (.raw "a + b") (.rel "lo")).toSGQ
@@ -198,10 +194,8 @@ info: {"constraints": [{"orientation": {"selector": "lft", "directions": ["below
 
 /-! ## Scalar closures stay in the vocabulary
 
-The walker decomposes `Int`/`Char`/`UInt*` into constructor chains
-(`Char → UInt32 → BitVec → Fin → Nat`), so their relations and types are
-selectable; only `Nat`/`String` (literal atoms) and `Float` (opaque) stop
-the closure walk. -/
+The walker decomposes `Int`/`Char`/`UInt*` into constructor chains, so their
+relations and types are selectable. -/
 
 public inductive SScalar where
   | mk (i : Int) (c : Char)
@@ -216,6 +210,27 @@ info: {"directives": [{"hideField": {"field": "val"}}],
 #spytial.spec sScalar with [
   hideAtom BitVec + UInt32,
   hideField val
+]
+
+/-! ## Stuck-match vocabulary
+
+The walker emits one ternary `scrutinee` whatever the discriminant count, so
+strict scopes accept it — in selector and field positions. -/
+
+/--
+warning: arity-3 selector in a pair position: only the first and last columns of each tuple are used
+---
+info: {"directives":
+ [{"edgeStyle":
+   {"lineStyle": {"pattern": "dashed", "color": "gray"},
+    "field": "scrutinee"}}],
+ "constraints":
+ [{"orientation": {"selector": "scrutinee", "directions": ["below"]}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [
+  orientation scrutinee below,
+  edgeStyle scrutinee (lineStyle "gray" dashed)
 ]
 
 /-! ## Checker errors — one per class -/
@@ -303,18 +318,10 @@ info: {"directives":
   edgeStyle hop (lineStyle "purple")
 ]
 
-/-! ## Dotted-selector resolution
+/-! ## Dotted-selector resolution -/
 
-A glued dotted join scores each component at its real arity, so a join through a
-spec-introduced arity-1 group is rejected exactly like the spaced spelling. A
-qualified type name resolves by longest prefix: leading components name the type,
-trailing ones fold as joins. -/
-
--- Glued `SBDD.cluster` and spaced `SBDD . cluster` agree — a join of the arity-1
--- sig and the arity-1 group has no columns left (and the reference draws the
--- graph-side warning first).
 /--
-warning: spec-introduced 'cluster' exists only in the drawn graph — the engine evaluates selectors against the data instance, so this reference selects nothing at render (engine limitation)
+warning: spec-introduced 'cluster' exists only in the drawn graph — the engine evaluates selectors against the data instance, so this reference selects nothing at render
 ---
 error: join of arity 1 and arity 1 has no columns left
 -/
@@ -322,7 +329,7 @@ error: join of arity 1 and arity 1 has no columns left
 #spytial.spec sExample with [group SBDD cluster, hideAtom SBDD.cluster]
 
 /--
-warning: spec-introduced 'cluster' exists only in the drawn graph — the engine evaluates selectors against the data instance, so this reference selects nothing at render (engine limitation)
+warning: spec-introduced 'cluster' exists only in the drawn graph — the engine evaluates selectors against the data instance, so this reference selects nothing at render
 ---
 error: join of arity 1 and arity 1 has no columns left
 -/
@@ -337,7 +344,7 @@ naming one selects nothing at render. Field-name positions (`edgeStyle hop`
 above) stay silent: they act on drawn edges, where the names do exist. -/
 
 /--
-warning: spec-introduced 'hop' exists only in the drawn graph — the engine evaluates selectors against the data instance, so this reference selects nothing at render (engine limitation)
+warning: spec-introduced 'hop' exists only in the drawn graph — the engine evaluates selectors against the data instance, so this reference selects nothing at render
 ---
 info: {"directives": [{"inferredEdge": {"selector": "lo.hi", "name": "hop"}}],
  "constraints": [{"orientation": {"selector": "hop", "directions": ["below"]}}]}
@@ -349,7 +356,7 @@ info: {"directives": [{"inferredEdge": {"selector": "lo.hi", "name": "hop"}}],
 ]
 
 /--
-warning: spec-introduced 'cluster' exists only in the drawn graph — the engine evaluates selectors against the data instance, so this reference selects nothing at render (engine limitation)
+warning: spec-introduced 'cluster' exists only in the drawn graph — the engine evaluates selectors against the data instance, so this reference selects nothing at render
 ---
 info: {"constraints":
  [{"group": {"selector": "SBDD", "name": "cluster"}},
@@ -374,15 +381,12 @@ end SelQual
 
 public def selQualOuter : SelQual.Outer := { inner := { someField := 0 } }
 
--- A qualified, un-opened type name resolves when escaped: the dot is the join
--- operator, so a dotted Lean name arrives as one escaped component.
 /--
 info: {"constraints": [{"hideAtom": {"selector": "Inner"}}]}
 -/
 #guard_msgs in
 #spytial.spec selQualOuter with [hideAtom «SelQual.Inner»]
 
--- Joining off an escaped qualified type.
 /--
 info: {"constraints": [{"hideAtom": {"selector": "Inner.someField"}}]}
 -/
@@ -437,13 +441,8 @@ public def sCarrier : SCarrier := { carrier := Nat, tag := 0 }
 
 /-! ## Relation arity — tabulated fields and `scrutinee`
 
-A field whose type tabulates emits one flat table rather than an edge to one
-value: `tr : SQ → Bool → SQ` is `(owner, q, b, q')`, and a decidable `Prop`
-codomain is the relation itself, `(owner, q, r)` with no result column. The
-scope reads both widths — and the column types, which are the vocabulary in
-place of the function type no atom ever gets — from the same `tabulationPlan?`
-the walker emits from. A stuck `match` is the other non-binary relation: one
-ternary `(match, position, discriminant)`. -/
+The scope reads widths and column vocabulary from the same `tabulationPlan?`
+the walker emits from. -/
 
 public inductive SQ where | q0 | q1 | q2
   deriving DecidableEq
@@ -458,16 +457,14 @@ public structure SLTS where
 
 public def sLTS : SLTS := { step := fun a b => a = b }
 
-/-- `String` does not enumerate, so this field keeps its λ leaf, its binary
-    edge, and its hold on the scope's open world. -/
+/-- `String` does not enumerate: binary edge, open scope. -/
 public structure SProc where
   handler : String → Nat
 
 public def sProc : SProc := { handler := String.length }
 
-/-- A function field over the type's own parameters: `tr` is a binary edge to a
-    λ leaf at `State := String` and a 4-ary table at `State := SQ`. The
-    declaration fixes no arity, so the checker predicts none. -/
+/-- A function field over the type's own parameters fixes no arity: the
+    checker predicts none. -/
 public structure SPoly (State Label : Type) where
   tr : State → Label → State
 
@@ -477,7 +474,6 @@ public def sPoly : SPoly SQ Bool := { tr := fun q _ => q }
 #guard_msgs in
 #spytial.spec sDA with [hideAtom bogus]
 
--- The whole table at its real width: any other predicted arity fails `in`.
 /--
 info: {"constraints":
  [{"hideAtom": {"selector": "{x : SDA | tr in SDA->SQ->Bool->SQ}"}}]}
@@ -497,8 +493,6 @@ info: {"constraints":
 #guard_msgs in
 #spytial.spec sDA with [hideAtom SDA.tr]
 
--- A pair position takes the first and last column of a wider tuple — a warning
--- the checker could not raise while it believed every relation binary.
 /--
 warning: arity-4 selector in a pair position: only the first and last columns of each tuple are used
 ---
@@ -516,7 +510,6 @@ info: {"constraints":
 #guard_msgs in
 #spytial.spec sLTS with [orientation step below]
 
--- An edge position reads every column, so the same table draws silently there.
 /-- info: {"directives": [{"inferredEdge": {"selector": "tr", "name": "e"}}]} -/
 #guard_msgs in
 #spytial.spec sDA with [inferredEdge e tr]
@@ -544,8 +537,7 @@ info: {"constraints":
 #guard_msgs in
 #spytial.spec sExample with [hideAtom scrutinee]
 
--- Negative control: a field that does not tabulate keeps its binary edge and
--- its open vocabulary.
+-- negative control: a non-tabulating field
 /--
 info: {"constraints":
  [{"orientation": {"selector": "handler", "directions": ["below"]}}]}
@@ -561,14 +553,11 @@ info: {"constraints": [{"hideAtom": {"selector": "bogus"}}]}
 #guard_msgs in
 #spytial.spec sProc with [hideAtom bogus]
 
--- Open vocabulary is not open arity: a monomorphic domain that does not
--- enumerate still fixes the width at 2.
+-- open vocabulary is not open arity
 /-- error: this position selects atoms (arity 1), but the selector has arity 2 -/
 #guard_msgs in
 #spytial.spec sProc with [hideAtom handler]
 
--- A parametric field's width is the instantiation's business, so a join off it
--- passes unchecked instead of being scored against a width nobody predicted.
 /-- info: {"directives": [{"inferredEdge": {"selector": "SPoly.tr", "name": "e"}}]} -/
 #guard_msgs in
 #spytial.spec sPoly with [inferredEdge e SPoly.tr]
@@ -579,9 +568,7 @@ info: {"constraints": [{"orientation": {"selector": "tr", "directions": ["below"
 #guard_msgs in
 #spytial.spec sPoly with [orientation tr below]
 
--- The goldens above pin what the scope predicts; these pin it against what the
--- walker emits: every monomorphic prediction matches the emitted width, and the
--- parametric fixture predicts nothing while emitting at the instantiation's width.
+-- the scope's predictions against what the walker actually emits
 #eval show Lean.Meta.MetaM Unit from do
   for (root, value) in [(``SDA, ``sDA), (``SLTS, ``sLTS), (``SProc, ``sProc)] do
     let scope ← SelScope.ofType root
@@ -675,8 +662,7 @@ info: {"constraints":
   hideAtom {x : SBDD | no y : SBDD, w : String | @:y = tt}
 ]
 
--- `let` desugars by substitution; a later binder shadows it (`a` below is the
--- `all`-bound `a`, not `lo`).
+-- `let` desugars by substitution; a later binder shadows it.
 /--
 info: {"constraints":
  [{"hideAtom": {"selector": "{x : SBDD | some x.lo and no x.hi}"}},
@@ -688,9 +674,8 @@ info: {"constraints":
   hideAtom {x : SBDD | let a = lo | all a : SBDD | some a}
 ]
 
--- A glued `x.v` is the same join as a spaced `x . v`, so a tail component
--- resolves through the same ladder as a head: `let`-bindings and type sigs
--- included, and with a real arity rather than an unknown one.
+-- A join tail resolves through the same ladder as a head: `let`-bindings and
+-- type sigs included.
 /--
 info: {"constraints":
  [{"hideAtom": {"selector": "{x : SBDD | some x.^(lo + hi)}"}},
@@ -722,9 +707,8 @@ info: {"constraints":
 #guard_msgs in
 #spytial.spec sExample with [hideAtom (lo.tt)]
 
--- A selector ident is one component, so the dot is always the join operator and
--- a unary operator binds tighter — `^lo.hi` is `(^lo).hi`, which is how SGQ
--- reads the same text. Spacing carries no meaning.
+-- The dot is always the join operator and a unary operator binds tighter —
+-- `^lo.hi` is `(^lo).hi`, which is how SGQ reads the same text.
 /--
 info: {"constraints":
  [{"orientation": {"selector": "^lo.hi", "directions": ["directlyBelow"]}},
@@ -810,7 +794,6 @@ info: {"directives":
   atomStyle {x : SRB | (sum y : SRB | @num:(y.key)) > 2} (borderStyle "red")
 ]
 
--- The binder domain is checked like the other quantifiers' (arity 1).
 /-- error: a sum-quantifier binder domain must have arity 1, got 2 -/
 #guard_msgs in
 #spytial.spec sRB with [atomStyle {x : SRB | (sum y : left | @num:(y.key)) > 2} (borderStyle "red")]
@@ -925,16 +908,12 @@ info: {"directives":
 
 /-! ## Empty box join, boolean literals, and operand diagnostics -/
 
--- An empty box join is an error, not a silent no-op (`e[]` ≡ `e`).
 /-- error: box join needs at least one argument (`a[b]` means `b.a`) -/
 #guard_msgs in
 #spytial.spec sExample with [hideAtom lo[]]
 
--- A `@bool:` projection compares against a bare `true`/`false`
--- literal (SGQ evaluates it directly). Bool is not in SBDD's scope, so this
--- works only via the boolean-literal wiring — contrast `@:x = true` below, which
--- stays a constructor-label reading: `true` resolves to `Bool.true`, rejected
--- because Bool cannot occur in SBDD.
+-- `@bool:` compares against SGQ's boolean literal; `@:x = true` below stays a
+-- constructor-label reading, rejected because Bool cannot occur in SBDD.
 /--
 info: {"directives":
  [{"atomStyle":
@@ -948,14 +927,12 @@ info: {"directives":
 #guard_msgs in
 #spytial.spec sExample with [atomStyle {x : SBDD | @:x = true} (borderStyle "red")]
 
--- A label value opposite an integer literal points at `@num:`.
 /-- error: cannot compare a label value with this operand; a label value compares against a nullary constructor or a string literal — for a numeric label, project with `@num:` -/
 #guard_msgs in
 #spytial.spec sExample with [hideAtom {x : SBDD | @:x = 5}]
 
--- The relationalizer labels a `String` atom with its Lean spelling, quotes
--- included, so a literal matching one lowers to a doubly-quoted SGQ string,
--- escaped per SGQ's string grammar (`\"` `\\` `\n` `\t` `\r` `\0`).
+-- A `String` atom's label carries its Lean quotes, so a matching literal
+-- lowers doubly-quoted, escaped per SGQ's string grammar.
 /--
 info: {"directives":
  [{"atomStyle":
@@ -969,7 +946,6 @@ info: {"directives":
 #guard_msgs in
 #spytial.spec sExample with [hideAtom {vr : String | @:vr = "a\x01b"}]
 
--- A quantifier binder domain says "quantifier", not "comprehension".
 /-- error: a quantifier binder domain must have arity 1, got 2 -/
 #guard_msgs in
 #spytial.spec sExample with [hideAtom {x : SBDD | all y : lo | some y}]
@@ -995,12 +971,10 @@ public def sWeird : SWeird := .leaf
 
 /-! ## Vocabulary shadowing — fields literally named `sum` / `univ`
 
-The `.both` flip added `univ`/`iden`/`none`/`sum` keyword rules to the expression
-category. `sum` is only ever the long-form quantifier — bare `sum` fails the rule
-and falls to the ident, so a field named `sum` needs nothing. A nullary `univ`
-would tie with the ident and wins by priority, so a field named `univ` is
-escaped: `nonReservedSymbol` compares raw source text, which `«univ»` changes.
-Spacing is not an escape — the dot is the join operator either way. -/
+Bare `sum` fails the quantifier rule and falls to the ident, so a field named
+`sum` needs nothing. `univ`/`iden`/`none` are read off the ident's source
+text, so a field named `univ` takes the escape (`«univ»`); spacing is not an
+escape — the dot is the join operator either way. -/
 
 public inductive SVocab where
   | mk (sum univ : SVocab)
@@ -1081,8 +1055,8 @@ def hygieneNotInBounds (inBounds : Bool) : Bool := !inBounds
 example : Nat := let and := 5; and
 example : Nat := let ni := hygieneNi; ni
 example : Option Nat := some 3
--- The `.both` constant/quantifier keywords (`univ`/`iden`/`none`/`sum`) auto-compile
--- to `nonReservedSymbol`, so they never enter the token table — still plain idents.
+-- Keyword-led `.both` rules compile to `nonReservedSymbol`, so their words
+-- never enter the token table.
 def hygieneSum : Nat := 5
 example : Nat := let univ := 3; univ
 example : Nat := let iden := 4; iden

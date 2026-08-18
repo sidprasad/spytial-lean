@@ -23,8 +23,7 @@ public meta def canonInstance (di : JsonDataInstance) : String := Id.run do
     s!"{r.name}[{String.intercalate "," r.types.toList}]:{String.intercalate ";" ts.toList}"
   return String.intercalate "\n" (atomsS ++ relsS).toList
 
-/-- Exact-shape golden: the whole canonical form, so a change anywhere in the
-    emission fails the test. -/
+/-- Exact-shape golden over the whole canonical form. -/
 public meta def assertCanon (label : String) (di : JsonDataInstance) (expected : String) :
     MetaM Unit := do
   let got := canonInstance di

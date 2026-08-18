@@ -70,6 +70,12 @@ public class ToIdentityKey (α : Type u) where
   /-- Encode a value as a key. -/
   toKey : α → IdentityKey
 
+-- Every encoding has a meta twin in `MetaEncode.lean`, same order — the
+-- walker's no-eval mirror. Adding an instance here means adding its twin
+-- there; the enumerating cross-check in `tests/IdentityWalkTest.lean` fails
+-- on a drifted twin or a twin without a sample. A twin left unwritten only
+-- costs the eval fallback.
+
 public instance : ToIdentityKey Nat where
   toKey := .ofNat
 
@@ -129,23 +135,21 @@ public inductive IdentityVia (α : Type u) where
   /-- Classifier: one computation per subterm, table lookup to merge. -/
   | identity (f : α → IdentityKey)
   /-- Decider: reuse your equality, e.g. `(· == ·)`. Must be an equivalence
-      relation — reflexive, symmetric, transitive. (Deliberately not
-      `LawfulBEq`, which demands agreement with `=` and would outlaw exactly
-      the coarser-than-structural quotients this design exists for.) Cost: up
-      to one comparison per existing group of the type — linear in the group
-      count, worst case — vs one lookup. -/
+      relation. Not `LawfulBEq` — that would outlaw the coarser-than-structural
+      quotients this design exists for. Cost: up to one comparison per existing
+      group of the type, vs a classifier's lookup. -/
   | eqv (r : α → α → Bool)
 
 /-- The classifier, when this presentation has one. Derived instances dispatch
-    on this to decide whether a composite can stay classifier-presented. -/
-public def IdentityVia.classifier? {α : Type u} : IdentityVia α → Option (α → IdentityKey)
+    on this to decide whether a composite can stay classifier-presented.
+    `@[expose]` with `viaOf`: a derived composite's `via` is a match on these,
+    and a module context that cannot whnf it degrades the route to `.eqvRel`. -/
+@[expose] public def IdentityVia.classifier? {α : Type u} : IdentityVia α → Option (α → IdentityKey)
   | .identity f => some f
   | .eqv _ => none
 
-/-- Every presentation induces a decider — classifiers compare by key. (The
-    reverse direction, a classifier from a decider, does not exist; that
-    asymmetry is why derived instances degrade to `eqv` when any ingredient
-    is decider-presented.) -/
+/-- Every presentation induces a decider — classifiers compare by key. The
+    reverse does not exist, which is why derived instances degrade to `.eqv`. -/
 public def IdentityVia.toEqv {α : Type u} : IdentityVia α → (α → α → Bool)
   | .identity f => fun a b => f a == f b
   | .eqv r => r
@@ -160,91 +164,86 @@ public def IdentityVia.comap {α : Type u} {β : Type v} (v : IdentityVia β) (n
 
 /-! ## The class -/
 
-/-- Declared diagram identity for `α`: subterms of type `α` with the same
-    identity merge into one atom. No instance ⇒ no merging — the term draws as
-    written, and no primitive ships an instance (writing a value into a parent
-    key is `ToIdentityKey`'s job and grants no merging). `deriving
-    SpytialIdentity` gives the structural identity, which fits value-like
-    domains (sameness is same content); syntax-like domains, where position is
-    meaning, should simply not opt in. -/
+/-- Declared diagram identity for `α`: subterms with the same identity merge
+    into one atom. No instance ⇒ no merging — the term draws as written; no
+    primitive ships one. `deriving SpytialIdentity` gives structural identity —
+    right where sameness is content, wrong where position is meaning. -/
 public class SpytialIdentity (α : Type u) where
   /-- Which occurrences are one atom. -/
   via : IdentityVia α
-  /-- Display layer: the drawn representative of each identity class. Law:
-      `identity (norm x) = identity x` — normalizing must not change identity;
-      the representative is a member of the class it represents. Under
-      structural identity the choice is invisible; it matters exactly when
-      identity is coarser than structural. -/
+  /-- Display layer: the intended drawn representative of each identity
+      class. Law: `identity (norm x) = identity x`. Recorded but not yet
+      drawn — the walker's `norm?`-display TODO; merging is unaffected, and
+      the first occurrence is drawn meanwhile. -/
   norm? : Option (α → α) := none
 
 /-- The `via` of `α`'s instance with `α` explicit — the form generated code and
-    dispatch sites use. -/
-public def SpytialIdentity.viaOf (α : Type u) [inst : SpytialIdentity α] : IdentityVia α :=
+    dispatch sites use. `@[expose]`: see `IdentityVia.classifier?`. -/
+@[expose] public def SpytialIdentity.viaOf (α : Type u) [inst : SpytialIdentity α] : IdentityVia α :=
   inst.via
 
-/-- Reuse the type's `BEq` as the decider presentation: `.eqv (· == ·)`.
-    The instance must be a genuine equivalence relation (see `IdentityVia.eqv`);
-    writing this is the declaration that it is — `BEq`-existence alone never
+/-- The compiled classifier of `α`'s instance, when it presents one — the
+    walker's eval fallback and the tests' runtime oracle. -/
+public def SpytialIdentity.runtimeKey? {α : Type u} [SpytialIdentity α] (a : α) :
+    Option IdentityKey :=
+  (SpytialIdentity.viaOf α).classifier? |>.map (· a)
+
+/-- Reuse the type's `BEq` as the decider: `.eqv (· == ·)`. Writing this is
+    the declaration that `==` is an equivalence — `BEq`-existence alone never
     triggers merging. -/
 @[reducible] public def SpytialIdentity.ofBEq {α : Type u} [BEq α] : SpytialIdentity α :=
   { via := .eqv (· == ·) }
 
-/-- The common "normalize, then use the underlying identity" quotient in one
-    line: `base` pulled back along `n`, with `n` recorded as the display
-    representative. The `norm?` law holds exactly when `n` is idempotent —
-    which is what makes it a normalizer. For a type with a derived structural
-    instance, `ofNorm n (SpytialIdentity.viaOf T)` is the doc's
-    "`structuralIdentity ∘ n`" pairing. -/
+/-- Normalize, then use the underlying identity: `base` pulled back along `n`,
+    with `n` the display representative. The `norm?` law holds exactly when
+    `n` is idempotent. -/
 @[reducible] public def SpytialIdentity.ofNorm {α : Type u} (n : α → α) (base : IdentityVia α) :
     SpytialIdentity α :=
   { via := base.comap n, norm? := some n }
 
 /-! ## Views: Raw and Viewed
 
-The walk carries an ambient mode — `declared` (consult `SpytialIdentity`,
-absent ⇒ fresh atom) or `asWritten` (no instance consultation, fresh atoms) —
-and these wrappers shift it for a subtree: quasiquote and unquote, for
-diagrams (the doc's walk-modes table). Mode semantics live in the walker; this
-layer provides only the types. -/
+The walk carries an ambient mode — `declared` (consult `SpytialIdentity`) or
+`asWritten` (every occurrence fresh) — and these wrappers shift it for a
+subtree: quasiquote and unquote for diagrams. Mode semantics live in the
+walker; this layer provides only the types. -/
 
 /-- `α` under a different name — the `OrderDual` device. `Raw.mk t` shifts the
-    walk mode to `asWritten` for its whole subtree — hereditary by meaning,
-    since "as written" is a property of a whole term — the quasiquote row of
-    the doc's walk-modes table. `Raw α` is a different type head, so instance
-    search finds no `SpytialIdentity` for it; the walker unwraps the wrapper on
-    sight, so no wrapper atom appears. Deliberately a semireducible `def`:
-    typeclass search runs at reducible transparency and cannot see through it
-    (pinned by test). Instances declared directly on `Raw τ` are found as
-    usual. -/
+    walk to `asWritten` for its whole subtree (hereditary: "as written" is a
+    property of a whole term). A different type head, so instance search finds
+    no `SpytialIdentity` for it; deliberately semireducible, so
+    reducible-transparency search cannot see through it (pinned by test).
+    The shift reads the value's spelling, not a declared field type: a field
+    declared `Raw τ` but filled with a bare carrier value (defeq, so it
+    typechecks) walks `declared` — spell the value `Raw.mk t`. -/
 @[expose] public def Raw (α : Type u) : Type u := α
 
 -- `@[expose]` on the `mk`s too: without it, module contexts cannot whnf-melt
 -- the wrapper application, and the walker's unwrap relies on the melt.
 @[expose] public def Raw.mk {α : Type u} (a : α) : Raw α := a
 
-/-- The dual shift: `Viewed.mk t` returns the walk mode to `declared` for its
-    subtree — the unquote — so a term can be drawn as written *except* one
-    collapsed sub-region (the doc's walk-modes table). Same `OrderDual` device
-    and instance-search invisibility as `Raw`; mode semantics live in the
-    walker. -/
+/-- The dual shift: back to `declared` for the subtree — the unquote — so a
+    term draws as written except one collapsed sub-region. Same device and
+    instance-search invisibility as `Raw`. -/
 @[expose] public def Viewed (α : Type u) : Type u := α
 
 @[expose] public def Viewed.mk {α : Type u} (a : α) : Viewed α := a
 
 /-! ## Derived-structural registry
 
-The deriving handler records each type it derives, so the walker can recognize
-"this type's instance is the derived structural one" and compute identities
-meta-side during the walk, without `evalExpr`. -/
+The deriving handler generates, from the same per-type plan as the runtime key
+functions, a meta twin — the key computed from a closed value's `Expr`, no
+evaluation — and records its name here. One source for both, so they cannot
+drift; the walker loads twins by name (`getStructuralTwin?`). -/
 
-/-- Environment extension recording types whose `SpytialIdentity` instance is
-    the derived structural one. -/
+/-- Environment extension: type name → the generated meta twin of its derived
+    key function. -/
 public meta initialize spytialStructuralExt :
-    SimplePersistentEnvExtension Name NameSet ←
+    SimplePersistentEnvExtension (Name × Name) (NameMap Name) ←
   registerSimplePersistentEnvExtension {
-    addEntryFn := fun s n => s.insert n
+    addEntryFn := fun s (n, f) => s.insert n f
     addImportedFn := fun arrays =>
-      arrays.foldl (fun s arr => arr.foldl (·.insert ·) s) {}
+      arrays.foldl (fun s arr => arr.foldl (fun s (n, f) => s.insert n f) s) {}
   }
 
 /-- Whether `typeName`'s `SpytialIdentity` instance is the derived structural
@@ -252,19 +251,21 @@ public meta initialize spytialStructuralExt :
 public meta def isSpytialStructural (env : Environment) (typeName : Name) : Bool :=
   spytialStructuralExt.getState env |>.contains typeName
 
+/-- The name of the generated meta twin of `typeName`'s derived key function,
+    if any. -/
+public meta def structuralTwinName? (env : Environment) (typeName : Name) : Option Name :=
+  spytialStructuralExt.getState env |>.find? typeName
+
 /-! ## Deriving handler
 
 Generates, per inductive: a structural key function (classifier), a structural
-comparison function (decider), and an instance. The field rule: a dependency
-routes through its `SpytialIdentity` when an instance is declared — identity-
-respecting composition wins — else through its `ToIdentityKey` (a total
-classifier), else the deriving fails with the ordinary instance-synthesis
-error. Parameter-dependent dependencies always route through `SpytialIdentity`
-(the instance binds `[SpytialIdentity α]`): containers merge iff their
-elements do. Presentations propagate: classifier-presented when every
-identity-routed dependency has a classifier, degraded to the decider otherwise
-(`List α` is classifier-presented iff `α` is); encoded dependencies never
-force degradation. -/
+comparison (decider), and an instance. The field rule, resolved at the
+deriving site and baked into the generated code: a dependency routes
+through its declared `SpytialIdentity`, else its `ToIdentityKey`, else the
+ordinary instance-synthesis error; parameter-dependent dependencies always
+route through `SpytialIdentity` (containers merge iff their elements do).
+The result is classifier-presented iff every identity-routed dependency has a
+classifier; encoded dependencies never force degradation. -/
 
 namespace Identity
 
@@ -316,6 +317,7 @@ private meta structure DerivCtx where
   deps : Array Dep
   keyFnNames : Array Name
   eqvFnNames : Array Name
+  metaFnNames : Array Name
   usePartial : Bool
 
 private meta def unsupported (declName : Name) (msg : MessageData) : TermElabM α :=
@@ -373,13 +375,16 @@ private meta def mkDerivCtx (declName : Name) : TermElabM DerivCtx := do
   let instName ← mkInstName ``SpytialIdentity declName
   let mut keyFnNames := #[]
   let mut eqvFnNames := #[]
+  let mut metaFnNames := #[]
   if typeInfos.size == 1 then
     keyFnNames := #[instName ++ `key]
     eqvFnNames := #[instName ++ `eqv]
+    metaFnNames := #[instName ++ `metaKey]
   else
     for i in [:typeInfos.size] do
       keyFnNames := keyFnNames.push (instName ++ .mkSimple s!"key_{i+1}")
       eqvFnNames := eqvFnNames.push (instName ++ .mkSimple s!"eqv_{i+1}")
+      metaFnNames := metaFnNames.push (instName ++ .mkSimple s!"metaKey_{i+1}")
   let mut deps : Array Dep := #[]
   let mut members : Array MemberPlan := #[]
   for ti in typeInfos do
@@ -419,7 +424,7 @@ private meta def mkDerivCtx (declName : Name) : TermElabM DerivCtx := do
   -- outside the ctor telescopes, so field-local instance binders cannot leak
   -- into the synthesis that decides each dependency's route
   deps ← deps.mapM fun d => return { d with path := ← depPath d.canon }
-  return { argNames, members, deps, keyFnNames, eqvFnNames,
+  return { argNames, members, deps, keyFnNames, eqvFnNames, metaFnNames,
            usePartial := typeInfos.size > 1 }
 
 private meta def mkKeyAlt (ctx : DerivCtx) (cp : CtorPlan) :
@@ -563,10 +568,101 @@ private meta def mkFamilyBlock (ctx : DerivCtx) (forKey : Bool) :
       $defs:command*
     end)
 
-private meta def mkCmds (declName : Name) : TermElabM (Array Syntax) := do
+/-- Whether the field type has a `MetaEncode` twin at the deriving site. By
+    dynamic name — `Identity` cannot import `MetaEncode` (it imports us). An
+    absent twin bakes a `pure none` step: the walker then falls back to the
+    compiled encoding, so a hand-written `ToIdentityKey` without a twin costs
+    an evaluation, never a failed derive. -/
+private meta def hasMetaEncode (canon : Expr) : TermElabM Bool := do
+  let clsName := `SpytialLean.MetaEncode
+  unless (← getEnv).contains clsName do return false
+  try
+    let u ← mkFreshLevelMVar
+    return (← synthInstance? (mkApp (mkConst clsName [u]) canon)).isSome
+  catch _ => return false
+
+/-- One constructor's arm of the meta twin: arity guard, then the recorded
+    field steps — encoded fields statically through `MetaEncode.keyOf?`,
+    identity-routed and recursive fields through the walker's `dispatch` (so
+    subterm memoization stays central) — folded into the tagged key. Any step
+    yielding `none` makes the arm `none`; the walker then falls back to the
+    compiled classifier. -/
+private meta def mkMetaCtorArm (ctx : DerivCtx) (cp : CtorPlan)
+    (dispatchId argsId : Ident) : TermElabM Term := do
+  let total := cp.numParams + cp.kinds.size
+  let keyOfRef : Term := mkCIdent `SpytialLean.MetaEncode.keyOf?
+  let mut pairs : Array (Term × Ident) := #[]
+  for (kind, i) in cp.kinds.zipIdx do
+    let idx := cp.numParams + i
+    let step? : Option Term ← do
+      match kind with
+      | .proofLike => pure none
+      | .recursive _ => some <$> `($dispatchId (($argsId)[$(quote idx)]!))
+      | .dep di =>
+        match ctx.deps[di]!.path with
+        | .identity => some <$> `($dispatchId (($argsId)[$(quote idx)]!))
+        | .encoding =>
+          if ← hasMetaEncode ctx.deps[di]!.canon then
+            some <$> `($keyOfRef $(ctx.deps[di]!.type) (($argsId)[$(quote idx)]!))
+          else
+            some <$> `((pure none : Lean.Meta.MetaM (Option IdentityKey)))
+    if let some step := step? then
+      pairs := pairs.push (step, mkIdent (← mkFreshUserName `k))
+  let parts : Array Term :=
+    #[← `(IdentityKey.ofString $(quote cp.tag))] ++ pairs.map (fun (_, k) => (k : Term))
+  let mut body : Term ← `(pure (some (IdentityKey.ofList [$parts,*])))
+  for (step, k) in pairs.reverse do
+    body ← `(($step : Lean.Meta.MetaM (Option IdentityKey)) >>= fun
+      | some $k => $body
+      | none => pure none)
+  -- `cond`, not `if`: spliced `if` syntax lacks the position info the do
+  -- elaborator's control-flow inference wants; both arms are action values,
+  -- so strictness is irrelevant.
+  `(cond (($argsId).size == $(quote total)) $body (pure none))
+
+open TSyntax.Compat in
+/-- The meta twin of one member's key function: same plan, `Expr`-side. Not
+    recursive — every child goes through `dispatch` — so twins need no
+    `mutual` block. The fallthrough is the opacity gate, matching the runtime
+    discipline for stuck leaves. -/
+private meta def mkMetaFn (ctx : DerivCtx) (m : MemberPlan) (i : Nat) :
+    TermElabM (TSyntax `command) := do
+  let fnName := mkIdent ctx.metaFnNames[i]!
+  let dispatchId := mkIdent (← mkFreshUserName `dispatch)
+  let eId := mkIdent (← mkFreshUserName `e)
+  let wId := mkIdent (← mkFreshUserName `w)
+  let cId := mkIdent (← mkFreshUserName `c)
+  let argsId := mkIdent (← mkFreshUserName `args)
+  let opacityRef : Term := mkCIdent `SpytialLean.opacityKey?
+  let mut body : Term ← `($opacityRef $wId)
+  for cp in m.ctorPlans.reverse do
+    let arm ← mkMetaCtorArm ctx cp dispatchId argsId
+    body ← `(cond ($cId == $(quote cp.ctorName)) $arm $body)
+  `(public meta def $fnName:ident
+      ($dispatchId : Lean.Expr → Lean.Meta.MetaM (Option IdentityKey))
+      ($eId : Lean.Expr) : Lean.Meta.MetaM (Option IdentityKey) :=
+    Lean.Meta.whnf $eId >>= fun $wId =>
+      match ($wId).getAppFn with
+      | Lean.Expr.const $cId _ =>
+        let $argsId := ($wId).getAppArgs
+        $body
+      | _ => pure none)
+
+private meta def mkCmds (declName : Name) : TermElabM (Array Syntax × Option Name) := do
   let ctx ← mkDerivCtx declName
-  return #[← mkFamilyBlock ctx true, ← mkFamilyBlock ctx false,
-           ← mkInstanceCmd ctx declName]
+  let some i := ctx.members.findIdx? (·.indVal.name == declName)
+    | unsupported declName m!"internal error: not a member of its own mutual block"
+  let mut cmds := #[← mkFamilyBlock ctx true, ← mkFamilyBlock ctx false]
+  -- No `MetaEncode` in scope (a site importing `Identity` alone): emit no
+  -- twin — the generated code could not elaborate — and register nothing, so
+  -- the walker takes the eval fallback. Deriving never fails over this.
+  let mut twinName? := none
+  if (← getEnv).contains `SpytialLean.opacityKey? then
+    for (m, j) in ctx.members.zipIdx do
+      cmds := cmds.push (← mkMetaFn ctx m j)
+    twinName? := some ctx.metaFnNames[i]!
+  cmds := cmds.push (← mkInstanceCmd ctx declName)
+  return (cmds, twinName?)
 
 public meta def mkSpytialIdentityInstanceHandler (declNames : Array Name) :
     CommandElabM Bool := do
@@ -575,9 +671,13 @@ public meta def mkSpytialIdentityInstanceHandler (declNames : Array Name) :
     return false
   for declName in declNames do
     withoutExposeFromCtors declName do
-      let cmds ← liftTermElabM <| mkCmds declName
+      let (cmds, twinName?) ← liftTermElabM <| mkCmds declName
       cmds.forM elabCommand
-      modifyEnv (spytialStructuralExt.addEntry · declName)
+      if let some twinName := twinName? then
+        -- the twin elaborated under the current namespace; register the name
+        -- it actually got, or a namespaced type's meta lane silently dies
+        let fullTwin := (← getCurrNamespace) ++ twinName
+        modifyEnv (spytialStructuralExt.addEntry · (declName, fullTwin))
   return true
 
 meta initialize

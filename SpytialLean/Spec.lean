@@ -100,7 +100,7 @@ public meta abbrev SpytialSpec := List SpytialOp
 /-! ## Spec serialization
 
 `parseLayoutSpec` in spytial-core is js-yaml's `yaml.load`, and JSON is valid
-YAML, so we emit the spec as `Lean.Json`: escape-safe and stable in goldens.
+YAML, so we emit the spec as `Lean.Json`, escape-safe.
 The shape has two optional top-level keys:
 ```json
 {"constraints": [{"orientation": {"selector": "…", "directions": ["above"]}}],

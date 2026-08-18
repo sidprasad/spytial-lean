@@ -2,39 +2,22 @@ import SpytialLean
 
 open SpytialLean
 
-/-! # Automata as state graphs
-
-A transition function tabulates into one flat relation,
-`tr : (automaton, state, symbol, state)`. Column 0 is the owner, so the
-default picture fans every transition out of that one atom. Joining the owner
-away leaves `(state, symbol, state)` — the automaton itself: `inferredEdge`
-draws the first column to the last and folds the symbol column into the edge
-label. -/
+/-! # Automata as state graphs -/
 
 deriving instance SpytialIdentity for Fin
 
-/-- The shape cslib uses: a labeled transition system, and a deterministic
-    automaton as one with a start state. -/
 structure FLTS (State Label : Type) where
   tr : State → Label → State
 
 structure DA (State Symbol : Type) extends FLTS State Symbol where
   start : State
 
-/- Specs compose down the parent chain, so every `DA` below draws with this
-   one. `hideField tr` drops the owner fan; the symbol atoms are then edge
-   labels rather than states. -/
+-- Specs compose down `extends`, so every `DA` below draws with this one.
 spytial_spec FLTS [
   inferredEdge step FLTS.tr,
   hideField tr,
   hideAtom Bool
 ]
-
-/-! ## `Fin` states
-
-The `SpytialIdentity` instance is what merges the six result cells back into
-the three states they came from. Without it every cell is a fresh atom, the
-graph has ten states, and no edge closes a cycle. -/
 
 /-- Counts `true` inputs mod 3. -/
 def daFin : DA (Fin 3) Bool where
@@ -47,15 +30,9 @@ def daFin : DA (Fin 3) Bool where
     | 2, true  => 0
   start := 0
 
--- `attribute val` would inline the state number, but `Fin` reaches the checker
--- only through `DA`'s type parameter, so that name does not check here.
 #spytial daFin
 
-/-! ## Named states
-
-The same automaton over an enumerated state type: the constructor names are
-the labels, so nothing has to be inlined. -/
-
+/-- The same automaton over named states. -/
 inductive St where | s0 | s1 | s2
   deriving DecidableEq, SpytialIdentity
 
@@ -71,14 +48,7 @@ def daSt : DA St Bool where
 
 #spytial daSt
 
-/-! ## Nondeterminism
-
-`Tr : State → Symbol → State → Prop` is a relation, not a function: its table
-has no result column and carries a tuple exactly where the proposition decides
-true, including two targets on one symbol. `start` is a predicate over states,
-which is what `Set State` unfolds to (Mathlib is not on this dependency path);
-its memberships draw as automaton→state edges with no directive. -/
-
+/-- Nondeterministic: `Tr` tabulates a tuple wherever it decides true. -/
 structure NA (State Symbol : Type) where
   Tr : State → Symbol → State → Prop
   start : State → Prop

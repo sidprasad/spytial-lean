@@ -2,6 +2,8 @@ module
 
 public import SpytialLean.Identity
 meta import SpytialLean.Identity
+-- the deriving handler's generated meta twins reference `MetaEncode`
+public meta import SpytialLean.MetaEncode
 
 open SpytialLean Lean Meta
 
@@ -63,7 +65,7 @@ private def isEqvArm {α : Type u} (s : SpytialIdentity α) : Bool :=
   | .eqv _ => true
   | .identity _ => false
 
--- the doc's A/B example: same value, different spelling — one identity
+-- same value, different spelling — one identity
 #guard keyOf (ITree.node (.leaf 1) (.leaf 1)) == keyOf (ITree.node (.leaf 1) (.leaf (0 + 1)))
 -- different values differ
 #guard keyOf (ITree.node (.leaf 1) (.leaf 1)) != keyOf (ITree.node (.leaf 1) (.leaf 2))
@@ -112,18 +114,16 @@ structure Bounded where
 
 deriving instance SpytialIdentity for List
 
--- `List α` requires element *identity* (`[SpytialIdentity α]` binder): with no
--- `SpytialIdentity Nat` there is no `SpytialIdentity (List Nat)` — probed
--- below — while elements that declare identity light the container up.
+-- `List α` requires element *identity*: no `SpytialIdentity Nat`, no
+-- `SpytialIdentity (List Nat)` (probed below).
 #guard keyOf ([ITree.leaf 1] : List ITree)
          == some (.ofList [.ofString "cons",
                            .ofList [.ofString "leaf", .ofNat 1],
                            .ofList [.ofString "nil"]])
 #guard keyOf ([ITree.leaf 1, ITree.leaf 2] : List ITree)
          != keyOf ([ITree.leaf 2, ITree.leaf 1] : List ITree)
--- note: `keyOf ([] : List ITree) == keyOf ([] : List Color)` — identities are
--- intra-type tokens; the walker's atom table is keyed on `(type, identity)`,
--- which is what keeps `List.nil` atoms of different element types apart
+-- `keyOf ([] : List ITree) == keyOf ([] : List Color)`: identities are
+-- intra-type tokens — the atom table's `(type, identity)` key separates them
 -- `List α` is classifier-presented when `α` is …
 #guard !isEqvArm (inferInstance : SpytialIdentity (List ITree))
 
@@ -206,8 +206,7 @@ deriving instance SpytialIdentity for EvenL, OddL
 -- an `.eqv` base stays decider-presented under `ofNorm`
 #guard isEqvArm (SpytialIdentity.ofNorm (· % 3) (.eqv (fun (a b : Nat) => a == b)))
 
--- the docstring's `ofNorm n (SpytialIdentity.viaOf T)` pairing, on a derived
--- type (no primitive instance exists to pair with): identity up to leaf values
+-- `ofNorm n (SpytialIdentity.viaOf T)` on a derived type: identity up to leaf values
 private def zeroLeaves : ITree → ITree
   | .leaf _ => .leaf 0
   | .node l r => .node (zeroLeaves l) (zeroLeaves r)
