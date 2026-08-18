@@ -401,7 +401,7 @@ private meta def intAggOf? : String → Option IntAgg
 
 /-- The nullary-constructor label a bare ident denotes, with hover info. -/
 private meta def resolveCtorLit? (scope : SelScope) (stx : Syntax) : TermElabM (Option SelVal) := do
-  if let some ctorName := scope.ctorLabels.get? stx.getId.toString then
+  if let some ctorName := scope.ctorLabels.get? (stx.getId.toString (escape := false)) then
     if let some e ← try pure (some (← mkConstWithLevelParams ctorName)) catch _ => pure none then
       discard <| Term.addTermInfo stx e
     return some (.ctorLit ctorName (shortName ctorName))
@@ -609,7 +609,7 @@ private meta partial def resolveExprIdent (scope : SelScope) (env : LEnv)
       return e
   if let some v ← resolveCtorLit? scope stx then
     return .val v
-  let s := name.toString
+  let s := name.toString (escape := false)
   if let some (_, arity?) := scope.rels.get? s then return .rel (.rel s) arity?
   if let some arity := scope.introduced.get? s then
     warnGraphSideName stx s
@@ -830,7 +830,7 @@ meta def elabSelector (scope : SelScope) (expect : ArityExpect)
   return sel
 
 meta def elabFieldName (scope : SelScope) (stx : TSyntax `ident) : TermElabM String := do
-  let s := stx.getId.toString
+  let s := stx.getId.toString (escape := false)
   if scope.rels.contains s || scope.introduced.contains s then
     return s
   unknownName scope stx s!"relation '{s}'" s

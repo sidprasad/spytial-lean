@@ -1137,3 +1137,15 @@ run_cmd do
     let some c := cats.find? cat | throwError "no category {cat}"
     let kinds := (c.kinds.toList.map (toString ·.1)).toArray.qsort (· < ·)
     Lean.logInfo (m!"{cat}:\n" ++ m!"{"\n".intercalate kinds.toList}")
+
+/-! A relation name outside SGQ's bare-identifier rule: resolved unescaped,
+lowered backtick-quoted. -/
+
+public structure SMem where
+  «∈» : Nat
+
+public def sMemVal : SMem := { «∈» := 1 }
+
+/-- info: {"constraints": [{"orientation": {"selector": "`∈`", "directions": ["below"]}}]} -/
+#guard_msgs in
+#spytial.spec sMemVal with [orientation «∈» below]

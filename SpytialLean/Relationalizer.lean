@@ -736,7 +736,7 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
           let isProof ← if cfg.filterProofs then isProofArg proj else pure false
           unless isProof do
             let projReduced ← Meta.whnf proj
-            let fn := toString fieldName
+            let fn := fieldName.toString (escape := false)
             unless ← tabulate? cfg recurse fn typeName atomId projReduced do
               let childId ← recurse projReduced
               let types := #[typeName, ← columnSig typeName projReduced]
