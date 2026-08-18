@@ -1,5 +1,6 @@
 module
 
+public import SpytialLean.Enum
 public import Lean
 public import Lean.Elab.Command
 public import Lean.Elab.Term
@@ -292,7 +293,7 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
       let a := mkArgs "group <selector> <name> [(addEdge togroup|fromgroup (lineStyle …)?)]"
       let s ← sel a 0 .unaryOrPair
       let gname ← match a.ident? 1, a.str? 1 with
-        | some x, _ => pure x.getId.toString
+        | some x, _ => pure (x.getId.toString (escape := false))
         | _, some s => pure s
         | _, _ => throwErrorAt head m!"missing group name; usage: {a.usage}"
       let p ← collectStyleArgs a 2 ["addEdge"]
@@ -345,7 +346,7 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
     | "inferredEdge" => do
       let a := mkArgs "inferredEdge <name> <selector> (lineStyle <color> \
         [solid|dashed|dotted] [<weight>])?"
-      let n := (← a.ident 0 "an edge name").getId.toString
+      let n := (← a.ident 0 "an edge name").getId.toString (escape := false)
       let s ← sel a 1 .edge
       let p ← collectStyleArgs a 2 ["lineStyle"]
       return .inferredEdge n s p.line

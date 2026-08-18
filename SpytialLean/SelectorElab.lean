@@ -830,7 +830,9 @@ meta def elabSelector (scope : SelScope) (expect : ArityExpect)
   return sel
 
 meta def elabFieldName (scope : SelScope) (stx : TSyntax `ident) : TermElabM String := do
-  let s := stx.getId.toString
+  -- unescaped, to match what the walker emits and what `introduce` stores: a
+  -- relation name is a string in the spec, never Lean source
+  let s := stx.getId.toString (escape := false)
   if scope.rels.contains s || scope.introduced.contains s then
     return s
   unknownName scope stx s!"relation '{s}'" s
