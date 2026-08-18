@@ -1,5 +1,6 @@
 module
 
+public import SpytialLean.Enum
 meta import SpytialLean.TypeShape
 meta import SpytialLean.Relationalizer
 
@@ -137,3 +138,32 @@ Elaborated here exactly as a synthesized term containing `match` would be. -/
     let di ← relationalize e
     assertEq "match2.labels" (di.atoms.map (·.label)) #["match", "0", "t", "1", "u"]
     assertEq "match2.rels"   (di.relations.map (·.name)) #["scrutinee"]
+
+/-! ## A domain is enumerated by `SpytialEnum`, derived on demand
+
+No `deriving SpytialEnum` is written below, and none is needed: the walker runs
+the handler itself when synthesis comes up empty, the way `#eval` derives a
+missing `Repr`. `Rec` is the negative control — its own field makes it
+infinite, so it must stay unenumerable. -/
+
+public structure Win where
+  prev : Bool
+  cur : Bool
+
+public inductive Rec where
+  | nil
+  | step (r : Rec)
+
+#eval show Lean.Elab.TermElabM Unit from do
+  let check (label : String) (b : Bool) : Lean.Elab.TermElabM Unit :=
+    unless b do throwError "{label}"
+  let some win ← tryEnumerateDomain (mkConst ``Win) | throwError "Win did not enumerate"
+  check "enum.struct.count" (win.size == 4)
+  let some bools ← tryEnumerateDomain (mkConst ``Bool) | throwError "Bool did not enumerate"
+  assertEq "enum.bool.labels" (bools.map (·.1)) #["false", "true"]
+  let some pair ← tryEnumerateDomain (← mkAppM ``Prod #[mkConst ``Bool, mkConst ``Win])
+    | throwError "Bool x Win did not enumerate"
+  check "enum.prod.count" (pair.size == 8)
+  check "enum.recursive" (← tryEnumerateDomain (mkConst ``Rec)).isNone
+  check "enum.nat" (← tryEnumerateDomain (mkConst ``Nat)).isNone
+  check "enum.string" (← tryEnumerateDomain (mkConst ``String)).isNone

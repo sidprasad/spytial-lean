@@ -1,5 +1,6 @@
 module
 
+public import SpytialLean.Enum
 public import SpytialLean.Identity
 public meta import SpytialLean.MetaEncode
 public meta import SpytialLean.Types
