@@ -25,8 +25,8 @@ or integer. Each position accepts specific kinds. This rejects SGQ's silent
 scalar/tuple confusion (`some #e`) at compile time.
 
 A scope is strict when the vocabulary is closed: a monomorphic type built from
-monomorphic fields. A type parameter, function-typed field, custom
-relationalizer, or non-inductive in the closure makes the scope lenient. The
+monomorphic fields. A type parameter, a function field that does not tabulate,
+a custom relationalizer, or a non-inductive in the closure makes it lenient. The
 walker can then emit names no static analysis predicts, so unknown names warn
 and pass through.
 -/
@@ -39,8 +39,9 @@ meta structure SelScope where
   root : Name
   /-- Lean type name → sig string, over the reachable field-type closure. -/
   types : Std.HashMap Name String := {}
-  /-- Relation name → the type whose constructor field emits it. -/
-  rels : Std.HashMap String Name := {}
+  /-- Relation name → the emitting type and the walker's arity; `none`
+      (`FieldShape.arity?`) leaves the name known and its width unchecked. -/
+  rels : Std.HashMap String (Name × Option Nat) := {}
   /-- Nullary-constructor label → constructor, for `@:x = tt` literals. -/
   ctorLabels : Std.HashMap String Name := {}
   /-- Names introduced by earlier ops in the same spec (group names arity 1,
@@ -59,9 +60,8 @@ private meta def scalarTypes : List Name :=
 meta def SelScope.ofType (root : Name) : MetaM SelScope := do
   let env ← getEnv
   let mut scope : SelScope := { root }
-  -- The bare name rides in `rels` for the suggestion vocabulary; the indexed
-  -- family resolves via `knowsRel`.
-  scope := { scope with rels := scope.rels.insert scrutineeRel root }
+  -- stuck matches appear in any open value; the walker emits one ternary
+  scope := { scope with rels := scope.rels.insert "scrutinee" (root, some 3) }
   let mut queue : Array Name := #[root]
   let mut seen : NameSet := {}
   while !queue.isEmpty do
@@ -85,18 +85,15 @@ meta def SelScope.ofType (root : Name) : MetaM SelScope := do
           scope := { scope with ctorLabels := scope.ctorLabels.insert c.ctorShort c.ctorName }
         for f in c.fields do
           unless f.isProofLike do
-            scope := { scope with rels := scope.rels.insert f.relName t }
-            match f.typeHead with
-            | some ft => queue := queue.push ft
-            | none => scope := { scope with lenient := true }
+            scope := { scope with rels := scope.rels.insert f.relName (t, f.arity?) }
+            match f.table, f.typeHead with
+            | some tbl, _ => queue := queue ++ tbl.columnHeads
+            | none, some ft => queue := queue.push ft
+            | none, none => scope := { scope with lenient := true }
   return scope
 
 meta def SelScope.introduce (scope : SelScope) (name : String) (arity : Nat) : SelScope :=
   { scope with introduced := scope.introduced.insert name arity }
-
-/-- A relation the walker can emit: a predicted field or a scrutinee edge. -/
-meta def SelScope.knowsRel (scope : SelScope) (s : String) : Bool :=
-  scope.rels.contains s || isScrutineeRelName s
 
 /-! ## Diagnostics -/
 
@@ -613,7 +610,7 @@ private meta partial def resolveExprIdent (scope : SelScope) (env : LEnv)
   if let some v ← resolveCtorLit? scope stx then
     return .val v
   let s := name.toString
-  if scope.knowsRel s then return .rel (.rel s) (some 2)
+  if let some (_, arity?) := scope.rels.get? s then return .rel (.rel s) arity?
   if let some arity := scope.introduced.get? s then
     warnGraphSideName stx s
     return .rel (.rel s) (some arity)
@@ -793,10 +790,12 @@ end
 /-! ## Entry points -/
 
 /-- `pair` positions project first/last at runtime, so a wider selector warns
-    rather than errors. -/
+    rather than errors. An `edge` position reads the whole tuple, so any width
+    from 2 up passes. -/
 meta inductive ArityExpect where
   | unary
   | pair
+  | edge
   | unaryOrPair
   deriving Repr, Inhabited
 
@@ -819,6 +818,11 @@ meta def elabSelector (scope : SelScope) (expect : ArityExpect)
       else if a > 2 then
         logWarningAt stx m!"arity-{a} selector in a pair position: only the \
           first and last columns of each tuple are used"
+    | .edge =>
+      if a < 2 then
+        throwErrorAt stx m!"this position selects edges (arity 2 or wider: \
+          source, then label columns, then target), but the selector has \
+          arity {a}"
     | .unaryOrPair =>
       unless a == 1 || a == 2 do
         throwErrorAt stx m!"this position selects atoms or pairs (arity 1 or \
@@ -827,7 +831,7 @@ meta def elabSelector (scope : SelScope) (expect : ArityExpect)
 
 meta def elabFieldName (scope : SelScope) (stx : TSyntax `ident) : TermElabM String := do
   let s := stx.getId.toString
-  if scope.knowsRel s || scope.introduced.contains s then
+  if scope.rels.contains s || scope.introduced.contains s then
     return s
   unknownName scope stx s!"relation '{s}'" s
 

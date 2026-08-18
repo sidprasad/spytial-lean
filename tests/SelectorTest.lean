@@ -214,23 +214,23 @@ info: {"directives": [{"hideField": {"field": "val"}}],
 
 /-! ## Stuck-match vocabulary
 
-The walker emits `scrutinee` (one discriminant) or `scrutinee_i` (several), so
-strict scopes accept the whole family — in selector and field positions. -/
+The walker emits one ternary `scrutinee` whatever the discriminant count, so
+strict scopes accept it — in selector and field positions. -/
 
 /--
+warning: arity-3 selector in a pair position: only the first and last columns of each tuple are used
+---
 info: {"directives":
  [{"edgeStyle":
    {"lineStyle": {"pattern": "dashed", "color": "gray"},
-    "field": "scrutinee_0"}}],
+    "field": "scrutinee"}}],
  "constraints":
- [{"orientation": {"selector": "scrutinee", "directions": ["below"]}},
-  {"orientation": {"selector": "scrutinee_1", "directions": ["right"]}}]}
+ [{"orientation": {"selector": "scrutinee", "directions": ["below"]}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [
   orientation scrutinee below,
-  orientation scrutinee_1 right,
-  edgeStyle scrutinee_0 (lineStyle "gray" dashed)
+  edgeStyle scrutinee (lineStyle "gray" dashed)
 ]
 
 /-! ## Checker errors — one per class -/
@@ -438,6 +438,161 @@ public def sCarrier : SCarrier := { carrier := Nat, tag := 0 }
 /-- error: unknown name 'carrier' (did you mean 'SCarrier'?) -/
 #guard_msgs in
 #spytial.spec sCarrier with [hideAtom carrier]
+
+/-! ## Relation arity — tabulated fields and `scrutinee`
+
+The scope reads widths and column vocabulary from the same `tabulationPlan?`
+the walker emits from. -/
+
+public inductive SQ where | q0 | q1 | q2
+  deriving DecidableEq
+
+public structure SDA where
+  tr : SQ → Bool → SQ
+
+public def sDA : SDA := { tr := fun q _ => q }
+
+public structure SLTS where
+  step : SQ → SQ → Prop
+
+public def sLTS : SLTS := { step := fun a b => a = b }
+
+/-- `String` does not enumerate: binary edge, open scope. -/
+public structure SProc where
+  handler : String → Nat
+
+public def sProc : SProc := { handler := String.length }
+
+/-- A function field over the type's own parameters fixes no arity: the
+    checker predicts none. -/
+public structure SPoly (State Label : Type) where
+  tr : State → Label → State
+
+public def sPoly : SPoly SQ Bool := { tr := fun q _ => q }
+
+/-- error: unknown name 'bogus'; vocabulary of 'SDA': Bool, SDA, SQ, scrutinee, tr -/
+#guard_msgs in
+#spytial.spec sDA with [hideAtom bogus]
+
+/--
+info: {"constraints":
+ [{"hideAtom": {"selector": "{x : SDA | tr in SDA->SQ->Bool->SQ}"}}]}
+-/
+#guard_msgs in
+#spytial.spec sDA with [hideAtom {x : SDA | tr in SDA->SQ->Bool->SQ}]
+
+/--
+info: {"constraints":
+ [{"hideAtom": {"selector": "{x : SLTS | step in SLTS->SQ->SQ}"}}]}
+-/
+#guard_msgs in
+#spytial.spec sLTS with [hideAtom {x : SLTS | step in SLTS->SQ->SQ}]
+
+-- A join off the table drops the owner column.
+/-- error: this position selects atoms (arity 1), but the selector has arity 3 -/
+#guard_msgs in
+#spytial.spec sDA with [hideAtom SDA.tr]
+
+/--
+warning: arity-4 selector in a pair position: only the first and last columns of each tuple are used
+---
+info: {"constraints": [{"orientation": {"selector": "tr", "directions": ["below"]}}]}
+-/
+#guard_msgs in
+#spytial.spec sDA with [orientation tr below]
+
+/--
+warning: arity-3 selector in a pair position: only the first and last columns of each tuple are used
+---
+info: {"constraints":
+ [{"orientation": {"selector": "step", "directions": ["below"]}}]}
+-/
+#guard_msgs in
+#spytial.spec sLTS with [orientation step below]
+
+/-- info: {"directives": [{"inferredEdge": {"selector": "tr", "name": "e"}}]} -/
+#guard_msgs in
+#spytial.spec sDA with [inferredEdge e tr]
+
+/-- info: {"directives": [{"inferredEdge": {"selector": "SDA.tr", "name": "e"}}]} -/
+#guard_msgs in
+#spytial.spec sDA with [inferredEdge e SDA.tr]
+
+/--
+error: this position selects edges (arity 2 or wider: source, then label columns, then target), but the selector has arity 1
+-/
+#guard_msgs in
+#spytial.spec sDA with [inferredEdge e SQ]
+
+/--
+warning: arity-3 selector in a pair position: only the first and last columns of each tuple are used
+---
+info: {"constraints":
+ [{"orientation": {"selector": "scrutinee", "directions": ["below"]}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [orientation scrutinee below]
+
+/-- error: this position selects atoms (arity 1), but the selector has arity 3 -/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom scrutinee]
+
+-- negative control: a non-tabulating field
+/--
+info: {"constraints":
+ [{"orientation": {"selector": "handler", "directions": ["below"]}}]}
+-/
+#guard_msgs in
+#spytial.spec sProc with [orientation handler below]
+
+/--
+warning: unknown name 'bogus'; vocabulary of 'SProc': SProc, handler, scrutinee — the vocabulary of 'SProc' is open (a custom relationalizer, type parameter, or function field makes it unpredictable), so the name passes through unchecked
+---
+info: {"constraints": [{"hideAtom": {"selector": "bogus"}}]}
+-/
+#guard_msgs in
+#spytial.spec sProc with [hideAtom bogus]
+
+-- open vocabulary is not open arity
+/-- error: this position selects atoms (arity 1), but the selector has arity 2 -/
+#guard_msgs in
+#spytial.spec sProc with [hideAtom handler]
+
+/-- info: {"directives": [{"inferredEdge": {"selector": "SPoly.tr", "name": "e"}}]} -/
+#guard_msgs in
+#spytial.spec sPoly with [inferredEdge e SPoly.tr]
+
+/--
+info: {"constraints": [{"orientation": {"selector": "tr", "directions": ["below"]}}]}
+-/
+#guard_msgs in
+#spytial.spec sPoly with [orientation tr below]
+
+-- the scope's predictions against what the walker actually emits
+#eval show Lean.Meta.MetaM Unit from do
+  for (root, value) in [(``SDA, ``sDA), (``SLTS, ``sLTS), (``SProc, ``sProc)] do
+    let scope ← SelScope.ofType root
+    for r in (← relationalize (mkConst value)).relations do
+      let some (_, predicted?) := scope.rels.get? r.name
+        | throwError "{root}: walker emitted '{r.name}', unknown to the scope"
+      let some predicted := predicted?
+        | throwError "{root}: scope predicts no arity for '{r.name}'"
+      for t in r.tuples do
+        unless t.atoms.size == predicted do
+          throwError "{root}: scope predicts arity {predicted} for '{r.name}', \
+            walker emitted {t.atoms.size}"
+
+#eval show Lean.Meta.MetaM Unit from do
+  let scope ← SelScope.ofType ``SPoly
+  let some (_, predicted?) := scope.rels.get? "tr"
+    | throwError "SPoly: 'tr' missing from the scope"
+  if let some k := predicted? then
+    throwError "SPoly: parametric 'tr' predicts arity {k}"
+  let some r := (← relationalize (mkConst ``sPoly)).relations.find? (·.name == "tr")
+    | throwError "SPoly: walker emitted no 'tr'"
+  for t in r.tuples do
+    unless t.atoms.size == 4 do
+      throwError "SPoly: expected 4-ary 'tr' at SQ×Bool, got {t.atoms.size}"
 
 /-! ## Precedence battery — the Forge re-tier
 

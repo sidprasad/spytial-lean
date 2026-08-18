@@ -5,6 +5,7 @@ meta import SpytialLean.Identity
 public meta import SpytialLean.MetaEncode
 public meta import SpytialLean.Relationalizer
 meta import SpytialLean.Command
+meta import WalkCanon
 
 open SpytialLean Lean Meta
 
@@ -83,40 +84,6 @@ private meta def checkMetaMatchesRuntime (label : String) (val : Expr) : MetaM U
     | throwError "{label}: runtime classifier absent"
   unless mkey == rkey do
     throwError "{label}: meta key {repr mkey} ≠ runtime key {repr rkey}"
-
-/-! ## Canonical comparison
-
-The fused walker and the two-pass reference allocate different atom ids, but
-emit surviving atoms in the same DFS order — so renaming ids by atoms-array
-position makes the instances directly comparable. Relations are sorted by name
-(the state stores them in hash order). -/
-
-private meta def canonInstance (di : JsonDataInstance) : String := Id.run do
-  let mut idx : Std.HashMap String Nat := {}
-  for a in di.atoms do
-    idx := idx.insert a.id idx.size
-  let atomsS := di.atoms.map fun a => s!"{a.type}|{a.label}"
-  let rels := di.relations.qsort (·.name < ·.name)
-  let relsS := rels.map fun r =>
-    let ts := r.tuples.map fun t =>
-      String.intercalate "," (t.atoms.map (fun a => toString (idx.getD a 9999))).toList
-    s!"{r.name}:{String.intercalate ";" ts.toList}"
-  return String.intercalate "\n" (atomsS ++ relsS).toList
-
-/-- Differential oracle: the fused walker must agree with the literal two-pass
-    reference (fresh atoms, then merge by `(type, identity)`). -/
-private meta def assertMatchesReference (label : String) (e : Expr) : MetaM Unit := do
-  let (rootF, stF) ← (walkExpr {} e).run {}
-  let diF := stF.toDataInstance
-  let (rootR, diR) ← referenceRelationalize e
-  let cF := canonInstance diF
-  let cR := canonInstance diR
-  unless cF == cR do
-    throwError "{label}: fused ≠ reference\n-- fused --\n{cF}\n-- reference --\n{cR}"
-  let idxOf (di : JsonDataInstance) (id : String) : Option Nat :=
-    di.atoms.findIdx? (·.id == id)
-  unless idxOf diF rootF == idxOf diR rootR do
-    throwError "{label}: root atoms disagree"
 
 /-! ## As-written default: no instance ⇒ no merging, literals included -/
 

@@ -48,20 +48,6 @@ public meta def fieldRelName (ctorShort : String) (binderNames : Array Name) (i 
   else
     s!"{ctorShort}_{i}"
 
-/-- The relation a stuck match's edges live in: `scrutinee` for a single
-    discriminant, `scrutinee_i` positionally otherwise. -/
-public meta def scrutineeRel : String := "scrutinee"
-
-public meta def scrutineeRelName (numDiscrs i : Nat) : String :=
-  if numDiscrs == 1 then scrutineeRel else s!"{scrutineeRel}_{i}"
-
-/-- Membership in the `scrutineeRelName` family. The static checker cannot know
-    a stuck match's discriminant count, so it accepts every indexed form. -/
-public meta def isScrutineeRelName (s : String) : Bool :=
-  let idx := s.drop (scrutineeRel.length + 1)
-  s == scrutineeRel ||
-    (s.startsWith (scrutineeRel ++ "_") && !idx.isEmpty && idx.all (·.isDigit))
-
 /-- The label the relationalizer assigns to a hole (an unassigned metavariable):
     `?` when anonymous, `?name` for a user-named hole. Macro-scoped names count as
     anonymous — they are synthetic, not something the user wrote. -/
@@ -81,6 +67,115 @@ public meta def hypLabel (userName : Name) : String :=
 public meta def isProofLikeType (ty : Expr) : MetaM Bool := do
   return (← Meta.isProp ty) || ty.isSort
 
+/-! ## Function tabulation
+
+Shared with the static checkers, so a predicted relation cannot drift from an
+emitted one. -/
+
+/-- Try to enumerate all elements of a finite type.
+    Returns `some [(label, expr)]` for finite types, `none` otherwise. -/
+public meta def tryEnumerateDomain (ty : Expr) : MetaM (Option (Array (String × Expr))) := do
+  let ty ← Meta.whnf ty
+  match ty.getAppFn with
+  | .const ``Fin _ =>
+    let args := ty.getAppArgs
+    if h : args.size = 1 then
+      let nExpr ← Meta.whnf args[0]
+      match nExpr with
+      | .lit (.natVal n) =>
+        if n ≤ 20 then
+          let mut result : Array (String × Expr) := #[]
+          for i in [:n] do
+            let iExpr := mkNatLit i
+            let finExpr ← Meta.mkAppOptM ``OfNat.ofNat #[some ty, some iExpr, none]
+            result := result.push (toString i, finExpr)
+          return some result
+        else return none
+      | _ => return none
+    else return none
+  | .const ``Bool _ =>
+    return some #[("false", mkConst ``Bool.false), ("true", mkConst ``Bool.true)]
+  | .const indName _ =>
+    let env ← getEnv
+    if let some (.inductInfo ii) := env.find? indName then
+      if ii.numIndices == 0 && ii.numParams == 0 then
+        let allZeroArity := ii.ctors.all fun ctorName =>
+          match env.find? ctorName with
+          | some (.ctorInfo ci) => ci.numFields == 0
+          | _ => false
+        if allZeroArity then
+          let result := ii.ctors.toArray.map fun ctorName =>
+            (shortName ctorName, mkConst ctorName)
+          return some result
+        else return none
+      else return none
+    else return none
+  | _ => return none
+
+public meta inductive CodomainKind where
+  | data
+  | prop
+  deriving BEq, Repr, Inhabited
+
+public meta structure TabulationBinder where
+  domain : Expr
+  elems : Array (String × Expr)
+
+/-- How a function type tabulates: one column per binder, then the codomain. -/
+public meta structure TabulationPlan where
+  binders : Array TabulationBinder
+  codomain : Expr
+  kind : CodomainKind
+
+/-- Points in the domain product — the tuple count of the emitted table. -/
+public meta def TabulationPlan.size (p : TabulationPlan) : Nat :=
+  p.binders.foldl (fun n b => n * b.elems.size) 1
+
+/-- The columns after the owner: the binders, then a data codomain's result
+    (a proposition's extension has none). -/
+public meta def TabulationPlan.tailTypes (p : TabulationPlan) : Array Expr :=
+  let domains := p.binders.map (·.domain)
+  match p.kind with
+  | .data => domains.push p.codomain
+  | .prop => domains
+
+public meta def TabulationPlan.arity (p : TabulationPlan) : Nat :=
+  1 + p.tailTypes.size
+
+/-- Column type heads, standing in for the function type no atom ever gets. -/
+public meta def TabulationPlan.columnHeads (p : TabulationPlan) : MetaM (Array Name) :=
+  p.tailTypes.filterMapM typeHead?
+
+private meta partial def peelBinders (ty : Expr) (acc : Array TabulationBinder) :
+    MetaM (Option TabulationPlan) := do
+  match ← Meta.whnf ty with
+  | .forallE _ dom body _ =>
+    -- a dependent telescope has no rectangular table
+    if body.hasLooseBVar 0 then return none
+    let some elems ← tryEnumerateDomain dom | return none
+    peelBinders body (acc.push { domain := dom, elems })
+  | cod =>
+    if acc.isEmpty then return none
+    -- the codomain of a relation is the sort `Prop`, not a proposition
+    let kind := match cod with
+      | .sort l => if l.isZero then CodomainKind.prop else .data
+      | _ => .data
+    return some { binders := acc, codomain := cod, kind }
+
+/-- The table a function type tabulates into, or `none` when it does not. -/
+public meta def tabulationPlan? (ty : Expr) : MetaM (Option TabulationPlan) :=
+  peelBinders ty #[]
+
+/-- What a tabulating field's type emits, as a static checker needs it. -/
+public meta structure FieldTable where
+  arity : Nat
+  columnHeads : Array Name
+  deriving Repr, Inhabited
+
+public meta def FieldTable.of? (ty : Expr) : MetaM (Option FieldTable) := do
+  let some plan ← tabulationPlan? ty | return none
+  return some { arity := plan.arity, columnHeads := ← plan.columnHeads }
+
 public meta structure FieldShape where
   relName : String
   typeSig : Option String
@@ -89,6 +184,13 @@ public meta structure FieldShape where
   typeHead : Option Name := none
   /-- The walker drops this field: it is `Prop`- or `Sort`-typed. -/
   isProofLike : Bool
+  /-- Set when the field's type tabulates: its columns, not its type head, are
+      the vocabulary its values contribute. -/
+  table : Option FieldTable := none
+  /-- The emitted relation's arity, when the declaration fixes it. A function
+      type over the inductive's own parameters fixes nothing: only the
+      instantiation decides leaf or table. -/
+  arity? : Option Nat := some 2
   deriving Repr, Inhabited
 
 public meta structure CtorShape where
@@ -121,8 +223,12 @@ public meta def TypeShape.ofInductive (typeName : Name) : MetaM (Option TypeShap
           match (← Meta.whnf xty).getAppFn with
           | .const n _ => pure (some (shortName n), some n)
           | _          => pure (none, none)
+        let table ← FieldTable.of? xty
+        let arity? ← match table with
+          | some t => pure (some t.arity)
+          | none => pure (if (← Meta.whnf xty).isForall && xty.hasFVar then none else some 2)
         fs := fs.push { relName := fieldRelName ctorShort binderNames i,
-                        typeSig, typeHead, isProofLike }
+                        typeSig, typeHead, isProofLike, table, arity? }
       return fs
     ctors := ctors.push { ctorName, ctorShort, fields }
   return some { typeName, sig := shortName typeName, ctors }
