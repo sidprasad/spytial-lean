@@ -773,17 +773,19 @@ info: {"constraints":
   hideAtom (lo . SBDD)
 ]
 
--- `.(` is a Lean token, so maximal munch takes it before the join's `.`; an
--- unspaced join onto a parenthesized operand needs its own rule.
+-- `.(` and `.{` are Lean tokens, so a token-level `.` would lose both to
+-- maximal munch; `selJoinOp` reads the dot as a raw character instead.
 /--
 info: {"constraints":
  [{"hideAtom": {"selector": "{x : SBDD | some x.(lo + hi)}"}},
-  {"hideAtom": {"selector": "{x : SBDD | some x.(lo + hi)}"}}]}
+  {"hideAtom": {"selector": "{x : SBDD | some x.(lo + hi)}"}},
+  {"hideAtom": {"selector": "{x : SBDD | some x.{y, z : SBDD | z in y.lo}}"}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [
   hideAtom {x : SBDD | some x.(lo + hi)},
-  hideAtom {x : SBDD | some x . (lo + hi)}
+  hideAtom {x : SBDD | some x . (lo + hi)},
+  hideAtom {x : SBDD | some x.{y, z : SBDD | z in y.lo}}
 ]
 
 /-- error: this position selects atoms (arity 1), but the selector has arity 2 -/
@@ -1169,6 +1171,7 @@ SpytialLean.selAtomLit
 SpytialLean.selBox
 SpytialLean.selCard
 SpytialLean.selIdent
+SpytialLean.selJoinOp
 SpytialLean.selNegNum
 SpytialLean.selNum
 SpytialLean.selProdOp
@@ -1185,8 +1188,6 @@ SpytialLean.«spytial_sel_&_»
 SpytialLean.«spytial_sel_++_»
 SpytialLean.«spytial_sel_+_»
 SpytialLean.«spytial_sel_-_»
-SpytialLean.«spytial_sel_.(_)»
-SpytialLean.«spytial_sel_._»
 SpytialLean.«spytial_sel_:>_»
 SpytialLean.«spytial_sel_<:_»
 SpytialLean.«spytial_sel{_,|_}»
