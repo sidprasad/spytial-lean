@@ -333,3 +333,21 @@ public def subDAFin : SubDA (Fin 3) Bool where
   assertMatchesReference "diff.prop.set" (mkConst ``naVal)
   assertMatchesReference "diff.prop.identity" (mkConst ``propRelIVal)
   assertMatchesReference "diff.table.subobject" (mkConst ``subDAFin)
+
+/-! ## A `Prop` behind a definition still tabulates
+
+Instance synthesis reduces beta but not delta, so `Decidable (Linked a b)`
+finds nothing until `Linked` is unfolded. Before that unfold the field bailed
+to a lambda leaf, which is how a `Set`-valued codomain silently stopped
+drawing. -/
+
+public def Linked (a b : Bool) : Prop := a = b
+
+public structure Boxed where
+  rel : Bool → Bool → Prop
+
+public def boxed : Boxed := { rel := fun a b => Linked a b }
+
+#eval show Lean.Elab.TermElabM Unit from do
+  assertCanon "prop.behind.def" (← relationalize (mkConst ``boxed))
+    "Boxed|mk\nBool|false\nBool|false\nBool|true\nBool|true\nrel[Boxed,Bool,Bool]:0,1,2;0,3,4"
