@@ -30,7 +30,7 @@ private meta def instanceStats (props : Json) : String :=
     `spytialPayloadProps` — to `cases/<name>/props.json` beside the invoking
     file. `render/render.mjs` turns dumps into PNGs; see `render/README.md`. -/
 syntax (name := snapshotCmd)
-  "#spytial_snapshot " str ppSpace term (" with " "[" spytial_op,* "]")? : command
+  "#spytial_snapshot " str ppSpace term (" with " "[" spytial_op,*,? "]")? : command
 
 private meta def dumpSnapshot (name : TSyntax `str) (t : Syntax)
     (ops? : Option (Array (TSyntax `spytial_op))) : CommandElabM Unit := do

@@ -514,7 +514,7 @@ private meta def optionalOps (stx : Syntax) : Option (Array (TSyntax `spytial_op
     ```
     #spytial myTree with [.., hideAtom Nat]
     ``` -/
-syntax (name := spytialCmd) "#spytial " term (" with " "[" spytial_op,* "]")? : command
+syntax (name := spytialCmd) "#spytial " term (" with " "[" spytial_op,*,? "]")? : command
 
 @[command_elab spytialCmd]
 meta def elabSpytialCmd : CommandElab := fun
@@ -538,7 +538,7 @@ meta def elabSpytialCmd : CommandElab := fun
     ]
     ```
 -/
-syntax (name := spytialSpecCmd) "spytial_spec " ident " [" spytial_op,* "]" : command
+syntax (name := spytialSpecCmd) "spytial_spec " ident " [" spytial_op,*,? "]" : command
 
 @[command_elab spytialSpecCmd]
 meta def elabSpytialSpecCmd : CommandElab := fun
@@ -560,7 +560,7 @@ meta def elabSpytialSpecCmd : CommandElab := fun
     #spytial t with [..quiet, orientation left below]
     ```
 -/
-syntax (name := spytialOpsCmd) "spytial_ops " ident " : " ident " [" spytial_op,* "]" : command
+syntax (name := spytialOpsCmd) "spytial_ops " ident " : " ident " [" spytial_op,*,? "]" : command
 
 @[command_elab spytialOpsCmd]
 meta def elabSpytialOpsCmd : CommandElab := fun
@@ -607,7 +607,7 @@ meta def elabSpytialRelationalizerCmd : CommandElab := fun
 
 /-- `#spytial.spec <term> with [<ops>]` prints the spec string handed to
     spytial-core. Useful for debugging whether the spec is what you expect. -/
-syntax (name := spytialSpecDebug) "#spytial.spec " term " with " "[" spytial_op,* "]" : command
+syntax (name := spytialSpecDebug) "#spytial.spec " term " with " "[" spytial_op,*,? "]" : command
 
 @[command_elab spytialSpecDebug]
 meta def elabSpytialSpecDebug : CommandElab := fun
@@ -637,7 +637,7 @@ meta def elabSpytialDatumDebug : CommandElab := fun
 
     Use `with [...]` to specify layout operations.
 -/
-syntax (name := spytialProofCmd) "#spytial.proof " term (" with " "[" spytial_op,* "]")? : command
+syntax (name := spytialProofCmd) "#spytial.proof " term (" with " "[" spytial_op,*,? "]")? : command
 
 @[command_elab spytialProofCmd]
 meta def elabSpytialProofCmd : CommandElab := fun
@@ -675,7 +675,7 @@ open Tactic in
       trivial
     ```
 -/
-syntax (name := spytialTactic) "spytial " term (" with " "[" spytial_op,* "]")? : tactic
+syntax (name := spytialTactic) "spytial " term (" with " "[" spytial_op,*,? "]")? : tactic
 
 open Tactic in
 @[tactic spytialTactic]
@@ -704,7 +704,7 @@ open Tactic in
 /-- `spytial.proof <term>` visualizes a proof term in tactic mode,
     showing the full proof structure without filtering Prop-typed fields. -/
 syntax (name := spytialProofTactic) spytialProofKw term
-  (" with " "[" spytial_op,* "]")? : tactic
+  (" with " "[" spytial_op,*,? "]")? : tactic
 
 open Tactic in
 @[tactic spytialProofTactic]
