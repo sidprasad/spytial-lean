@@ -399,6 +399,17 @@ private meta def resolveGlobal? (stx : Syntax) : TermElabM (Option Name) := do
   catch _ =>
     pure none
 
+/-- Hover/go-to-def for a relation name, which is not a Lean identifier: aim at
+    the projection when the emitting type is a structure, else at the type
+    itself, whose constructors is where a non-structure field is written. -/
+private meta def addRelInfo (stx : Syntax) (owner : Name) (relName : String) :
+    TermElabM Unit := do
+  let env ← getEnv
+  let proj := Name.mkStr owner relName
+  let target := if env.contains proj then proj else owner
+  if env.contains target then
+    addConstInfo stx target
+
 private meta def intBuiltinOf? : String → Option IntBuiltin
   | "add" => some .add | "subtract" => some .subtract | "multiply" => some .multiply
   | "divide" => some .divide | "remainder" => some .remainder
@@ -623,7 +634,9 @@ private meta partial def resolveExprIdent (scope : SelScope) (env : LEnv)
   if let some v ← resolveCtorLit? scope stx then
     return .val v
   let s := name.toString
-  if let some (_, arity?) := scope.rels.get? s then return .rel (.rel s) arity?
+  if let some (owner, arity?) := scope.rels.get? s then
+    addRelInfo stx owner s
+    return .rel (.rel s) arity?
   if let some arity := scope.introduced.get? s then
     warnGraphSideName stx s
     return .rel (.rel s) (some arity)
