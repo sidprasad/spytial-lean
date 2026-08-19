@@ -491,7 +491,7 @@ syntax (name := spytialSpecCmd) "spytial_spec " ident " [" spytial_op,* "]" : co
 @[command_elab spytialSpecCmd]
 meta def elabSpytialSpecCmd : CommandElab := fun
   | `(spytial_spec $id:ident [$ops,*]) => do
-    let declName ← resolveGlobalConstNoOverload id
+    let declName ← liftCoreM <| realizeGlobalConstNoOverloadWithInfo id
     liftTermElabM do
       let scope ← SelScope.ofType declName
       let spec ← elabSpytialOps scope ops.getElems
@@ -515,8 +515,8 @@ syntax (name := spytialRelationalizerCmd) "spytial_relationalizer " ident ident 
 @[command_elab spytialRelationalizerCmd]
 meta def elabSpytialRelationalizerCmd : CommandElab := fun
   | `(spytial_relationalizer $typeId:ident $defId:ident) => do
-    let typeName ← resolveGlobalConstNoOverload typeId
-    let defName ← resolveGlobalConstNoOverload defId
+    let typeName ← liftCoreM <| realizeGlobalConstNoOverloadWithInfo typeId
+    let defName ← liftCoreM <| realizeGlobalConstNoOverloadWithInfo defId
     -- fail mistyped registrations here, not opaquely at dispatch
     liftTermElabM do
       let declType := (← getConstInfo defName).type
