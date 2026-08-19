@@ -194,6 +194,72 @@ info: {"directives":
 #guard_msgs in
 #spytial.spec sRB with [flag hideDisconnected, .., hideAtom SColor]
 
+/-! ## Named op lists — `spytial_ops` binds a declaration, `..name` splices it -/
+
+namespace SOps
+spytial_ops quiet : SRB [hideAtom SColor + Nat]
+end SOps
+
+/-- info: SOps.quiet : SpytialOps -/
+#guard_msgs in
+#check @SOps.quiet
+
+/-- info: {"constraints": [{"hideAtom": {"selector": "SColor + Nat"}}]} -/
+#guard_msgs in
+#spytial.spec sRB with [..SOps.quiet]
+
+-- `open` reaches one like any other declaration...
+/--
+info: {"directives": [{"flag": "hideDisconnected"}],
+ "constraints": [{"hideAtom": {"selector": "SColor + Nat"}}]}
+-/
+#guard_msgs in
+open SOps in
+#spytial.spec sRB with [..quiet, flag hideDisconnected]
+
+-- ...and both spellings name the same declaration.
+/-- error: duplicate `..SOps.quiet` -/
+#guard_msgs in
+open SOps in
+#spytial.spec sRB with [..quiet, ..SOps.quiet]
+
+namespace SOps
+/-- error: `SOps.quiet` has already been declared -/
+#guard_msgs in
+spytial_ops quiet : SRB [hideAtom Nat]
+end SOps
+
+-- A named op list only splices into the root it was bound against.
+/--
+error: 'SOps.quiet' is bound against 'SRB', but this op list is elaborated against 'SBDD'
+-/
+#guard_msgs in
+#spytial.spec sExample with [..SOps.quiet]
+
+/-- error: 'SColor' is not a `spytial_ops` declaration; `spytial_ops <name> : <RootType> [<ops>]` binds one -/
+#guard_msgs in
+#spytial.spec sRB with [..SColor]
+
+/-- error: Unknown constant `loud` -/
+#guard_msgs in
+#spytial.spec sRB with [..loud]
+
+-- A named op list also splices into an attached spec, not just a use-site list.
+public inductive SBun where
+  | leaf
+  | node (kid : SBun) (tag : Nat)
+
+spytial_ops SBunOps.tagged : SBun [attribute tag]
+
+spytial_spec SBun [..SBunOps.tagged, hideAtom Nat]
+
+/--
+info: {"directives": [{"attribute": {"field": "tag"}}],
+ "constraints": [{"hideAtom": {"selector": "Nat"}}]}
+-/
+#guard_msgs in
+#stored_spec SBun
+
 public inductive SDAG where
   | tip
   | node (lo hi : SDAG)
