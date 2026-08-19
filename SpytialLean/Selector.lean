@@ -87,7 +87,7 @@ public meta inductive SelInt where
   | sumQuant (x : Name) (dom : Sel) (body : SelInt)  -- `sum x : A | ie`
   deriving Repr, BEq
 
-/-- A nullary-constructor literal (`@:x = tt`) lowers to the short-name label
+/-- A constructor literal (`@:x = tt`) lowers to the short-name label
     the relationalizer gives its atoms. -/
 public meta inductive SelVal where
   | label (proj : LabelProj) (e : Sel)

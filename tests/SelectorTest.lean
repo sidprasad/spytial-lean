@@ -243,9 +243,28 @@ info: {"directives":
 #guard_msgs in
 #spytial.spec sExample with [hideAtom STree]
 
-/-- error: unknown constructor label 'ttt'; known labels of 'SBDD': ff, tt -/
+/-- error: unknown constructor label 'ttt'; known labels of 'SBDD': ff, node, tt -/
 #guard_msgs in
 #spytial.spec sExample with [atomStyle {x : SBDD | @:x = ttt} (borderStyle "red")]
+
+-- A constructor with fields is an atom label like any other: the walker writes
+-- the constructor's short name into `label` whether or not it takes arguments.
+/--
+info: {"directives":
+ [{"atomStyle":
+   {"selector": "{x : SBDD | @:x = \"node\"}",
+    "borderStyle": {"color": "red"}}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [atomStyle {x : SBDD | @:x = node} (borderStyle "red")]
+
+-- ...but its short name now shadows a same-named relation in expression
+-- position, where a label value is not what is wanted.
+/--
+error: this position expects a relational expression, but the selector is a label/literal value
+-/
+#guard_msgs in
+#spytial.spec sExample with [atomStyle {x : SBDD | some x.node} (borderStyle "red")]
 
 /-- error: constructor 'SRB.nil' belongs to 'SRB', which cannot occur in values of 'SBDD' -/
 #guard_msgs in
@@ -942,7 +961,7 @@ info: {"directives":
 #guard_msgs in
 #spytial.spec sExample with [atomStyle {x : SBDD | @:x = true} (borderStyle "red")]
 
-/-- error: cannot compare a label value with this operand; a label value compares against a nullary constructor or a string literal — for a numeric label, project with `@num:` -/
+/-- error: cannot compare a label value with this operand; a label value compares against a constructor or a string literal — for a numeric label, project with `@num:` -/
 #guard_msgs in
 #spytial.spec sExample with [hideAtom {x : SBDD | @:x = 5}]
 

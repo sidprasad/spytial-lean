@@ -15,7 +15,7 @@ public section
 
 Selectors are Lean syntax (categories `spytial_sel` and `spytial_sel_form`),
 elaborated against a `SelScope`: the vocabulary of sigs, relations, and
-nullary-constructor labels the relationalizer can emit for the target type.
+constructor labels the relationalizer can emit for the target type.
 Every identifier must resolve and every operator's arity must check. A renamed
 field or a typo is a compile error at the ident, not an empty selection at
 render time.
@@ -42,7 +42,7 @@ meta structure SelScope where
   /-- Relation name → the emitting type and the walker's arity; `none`
       (`FieldShape.arity?`) leaves the name known and its width unchecked. -/
   rels : Std.HashMap String (Name × Option Nat) := {}
-  /-- Nullary-constructor label → constructor, for `@:x = tt` literals. -/
+  /-- Constructor label → constructor, for `@:x = tt` literals. -/
   ctorLabels : Std.HashMap String Name := {}
   /-- Names introduced by earlier ops in the same spec (group names arity 1,
       inferred edges arity 2). -/
@@ -85,8 +85,7 @@ meta def SelScope.ofType (root : Name) (seeds : Array Name := #[]) : MetaM SelSc
       scope := { scope with lenient := true }
     | some ts =>
       for c in ts.ctors do
-        if c.fields.isEmpty then
-          scope := { scope with ctorLabels := scope.ctorLabels.insert c.ctorShort c.ctorName }
+        scope := { scope with ctorLabels := scope.ctorLabels.insert c.ctorShort c.ctorName }
         for f in c.fields do
           unless f.isProofLike do
             scope := { scope with rels := scope.rels.insert f.relName (t, f.arity?) }
@@ -422,7 +421,7 @@ private meta def IntBuiltin.arity : IntBuiltin → Nat
 private meta def intAggOf? : String → Option IntAgg
   | "sum" => some .sum | "min" => some .min | "max" => some .max | _ => none
 
-/-- The nullary-constructor label a bare ident denotes, with hover info. -/
+/-- The constructor label a bare ident denotes, with hover info. -/
 private meta def resolveCtorLit? (scope : SelScope) (stx : Syntax) : TermElabM (Option SelVal) := do
   if let some ctorName := scope.ctorLabels.get? (stx.getId.toString (escape := false)) then
     if let some e ← try pure (some (← mkConstWithLevelParams ctorName)) catch _ => pure none then
@@ -601,7 +600,7 @@ private meta partial def elabLabel (scope : SelScope) (env : LEnv)
   checkArity e "a label projection's operand" arity 1
   return .label proj sel
 
-/-- Resolution order: local binding, nullary-constructor label, vocabulary. -/
+/-- Resolution order: local binding, constructor label, vocabulary. -/
 private meta partial def resolveExprIdent (scope : SelScope) (env : LEnv)
     (stx : TSyntax `ident) : TermElabM EExpr := do
   -- Source text, not the name, decides: `«univ»` is a field spelled differently
@@ -671,18 +670,15 @@ private meta partial def coerceVal (scope : SelScope) (stx : Syntax) :
           '{scope.root}': {", ".intercalate (sortDedup (scope.ctorLabels.toList.map (·.1)).toArray).toList}"
     match (← getEnv).find? constName with
     | some (.ctorInfo ci) =>
-      unless ci.numFields == 0 do
-        throwErrorAt x m!"'{constName}' has fields — only nullary constructors \
-          are atom labels"
       if !scope.types.contains ci.induct && !scope.lenient then
         throwErrorAt x m!"constructor '{constName}' belongs to '{ci.induct}', \
           which cannot occur in values of '{scope.root}'"
       return .ctorLit constName (shortName constName)
     | _ =>
       throwErrorAt x m!"'{constName}' is not a constructor; label comparisons \
-        expect a nullary constructor or a literal"
+        expect a constructor or a literal"
   | s => throwErrorAt s "cannot compare a label value with this operand; a label \
-      value compares against a nullary constructor or a string literal — for a \
+      value compares against a constructor or a string literal — for a \
       numeric label, project with `@num:`"
 
 private meta partial def elabCmp (scope : SelScope) (env : LEnv) (stx : Syntax)
