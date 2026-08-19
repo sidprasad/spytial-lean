@@ -1074,6 +1074,7 @@ SpytialLean.selAtomLit
 SpytialLean.selBox
 SpytialLean.selCard
 SpytialLean.selIdent
+SpytialLean.selLean
 SpytialLean.selNegNum
 SpytialLean.selNum
 SpytialLean.selProdOp

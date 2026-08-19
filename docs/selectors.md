@@ -34,6 +34,7 @@ sel ::=
   | string                                       (* escape hatch / string literal *)
   | int                                          (* integer literal *)
   | "`" name                                     (* atom literal, a Lean name literal *)
+  | "lean" "(" term ")"                          (* raw Lean predicate; arity 1 *)
 
 mult ::= "lone" | "one" | "some" | "set"
 
@@ -93,6 +94,7 @@ declaration and constraint syntax, not part of an expression.
 | `{x, y : T \| φ}` | set comprehension (arity = number of binders) |
 | `@:e`, `@str:e`, `@bool:e` | label projections (string/bool value reads) |
 | `univ`, `iden` | the universe and identity relations |
+| `lean (f)` | the tuples the Lean function `f` selects (arity from `f`'s type) |
 
 **`let x = e, … | φ`** desugars by substitution at elaboration; the engine
 never sees a `let`. A later binder shadows the `let`. A substitution that an
@@ -122,6 +124,45 @@ the `nil` constructor, and `@str:(x.v) = "abc"` the `String` atom holding
 `abc`. (A string literal carrying a character SGQ cannot spell — a control
 character — is a compile error.) `ni` and its negations lower verbatim
 (`a ni b`, `a !ni b`); the engine owns their semantics.
+
+## Raw Lean selectors
+
+`lean (f)` selects by running an ordinary Lean function over the values the
+relationalizer walked, rather than by querying the relational encoding:
+
+```lean
+hideAtom      lean (fun n : RBNode => n matches .nil)
+inferredEdge  kids lean (RBNode.children)
+```
+
+`f` must be closed and non-dependent. Its type is its arity, and decides whether
+the last column is *enumerated* — every atom of that sig is tested — or
+*computed* from what `f` returns:
+
+| `f` | arity | last column |
+|-----|-------|-------------|
+| `σ₁ → ⋯ → σₙ → Bool` (or `Prop`) | n | enumerated: one decision per point of the product |
+| `σ₁ → ⋯ → σₖ → τ` | k+1 | computed: the returned value's atom |
+| `σ₁ → ⋯ → σₖ → List τ` (or `Array`, `Option`) | k+1 | computed: one tuple per element |
+
+Resolution rewrites the selector into the tuples it selected —
+`` `a1->`a2->`a3 + `a4->`a5->`a6 ``, which the engine resolves by atom id — or
+`none` when nothing matches. It runs against the value being drawn, so an
+attached `spytial_spec` stores `f` and applies it once per value.
+
+The two arity-2 shapes are not interchangeable. A predicate compares *values*,
+so on a tree with three `.nil` leaves it relates each nil-valued parent to all
+three; a computed column carries the position the value came from. Prefer the
+computed shape for anything meaning "this node's …". It is also the only one
+that stays linear, and the enumerated product is capped.
+
+`lean` reaches values, not the diagram, so it cannot name a group or an inferred
+edge introduced by an earlier op, and it cannot name a relation the walker
+synthesizes. Those stay in the relational language, which composes with it:
+`hideAtom lean (p) + Color` is one selector.
+
+[lean-selectors.md](lean-selectors.md) is the user-facing guide: how to use it,
+which shape to pick, what does not work, and what each error means.
 
 ## What gets checked
 
