@@ -85,8 +85,7 @@ meta def SelScope.ofType (root : Name) (seeds : Array Name := #[]) : MetaM SelSc
       scope := { scope with lenient := true }
     | some ts =>
       for c in ts.ctors do
-        if c.fields.isEmpty then
-          scope := { scope with ctorLabels := scope.ctorLabels.insert c.ctorShort c.ctorName }
+        scope := { scope with ctorLabels := scope.ctorLabels.insert c.ctorShort c.ctorName }
         for f in c.fields do
           unless f.isProofLike do
             scope := { scope with rels := scope.rels.insert f.relName (t, f.arity?) }
@@ -422,7 +421,7 @@ private meta def IntBuiltin.arity : IntBuiltin → Nat
 private meta def intAggOf? : String → Option IntAgg
   | "sum" => some .sum | "min" => some .min | "max" => some .max | _ => none
 
-/-- The nullary-constructor label a bare ident denotes, with hover info. -/
+/-- The constructor label a bare ident denotes, with hover info. -/
 private meta def resolveCtorLit? (scope : SelScope) (stx : Syntax) : TermElabM (Option SelVal) := do
   if let some ctorName := scope.ctorLabels.get? stx.getId.toString then
     if let some e ← try pure (some (← mkConstWithLevelParams ctorName)) catch _ => pure none then
@@ -671,18 +670,15 @@ private meta partial def coerceVal (scope : SelScope) (stx : Syntax) :
           '{scope.root}': {", ".intercalate (sortDedup (scope.ctorLabels.toList.map (·.1)).toArray).toList}"
     match (← getEnv).find? constName with
     | some (.ctorInfo ci) =>
-      unless ci.numFields == 0 do
-        throwErrorAt x m!"'{constName}' has fields — only nullary constructors \
-          are atom labels"
       if !scope.types.contains ci.induct && !scope.lenient then
         throwErrorAt x m!"constructor '{constName}' belongs to '{ci.induct}', \
           which cannot occur in values of '{scope.root}'"
       return .ctorLit constName (shortName constName)
     | _ =>
       throwErrorAt x m!"'{constName}' is not a constructor; label comparisons \
-        expect a nullary constructor or a literal"
+        expect a constructor or a literal"
   | s => throwErrorAt s "cannot compare a label value with this operand; a label \
-      value compares against a nullary constructor or a string literal — for a \
+      value compares against a constructor or a string literal — for a \
       numeric label, project with `@num:`"
 
 private meta partial def elabCmp (scope : SelScope) (env : LEnv) (stx : Syntax)
