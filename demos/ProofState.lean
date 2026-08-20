@@ -70,6 +70,15 @@ example (t : DTree) : True := by
     spytial.state
     trivial
 
+-- with BOTH branch goals open at once, the goals disagree about `t`. The
+-- first branch's equation refines it; the second branch's stays an explicit
+-- `=` edge against the drawn atom, so neither branch's knowledge is lost
+set_option linter.unusedVariables false in
+example (t : DTree) : True := by
+  cases h : t
+  spytial.state
+  all_goals trivial
+
 /-! ## 4. A hypothesis rules structure out (negative)
 
 `h2 : t ≠ DTree.node (leaf 0) (leaf 0)` emits into the `≠` relation — drawn

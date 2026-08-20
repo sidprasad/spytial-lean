@@ -133,6 +133,33 @@ rendering. The goal's two `x` occurrences share the refined root. -/
     unless skipped == 0 do throwError "state.refined.cycle: skipped {skipped}"
     assertCanon "state.refined.cycle" st.toDataInstance "STree|x\nGoal|True"
 
+-- goals disagreeing about a variable (branches of `cases h : t`): the first
+-- goal refines, the second keeps its equation as an `=` tuple against the
+-- already-drawn atom — nothing is silently absorbed
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x sTree fun x => do
+    let g1 ← withLocalDeclD `h (← mkAppM ``Eq #[x, sLeaf 1]) fun _ => do
+      Meta.mkFreshExprMVar (some (← mkAppM ``Eq #[x, x]))
+    let g2 ← withLocalDeclD `h (← mkAppM ``Eq #[x, sLeaf 2]) fun _ => do
+      Meta.mkFreshExprMVar (some (← mkAppM ``Eq #[x, x]))
+    let (skipped, st) ← runState [g1.mvarId!, g2.mvarId!]
+    unless skipped == 0 do throwError "state.refine.conflict: skipped {skipped}"
+    assertCanon "state.refine.conflict" st.toDataInstance
+      "STree|leaf\nNat|1\nSTree|leaf\nNat|2\n\
+       =[STree,STree]:0,2\nvalue[STree,Nat]:0,1;2,3\n⊢ =[STree,STree]:0,0;0,0"
+
+-- a variable drawn opaque by an earlier goal is not retroactively refined:
+-- the later goal's equation stays an `=` tuple
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x sTree fun x => do
+    let g1 ← Meta.mkFreshExprMVar (some (← mkAppM ``Eq #[x, x]))
+    let g2 ← withLocalDeclD `h (← mkAppM ``Eq #[x, sLeaf 1]) fun _ => do
+      Meta.mkFreshExprMVar (some (mkConst ``True))
+    let (_, st) ← runState [g1.mvarId!, g2.mvarId!]
+    assertCanon "state.refine.late" st.toDataInstance
+      "STree|x\nSTree|leaf\nNat|1\nGoal|True\n\
+       =[STree,STree]:0,1\nvalue[STree,Nat]:1,2\n⊢ =[STree,STree]:0,0"
+
 -- an equation between non-variables stays an `=` tuple
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `h (← mkAppM ``Eq #[sLeaf 1, sLeaf 2]) fun _ => do
