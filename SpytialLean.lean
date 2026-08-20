@@ -9,6 +9,7 @@ public meta import SpytialLean.TypeShape
 public meta import SpytialLean.SelectorElab
 public meta import SpytialLean.Relationalizer
 public meta import SpytialLean.ProofState
+public meta import SpytialLean.ModelFind
 public meta import SpytialLean.Widget
 public meta import SpytialLean.Attr
 public meta import SpytialLean.Command

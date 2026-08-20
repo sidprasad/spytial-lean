@@ -11,6 +11,7 @@ public meta import SpytialLean.Selector
 public meta import SpytialLean.SelectorElab
 public meta import SpytialLean.Relationalizer
 public meta import SpytialLean.ProofState
+public meta import SpytialLean.ModelFind
 public meta import SpytialLean.Widget
 public meta import SpytialLean.Attr
 
@@ -756,6 +757,102 @@ meta def elabSpytialStateDatumTactic : Tactic := fun stx => do
       pure (some (← instantiateMVars e))
     let goals := if subject?.isSome then goals.take 1 else goals
     let (_, state) ← (walkProofState {} goals subject?).run {}
+    logInfo m!"{(toJson state.toDataInstance).pretty}"
+
+/-! ## Model finding -/
+
+/-- Default constructor-depth bound for `spytial.find`. -/
+meta def defaultFindDepth : Nat := 3
+
+/-- Run the bounded search for `spytial.find`: resolve the subject to a local
+    variable, search, report, and return the walk config with the first model
+    injected as a refinement (unchanged when nothing was found). -/
+private meta def runFindSearch (subjStx : Syntax) (depthStx : Syntax) :
+    TermElabM (Expr × WalkConfig) := do
+  let e ← Term.elabTerm subjStx none
+  Term.synthesizeSyntheticMVarsNoPostponing
+  let e ← instantiateMVars e
+  let .fvar fvarId := e
+    | throwErrorAt subjStx m!"spytial.find expects a local variable (the hole \
+        to search for), got {e}"
+  let depth := if depthStx.getNumArgs == 0 then defaultFindDepth
+    else (depthStx[0].isNatLit?).getD defaultFindDepth
+  let search ← findModels fvarId depth
+  if search.candidates == 0 then
+    logWarningAt subjStx m!"spytial.find: cannot enumerate values of \
+      {← inferType e} — the diagram shows the hole as known, without a model."
+    return (e, {})
+  let atLeast := if search.capped then "at least " else ""
+  let uncheckedNote :=
+    if search.unchecked == 0 then m!""
+    else m!" ({search.unchecked} hypothesis(es) unchecked: no decision procedure)"
+  match search.models[0]? with
+  | some m =>
+    logInfo m!"spytial.find: {search.models.size} of {atLeast}{search.candidates} \
+      candidate(s) at depth ≤ {depth} satisfy all {search.checked} checked \
+      hypothesis(es){uncheckedNote}; showing the first."
+    return (e, { refinements := ({} : Std.HashMap FVarId Expr).insert fvarId m })
+  | none =>
+    logWarningAt subjStx m!"spytial.find: no candidate at depth ≤ {depth} \
+      satisfies the {search.checked} checked hypothesis(es) — \
+      {atLeast}{search.candidates} candidate(s) ruled out{uncheckedNote}. \
+      The diagram shows the hole as known, without a model."
+    return (e, {})
+
+meta def spytialFindKw : Lean.Parser.Parser :=
+  Lean.Parser.nonReservedSymbol "spytial.find" (includeIdent := true)
+
+open Tactic in
+/-- `spytial.find x` searches for concrete values the hole `x` can be, and
+    draws one.
+
+    Candidates are every value of `x`'s type up to a constructor depth
+    (default `3`; `spytial.find x 5` raises it), Alloy-style scope-bounded
+    enumeration. A candidate survives when every hypothesis mentioning `x`
+    that has a decision procedure (`Decidable` after substituting the
+    candidate — so `x ≠ t` needs `DecidableEq`) evaluates to true.
+    Hypotheses that cannot be decided are reported as *unchecked*, never
+    silently assumed.
+
+    The first surviving model is injected as a refinement and the state is
+    drawn focused on `x`: the model's structure, with every constraint —
+    relations, `≠` edges, the goal — pointing into it. When nothing survives
+    the bound, that is the finding: the hole cannot look like any candidate,
+    and the diagram falls back to what is known.
+
+    `with [<ops>]` attaches layout ops, as in `spytial.state`. -/
+syntax (name := spytialFindTactic) spytialFindKw (colGt ident)? (num)?
+  (" with " "[" spytial_op,* "]")? : tactic
+
+open Tactic in
+@[tactic spytialFindTactic]
+meta def elabSpytialFindTactic : Tactic := fun stx => do
+  if stx[1].getNumArgs == 0 then
+    throwError "spytial.find expects the local variable to search for: `spytial.find x`"
+  let (props, skipped) ← withMainContext do
+    let (subject, cfg) ← runFindSearch stx[1][0] stx[2]
+    spytialStateProps [← getMainGoal] (optionalOps stx[3]) (some subject) cfg
+  if skipped > 0 then
+    logInfo m!"spytial.find: skipped {skipped} hypothesis(es) that do not \
+      decompose into relation tuples (e.g. `∀`, `∧`, `→`)."
+  savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
+
+meta def spytialFindDatumKw : Lean.Parser.Parser :=
+  Lean.Parser.nonReservedSymbol "spytial.find.datum" (includeIdent := true)
+
+open Tactic in
+/-- `spytial.find.datum x` prints the JSON data instance `spytial.find x`
+    would draw — the debugging counterpart. -/
+syntax (name := spytialFindDatumTactic) spytialFindDatumKw (colGt ident)? (num)? : tactic
+
+open Tactic in
+@[tactic spytialFindDatumTactic]
+meta def elabSpytialFindDatumTactic : Tactic := fun stx => do
+  if stx[1].getNumArgs == 0 then
+    throwError "spytial.find.datum expects the local variable to search for"
+  withMainContext do
+    let (subject, cfg) ← runFindSearch stx[1][0] stx[2]
+    let (_, state) ← (walkProofState cfg [← getMainGoal] (some subject)).run {}
     logInfo m!"{(toJson state.toDataInstance).pretty}"
 
 end

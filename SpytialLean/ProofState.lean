@@ -173,6 +173,11 @@ private meta def mentionsAny (ty : Expr) (fvars : Array FVarId) : Bool :=
     With a `subject?`, only the subject, the hypotheses whose types mention
     its variables, and the goal targets are walked.
 
+    Refinements already present in `cfg.refinements` are *injected* — a found
+    model, say — and pre-applied: they win over the context's equations, and
+    an equation disagreeing with one demotes to an `=` tuple like any other
+    cross-goal conflict.
+
     Returns the number of Prop hypotheses that did not decompose (the caller
     reports them; headless tests stay silent). -/
 meta def walkProofState (cfg : WalkConfig) (goals : List MVarId)
@@ -181,13 +186,16 @@ meta def walkProofState (cfg : WalkConfig) (goals : List MVarId)
     | some subj => exprFVars subj
     | none => #[]
   let mut skipped : Nat := 0
-  let mut applied : Std.HashMap FVarId Expr := {}
+  let mut applied : Std.HashMap FVarId Expr := cfg.refinements
   for mvarId in goals do
     let (skipped', applied') ← mvarId.withContext do
       let mut skipped := skipped
       let (refs, applied') := planRefinements applied (← get).fvarAtoms
         (← equationRefinements (← getLCtx))
-      let cfg := { cfg with refinements := refs.map }
+      -- injected entries win; a conflicting context equation was demoted
+      -- above (planRefinements saw it in `applied`), so this union is clash-free
+      let cfg := { cfg with refinements :=
+        cfg.refinements.fold (init := refs.map) fun m k v => m.insert k v }
       if let some subj := subject? then
         let _ ← walkExpr cfg subj
       for decl in ← getLCtx do

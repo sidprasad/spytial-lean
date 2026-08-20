@@ -22,6 +22,7 @@ the build log, which is the headless verification mechanism. -/
 inductive DTree where
   | leaf (value : Nat)
   | node (left right : DTree)
+  deriving DecidableEq
 
 /-! ## 1. An opaque hole
 
@@ -114,6 +115,28 @@ example {α : Type} (R : α → α → Prop) (x y : α)
     (h : R x y) (hsymm : ∀ a b, R a b → R b a) : R y x := by
   spytial.state.datum
   exact hsymm x y h
+
+/-! ## 6. Model finding: what CAN the hole be?
+
+Everything above renders what is *known*. `spytial.find` searches: it
+enumerates every `DTree` up to a constructor depth (default 3), keeps the
+candidates on which all decidable hypotheses hold (`≠` is decidable here
+because `DTree` derives `DecidableEq`), and draws the first survivor as `t`
+— with the ruled-out value dashed red against the found model. Hypotheses
+without a decision procedure are reported as unchecked, never assumed.
+Zero survivors is an answer too: within the bound, no such value exists. -/
+
+set_option linter.unusedVariables false in
+example (t : DTree) (h : t ≠ DTree.leaf 0) : True := by
+  spytial.find t
+  trivial
+
+-- the JSON view, at an explicit depth: the only depth-2 survivor of the two
+-- disequalities is `node (leaf 0) (leaf 0)`
+set_option linter.unusedVariables false in
+example (t : DTree) (h : t ≠ DTree.leaf 0) (h2 : t ≠ DTree.leaf 1) : True := by
+  spytial.find.datum t 2
+  trivial
 
 /-! ## Styling
 
