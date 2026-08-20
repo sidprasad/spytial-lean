@@ -110,29 +110,32 @@ spytial-core resolves by atom id. -/
 /-! ## Arity n
 
 A tuple lowers to a product, and the tuples to a union. A column past the
-arguments is *computed*: the function returns the value, and resolution finds
-its atom. -/
+arguments is *computed*: the function returns a value, and the column is every
+atom holding it. Selection is by value — a value held by several atoms selects
+all of them. -/
 
--- `lBig`'s real left edges are 0→3 and 3→6; the rest are `lt`'s own `.nil`
--- fixpoint, which is what the definition says.
+-- `lt` of the interior node is `.nil`, and three atoms hold `.nil`, so the
+-- interior node relates to all three — as does each `.nil` via `lt`'s own
+-- fixpoint. Equal values cannot be told apart; position is the relational
+-- language's job.
 /--
 info: {"constraints":
  [{"orientation":
    {"selector":
-    "`atom_0->`atom_3 + `atom_3->`atom_6 + `atom_6->`atom_6 + `atom_7->`atom_6 + `atom_8->`atom_6",
+    "`atom_0->`atom_3 + `atom_3->`atom_6 + `atom_3->`atom_7 + `atom_3->`atom_8 + `atom_6->`atom_6 + `atom_6->`atom_7 + `atom_6->`atom_8 + `atom_7->`atom_6 + `atom_7->`atom_7 + `atom_7->`atom_8 + `atom_8->`atom_6 + `atom_8->`atom_7 + `atom_8->`atom_8",
     "directions": ["below"]}}]}
 -/
 #guard_msgs in
 #spytial.spec lBig with [orientation lean (LRB.lt) below]
 
--- An `Array`/`List`/`Option` codomain emits one tuple per element. Both of
--- `lBig`'s interior children are `.nil` — one value, two atoms — so this is
--- also the test that positions in one collection take *distinct* atoms.
+-- An `Array`/`List`/`Option` codomain emits tuples per element. Both of the
+-- interior node's children are `.nil` — one value — so its `kids` reach every
+-- `.nil` atom once (duplicate tuples collapse), and so do the root's.
 /--
 info: {"directives":
  [{"inferredEdge":
    {"selector":
-    "`atom_0->`atom_3 + `atom_0->`atom_8 + `atom_3->`atom_6 + `atom_3->`atom_7",
+    "`atom_0->`atom_3 + `atom_0->`atom_6 + `atom_0->`atom_7 + `atom_0->`atom_8 + `atom_3->`atom_6 + `atom_3->`atom_7 + `atom_3->`atom_8",
     "name": "kids"}}]}
 -/
 #guard_msgs in
@@ -146,11 +149,9 @@ info: {"constraints":
 #spytial.spec lBig with [orientation lean (LRB.inner) below]
 
 -- Arity 2 as a binary predicate: the product of the two columns, one decision
--- per point. It does *not* say what `lean (LRB.lt)` above says, and the
--- difference is the point of having both forms. `==` compares values, and the
--- three `.nil` atoms hold one value, so every nil-to-nil pair passes — 13
--- tuples where the computed column found 5. A computed column carries the
--- position the value came from; a predicate over values cannot.
+-- per point. It selects exactly what `lean (LRB.lt)` above selects — the two
+-- forms mean the same thing, and differ only in cost: the predicate decides
+-- every pair, the computed column makes one call per atom.
 /--
 info: {"constraints":
  [{"orientation":

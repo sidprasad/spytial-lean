@@ -142,19 +142,20 @@ the last column is *enumerated* — every atom of that sig is tested — or
 | `f` | arity | last column |
 |-----|-------|-------------|
 | `σ₁ → ⋯ → σₙ → Bool` (or `Prop`) | n | enumerated: one decision per point of the product |
-| `σ₁ → ⋯ → σₖ → τ` | k+1 | computed: the returned value's atom |
-| `σ₁ → ⋯ → σₖ → List τ` (or `Array`, `Option`) | k+1 | computed: one tuple per element |
+| `σ₁ → ⋯ → σₖ → τ` | k+1 | computed: every atom holding the returned value |
+| `σ₁ → ⋯ → σₖ → List τ` (or `Array`, `Option`) | k+1 | computed: every atom holding each element |
 
 Resolution rewrites the selector into the tuples it selected —
 `` `a1->`a2->`a3 + `a4->`a5->`a6 ``, which the engine resolves by atom id — or
 `none` when nothing matches. It runs against the value being drawn, so an
 attached `spytial_spec` stores `f` and applies it once per value.
 
-The two arity-2 shapes are not interchangeable. A predicate compares *values*,
-so on a tree with three `.nil` leaves it relates each nil-valued parent to all
-three; a computed column carries the position the value came from. Prefer the
-computed shape for anything meaning "this node's …". It is also the only one
-that stays linear, and the enumerated product is capped.
+Selection is by *value*: a selected value selects every atom holding it, so on
+a tree with three `.nil` leaves a selector that picks `.nil` picks all three.
+The two shapes mean the same thing and differ only in cost — prefer the
+computed shape, which stays linear; the enumerated product is capped. When the
+*position* matters rather than the value, that is the relational language's
+job (`left`, `right`, field names).
 
 `lean` reaches values, not the diagram, so it cannot name a group or an inferred
 edge introduced by an earlier op, and it cannot name a relation the walker

@@ -144,30 +144,35 @@ For three columns, use three arguments, or two arguments and a returned value:
 
 ## Which shape should I use?
 
-**Use shape 2 or 3 when you mean "this node's something".** They are faster, and
-they give the right answer more often. See the next section for why.
+The three shapes mean the same thing. A selector picks by **value**, and the
+same function written in any shape picks the same tuples. The shapes differ
+only in cost.
+
+**Use shape 2 or 3 when there is a value to return.** Shape 1 with two
+arguments tries every pair. On a tree with 300 nodes that is 90,000 calls.
+Shape 2 with one argument makes 300 calls. Spytial stops with an error above
+4096 combinations.
 
 Use shape 1 when there is no value to return, only a test to run.
 
-The cost matters. Shape 1 with two arguments tries every pair. On a tree with
-300 nodes that is 90,000 calls. Shape 2 with one argument makes 300 calls.
-Spytial stops with an error above 4096 combinations.
-
-## Why shape 2 is usually more correct
+## A selector picks by value
 
 A Lean value does not know where it came from. A tree with three `nil` leaves
 has three nodes in the diagram, but all three hold the same value, `.nil`.
 
-So this shape 1 selector relates every leaf to every other leaf:
+A Lean selector picks by value. When it picks `.nil`, it picks all three
+nodes. There is no way for a Lean function to tell them apart, and Spytial
+does not guess:
 
 ```lean
 #spytial.spec myTree with [
-  orientation lean (fun p c : RBNode => p.leftChild == c) below
+  orientation lean (RBNode.leftChild) below
 ]
 ```
 
-It picks 13 pairs. `atom_6`, `atom_7` and `atom_8` are the three leaves, and
-every combination of them is in the result:
+The root's left child is the key-5 node. Only one node holds that value, so
+the root gets one pair. But `atom_3`'s left child is `.nil`, and three nodes
+hold `.nil`, so `atom_3` gets three pairs:
 
 ```
 `atom_0->`atom_3 + `atom_3->`atom_6 + `atom_3->`atom_7 + `atom_3->`atom_8
@@ -176,24 +181,19 @@ every combination of them is in the result:
   + `atom_8->`atom_6 + `atom_8->`atom_7 + `atom_8->`atom_8
 ```
 
-The shape 2 version does not have this problem. Spytial knows which node it
-called the function on, so it picks the child of *that* node:
+The last nine pairs are there because `RBNode.leftChild` returns `.nil` when
+given `.nil`. That is what the function says, so that is what you get.
+
+If you meant "the node in the left *slot*", that is a question about position,
+not value. Position is what the relational language is for:
 
 ```lean
-#spytial.spec myTree with [
-  orientation lean (RBNode.leftChild) below
-]
+orientation left below
 ```
 
-It picks 5 pairs, and `atom_3` now has exactly one left child:
-
-```
-`atom_0->`atom_3 + `atom_3->`atom_6
-  + `atom_6->`atom_6 + `atom_7->`atom_6 + `atom_8->`atom_6
-```
-
-The last three pairs are there because `RBNode.leftChild` returns `.nil` when
-given `.nil`. That is what the function says, so that is what you get.
+This is the division of work between the two languages. The relational
+language sees positions: `left`, `right`, field names. Lean sees values:
+anything Lean can compute. Use each for what it sees.
 
 ## Seeing what your selector picked
 
@@ -275,8 +275,10 @@ first.
 **Dependent function types are rejected.**
 A function like `(n : Nat) → Fin n → Bool` will not work as a selector.
 
-**Two nodes holding the same value cannot be told apart by shape 1.**
-See "Why shape 2 is usually more correct" above.
+**Two nodes holding the same value cannot be told apart.**
+A selector picks by value, and picks every node holding that value. When
+position matters, use the relational language. See "A selector picks by
+value" above.
 
 **Diagram error messages show node ids, not your Lean code.**
 When constraints conflict, the Spytial error panel shows the failing selector.

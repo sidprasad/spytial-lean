@@ -32,29 +32,28 @@ or *computed*:
 | `fn` | arity | last column |
 |------|-------|-------------|
 | `σ₁ → ⋯ → σₙ → Bool` (or `Prop`) | n | enumerated: every point of the product is tested |
-| `σ₁ → ⋯ → σₖ → τ` | k+1 | computed: the returned value's atom |
-| `σ₁ → ⋯ → σₖ → List τ` (or `Array`, `Option`) | k+1 | computed: one tuple per element |
+| `σ₁ → ⋯ → σₖ → τ` | k+1 | computed: every atom holding the returned value |
+| `σ₁ → ⋯ → σₖ → List τ` (or `Array`, `Option`) | k+1 | computed: every atom holding each element |
 
-The distinction is what makes arity ≥ 2 practical. A predicate on `(p c : Tree)`
-costs one decision per *pair* of tree atoms; `fun p : Tree => p.left` costs one
-per atom and says the same thing. Predicates are the general form, functions the
+The distinction is cost, not meaning. A predicate on `(p c : Tree)` costs one
+decision per *pair* of tree atoms; `fun p : Tree => p.left` costs one call per
+atom and selects the same tuples. Predicates are the general form, functions the
 one to reach for on anything large — the product is capped, with an error naming
 the alternative.
 
 ## Boundaries
 
+* A Lean selector selects **by value**. The walk mints an atom per occurrence,
+  so a tree with three `.nil` leaves has three atoms holding one value — and a
+  selector that picks that value picks all three atoms. Equal values cannot be
+  told apart; when the *position* matters, that is what the relational language
+  (`left`, `right`, field names) is for.
 * Atoms with no subterm to apply a function to — holes, hypotheses, and
   custom-relationalizer emissions — carry no provenance and are never selected.
 * With identity merging one atom stands for a class of subterms, and `fn` runs
   on the representative. A computed column resolves by structural equality
   against those representatives, so a returned value that is identity-equal to
   one without being structurally equal to it finds no atom, and drops its tuple.
-* A Lean value carries no occurrence, but the walk mints an atom per
-  occurrence: a tree with three `.nil` leaves has three atoms holding one
-  value. So a computed column that matches several atoms is disambiguated by
-  the datum — the match nearest the point's own atoms wins, which is what makes
-  `fun p => p.left` name *that* parent's child rather than the first equal one.
-  With a unique match, which is the ordinary case, no search happens.
 * A function that gets stuck (an open subterm, no `Decidable` instance) selects
   nothing. `decideProp?` returns `none` rather than guessing.
 -/
@@ -131,9 +130,6 @@ meta structure LeanSelCtx where
   prov : Provenance
   /-- Subterm → every atom holding it, in atom order. -/
   located : Std.HashMap ExprStructEq (Array String)
-  /-- Atom → the atoms its tuples point at (a tuple's head reaches its tail),
-      for disambiguating a computed value by proximity. -/
-  succ : Std.HashMap String (Array String)
   /-- Atom → its position in the walk, so results sort in mint order rather
       than in the datum's hash order. -/
   rank : Std.HashMap String Nat
@@ -143,45 +139,17 @@ meta def LeanSelCtx.mk' (di : JsonDataInstance) (prov : Provenance) : LeanSelCtx
   for a in di.atoms do
     if let some e := prov[a.id]? then
       located := located.insert ⟨e⟩ ((located[(⟨e⟩ : ExprStructEq)]?.getD #[]).push a.id)
-  let mut succ : Std.HashMap String (Array String) := {}
-  for r in di.relations do
-    for t in r.tuples do
-      if let some hd := t.atoms[0]? then
-        succ := succ.insert hd ((succ[hd]?.getD #[]) ++ t.atoms.extract 1 t.atoms.size)
   let mut rank : Std.HashMap String Nat := {}
   for i in [:di.atoms.size] do
     rank := rank.insert di.atoms[i]!.id i
-  return { di, prov, located, succ, rank }
+  return { di, prov, located, rank }
 
-/-- The candidate nearest `start` in the datum, by breadth-first search over
-    `succ`, skipping `used`. Falls back to the first candidate — `used` and all
-    — when none is reachable: an unreachable value has no position to argue
-    from, and inventing a distinct atom for it would invent structure. -/
-private meta def LeanSelCtx.nearest? (ctx : LeanSelCtx) (start : Array String)
-    (cands : Array String) (used : Std.HashSet String) : Option String := Id.run do
-  let candSet := cands.foldl (·.insert ·) (∅ : Std.HashSet String)
-  let mut seen : Std.HashSet String := start.foldl (·.insert ·) ∅
-  let mut frontier := start
-  while !frontier.isEmpty do
-    let mut next := #[]
-    for a in frontier do
-      for b in ctx.succ[a]?.getD #[] do
-        if candSet.contains b && !used.contains b then return some b
-        unless seen.contains b do
-          seen := seen.insert b
-          next := next.push b
-    frontier := next
-  return cands[0]?
-
-/-- The atom a computed value denotes, given the atoms of the point that
-    produced it and the atoms its siblings in the same collection already took.
-    `none` when the walk minted none for that value. -/
-private meta def LeanSelCtx.locate? (ctx : LeanSelCtx) (start : Array String)
-    (used : Std.HashSet String) (v : Expr) : MetaM (Option String) := do
-  let some cands := ctx.located[(⟨← whnf v⟩ : ExprStructEq)]? | return none
-  -- The ordinary case: one atom holds this value, so there is nothing to search.
-  if cands.size ≤ 1 then return cands[0]?
-  return ctx.nearest? start cands used
+/-- Every atom holding this value — empty when the walk minted none for it. A
+    value can be held by several atoms (three `.nil` leaves are three atoms,
+    one value); a computed column selects all of them, because a value carries
+    no occurrence and picking one would be a guess. -/
+private meta def LeanSelCtx.atomsOf (ctx : LeanSelCtx) (v : Expr) : MetaM (Array String) := do
+  return (ctx.located[(⟨← whnf v⟩ : ExprStructEq)]?).getD #[]
 
 /-- The elements of a closed `List` value. `none` if the spine does not reduce. -/
 private meta partial def listElems? (e : Expr) : MetaM (Option (Array Expr)) := do
@@ -239,16 +207,12 @@ meta def evalLeanRel (ctx : LeanSelCtx) (fn : Expr) : MetaM (Array (Array String
       let verdict ← if isProp then decideProp? res else evalBool? res
       if verdict == some true then out := out.push ids
     | .one =>
-      if let some id ← ctx.locate? ids ∅ res then out := out.push (ids.push id)
+      for id in ← ctx.atomsOf res do
+        out := out.push (ids.push id)
     | .many container =>
       let some elems ← containerElems? container res | continue
-      -- Positions in one collection take distinct atoms where the datum has
-      -- them: `#[n.left, n.right]` on a node with two `.nil` children is two
-      -- edges to two leaves, not two edges to the same one.
-      let mut used : Std.HashSet String := ∅
       for v in elems do
-        if let some id ← ctx.locate? ids used v then
-          used := used.insert id
+        for id in ← ctx.atomsOf v do
           let tuple := ids.push id
           unless out.contains tuple do out := out.push tuple
   -- The datum lists relations in hash order, so sort into walk order to keep
