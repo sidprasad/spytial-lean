@@ -10,6 +10,7 @@ public meta import SpytialLean.Spec
 public meta import SpytialLean.Selector
 public meta import SpytialLean.SelectorElab
 public meta import SpytialLean.Relationalizer
+public meta import SpytialLean.ProofState
 public meta import SpytialLean.Widget
 public meta import SpytialLean.Attr
 
@@ -638,6 +639,124 @@ meta def elabSpytialProofTactic : Tactic := fun stx => do
   let props ← withMainContext do
     spytialPayloadProps stx[1] (optionalOps stx[2]) { filterProofs := false }
   savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
+
+/-! ## Proof-state tactic -/
+
+/-- Default styling for negative relations (`≠`, `¬R`): dashed red edges, the
+    ruled-out look. Prepended before user ops, so an explicit `with [...]`
+    overrides. Sorted for a deterministic spec string. -/
+private meta def negativeStyleOps (di : JsonDataInstance) : SpytialSpec :=
+  let names := di.relations.filterMap fun r =>
+    if isNegativeRelName r.name then some r.name else none
+  names.qsort (· < ·) |>.toList.map fun n =>
+    .edgeStyle n (line := some { color := some "#cc0000", pattern := some .dashed })
+
+/-- The payload `spytial.state` hands the infoview, plus the count of Prop
+    hypotheses that did not decompose (the tactic reports them). Public
+    sibling of `spytialPayloadProps`: there is no subject term — the walk and
+    the spec vocabulary come from the goal list. Without ops there is no
+    single subject type, so no `spytial_spec` fallback applies; only the
+    default negative-relation styling is sent, when negative relations were
+    emitted. -/
+public meta def spytialStateProps (goals : List MVarId)
+    (ops? : Option (Array (TSyntax `spytial_op)) := none)
+    (subject? : Option Expr := none)
+    (cfg : WalkConfig := {}) : TermElabM (Json × Nat) := do
+  let (skipped, state) ← (walkProofState cfg goals subject?).run {}
+  let di := state.toDataInstance
+  let defaults := negativeStyleOps di
+  let spec ← match ops? with
+    | some ops => do
+      let scope ← proofStateScope goals subject?
+      pure (defaults ++ (← elabSpytialOps scope ops))
+    | none => pure defaults
+  let spec? := if spec.isEmpty then none else some (SpytialSpec.render spec)
+  return (spytialProps di spec?, skipped)
+
+/-- Leading parser for the `spytial.state` tactic; see `spytialProofKw` for
+    why a dotted name needs `nonReservedSymbol`. -/
+meta def spytialStateKw : Lean.Parser.Parser :=
+  Lean.Parser.nonReservedSymbol "spytial.state" (includeIdent := true)
+
+open Tactic in
+/-- `spytial.state` renders the current proof state — every goal's hypotheses
+    and target — as one spatial diagram in the Lean infoview.
+
+    Per goal, inside its own context, with metavariable assignments
+    instantiated (so structure the elaborator has already determined — e.g.
+    from `refine` — shows up):
+
+    - A hypothesis whose type is a Prop application `R a b` (head a constant,
+      or a local relation variable) becomes one tuple in relation `R`. Proofs,
+      types, and typeclass instances among the arguments are dropped.
+    - A data hypothesis `t : T` walks structurally; an abstract variable is
+      one `T`-typed atom.
+    - `h : x = t` refines `x`: its atom shows `t`'s structure instead of an
+      opaque leaf. Equations between non-variables emit `=` tuples.
+    - `h : x ≠ t` and `h : ¬ (R a b)` emit into the ruled-out relations `≠` /
+      `¬R`, drawn dashed red by default.
+    - Hypotheses that are types, relations, or instances (`α : Type`,
+      `R : α → α → Prop`, `[DecidableEq α]`) are skipped — their names appear
+      as atom types and relation names already.
+    - The goal target gets the tuple treatment under the `⊢ ` prefix; a goal
+      that does not decompose is one `Goal` atom.
+    - Prop hypotheses that do not decompose (`∀ …`, `A ∧ B`) are skipped, with
+      one note reporting the count.
+
+    Everything shares one walk state: a term in a hypothesis and in the goal
+    is the same atom.
+
+    `spytial.state x` focuses on subject `x`: only `x`, hypotheses mentioning
+    it, and the (main) goal are drawn. `spytial.state … with [<ops>]` attaches
+    layout ops, checked against the live proof state; decorated relation names
+    are addressable as escaped idents (`edgeStyle «⊢ lt» …`) and the `Goal`
+    atom type as a raw string selector (`atomStyle "Goal" …`). There is no
+    single subject type, so no `spytial_spec` fallback applies.
+
+    Not shown: values consistent-but-unmentioned (this is not a model finder),
+    and constructors eliminated by `cases` (they leave no trace in the
+    context). -/
+syntax (name := spytialStateTactic) spytialStateKw (colGt term)?
+  (" with " "[" spytial_op,* "]")? : tactic
+
+open Tactic in
+@[tactic spytialStateTactic]
+meta def elabSpytialStateTactic : Tactic := fun stx => do
+  let goals ← getGoals
+  let (props, skipped) ← withMainContext do
+    let subject? ← if stx[1].getNumArgs == 0 then pure none else do
+      let e ← Term.elabTerm stx[1][0] none
+      Term.synthesizeSyntheticMVarsNoPostponing
+      pure (some (← instantiateMVars e))
+    -- a subject's variables live in the main goal's context; focus there
+    let goals := if subject?.isSome then goals.take 1 else goals
+    spytialStateProps goals (optionalOps stx[2]) subject?
+  if skipped > 0 then
+    logInfo m!"spytial.state: skipped {skipped} hypothesis(es) that do not \
+      decompose into relation tuples (e.g. `∀`, `∧`, `→`)."
+  savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
+
+meta def spytialStateDatumKw : Lean.Parser.Parser :=
+  Lean.Parser.nonReservedSymbol "spytial.state.datum" (includeIdent := true)
+
+open Tactic in
+/-- `spytial.state.datum` prints the proof-state JSON data instance — the
+    debugging counterpart of `spytial.state`, mirroring the `.datum`
+    commands. -/
+syntax (name := spytialStateDatumTactic) spytialStateDatumKw (colGt term)? : tactic
+
+open Tactic in
+@[tactic spytialStateDatumTactic]
+meta def elabSpytialStateDatumTactic : Tactic := fun stx => do
+  let goals ← getGoals
+  withMainContext do
+    let subject? ← if stx[1].getNumArgs == 0 then pure none else do
+      let e ← Term.elabTerm stx[1][0] none
+      Term.synthesizeSyntheticMVarsNoPostponing
+      pure (some (← instantiateMVars e))
+    let goals := if subject?.isSome then goals.take 1 else goals
+    let (_, state) ← (walkProofState {} goals subject?).run {}
+    logInfo m!"{(toJson state.toDataInstance).pretty}"
 
 end
 

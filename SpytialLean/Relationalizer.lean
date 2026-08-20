@@ -53,6 +53,10 @@ public meta structure WalkState where
   mvarAtoms : Std.HashMap MVarId String := {}
   /-- Hypothesis atoms, one per free variable, ditto. -/
   fvarAtoms : Std.HashMap FVarId String := {}
+  /-- Refinements currently being expanded — the cycle guard for mutual
+      equations (`h₁ : x = y`, `h₂ : y = x`): a variable re-entered during its
+      own refinement renders as the opaque leaf instead. -/
+  refining : Std.HashSet FVarId := {}
   /-- Memo-reconcile for custom relationalizers: a repeated occurrence resolves
       to the id the relationalizer actually returned, never the discarded
       pre-allocated one. Confirmed equality, not bare hash. -/
@@ -109,6 +113,11 @@ public meta structure WalkConfig where
   /-- Largest domain product a function tabulates into; over it, the function
       stays a leaf. -/
   maxTableTuples : Nat := 512
+  /-- Equational refinements: a hypothesis variable in this map draws the term
+      it is known equal to (`h : x = t` in a proof state) instead of an opaque
+      leaf. Consulted at the `fvar` hole and memoized in `fvarAtoms`, so every
+      occurrence shares the refined structure. -/
+  refinements : Std.HashMap FVarId Expr := {}
 
 /-- The ambient walk mode. Identity is per-type and declared; the mode is
     per-subtree — it decides only whether declarations are consulted at all. -/
@@ -462,8 +471,10 @@ private meta def registerIdentity (v : IdVerdict) (e : Expr) (atomId : String) :
     hole still occupies a `Tree` slot, so `Tree` specs apply). One atom per
     metavariable/hypothesis, under every mode. Must short-circuit *before*
     custom-relationalizer dispatch — a value decomposer must never be handed a
-    bare hole of its target type. -/
-private meta def holeAtom? (e ty : Expr) : StateT WalkState MetaM (Option String) := do
+    bare hole of its target type. A variable with an entry in
+    `cfg.refinements` is not opaque: it draws the term it is known equal to. -/
+private meta def holeAtom? (cfg : WalkConfig) (recurse : Expr → StateT WalkState MetaM String)
+    (e ty : Expr) : StateT WalkState MetaM (Option String) := do
   match e with
   | .mvar mvarId =>
     if let some id := (← get).mvarAtoms[mvarId]? then return some id
@@ -476,6 +487,16 @@ private meta def holeAtom? (e ty : Expr) : StateT WalkState MetaM (Option String
     return some atomId
   | .fvar fvarId =>
     if let some id := (← get).fvarAtoms[fvarId]? then return some id
+    -- An equational refinement draws the term the variable is known equal to;
+    -- the memo below makes every occurrence share the refined structure. A
+    -- cyclic chain re-entering the variable falls through to the opaque leaf.
+    if let some rhs := cfg.refinements[fvarId]? then
+      if !(← get).refining.contains fvarId then
+        modify fun s => { s with refining := s.refining.insert fvarId }
+        let id ← recurse rhs
+        modify fun s => { s with refining := s.refining.erase fvarId,
+                                 fvarAtoms := s.fvarAtoms.insert fvarId id }
+        return some id
     let typeName ← sigOfType ty
     let userName ← fvarId.getUserName
     let s ← get
@@ -717,7 +738,8 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
     return ancestorId
   let ty ← Meta.inferType e
   -- Open-value holes: one atom per metavariable/hypothesis, under every mode.
-  if let some id ← holeAtom? e ty then
+  if let some id ← holeAtom? cfg (fun c => walkExpr cfg c { mode, ancestors := ctx.ancestors })
+      e ty then
     return id
   -- Custom relationalizer wins over any identity instance.
   let tyKey ← Meta.whnf ty
@@ -780,7 +802,8 @@ public meta partial def referenceRelationalize (e : Expr) (cfg : WalkConfig := {
     if let some (_, ancestorId) := ctx.ancestors.find? (fun (a, _) => a.equal e) then
       return ancestorId
     let ty ← Meta.inferType e
-    if let some id ← holeAtom? e ty then
+    if let some id ← holeAtom? cfg (fun c => refWalk c { mode, ancestors := ctx.ancestors })
+        e ty then
       return id
     let tyKey ← Meta.whnf ty
     if let some id ← customDispatch? eOrig e tyKey

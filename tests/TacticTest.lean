@@ -61,3 +61,35 @@ example : ∀ h : TEven 4, True := by
   intro h
   spytial.proof h
   trivial
+
+-- proof-state tactic, bare
+set_option linter.unusedVariables false in
+example (a b : Nat) (h : a < b) : True := by
+  spytial.state
+  trivial
+
+-- proof-state tactic after intro
+set_option linter.unusedVariables false in
+example : ∀ a b : Nat, a < b → True := by
+  intro a b h
+  spytial.state
+  trivial
+
+-- proof-state tactic with a subject
+set_option linter.unusedVariables false in
+example (xs ys : List Nat) (h : xs = ys) : True := by
+  spytial.state xs
+  trivial
+
+-- proof-state tactic with ops: a hypothesis relation and an escaped goal
+-- relation are both addressable in field positions
+example (a b : Nat) (h : a < b) : a < b := by
+  spytial.state with [edgeStyle lt (lineStyle "blue"),
+                      edgeStyle «⊢ lt» (lineStyle "green")]
+  exact h
+
+-- proof-state datum tactic
+set_option linter.unusedVariables false in
+example (a b : Nat) (h : a < b) : True := by
+  spytial.state.datum
+  trivial
