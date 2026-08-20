@@ -136,20 +136,16 @@ inferredEdge  kids lean (RBNode.children)
 ```
 
 `f` must be closed and non-dependent. The contract (`SpytialLean/Sel.lean`) is
-`Spytial.Sel T α := T → Spytial.Tuples α`: a function of the value being
-drawn, returning the selected tuples of values, read as a set. `f`'s type says
-which form it is:
+`Spytial.Sel T α`, a structure wrapping `T → Spytial.Tuples α`: a plain
+function of the value being drawn, returning the selected tuples of values,
+read as a set. `f`'s type says which form it is:
 
 | `f` | arity | meaning |
 |-----|-------|---------|
 | `σ₁ → ⋯ → σₙ → Bool` (or `Prop`, via `Decidable`) | n | one decision per point of the product |
 | `σ₁ → ⋯ → σₖ → τ` | k+1 | last column computed: every atom holding the returned value |
 | `σ₁ → ⋯ → σₖ → List τ` (or `Array`, `Option`) | k+1 | computed: every atom holding each element |
-| `Spytial.Sel T α` | columns of `α` | canonical: called on the datum; `Spytial.walked` reads the walk |
-
-The function shapes are definitions in the `Sel` vocabulary (`Sel.ofPred`,
-`Sel.ofFn`, `Sel.ofMany`); a bare lambda needs the `Sel` ascription to be read
-as canonical, since its inferred type is the plain arrow.
+| `Spytial.Sel T α` | columns of `α` | canonical: called on the datum, selecting exactly what it returns |
 
 Resolution runs against the value being drawn (an attached `spytial_spec`
 stores `f` and resolves it once per value): the walked values of each column
@@ -164,10 +160,10 @@ Selection is by *value*: a selected value selects every atom holding it, so on
 a tree with three `.nil` leaves a selector that picks `.nil` picks all three.
 A returned value is located by `==`, so returning values (the computed shapes
 and `Sel`) needs `BEq` on each returned type; predicates need no instance.
-`Spytial.walked` is `noncomputable`, and so is any definition that calls it —
-a call Spytial cannot see (an unexposed definition) is a compile error, never
-a silent empty selection. When the *position* matters rather than the value,
-that is the relational language's job (`left`, `right`, field names).
+A `Sel` is ordinary computable code — build it with the anonymous constructor
+(`⟨fun root => …⟩`), walk your own type inside it, test it with `#eval`. When
+the *position* matters rather than the value, that is the relational
+language's job (`left`, `right`, field names).
 
 `lean` reaches values, not the diagram, so it cannot name a group or an inferred
 edge introduced by an earlier op, and it cannot name a relation the walker

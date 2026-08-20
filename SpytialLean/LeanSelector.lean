@@ -30,13 +30,12 @@ Which term is built depends on the selector's type (`classifyLeanRel`):
   directly — no equality instances needed, because nothing is returned;
 * a function (`… → τ`, `… → List/Array/Option τ`) computes its last column,
   and each returned value is located by `==` (`BEq τ`);
-* a canonical `Spytial.Sel T α` is applied to the datum, its `Spytial.walked`
-  calls are replaced with the quoted walked values, and every returned column
-  is located by `==`.
+* a canonical `Spytial.Sel T α` is applied to the datum, and every returned
+  column is located by `==`.
 
-Failures are loud. A function from a module that is not `meta import`ed, a
-missing `BEq` or `Decidable` instance, and a `walked` call hidden inside
-another definition are all reported as errors — never as an empty selection.
+Failures are loud. A function from a module that is not `meta import`ed and a
+missing `BEq` or `Decidable` instance are reported as errors — never as an
+empty selection.
 
 Two boundaries carry over from the walk itself: atoms with no value behind
 them (holes, hypotheses, custom-relationalizer emissions) are never selected,
@@ -95,8 +94,8 @@ private meta partial def splitProds (α : Expr) : Array Expr :=
     two cannot drift. Throws the user-facing rejections. -/
 meta def classifyLeanRel (fn : Expr) : MetaM LeanRelKind := do
   let ty ← instantiateMVars (← inferType fn)
-  -- The canonical form is marked by its type's head; `Sel` is an abbrev, so
-  -- this check must run before any unfolding.
+  -- The canonical form is marked by its type's head; `Sel` is a structure,
+  -- so inference keeps the head visible.
   if ty.getAppFn.isConstOf ``Spytial.Sel then
     if let #[T, α] := ty.getAppArgs then
       let cols := splitProds α
@@ -215,82 +214,6 @@ private meta def evalIdxTuples (e : Expr) : MetaM (List (List Nat)) := do
   try evalIdxTuplesCore e
   catch ex => throwError "the raw Lean selector failed to run: {ex.toMessageData}"
 
-/-- Whether `n`'s visible body mentions `Spytial.walked` — the mark of a
-    definition that must be unfolded, not run. An invisible body (another
-    module, no `@[expose]`) reads as `false`; a call reaching `walked` through
-    one is caught by `walked` being `noncomputable`. -/
-private meta def refsWalked (env : Environment) (n : Name) : Bool :=
-  n != ``Spytial.walked &&
-    match env.find? n with
-    | some ci =>
-      match ci.value? with
-      | some v => v.getUsedConstants.contains ``Spytial.walked
-      | none => false
-    | none => false
-
-/-- Replace every visible `Spytial.walked` call with the quoted walked values.
-    One rule finds them: any definition whose body mentions `walked` — a named
-    selector, a `Spytial.Sel` combinator, a helper — is unfolded on the way
-    (across modules that needs `@[expose]`). -/
-private meta def interpretWalked (ctx : LeanSelCtx) (e : Expr) : MetaM Expr := do
-  let env ← getEnv
-  let mut e := e
-  -- Read through the head first: `id` from the elaborator's type wrapper, and
-  -- the named-selector case `mySel datum`.
-  for _ in [:8] do
-    let f := e.getAppFn
-    if f.isConstOf ``id || (f.isConst && refsWalked env f.constName!) then
-      if let some e' ← unfoldDefinition? e then
-        e := e'.headBeta
-        continue
-    break
-  Meta.transform e (pre := fun node => do
-    match node.getAppFn.constName? with
-    | some n =>
-      if n == ``Spytial.walked then
-        let args := node.getAppArgs
-        if h : args.size ≥ 3 then
-          let σ := args[1]
-          let (_, es) ← ctx.columnFor σ
-          return .done (← mkListLit σ es.toList)
-        return .continue
-      else if refsWalked env n then
-        match ← unfoldDefinition? node with
-        | some e' => return .visit e'.headBeta
-        | none => return .continue
-      else
-        return .continue
-    | none => return .continue)
-
-/-- A `walked` call the interpreter could not see would evaluate to `[]` and
-    silently select nothing; find it and refuse instead. Follows definitions
-    breadth-first from the term. -/
-private meta def checkNoHiddenWalked (e : Expr) : MetaM Unit := do
-  let env ← getEnv
-  let mut seen : Std.HashSet Name := ∅
-  let mut queue : Array (Name × Name) := e.getUsedConstants.map fun n => (n, n)
-  let mut budget := 300
-  while h : queue.size > 0 do
-    let (n, root) := queue[queue.size - 1]
-    queue := queue.pop
-    if seen.contains n then continue
-    seen := seen.insert n
-    if n == ``Spytial.walked then
-      if root == ``Spytial.walked then
-        throwError "`Spytial.walked` must be applied to the datum inside the \
-          selector term"
-      throwError "this selector calls `Spytial.walked` inside `{root}`, where \
-        it cannot be given the walked values; call `walked` in the selector \
-        term itself, through the `Spytial.Sel` combinators, or from an \
-        `@[expose]`d definition"
-    if budget == 0 then continue
-    budget := budget - 1
-    if let some ci := env.find? n then
-      if let some v := ci.value? then
-        for m in v.getUsedConstants do
-          unless seen.contains m do
-            queue := queue.push (m, root)
-
 /-! ## Evaluating one selector -/
 
 /-- The tuples the selector term selects on this datum, as arrays of atom ids. -/
@@ -331,8 +254,7 @@ meta def evalLeanRel (ctx : LeanSelCtx) (fn : Expr) : MetaM (Array (Array String
       unless ← withNewMCtxDepth (isDefEq datumTy T) do
         throwError "this selector expects a value of type {T}, but the value \
           being drawn has type {datumTy}"
-      let body ← interpretWalked ctx (mkApp fn ctx.datum).headBeta
-      checkNoHiddenWalked body
+      let body ← mkAppM ``Spytial.Sel.select #[fn, ctx.datum]
       let helper := match kind.domains.size with
         | 1 => ``Spytial.Sel.locate1
         | 2 => ``Spytial.Sel.locate2

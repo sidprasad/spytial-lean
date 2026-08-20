@@ -199,43 +199,46 @@ error: raw Lean selector selects 4900 tuples, over the limit of 4096; a diagram 
 /-! ## Canonical selectors: `Spytial.Sel`
 
 The shorthand forms above are the common cases of one contract: a selector is
-a function of the datum, `Sel T α := T → Tuples α`. These test the general
-form directly. -/
+a function of the datum, `Sel T α` wrapping `T → Tuples α`. It is plain
+computable code — anything it needs, like the traversal below, is an ordinary
+function. These test the general form directly. -/
 
--- The datum itself, as a bare lambda: the ascription is what marks it
--- canonical, since the lambda's own type is a plain arrow.
+public def LRB.subtrees : LRB → List LRB
+  | .nil => [.nil]
+  | n@(.node _ _ l r) => n :: (l.subtrees ++ r.subtrees)
+
+-- The datum itself, inline: the anonymous constructor takes its type from
+-- the ascription.
 /-- info: {"constraints": [{"hideAtom": {"selector": "`atom_0"}}]} -/
 #guard_msgs in
-#spytial.spec lBig with [hideAtom lean ((fun t => [t] : Spytial.Sel LRB LRB))]
+#spytial.spec lBig with [hideAtom lean ((⟨fun t => [t]⟩ : Spytial.Sel LRB LRB))]
 
 -- `Tuples` is a set: order and duplicates in the returned list change nothing.
 /-- info: {"constraints": [{"hideAtom": {"selector": "`atom_0"}}]} -/
 #guard_msgs in
-#spytial.spec lBig with [hideAtom lean ((fun t => [t, t] : Spytial.Sel LRB LRB))]
+#spytial.spec lBig with [hideAtom lean ((⟨fun t => [t, t]⟩ : Spytial.Sel LRB LRB))]
 
--- A named selector reading the walk. `noncomputable` because `walked` is:
--- neither can run outside resolution, and the marker keeps that honest.
-public noncomputable def blackSel : Spytial.Sel LRB LRB :=
-  fun t => (Spytial.walked t).filter LRB.isBlack
+-- A named selector: an ordinary definition, running its own traversal.
+public def blackSel : Spytial.Sel LRB LRB :=
+  ⟨fun t => t.subtrees.filter LRB.isBlack⟩
+
+-- A selector is plain code, so it tests like any other function.
+#guard blackSel.select lBig == [.node .black 2 .nil .nil]
 
 /-- info: {"constraints": [{"hideAtom": {"selector": "`atom_3"}}]} -/
 #guard_msgs in
 #spytial.spec lBig with [hideAtom lean (blackSel)]
 
--- A combinator used bare leaves the datum type open; the spec's scope fills it.
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_3"}}]} -/
-#guard_msgs in
-#spytial.spec lBig with [hideAtom lean (Spytial.Sel.ofPred LRB.isBlack)]
-
 -- Selectors compose inside Lean; on `Tuples`, `∪` is `++` read as a set.
+public def nilSel : Spytial.Sel LRB LRB :=
+  ⟨fun t => t.subtrees.filter (fun n => n matches .nil)⟩
+
 /--
 info: {"constraints":
  [{"hideAtom": {"selector": "`atom_3 + `atom_6 + `atom_7 + `atom_8"}}]}
 -/
 #guard_msgs in
-#spytial.spec lBig with
-  [hideAtom lean ((Spytial.Sel.ofPred LRB.isBlack
-      ∪ Spytial.Sel.ofPred (fun n : LRB => n matches .nil) : Spytial.Sel LRB LRB))]
+#spytial.spec lBig with [hideAtom lean ((blackSel ∪ nilSel))]
 
 -- `α`'s product structure is the arity, and it reaches the op position check.
 /--
@@ -244,12 +247,12 @@ info: {"constraints":
 -/
 #guard_msgs in
 #spytial.spec lBig with
-  [orientation lean ((fun t => [(t, t.lt)] : Spytial.Sel LRB (LRB × LRB))) below]
+  [orientation lean ((⟨fun t => [(t, t.lt)]⟩ : Spytial.Sel LRB (LRB × LRB))) below]
 
 /-- error: this position selects atoms (arity 1), but the selector has arity 2 -/
 #guard_msgs in
 #spytial.spec lBig with
-  [hideAtom lean ((fun t => [(t, t)] : Spytial.Sel LRB (LRB × LRB)))]
+  [hideAtom lean ((⟨fun t => [(t, t)]⟩ : Spytial.Sel LRB (LRB × LRB)))]
 
 /-! ## Deferred resolution
 

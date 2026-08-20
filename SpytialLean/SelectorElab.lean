@@ -415,46 +415,20 @@ private meta def resolveCtorLit? (scope : SelScope) (stx : Syntax) : TermElabM (
     return some (.ctorLit ctorName (shortName ctorName))
   return none
 
-/-! ### Raw Lean predicates
+/-! ### Raw Lean selectors
 
 `lean <term>` steps outside the relational vocabulary: the term is an ordinary
-Lean predicate over one of the walked types, checked by Lean's own elaborator.
-Its domain fixes the sig it ranges over, so it needs no binder and no arity
-inference — it selects atoms, arity 1. `SpytialLean.LeanSelector` resolves it
-against a datum. -/
+Lean function, checked by Lean's own elaborator. Its type fixes the columns it
+selects and their arity (`classifyLeanRel`); `SpytialLean.LeanSelector`
+resolves it against a datum. -/
 
 private meta def elabLeanRel (scope : SelScope) (stx : TSyntax `term) :
     TermElabM EExpr := do
-  -- An ascription to `Spytial.Sel` elaborates against that type and is wrapped
-  -- in `id` so the type survives: a bare lambda's inferred type is the plain
-  -- arrow, which would otherwise re-read as the shorthand forms.
-  let fn ← match stx with
-    | `(($e : $ty)) => do
-      let tyE? ← try some <$> Term.elabType ty catch _ => pure none
-      match tyE? with
-      | some tyE =>
-        if tyE.getAppFn.isConstOf ``Spytial.Sel then
-          let f ← Term.withSynthesize <| Term.elabTermEnsuringType e tyE
-          mkAppOptM ``id #[some tyE, some (← instantiateMVars f)]
-        else
-          Term.withSynthesize <| Term.elabTerm stx none
-      | none => Term.withSynthesize <| Term.elabTerm stx none
-    | _ => Term.withSynthesize <| Term.elabTerm stx none
-  let mut fn ← instantiateMVars fn
+  let fn ← instantiateMVars (← Term.withSynthesize <| Term.elabTerm stx none)
   -- Lean already reported whatever went wrong; a second message about the
   -- recovery term's holes would only bury it. The unknown arity disables
   -- downstream position checks.
   if fn.hasSorry then return .rel .none_ none
-  if fn.hasExprMVar then
-    -- A combinator-built `Sel` (e.g. `Sel.ofPred p`) leaves its datum type
-    -- open; the scope's root fills it.
-    let ty ← instantiateMVars (← inferType fn)
-    if ty.getAppFn.isConstOf ``Spytial.Sel then
-      if let #[T, _] := ty.getAppArgs then
-        if T.isMVar then
-          try discard <| isDefEq T (← mkConstWithLevelParams scope.root)
-          catch _ => pure ()
-    fn ← instantiateMVars fn
   if fn.hasExprMVar || fn.hasFVar then
     throwErrorAt stx "a raw Lean selector must be a closed term; this one \
       still has holes or local variables"

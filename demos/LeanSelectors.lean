@@ -105,13 +105,17 @@ evaluates: -/
 /-! ## The general form
 
 The shapes above are shorthand for one contract: a selector is a function of
-the value being drawn — `Spytial.Sel T α`, which is `T → Spytial.Tuples α`.
+the value being drawn — `Spytial.Sel T α`, wrapping `T → Spytial.Tuples α`.
 Because it receives the whole tree, it can compare nodes *against* the tree,
-which no per-node predicate can: a predicate never sees the root.
-`Spytial.walked` is the list of values the walk visited; it means something
-only during resolution, so anything calling it is `noncomputable`. -/
+which no per-node predicate can: a predicate never sees the root. It is plain
+code: walk the tree yourself, return the values to select, test it with
+`#eval`. -/
 
-noncomputable def deepHalf : Spytial.Sel RBNode RBNode :=
-  fun root => (Spytial.walked root).filter (fun n => 2 * n.height ≤ root.height)
+def RBNode.subtrees : RBNode → List RBNode
+  | .nil => [.nil]
+  | n@(.node _ _ l r) => n :: (l.subtrees ++ r.subtrees)
+
+def deepHalf : Spytial.Sel RBNode RBNode :=
+  ⟨fun root => root.subtrees.filter (fun n => 2 * n.height ≤ root.height)⟩
 
 #spytial.spec skewed with [hideAtom lean (deepHalf)]

@@ -89,7 +89,7 @@ second node of each pair relative to the first. `inferredEdge` is another: it
 draws an edge for each pair.
 
 The **type of your function** decides how many columns the selector has. There
-are three shapes. All three are shorthand for one general form, `Spytial.Sel`,
+are three shapes. All three are special cases of one contract, `Spytial.Sel`,
 described further down; use a shape when it fits, and the general form when it
 does not.
 
@@ -200,60 +200,51 @@ anything Lean can compute. Use each for what it sees.
 
 ## The general form: `Spytial.Sel`
 
-The full form of a selector is a plain Lean type:
+The full form of a selector is a small structure around a plain function:
 
 ```lean
-Spytial.Sel T α   -- the same type as: T → Spytial.Tuples α
+Spytial.Sel T α   -- wraps one field, select : T → Spytial.Tuples α
 ```
 
-A `Sel T α` is a function. Spytial calls it on the value being drawn, at the
-moment it draws it. The function returns the tuples to select, as a list that
-is read as a set: order and duplicates do not matter. `α` is one column
-(`Sel RBNode RBNode`) or a product (`Sel RBNode (RBNode × RBNode)` for pairs).
+Spytial calls the function on the value being drawn, at the moment it draws
+it. The function returns the tuples to select, as a list that is read as a
+set: order and duplicates do not matter. `α` is one column (`Sel RBNode
+RBNode`) or a product (`Sel RBNode (RBNode × RBNode)` for pairs).
 
 Because the function receives the whole value, it can say things the per-node
-shapes cannot — for example, compare every node against the root:
+shapes cannot — for example, compare every node against the root. Walk your
+own type to get the nodes; that is ordinary code:
 
 ```lean
-#spytial.spec myTree with [
-  hideAtom lean ((fun t => (Spytial.walked t).filter (fun n => n.key? < t.key?)
-    : Spytial.Sel RBNode RBNode))
-]
-```
+def RBNode.subtrees : RBNode → List RBNode
+  | .nil => [.nil]
+  | n@(.node _ _ l r) => n :: (l.subtrees ++ r.subtrees)
 
-`Spytial.walked t` is the list of values Spytial walked, at whatever type you
-use it. It has a meaning only during resolution, so a definition that calls it
-must be marked `noncomputable` (Lean tells you when you forget), and
-`@[expose]`d if another module uses it:
-
-```lean
-noncomputable def smallKeys : Spytial.Sel RBNode RBNode :=
-  fun t => (Spytial.walked t).filter (fun n => n.key? < t.key?)
+def smallKeys : Spytial.Sel RBNode RBNode :=
+  ⟨fun t => t.subtrees.filter (fun n => n.key? < t.key?)⟩
 
 #spytial myTree with [hideAtom lean (smallKeys)]
 ```
 
-The three shapes are ordinary definitions in this vocabulary, and you can read
-them in `SpytialLean/Sel.lean`:
-
-```lean
-Sel.ofPred p   -- fun t => (walked t).filter p
-Sel.ofFn f     -- fun t => (walked t).map (fun x => (x, f x))
-Sel.ofMany f   -- fun t => (walked t).flatMap (fun x => (f x).map (x, ·))
-```
-
-Selectors compose inside Lean with `∪`:
+`⟨…⟩` is Lean's anonymous constructor; it wraps the function as a `Sel`.
+Inline, give it its type with an ascription:
 
 ```lean
 #spytial myTree with [
-  hideAtom lean ((Spytial.Sel.ofPred RBNode.isLeaf ∪ smallKeys
-    : Spytial.Sel RBNode RBNode))
+  hideAtom lean ((⟨fun t => [t.leftChild]⟩ : Spytial.Sel RBNode RBNode))
 ]
 ```
 
-One care point: a bare lambda needs the ascription `(… : Spytial.Sel T α)`.
-Without it, the lambda's type is a plain arrow, and Spytial reads it as one of
-the three shapes.
+A `Sel` is ordinary computable code. Run it with `#eval`, test it with
+`#guard`, and compose it with `∪`:
+
+```lean
+#guard (smallKeys.select myTree).length == 4
+
+#spytial myTree with [
+  hideAtom lean ((smallKeys ∪ ⟨fun t => [t]⟩))
+]
+```
 
 ## When you need `BEq`
 
@@ -381,7 +372,6 @@ you wrote. This is a known gap and is planned as a follow-up.
 | `needs a Decidable instance to run as a selector` | See "A `Prop` runs through `decide`" above. |
 | `add deriving BEq to the returned type` | See "When you need `BEq`" above. |
 | `consider adding public meta import ...` | See "A function from another module" above. Lean names the import to add. |
-| `calls Spytial.walked inside ...` | `walked` sits in a definition Spytial cannot read into. Call it in the selector term, or `@[expose]` the definition. |
 | `can select at most 4-tuples` | The selector is wider than any diagram op. |
 
 ## How it works, briefly
