@@ -3,6 +3,8 @@ module
 public import SpytialLean.Identity
 public meta import SpytialLean.MetaEncode
 public meta import SpytialLean.Types
+public import SpytialLean.Sel
+public meta import SpytialLean.Sel
 public meta import SpytialLean.Selector
 public meta import SpytialLean.Spec
 public meta import SpytialLean.TypeShape

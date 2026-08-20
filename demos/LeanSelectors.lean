@@ -25,6 +25,9 @@ inductive Color where
 inductive RBNode where
   | nil : RBNode
   | node (color : Color) (key : Nat) (left right : RBNode) : RBNode
+  -- A selector that *returns* values (like `heavySide` below) locates them by
+  -- `==`, so the type derives `BEq`. Plain predicates need nothing.
+  deriving BEq
 
 def RBNode.height : RBNode → Nat
   | .nil => 0
@@ -98,3 +101,17 @@ evaluates: -/
   hideAtom lean (fun n : RBNode => n.height > 2),
   inferredEdge heavy lean (RBNode.heavySide)
 ]
+
+/-! ## The general form
+
+The shapes above are shorthand for one contract: a selector is a function of
+the value being drawn — `Spytial.Sel T α`, which is `T → Spytial.Tuples α`.
+Because it receives the whole tree, it can compare nodes *against* the tree,
+which no per-node predicate can: a predicate never sees the root.
+`Spytial.walked` is the list of values the walk visited; it means something
+only during resolution, so anything calling it is `noncomputable`. -/
+
+noncomputable def deepHalf : Spytial.Sel RBNode RBNode :=
+  fun root => (Spytial.walked root).filter (fun n => 2 * n.height ≤ root.height)
+
+#spytial.spec skewed with [hideAtom lean (deepHalf)]

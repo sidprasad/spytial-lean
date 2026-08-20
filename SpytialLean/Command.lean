@@ -425,7 +425,7 @@ private meta def elabSpytialPayload (t : Syntax) (ops? : Option (Array (TSyntax 
       let scope ← scopeForExpr e
       pure (some (← elabSpytialOps scope ops))
     | none => lookupTypeSpec e
-  let spec? ← spec?.mapM fun s => liftM (resolveLeanSelectors di prov s)
+  let spec? ← spec?.mapM fun s => liftM (resolveLeanSelectors e di prov s)
   return (di, spec?.map SpytialSpec.render)
 
 private meta def spytialProps (di : JsonDataInstance) (cndSpec? : Option String) : Json :=
@@ -542,7 +542,7 @@ meta def elabSpytialSpecDebug : CommandElab := fun
       let (e, di, prov) ← elabRelationalized t
       let scope ← scopeForExpr e
       let spec ← elabSpytialOps scope ops.getElems
-      return (← resolveLeanSelectors di prov spec).render
+      return (← resolveLeanSelectors e di prov spec).render
     logInfo m!"{specStr}"
   | stx => throwError "Unexpected syntax {stx}."
 

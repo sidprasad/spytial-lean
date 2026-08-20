@@ -237,7 +237,7 @@ private meta unsafe def evalBoolUnsafe (e : Expr) : MetaM Bool :=
 @[implemented_by evalBoolUnsafe]
 private meta opaque evalBoolOpaque (e : Expr) : MetaM Bool
 
-public meta def evalBool? (e : Expr) : MetaM (Option Bool) := do
+private meta def evalBool? (e : Expr) : MetaM (Option Bool) := do
   try return some (← evalBoolOpaque e) catch _ => return none
 
 -- TODO(norm?-display): drawing `n e`'s structure per new group needs value →
@@ -543,7 +543,7 @@ private meta def pick [Inhabited α] (columns : Array (Array α)) (pt : Array Na
 /-- Decide a closed proposition: `whnf` the `Decidable` instance to a
     constructor, compiled `decide p` when that sticks. `none` is undecided,
     never a guess. -/
-public meta def decideProp? (p : Expr) : MetaM (Option Bool) := do
+private meta def decideProp? (p : Expr) : MetaM (Option Bool) := do
   try
     let some inst ← Meta.synthInstance? (← mkAppM ``Decidable #[p]) | return none
     match (← Meta.whnf inst).getAppFn with

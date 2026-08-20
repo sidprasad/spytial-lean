@@ -135,27 +135,39 @@ hideAtom      lean (fun n : RBNode => n matches .nil)
 inferredEdge  kids lean (RBNode.children)
 ```
 
-`f` must be closed and non-dependent. Its type is its arity, and decides whether
-the last column is *enumerated* — every atom of that sig is tested — or
-*computed* from what `f` returns:
+`f` must be closed and non-dependent. The contract (`SpytialLean/Sel.lean`) is
+`Spytial.Sel T α := T → Spytial.Tuples α`: a function of the value being
+drawn, returning the selected tuples of values, read as a set. `f`'s type says
+which form it is:
 
-| `f` | arity | last column |
-|-----|-------|-------------|
-| `σ₁ → ⋯ → σₙ → Bool` (or `Prop`) | n | enumerated: one decision per point of the product |
-| `σ₁ → ⋯ → σₖ → τ` | k+1 | computed: every atom holding the returned value |
+| `f` | arity | meaning |
+|-----|-------|---------|
+| `σ₁ → ⋯ → σₙ → Bool` (or `Prop`, via `Decidable`) | n | one decision per point of the product |
+| `σ₁ → ⋯ → σₖ → τ` | k+1 | last column computed: every atom holding the returned value |
 | `σ₁ → ⋯ → σₖ → List τ` (or `Array`, `Option`) | k+1 | computed: every atom holding each element |
+| `Spytial.Sel T α` | columns of `α` | canonical: called on the datum; `Spytial.walked` reads the walk |
 
-Resolution rewrites the selector into the tuples it selected —
-`` `a1->`a2->`a3 + `a4->`a5->`a6 ``, which the engine resolves by atom id — or
-`none` when nothing matches. It runs against the value being drawn, so an
-attached `spytial_spec` stores `f` and applies it once per value.
+The function shapes are definitions in the `Sel` vocabulary (`Sel.ofPred`,
+`Sel.ofFn`, `Sel.ofMany`); a bare lambda needs the `Sel` ascription to be read
+as canonical, since its inferred type is the plain arrow.
+
+Resolution runs against the value being drawn (an attached `spytial_spec`
+stores `f` and resolves it once per value): the walked values of each column
+are quoted into one term, and the term runs through the compiled evaluator —
+the same machinery as `#eval`, so a definition from another module must be
+`meta import`ed, and `whnf` never touches user code. The selector rewrites to
+the tuples it selected — `` `a1->`a2->`a3 + `a4->`a5->`a6 ``, which the engine
+resolves by atom id — or `none` when nothing matches. At most 4 columns; at
+most 4096 selected tuples.
 
 Selection is by *value*: a selected value selects every atom holding it, so on
 a tree with three `.nil` leaves a selector that picks `.nil` picks all three.
-The two shapes mean the same thing and differ only in cost — prefer the
-computed shape, which stays linear; the enumerated product is capped. When the
-*position* matters rather than the value, that is the relational language's
-job (`left`, `right`, field names).
+A returned value is located by `==`, so returning values (the computed shapes
+and `Sel`) needs `BEq` on each returned type; predicates need no instance.
+`Spytial.walked` is `noncomputable`, and so is any definition that calls it —
+a call Spytial cannot see (an unexposed definition) is a compile error, never
+a silent empty selection. When the *position* matters rather than the value,
+that is the relational language's job (`left`, `right`, field names).
 
 `lean` reaches values, not the diagram, so it cannot name a group or an inferred
 edge introduced by an earlier op, and it cannot name a relation the walker

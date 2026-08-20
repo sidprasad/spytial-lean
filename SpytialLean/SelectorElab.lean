@@ -425,15 +425,44 @@ against a datum. -/
 
 private meta def elabLeanRel (scope : SelScope) (stx : TSyntax `term) :
     TermElabM EExpr := do
-  let fn ← Term.withSynthesize <| Term.elabTerm stx none
-  let fn ← instantiateMVars fn
+  -- An ascription to `Spytial.Sel` elaborates against that type and is wrapped
+  -- in `id` so the type survives: a bare lambda's inferred type is the plain
+  -- arrow, which would otherwise re-read as the shorthand forms.
+  let fn ← match stx with
+    | `(($e : $ty)) => do
+      let tyE? ← try some <$> Term.elabType ty catch _ => pure none
+      match tyE? with
+      | some tyE =>
+        if tyE.getAppFn.isConstOf ``Spytial.Sel then
+          let f ← Term.withSynthesize <| Term.elabTermEnsuringType e tyE
+          mkAppOptM ``id #[some tyE, some (← instantiateMVars f)]
+        else
+          Term.withSynthesize <| Term.elabTerm stx none
+      | none => Term.withSynthesize <| Term.elabTerm stx none
+    | _ => Term.withSynthesize <| Term.elabTerm stx none
+  let mut fn ← instantiateMVars fn
   -- Lean already reported whatever went wrong; a second message about the
-  -- recovery term's holes would only bury it.
-  if fn.hasSorry then return .rel .none_ (some 1)
+  -- recovery term's holes would only bury it. The unknown arity disables
+  -- downstream position checks.
+  if fn.hasSorry then return .rel .none_ none
+  if fn.hasExprMVar then
+    -- A combinator-built `Sel` (e.g. `Sel.ofPred p`) leaves its datum type
+    -- open; the scope's root fills it.
+    let ty ← instantiateMVars (← inferType fn)
+    if ty.getAppFn.isConstOf ``Spytial.Sel then
+      if let #[T, _] := ty.getAppArgs then
+        if T.isMVar then
+          try discard <| isDefEq T (← mkConstWithLevelParams scope.root)
+          catch _ => pure ()
+    fn ← instantiateMVars fn
   if fn.hasExprMVar || fn.hasFVar then
     throwErrorAt stx "a raw Lean selector must be a closed term; this one \
       still has holes or local variables"
   let kind ← withRef stx <| classifyLeanRel fn
+  -- A `Prop`-valued predicate runs through `decide`; refuse an undecidable
+  -- one here, where the message can point at the selector.
+  if let .pred true := kind.shape then
+    discard <| withRef stx <| boolifyPred fn kind.domains
   -- A column over a type the walk cannot produce can never be filled; in a
   -- strict scope that is a mistake worth naming, in a lenient one unknowable.
   unless scope.lenient do

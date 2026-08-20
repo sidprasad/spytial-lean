@@ -196,8 +196,10 @@ spytial_spec RBNode [
 
 The type of the function decides how many columns the selector has. `σ → Bool`
 picks single nodes, `σ₁ → σ₂ → Bool` picks pairs, and `σ → List τ` computes the
-second column instead of trying every pair. The function runs against the value
-being drawn, so an attached spec re-runs it for each value.
+second column instead of trying every pair. These are shorthand for one
+contract, `Spytial.Sel T α` — a function of the value being drawn — and the
+function runs against that value, so an attached spec re-runs it for each
+value, as compiled code.
 
 [docs/lean-selectors.md](docs/lean-selectors.md) is the guide, including what
 does not work. [demos/LeanSelectors.lean](demos/LeanSelectors.lean) is a

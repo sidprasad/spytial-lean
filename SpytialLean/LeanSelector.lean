@@ -6,63 +6,51 @@ public meta import SpytialLean.Selector
 public meta import SpytialLean.Spec
 public meta import SpytialLean.TypeShape
 public meta import SpytialLean.Relationalizer
+public meta import SpytialLean.Sel
 
 namespace SpytialLean
 
 open Lean Meta
 
-/-! # Raw Lean selectors
+/-! # Resolving raw Lean selectors
 
-`hideAtom lean (fun n : RBNode => n matches .nil)` selects by running an
-ordinary Lean function over the values the relationalizer walked — no relational
-vocabulary, no SGQ, no label round-trip.
+`SpytialLean.Sel` states the contract: a Lean selector is a function called on
+the value being drawn, returning the selected tuples of values, read as a set.
+This file resolves one against a concrete datum.
 
-The mechanism is the walk's `Provenance` table: every ordinary atom remembers
-the (post-whnf) subterm it was minted from. Given a datum, `Sel.leanRel fn`
-applies `fn` across the atoms of its domain types, and rewrites itself into the
-tuples it selected — `` `a1->`a2->`a3 + `a4->`a5->`a6 ``, the extensional form
-spytial-core already resolves by atom id. `resolveLeanSelectors` performs that
-rewrite over a whole spec, and every path that renders a spec runs it first.
+Resolution builds **one term** per selector and runs it through Lean's own
+compiled evaluator — the same machinery as `#eval`. The walked values of each
+column are quoted into an array in atom order; the term computes index tuples
+into those arrays; an index *is* an atom. Nothing here reduces user code with
+`whnf`; the user's function runs as compiled code.
 
-## Shapes
+Which term is built depends on the selector's type (`classifyLeanRel`):
 
-The type of `fn` fixes the arity, and whether the last column is *enumerated*
-or *computed*:
+* a predicate (`σ₁ → ⋯ → σₙ → Bool`/`Prop`) filters the index product
+  directly — no equality instances needed, because nothing is returned;
+* a function (`… → τ`, `… → List/Array/Option τ`) computes its last column,
+  and each returned value is located by `==` (`BEq τ`);
+* a canonical `Spytial.Sel T α` is applied to the datum, its `Spytial.walked`
+  calls are replaced with the quoted walked values, and every returned column
+  is located by `==`.
 
-| `fn` | arity | last column |
-|------|-------|-------------|
-| `σ₁ → ⋯ → σₙ → Bool` (or `Prop`) | n | enumerated: every point of the product is tested |
-| `σ₁ → ⋯ → σₖ → τ` | k+1 | computed: every atom holding the returned value |
-| `σ₁ → ⋯ → σₖ → List τ` (or `Array`, `Option`) | k+1 | computed: every atom holding each element |
+Failures are loud. A function from a module that is not `meta import`ed, a
+missing `BEq` or `Decidable` instance, and a `walked` call hidden inside
+another definition are all reported as errors — never as an empty selection.
 
-The distinction is cost, not meaning. A predicate on `(p c : Tree)` costs one
-decision per *pair* of tree atoms; `fun p : Tree => p.left` costs one call per
-atom and selects the same tuples. Predicates are the general form, functions the
-one to reach for on anything large — the product is capped, with an error naming
-the alternative.
-
-## Boundaries
-
-* A Lean selector selects **by value**. The walk mints an atom per occurrence,
-  so a tree with three `.nil` leaves has three atoms holding one value — and a
-  selector that picks that value picks all three atoms. Equal values cannot be
-  told apart; when the *position* matters, that is what the relational language
-  (`left`, `right`, field names) is for.
-* Atoms with no subterm to apply a function to — holes, hypotheses, and
-  custom-relationalizer emissions — carry no provenance and are never selected.
-* With identity merging one atom stands for a class of subterms, and `fn` runs
-  on the representative. A computed column resolves by structural equality
-  against those representatives, so a returned value that is identity-equal to
-  one without being structurally equal to it finds no atom, and drops its tuple.
-* A function that gets stuck (an open subterm, no `Decidable` instance) selects
-  nothing. `decideProp?` returns `none` rather than guessing.
--/
+Two boundaries carry over from the walk itself: atoms with no value behind
+them (holes, hypotheses, custom-relationalizer emissions) are never selected,
+and with identity merging a column holds one representative value per merged
+atom. -/
 
 public section
 
-/-! ## Classifying the function -/
+/-! ## Classifying the selector term -/
 
-/-- How `fn`'s codomain produces the last column. -/
+/-- The largest tuple a selector may select. -/
+meta def maxSelArity : Nat := 4
+
+/-- How the selector term produces its tuples. -/
 meta inductive LeanRelShape where
   /-- `… → Bool` / `… → Prop`; every column is enumerated. -/
   | pred (isProp : Bool)
@@ -70,31 +58,54 @@ meta inductive LeanRelShape where
   | one
   /-- `… → List τ` / `Array τ` / `Option τ`; one tuple per element. -/
   | many (container : Name)
-  deriving Repr, BEq, Inhabited
+  /-- The canonical form: the term's type is `Spytial.Sel T α`. -/
+  | sel (T : Expr)
+  deriving Inhabited
 
-/-- `fn` read as a relation: which types its columns range over, and how the
-    last one is produced. -/
+/-- The selector term read as a relation: which types its columns range over,
+    and how its tuples are produced. -/
 meta structure LeanRelKind where
-  /-- The enumerated columns, in order — `fn`'s argument types. -/
+  /-- For `.sel`, the columns of `α`; otherwise the argument types. -/
   domains : Array Expr
   shape : LeanRelShape
-  /-- The computed column's element type; meaningless for `.pred`. -/
+  /-- The computed column's element type; meaningless for `.pred` and `.sel`. -/
   result : Expr
   deriving Inhabited
 
 meta def LeanRelKind.arity (k : LeanRelKind) : Nat :=
-  k.domains.size + (if k.shape matches .pred _ then 0 else 1)
+  match k.shape with
+  | .pred _ | .sel _ => k.domains.size
+  | _ => k.domains.size + 1
 
 /-- Every column type, enumerated ones first. -/
 meta def LeanRelKind.columns (k : LeanRelKind) : Array Expr :=
-  if k.shape matches .pred _ then k.domains else k.domains.push k.result
+  match k.shape with
+  | .pred _ | .sel _ => k.domains
+  | _ => k.domains.push k.result
 
-/-- Read `fn`'s type as a relation. Shared by the elaborator (which needs the
-    arity to check the op position) and by resolution, so the two cannot drift.
-    Throws the user-facing rejection. -/
+/-- The column types of a tuple type: `σ₁ × σ₂ × σ₃` splits right-nested. -/
+private meta partial def splitProds (α : Expr) : Array Expr :=
+  if α.isAppOfArity ``Prod 2 then
+    #[α.getAppArgs[0]!] ++ splitProds α.getAppArgs[1]!
+  else
+    #[α]
+
+/-- Read the selector term's type as a relation. Shared by the elaborator
+    (which needs the arity to check the op position) and by resolution, so the
+    two cannot drift. Throws the user-facing rejections. -/
 meta def classifyLeanRel (fn : Expr) : MetaM LeanRelKind := do
+  let ty ← instantiateMVars (← inferType fn)
+  -- The canonical form is marked by its type's head; `Sel` is an abbrev, so
+  -- this check must run before any unfolding.
+  if ty.getAppFn.isConstOf ``Spytial.Sel then
+    if let #[T, α] := ty.getAppArgs then
+      let cols := splitProds α
+      if cols.size > maxSelArity then
+        throwError "a Lean selector can select at most {maxSelArity}-tuples, \
+          but this one selects {cols.size}-tuples"
+      return { domains := cols, shape := .sel T, result := α }
   let mut domains := #[]
-  let mut ty ← whnf (← inferType fn)
+  let mut ty ← whnf ty
   -- Peel non-dependent arrows; a dependent one ends the argument list.
   while ty matches .forallE .. do
     let .forallE _ dom body _ := ty | unreachable!
@@ -107,116 +118,242 @@ meta def classifyLeanRel (fn : Expr) : MetaM LeanRelKind := do
   if ty matches .forallE .. then
     throwError "a raw Lean selector cannot have a dependent argument type; \
       this one has type {← inferType fn}"
+  let checkArity (n : Nat) : MetaM Unit := do
+    if n > maxSelArity then
+      throwError "a Lean selector can select at most {maxSelArity}-tuples, \
+        but this one selects {n}-tuples"
   match ty with
-  | .sort .zero => return { domains, shape := .pred true, result := ty }
+  | .sort .zero =>
+    checkArity domains.size
+    return { domains, shape := .pred true, result := ty }
   | _ =>
     if ty.isConstOf ``Bool then
+      checkArity domains.size
       return { domains, shape := .pred false, result := ty }
+    let mkComputed (shape : LeanRelShape) (τ : Expr) : MetaM LeanRelKind := do
+      checkArity (domains.size + 1)
+      if domains.size > 2 then
+        throwError "a function-valued selector allows at most 2 arguments; \
+          write a `Spytial.Sel` for wider relations"
+      return { domains, shape, result := τ }
     match ty.getAppFn.constName?, ty.getAppArgs with
     | some c@``List, #[τ] | some c@``Array, #[τ] | some c@``Option, #[τ] =>
-      return { domains, shape := .many c, result := τ }
-    | _, _ => return { domains, shape := .one, result := ty }
+      mkComputed (.many c) τ
+    | _, _ => mkComputed .one ty
 
-/-! ## Evaluation -/
+/-- The `Bool` form of a `Prop`-valued predicate: `fun x₁ … xₙ => decide (p x₁ … xₙ)`.
+    Fails loudly when the proposition has no `Decidable` instance. -/
+meta def boolifyPred (fn : Expr) (doms : Array Expr) : MetaM Expr := do
+  let rec go (i : Nat) (xs : Array Expr) : MetaM Expr := do
+    if h : i < doms.size then
+      withLocalDeclD (Name.mkSimple s!"x{i}") doms[i] fun x =>
+        go (i + 1) (xs.push x)
+    else
+      let prop := (mkAppN fn xs).headBeta
+      -- `decide`'s instance argument trails the proposition, so `mkAppM`
+      -- would leave it unapplied; synthesize it directly.
+      let inst ← try synthInstance (← mkAppM ``Decidable #[prop])
+        catch _ => throwError "the proposition{indentExpr prop}\nneeds a \
+          `Decidable` instance to run as a selector"
+      mkLambdaFVars xs (mkApp2 (mkConst ``decide) prop inst)
+  go 0 #[]
 
-/-- Ceiling on the enumerated product. One decision per point is the same budget
-    the walker spends on identity, but a runaway deserves an error. -/
-private meta def maxSelectorEvals : Nat := 4096
+/-! ## Resolution context -/
 
-/-- What a raw Lean selector resolves against: the walked datum, the subterm
-    behind each atom, and two indexes over them. -/
+/-- The number of selected tuples past which the diagram stops being one. -/
+private meta def maxSelectedTuples : Nat := 4096
+
+/-- What a raw Lean selector resolves against: the datum, the walked instance,
+    and the subterm behind each atom. -/
 meta structure LeanSelCtx where
+  datum : Expr
   di : JsonDataInstance
   prov : Provenance
-  /-- Subterm → every atom holding it, in atom order. -/
-  located : Std.HashMap ExprStructEq (Array String)
   /-- Atom → its position in the walk, so results sort in mint order rather
       than in the datum's hash order. -/
   rank : Std.HashMap String Nat
 
-meta def LeanSelCtx.mk' (di : JsonDataInstance) (prov : Provenance) : LeanSelCtx := Id.run do
-  let mut located : Std.HashMap ExprStructEq (Array String) := {}
-  for a in di.atoms do
-    if let some e := prov[a.id]? then
-      located := located.insert ⟨e⟩ ((located[(⟨e⟩ : ExprStructEq)]?.getD #[]).push a.id)
+meta def LeanSelCtx.mk' (datum : Expr) (di : JsonDataInstance) (prov : Provenance) :
+    LeanSelCtx := Id.run do
   let mut rank : Std.HashMap String Nat := {}
   for i in [:di.atoms.size] do
     rank := rank.insert di.atoms[i]!.id i
-  return { di, prov, located, rank }
+  return { datum, di, prov, rank }
 
-/-- Every atom holding this value — empty when the walk minted none for it. A
-    value can be held by several atoms (three `.nil` leaves are three atoms,
-    one value); a computed column selects all of them, because a value carries
-    no occurrence and picking one would be a guess. -/
-private meta def LeanSelCtx.atomsOf (ctx : LeanSelCtx) (v : Expr) : MetaM (Array String) := do
-  return (ctx.located[(⟨← whnf v⟩ : ExprStructEq)]?).getD #[]
+/-- One column: the walked atoms of type `σ`, with the value behind each, in
+    atom order. The evaluated term reports indexes into this array, so an
+    index *is* an atom. The walker's sig is a short name; the definitional
+    type check keeps a same-named type's atoms out of the array, which would
+    otherwise make the evaluated term ill-typed. -/
+meta def LeanSelCtx.columnFor (ctx : LeanSelCtx) (σ : Expr) :
+    MetaM (Array String × Array Expr) := do
+  let sig ← sigOfType σ
+  let mut ids := #[]
+  let mut es := #[]
+  for a in ctx.di.atoms do
+    if a.type == sig then
+      if let some e := ctx.prov[a.id]? then
+        if ← withNewMCtxDepth (isDefEq (← inferType e) σ) then
+          ids := ids.push a.id
+          es := es.push e
+  return (ids, es)
 
-/-- The elements of a closed `List` value. `none` if the spine does not reduce. -/
-private meta partial def listElems? (e : Expr) : MetaM (Option (Array Expr)) := do
-  let e ← whnf e
-  match e.getAppFn.constName? with
-  | some ``List.nil => return some #[]
-  | some ``List.cons =>
-    let args := e.getAppArgs
-    if h : args.size = 3 then
-      let some rest ← listElems? args[2] | return none
-      return some (#[args[1]] ++ rest)
-    else return none
-  | _ => return none
+/-! ## The one evaluation -/
 
-/-- The elements the computed column ranges over, for a `.many` codomain. -/
-private meta def containerElems? (container : Name) (e : Expr) :
-    MetaM (Option (Array Expr)) := do
-  match container with
-  | ``List => listElems? e
-  | ``Array => listElems? (← mkAppM ``Array.toList #[e])
-  | _ =>
-    let e ← whnf e
-    match e.getAppFn.constName? with
-    | some ``Option.none => return some #[]
-    | some ``Option.some => return some #[e.appArg!]
-    | _ => return none
+private meta def listListNatTy : Expr :=
+  mkApp (mkConst ``List [.zero]) (mkApp (mkConst ``List [.zero]) (mkConst ``Nat))
 
-/-- Every point of `columns`' product, as index tuples. -/
-private meta def productPoints (sizes : Array Nat) : Array (Array Nat) :=
-  sizes.foldl (init := #[#[]]) fun acc n =>
-    acc.flatMap fun pt => (Array.range n).map pt.push
+private meta unsafe def evalIdxTuplesUnsafe (e : Expr) : MetaM (List (List Nat)) :=
+  Meta.evalExpr (List (List Nat)) listListNatTy e
 
-/-- The tuples `fn` selects on this datum, as arrays of atom ids. -/
+@[implemented_by evalIdxTuplesUnsafe]
+private meta opaque evalIdxTuplesCore (e : Expr) : MetaM (List (List Nat))
+
+/-- Run the built term through the compiled evaluator. Errors pass through —
+    Lean's own message for a missing `meta import` names the fix. -/
+private meta def evalIdxTuples (e : Expr) : MetaM (List (List Nat)) := do
+  try evalIdxTuplesCore e
+  catch ex => throwError "the raw Lean selector failed to run: {ex.toMessageData}"
+
+/-- Whether `n`'s visible body mentions `Spytial.walked` — the mark of a
+    definition that must be unfolded, not run. An invisible body (another
+    module, no `@[expose]`) reads as `false`; a call reaching `walked` through
+    one is caught by `walked` being `noncomputable`. -/
+private meta def refsWalked (env : Environment) (n : Name) : Bool :=
+  n != ``Spytial.walked &&
+    match env.find? n with
+    | some ci =>
+      match ci.value? with
+      | some v => v.getUsedConstants.contains ``Spytial.walked
+      | none => false
+    | none => false
+
+/-- Replace every visible `Spytial.walked` call with the quoted walked values.
+    One rule finds them: any definition whose body mentions `walked` — a named
+    selector, a `Spytial.Sel` combinator, a helper — is unfolded on the way
+    (across modules that needs `@[expose]`). -/
+private meta def interpretWalked (ctx : LeanSelCtx) (e : Expr) : MetaM Expr := do
+  let env ← getEnv
+  let mut e := e
+  -- Read through the head first: `id` from the elaborator's type wrapper, and
+  -- the named-selector case `mySel datum`.
+  for _ in [:8] do
+    let f := e.getAppFn
+    if f.isConstOf ``id || (f.isConst && refsWalked env f.constName!) then
+      if let some e' ← unfoldDefinition? e then
+        e := e'.headBeta
+        continue
+    break
+  Meta.transform e (pre := fun node => do
+    match node.getAppFn.constName? with
+    | some n =>
+      if n == ``Spytial.walked then
+        let args := node.getAppArgs
+        if h : args.size ≥ 3 then
+          let σ := args[1]
+          let (_, es) ← ctx.columnFor σ
+          return .done (← mkListLit σ es.toList)
+        return .continue
+      else if refsWalked env n then
+        match ← unfoldDefinition? node with
+        | some e' => return .visit e'.headBeta
+        | none => return .continue
+      else
+        return .continue
+    | none => return .continue)
+
+/-- A `walked` call the interpreter could not see would evaluate to `[]` and
+    silently select nothing; find it and refuse instead. Follows definitions
+    breadth-first from the term. -/
+private meta def checkNoHiddenWalked (e : Expr) : MetaM Unit := do
+  let env ← getEnv
+  let mut seen : Std.HashSet Name := ∅
+  let mut queue : Array (Name × Name) := e.getUsedConstants.map fun n => (n, n)
+  let mut budget := 300
+  while h : queue.size > 0 do
+    let (n, root) := queue[queue.size - 1]
+    queue := queue.pop
+    if seen.contains n then continue
+    seen := seen.insert n
+    if n == ``Spytial.walked then
+      if root == ``Spytial.walked then
+        throwError "`Spytial.walked` must be applied to the datum inside the \
+          selector term"
+      throwError "this selector calls `Spytial.walked` inside `{root}`, where \
+        it cannot be given the walked values; call `walked` in the selector \
+        term itself, through the `Spytial.Sel` combinators, or from an \
+        `@[expose]`d definition"
+    if budget == 0 then continue
+    budget := budget - 1
+    if let some ci := env.find? n then
+      if let some v := ci.value? then
+        for m in v.getUsedConstants do
+          unless seen.contains m do
+            queue := queue.push (m, root)
+
+/-! ## Evaluating one selector -/
+
+/-- The tuples the selector term selects on this datum, as arrays of atom ids. -/
 meta def evalLeanRel (ctx : LeanSelCtx) (fn : Expr) : MetaM (Array (Array String)) := do
   let kind ← classifyLeanRel fn
-  -- Enumerated columns: the atoms of each domain sig, with their subterms.
-  let mut cols : Array (Array (String × Expr)) := #[]
-  for dom in kind.domains do
-    let sig ← sigOfType dom
-    cols := cols.push <| ctx.di.atoms.filterMap fun a =>
-      if a.type == sig then (ctx.prov[a.id]?).map (a.id, ·) else none
-  let total := cols.foldl (init := 1) (· * ·.size)
-  if total > maxSelectorEvals then
-    throwError "raw Lean selector ranges over {total} points \
-      ({" × ".intercalate (cols.toList.map (toString ·.size))}), over the limit \
-      of {maxSelectorEvals}; a function-valued selector computes its last \
-      column instead of enumerating it"
-  let mut out : Array (Array String) := #[]
-  for pt in productPoints (cols.map (·.size)) do
-    let cells := pt.zipWith (fun i col => col[i]!) cols
-    let ids := cells.map (·.1)
-    let res := mkAppN fn (cells.map (·.2))
-    match kind.shape with
+  let cols ← kind.columns.mapM ctx.columnFor
+  let us ← (cols.zip kind.columns).mapM fun ((_, es), σ) => mkArrayLit σ es.toList
+  -- The half of the contract that needs an instance: a returned value is
+  -- located by `==`, so its type must have `BEq`.
+  let mkLocated (helper : Name) (args : Array Expr) : MetaM Expr := do
+    try mkAppM helper args
+    catch ex => throwError "{ex.toMessageData}\n\nthis selector returns \
+      values, and a returned value is located by `==` — add `deriving BEq` \
+      to the returned type"
+  let term ← match kind.shape with
     | .pred isProp =>
-      let verdict ← if isProp then decideProp? res else evalBool? res
-      if verdict == some true then out := out.push ids
+      let p ← if isProp then boolifyPred fn kind.domains else pure fn
+      let helper := match kind.domains.size with
+        | 1 => ``Spytial.Sel.selIdx1
+        | 2 => ``Spytial.Sel.selIdx2
+        | 3 => ``Spytial.Sel.selIdx3
+        | _ => ``Spytial.Sel.selIdx4
+      mkAppM helper (us.push p)
     | .one =>
-      for id in ← ctx.atomsOf res do
-        out := out.push (ids.push id)
+      let helper := if kind.domains.size == 1 then ``Spytial.Sel.selFn1
+        else ``Spytial.Sel.selFn2
+      mkLocated helper (us.push fn)
     | .many container =>
-      let some elems ← containerElems? container res | continue
-      for v in elems do
-        for id in ← ctx.atomsOf v do
-          let tuple := ids.push id
-          unless out.contains tuple do out := out.push tuple
-  -- The datum lists relations in hash order, so sort into walk order to keep
-  -- the rendered selector stable.
+      let f ← match container with
+        | ``Array => mkAppM ``Spytial.Sel.listOfArray #[fn]
+        | ``Option => mkAppM ``Spytial.Sel.listOfOption #[fn]
+        | _ => pure fn
+      let helper := if kind.domains.size == 1 then ``Spytial.Sel.selMany1
+        else ``Spytial.Sel.selMany2
+      mkLocated helper (us.push f)
+    | .sel T =>
+      let datumTy ← inferType ctx.datum
+      unless ← withNewMCtxDepth (isDefEq datumTy T) do
+        throwError "this selector expects a value of type {T}, but the value \
+          being drawn has type {datumTy}"
+      let body ← interpretWalked ctx (mkApp fn ctx.datum).headBeta
+      checkNoHiddenWalked body
+      let helper := match kind.domains.size with
+        | 1 => ``Spytial.Sel.locate1
+        | 2 => ``Spytial.Sel.locate2
+        | 3 => ``Spytial.Sel.locate3
+        | _ => ``Spytial.Sel.locate4
+      mkLocated helper (us.push body)
+  let tuples ← evalIdxTuples term
+  if tuples.length > maxSelectedTuples then
+    throwError "raw Lean selector selects {tuples.length} tuples, over the \
+      limit of {maxSelectedTuples}; a diagram op over that many tuples would \
+      not render legibly"
+  let mut out : Array (Array String) := #[]
+  let mut seen : Std.HashSet String := ∅
+  for t in tuples do
+    let ids := (t.toArray.zip cols).filterMap fun (i, (ids, _)) => ids[i]?
+    if ids.size == t.length then
+      let key := "\x00".intercalate ids.toList
+      unless seen.contains key do
+        seen := seen.insert key
+        out := out.push ids
+  -- Sort into walk order to keep the rendered selector stable.
   return out.qsort fun a b =>
     Id.run do
       for i in [:min a.size b.size] do
@@ -305,11 +442,11 @@ meta partial def SelForm.resolveLean (ctx : LeanSelCtx) : SelForm → MetaM SelF
 
 end
 
-/-- Rewrite every raw Lean selector in `spec` into the tuples it selects on this
-    datum. Runs before any lowering to SGQ; identity on specs with none. -/
-meta def resolveLeanSelectors (di : JsonDataInstance) (prov : Provenance)
-    (spec : SpytialSpec) : MetaM SpytialSpec := do
-  let ctx := LeanSelCtx.mk' di prov
+/-- Rewrite every raw Lean selector in `spec` into the tuples it selects on
+    this datum. Runs before any lowering to SGQ; identity on specs with none. -/
+meta def resolveLeanSelectors (datum : Expr) (di : JsonDataInstance)
+    (prov : Provenance) (spec : SpytialSpec) : MetaM SpytialSpec := do
+  let ctx := LeanSelCtx.mk' datum di prov
   spec.mapM fun
     | .orientation s ds => return .orientation (← s.resolveLean ctx) ds
     | .align s d => return .align (← s.resolveLean ctx) d
