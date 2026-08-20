@@ -48,3 +48,16 @@ example (h : TEven 4) : True := by
 example : True := by
   spytial.proof teven_four with [hideAtom Nat]
   trivial
+
+-- the tactics see hypotheses introduced by earlier tactics (withMainContext)
+set_option linter.unusedVariables false in
+example : ∀ n : Nat, True := by
+  intro n
+  spytial n
+  trivial
+
+set_option linter.unusedVariables false in
+example : ∀ h : TEven 4, True := by
+  intro h
+  spytial.proof h
+  trivial

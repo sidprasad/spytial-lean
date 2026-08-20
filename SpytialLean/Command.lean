@@ -604,10 +604,12 @@ open Tactic in
 meta def elabSpytialTactic : Tactic := fun stx => do
   match stx with
   | `(tactic| spytial $t:term) => do
-    let props ← spytialPayloadProps t
+    -- withMainContext: hypotheses introduced by earlier tactics (intro, cases)
+    -- live in the goal's context, not the by-block's ambient one
+    let props ← withMainContext do spytialPayloadProps t
     savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
   | `(tactic| spytial $t:term with [$ops,*]) => do
-    let props ← spytialPayloadProps t (some ops.getElems)
+    let props ← withMainContext do spytialPayloadProps t (some ops.getElems)
     savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
   | _ => throwError "Unexpected syntax {stx}."
 
@@ -633,7 +635,8 @@ open Tactic in
 meta def elabSpytialProofTactic : Tactic := fun stx => do
   -- A quotation pattern would lex `spytial.proof` as one dotted ident and never
   -- match; extract positionally.
-  let props ← spytialPayloadProps stx[1] (optionalOps stx[2]) { filterProofs := false }
+  let props ← withMainContext do
+    spytialPayloadProps stx[1] (optionalOps stx[2]) { filterProofs := false }
   savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
 
 end
