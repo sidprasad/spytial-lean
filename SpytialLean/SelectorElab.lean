@@ -4,6 +4,7 @@ public import Lean
 public meta import SpytialLean.Selector
 public meta import SpytialLean.TypeShape
 public meta import SpytialLean.Relationalizer
+public meta import SpytialLean.LeanSelector
 
 namespace SpytialLean
 
@@ -244,6 +245,13 @@ syntax:100 (name := selNegNum) "-" noWs num : spytial_sel
 /-- Backquote atom literal (`` `a0 ``), spelled with Lean's `name` literal. -/
 syntax:100 (name := selAtomLit) name : spytial_sel
 
+/-- A raw Lean predicate over the walked values: `lean (fun n : RBNode => …)`.
+    The parentheses belong to this rule, not to the generic selector grouping:
+    they bound a greedy `term`, and they keep `lean (f)` out of the hands of the
+    `(blockName arg…)` style-block rule. Non-reserved, so a relation named
+    `lean` still reads as `selIdent`. -/
+syntax:100 (name := selLean) &"lean " "(" term ")" : spytial_sel
+
 -- `univ`/`iden`/`none` have no rules of their own: an atom-keyed rule never
 -- fires on an unspaced `univ.lo`, so `resolveExprIdent` reads them off the ident.
 
@@ -407,6 +415,38 @@ private meta def resolveCtorLit? (scope : SelScope) (stx : Syntax) : TermElabM (
     return some (.ctorLit ctorName (shortName ctorName))
   return none
 
+/-! ### Raw Lean selectors
+
+`lean <term>` steps outside the relational vocabulary: the term is an ordinary
+Lean function, checked by Lean's own elaborator. Its type fixes the columns it
+selects and their arity (`classifyLeanRel`); `SpytialLean.LeanSelector`
+resolves it against a datum. -/
+
+private meta def elabLeanRel (scope : SelScope) (stx : TSyntax `term) :
+    TermElabM EExpr := do
+  let fn ← instantiateMVars (← Term.withSynthesize <| Term.elabTerm stx none)
+  -- Lean already reported whatever went wrong; a second message about the
+  -- recovery term's holes would only bury it. The unknown arity disables
+  -- downstream position checks.
+  if fn.hasSorry then return .rel .none_ none
+  if fn.hasExprMVar || fn.hasFVar then
+    throwErrorAt stx "a raw Lean selector must be a closed term; this one \
+      still has holes or local variables"
+  let kind ← withRef stx <| classifyLeanRel fn
+  -- A `Prop`-valued predicate runs through `decide`; refuse an undecidable
+  -- one here, where the message can point at the selector.
+  if let .pred true := kind.shape then
+    discard <| withRef stx <| boolifyPred fn kind.domains
+  -- A column over a type the walk cannot produce can never be filled; in a
+  -- strict scope that is a mistake worth naming, in a lenient one unknowable.
+  unless scope.lenient do
+    for col in kind.columns do
+      if let some n ← typeHead? col then
+        unless scope.types.contains n do
+          logWarningAt stx m!"'{n}' is not among the types reachable from \
+            '{scope.root}', so this selector cannot match anything"
+  return .rel (.leanRel fn) (some kind.arity)
+
 mutual
 
 private meta partial def elabExpr (scope : SelScope) (env : LEnv) :
@@ -468,6 +508,7 @@ private meta partial def elabExpr (scope : SelScope) (env : LEnv) :
       checkArity stx[1] "a label projection's operand" arity 1
       return .int (.proj sel)
     | `selProd => elabProd scope env stx
+    | ``selLean => elabLeanRel scope ⟨stx[2]⟩
     | _ => elabBoxJoin? scope env stx
 
 private meta partial def elabBoxJoin? (scope : SelScope) (env : LEnv) (stx : Syntax) :

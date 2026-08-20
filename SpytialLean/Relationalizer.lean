@@ -42,6 +42,11 @@ public meta inductive IdentityRoute where
   | eqvRel (r : Expr)
   deriving Inhabited
 
+/-- Atom id → the (post-whnf) subterm that minted it. Populated for ordinary
+    value atoms only: holes, hypotheses, and custom-relationalizer atoms have no
+    subterm a Lean predicate could be applied to, and are absent. -/
+public meta abbrev Provenance := Std.HashMap String Expr
+
 /-- State maintained while walking an expression tree. -/
 public meta structure WalkState where
   atoms : Array JsonAtom := #[]
@@ -74,6 +79,8 @@ public meta structure WalkState where
   /-- Exact-occurrence shortcut for `.eqv` types: a structurally identical
       subterm rejoins its group without re-evaluating the relation. -/
   eqvSeen : ExprStructMap String := {}
+  /-- What each atom was walked from, for raw Lean selectors. -/
+  provenance : Provenance := {}
 
 /-- Generate a fresh atom ID. -/
 public meta def WalkState.freshId (s : WalkState) : String × WalkState :=
@@ -732,7 +739,7 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
     return id
   let s ← get
   let (atomId, s) := s.freshId
-  set s
+  set { s with provenance := s.provenance.insert atomId e }
   -- Register before walking children, so a re-occurrence inside the subtree
   -- (sharing, or a quotient collapsing a child into its parent) resolves to
   -- this atom.
@@ -741,10 +748,16 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
     e ty origName atomId
   return atomId
 
+/-- Walk an expression and produce a complete JsonDataInstance, keeping the
+    subterm each atom was walked from (see `Provenance`). -/
+public meta def relationalizeWithProvenance (e : Expr) (cfg : WalkConfig := {}) :
+    MetaM (JsonDataInstance × Provenance) := do
+  let (_, state) ← walkExpr cfg e |>.run {}
+  return (state.toDataInstance, state.provenance)
+
 /-- Walk an expression and produce a complete JsonDataInstance. -/
 public meta def relationalize (e : Expr) (cfg : WalkConfig := {}) : MetaM JsonDataInstance := do
-  let (_, state) ← walkExpr cfg e |>.run {}
-  return state.toDataInstance
+  return (← relationalizeWithProvenance e cfg).1
 
 /-! ## Two-pass reference implementation
 
