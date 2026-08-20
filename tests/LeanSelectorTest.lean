@@ -254,6 +254,33 @@ info: {"constraints":
 #spytial.spec lBig with
   [hideAtom lean ((⟨fun t => [(t, t)]⟩ : Spytial.Sel LRB (LRB × LRB)))]
 
+-- A reducible alias is normalized before the columns are read, so an `abbrev`
+-- standing for a product contributes both of them.
+public abbrev LEdge := LRB × LRB
+
+/--
+info: {"constraints":
+ [{"orientation": {"selector": "`atom_0->`atom_3", "directions": ["below"]}}]}
+-/
+#guard_msgs in
+#spytial.spec lBig with
+  [orientation lean ((⟨fun t => [(t, t.lt)]⟩ : Spytial.Sel LRB LEdge)) below]
+
+-- Same for an alias of a column type, and for one of `Sel` itself.
+public abbrev LNode := LRB
+public abbrev LRBSel := Spytial.Sel LRB LNode
+
+/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_0"}}]} -/
+#guard_msgs in
+#spytial.spec lBig with [hideAtom lean ((⟨fun t => [t]⟩ : LRBSel))]
+
+-- The tuple cap counts the *set*, so duplicates cost nothing: this returns
+-- 9000 tuples and selects one.
+/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_0"}}]} -/
+#guard_msgs in
+#spytial.spec lBig with
+  [hideAtom lean ((⟨fun t => List.replicate 9000 t⟩ : Spytial.Sel LRB LRB))]
+
 /-! ## Deferred resolution
 
 An attached spec is elaborated with no value in sight and stored structurally;

@@ -82,23 +82,29 @@ meta def LeanRelKind.columns (k : LeanRelKind) : Array Expr :=
   | .pred _ | .sel _ => k.domains
   | _ => k.domains.push k.result
 
-/-- The column types of a tuple type: `σ₁ × σ₂ × σ₃` splits right-nested. -/
-private meta partial def splitProds (α : Expr) : Array Expr :=
+/-- The column types of a tuple type: `σ₁ × σ₂ × σ₃` splits right-nested.
+    Each level is normalized at reducible transparency first, so an `abbrev`
+    standing for a product (`abbrev Edge := Node × Node`) contributes its own
+    columns rather than reading as one. A column type is normalized for the
+    same reason: the walk knows it under its real name. -/
+private meta partial def splitProds (α : Expr) : MetaM (Array Expr) := do
+  let α ← whnfR α
   if α.isAppOfArity ``Prod 2 then
-    #[α.getAppArgs[0]!] ++ splitProds α.getAppArgs[1]!
+    return #[α.getAppArgs[0]!] ++ (← splitProds α.getAppArgs[1]!)
   else
-    #[α]
+    return #[α]
 
 /-- Read the selector term's type as a relation. Shared by the elaborator
     (which needs the arity to check the op position) and by resolution, so the
     two cannot drift. Throws the user-facing rejections. -/
 meta def classifyLeanRel (fn : Expr) : MetaM LeanRelKind := do
-  let ty ← instantiateMVars (← inferType fn)
-  -- The canonical form is marked by its type's head; `Sel` is a structure,
-  -- so inference keeps the head visible.
+  -- The canonical form is marked by its type's head; `Sel` is a structure, so
+  -- inference keeps the head visible, and reducible normalization sees through
+  -- an `abbrev` standing for one.
+  let ty ← whnfR (← instantiateMVars (← inferType fn))
   if ty.getAppFn.isConstOf ``Spytial.Sel then
     if let #[T, α] := ty.getAppArgs then
-      let cols := splitProds α
+      let cols ← splitProds α
       if cols.size > maxSelArity then
         throwError "a Lean selector can select at most {maxSelArity}-tuples, \
           but this one selects {cols.size}-tuples"
@@ -109,7 +115,7 @@ meta def classifyLeanRel (fn : Expr) : MetaM LeanRelKind := do
   while ty matches .forallE .. do
     let .forallE _ dom body _ := ty | unreachable!
     if body.hasLooseBVars then break
-    domains := domains.push dom
+    domains := domains.push (← whnfR dom)
     ty ← whnf body
   if domains.isEmpty then
     throwError "a raw Lean selector must be a function over the walked types, \
@@ -262,10 +268,6 @@ meta def evalLeanRel (ctx : LeanSelCtx) (fn : Expr) : MetaM (Array (Array String
         | _ => ``Spytial.Sel.locate4
       mkLocated helper (us.push body)
   let tuples ← evalIdxTuples term
-  if tuples.length > maxSelectedTuples then
-    throwError "raw Lean selector selects {tuples.length} tuples, over the \
-      limit of {maxSelectedTuples}; a diagram op over that many tuples would \
-      not render legibly"
   let mut out : Array (Array String) := #[]
   let mut seen : Std.HashSet String := ∅
   for t in tuples do
@@ -275,6 +277,12 @@ meta def evalLeanRel (ctx : LeanSelCtx) (fn : Expr) : MetaM (Array (Array String
       unless seen.contains key do
         seen := seen.insert key
         out := out.push ids
+  -- The cap counts the *set*: `Tuples` ignores duplicates, so a selector that
+  -- returns one tuple many times is small, however long its list.
+  if out.size > maxSelectedTuples then
+    throwError "raw Lean selector selects {out.size} tuples, over the \
+      limit of {maxSelectedTuples}; a diagram op over that many tuples would \
+      not render legibly"
   -- Sort into walk order to keep the rendered selector stable.
   return out.qsort fun a b =>
     Id.run do
