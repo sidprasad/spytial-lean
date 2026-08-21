@@ -749,7 +749,8 @@ private meta def runFindSearch (subjStx : Syntax) (depthStx : Syntax) :
   let atLeast := if search.capped then "at least " else ""
   let uncheckedNote :=
     if search.unchecked == 0 then m!""
-    else m!" ({search.unchecked} hypothesis(es) unchecked: no decision procedure)"
+    else m!" ({search.unchecked} hypothesis(es) unchecked: no decision \
+      procedure, or no candidates left to decide on)"
   match search.models[0]? with
   | some m =>
     logInfo m!"spytial.find: {search.models.size} of {atLeast}{search.candidates} \

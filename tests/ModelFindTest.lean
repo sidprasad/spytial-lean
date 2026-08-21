@@ -60,12 +60,14 @@ private meta def fLeaf (n : Nat) : Expr :=
 
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `x fTree fun x => do
-  -- unsatisfiable within the bound: everything ruled out
+  -- unsatisfiable within the bound: everything ruled out. h1 empties the
+  -- pool, so h2 is never decided on anything — unchecked, not checked
   withLocalDeclD `h1 (← mkAppM ``Ne #[x, fLeaf 0]) fun _ => do
   withLocalDeclD `h2 (← mkAppM ``Eq #[x, fLeaf 0]) fun _ => do
     let search ← findModels x.fvarId! 1
     unless search.models.size == 0 do throwError "find.unsat: models {search.models.size}"
-    unless search.checked == 2 do throwError "find.unsat: checked {search.checked}"
+    unless search.checked == 1 && search.unchecked == 1 do
+      throwError "find.unsat: checked {search.checked}, unchecked {search.unchecked}"
 
 /-! ## A found model draws as the hole's structure, constraints against it -/
 
@@ -80,3 +82,36 @@ private meta def fLeaf (n : Nat) : Expr :=
     assertCanon "find.walk" st.toDataInstance
       "FTree|leaf\nNat|1\nFTree|leaf\nNat|0\n\
        value[FTree,Nat]:0,1;2,3\n≠[FTree,FTree]:0,2"
+
+/-! ## Honesty at the edges -/
+
+-- an explicit large depth does not bypass the cap for Nat
+#eval show Lean.Elab.TermElabM Unit from do
+  let vals ← enumerateValues (mkConst ``Nat) 1000000 (cap := 8)
+  unless vals.size == 8 do throwError "find.natCap: {vals.size} values"
+
+-- once every candidate is ruled out, later hypotheses are never counted as
+-- checked: there was nothing to decide them on
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x (mkConst ``Bool) fun x => do
+  withLocalDeclD `h1 (← mkAppM ``Ne #[x, mkConst ``Bool.true]) fun _ => do
+  withLocalDeclD `h2 (← mkAppM ``Ne #[x, mkConst ``Bool.false]) fun _ => do
+  withLocalDeclD `R (← mkArrow (mkConst ``Bool) (mkSort Level.zero)) fun R => do
+  withLocalDeclD `h3 (mkApp R x) fun _ => do
+    let search ← findModels x.fvarId! 0
+    unless search.models.isEmpty do throwError "find.exhausted: models"
+    unless search.checked == 2 do throwError "find.exhausted: checked {search.checked}"
+    unless search.unchecked == 1 do
+      throwError "find.exhausted: unchecked {search.unchecked}"
+
+-- a hypothesis reaching the subject only through a let alias still filters
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x (mkConst ``Bool) fun x => do
+  withLetDecl `y (mkConst ``Bool) x fun y => do
+  withLocalDeclD `h (← mkAppM ``Eq #[y, mkConst ``Bool.true]) fun _ => do
+    let search ← findModels x.fvarId! 0
+    unless search.checked == 1 do throwError "find.letAlias: checked {search.checked}"
+    unless search.models.size == 1 do
+      throwError "find.letAlias: {search.models.size} models"
+    unless search.models[0]!.isConstOf ``Bool.true do
+      throwError "find.letAlias: wrong model"

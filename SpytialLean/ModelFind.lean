@@ -43,7 +43,7 @@ public meta partial def enumerateValues (ty : Expr) (depth : Nat) (cap : Nat := 
   let ty ← whnf ty
   match ty.getAppFn with
   | .const ``Nat _ =>
-    return (Array.range (depth + 1)).map (mkRawNatLit ·)
+    return (Array.range (min (depth + 1) cap)).map (mkRawNatLit ·)
   | .const indName lvls => do
     let env ← getEnv
     let some (.inductInfo ii) := env.find? indName | return #[]
@@ -106,7 +106,10 @@ public meta def findModels (x : FVarId) (depth : Nat) (cap : Nat := 512) :
   for decl in ← getLCtx do
     if decl.isImplementationDetail then continue
     if decl.fvarId == x then continue
-    let hypTy ← instantiateMVars decl.type
+    -- see through let aliases (`let y := x; h : y = true` mentions x only
+    -- via y): unfold let-bound variables to their values before the mention
+    -- check, so the substitution below reaches x
+    let hypTy ← zetaReduce (← instantiateMVars decl.type)
     unless hypTy.containsFVar x do continue
     if ← Meta.isProp hypTy then
       hyps := hyps.push hypTy
@@ -114,6 +117,11 @@ public meta def findModels (x : FVarId) (depth : Nat) (cap : Nat := 512) :
   let mut checked := 0
   let mut unchecked := 0
   for h in hyps do
+    -- with no candidates left there is nothing to decide against: later
+    -- hypotheses filtered nothing and count as unchecked, never as checked
+    if surviving.isEmpty then
+      unchecked := unchecked + 1
+      continue
     let mut verdicts : Array (Expr × Bool) := #[]
     let mut decidesAll := true
     for v in surviving do
