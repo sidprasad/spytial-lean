@@ -635,15 +635,14 @@ open Tactic in
     earlier tactics live there, not in the by-block's ambient one), build the
     payload, report facts that were not drawn, render. -/
 private meta def spytialInContextTac (t : Syntax) (usingStx : Syntax)
-    (ops? : Option (Array (TSyntax `spytial_op))) (stx : Syntax)
-    (derive : Bool := false) : TacticM Unit := do
+    (ops? : Option (Array (TSyntax `spytial_op))) (stx : Syntax) :
+    TacticM Unit := do
   let (props, skipped) ← withMainContext do
     spytialInContextProps (← elabTermInstantiated t) ops? {} (← resolveFacts usingStx)
-      derive
+      (derive := true)
   if skipped > 0 then
     logInfo m!"spytial: {skipped} fact(s) about the subject not drawn \
-      (an `∨`/`∀`/`→`, or a negative fact against values not in the \
-      diagram)."
+      (an `∨`, or a negative fact against values not in the diagram)."
   savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
 
 open Tactic in
@@ -664,10 +663,14 @@ open Tactic in
       fact draws only between values already in the world — ruling a term
       out is not license to materialize it, so `h : x ≠ node a b` against an
       absent term is counted, not drawn.
+    - Universal knowledge is put to work: every rule-shaped hypothesis
+      (`∀ …, … → …`) is applied to the known facts, and a conclusion draws
+      only with a type-checked proof term behind it. A rule is never drawn
+      as itself.
     - Hypotheses not mentioning the subject are ignored; subject-relevant
       facts that cannot draw (an `∨` — one side holds, but which is unknown
-      — a `∀`, a `→`, a withheld negative fact) are counted, with one note
-      reporting the count.
+      — an unfired rule, a withheld negative fact) are counted, with one
+      note reporting the count.
 
     The goal is deliberately not drawn: hypotheses are established knowledge,
     the goal is what is still being proven.
@@ -713,44 +716,10 @@ open Tactic in
 meta def elabSpytialDatumTactic : Tactic := fun stx => do
   withMainContext do
     let subject ← elabTermInstantiated stx[1]
-    let (_, state) ← (walkInContext {} subject (← resolveFacts stx[2])).run {}
+    let (_, state) ←
+      (walkInContext {} subject (← resolveFacts stx[2]) (derive := true)).run {}
     logInfo m!"{(toJson state.toDataInstance).pretty}"
 
-meta def spytialDeriveKw : Lean.Parser.Parser :=
-  Lean.Parser.nonReservedSymbol "spytial.derive" (includeIdent := true)
-
-open Tactic in
-/-- `spytial.derive <term>` draws the value like the `spytial` tactic, and
-    additionally puts universal knowledge to work: every rule-shaped
-    hypothesis (`∀ …, … → …`) is applied to the known facts, and each
-    conclusion that carries a type-checked proof term is drawn as well.
-    Derivation never guesses — a derived arrow always has a real proof
-    behind it. `with [<ops>]` works as in `spytial`; the vocabulary is open
-    (a rule can conclude in relations no plain fact names), so op checking
-    is lenient. -/
-syntax (name := spytialDeriveTactic) spytialDeriveKw term
-  (" with " "[" spytial_op,* "]")? : tactic
-
-open Tactic in
-@[tactic spytialDeriveTactic]
-meta def elabSpytialDeriveTactic : Tactic := fun stx => do
-  spytialInContextTac stx[1] .missing (optionalOps stx[2]) stx (derive := true)
-
-meta def spytialDeriveDatumKw : Lean.Parser.Parser :=
-  Lean.Parser.nonReservedSymbol "spytial.derive.datum" (includeIdent := true)
-
-open Tactic in
-/-- `spytial.derive.datum <term>` prints the JSON `spytial.derive` would
-    draw — the debugging counterpart. -/
-syntax (name := spytialDeriveDatumTactic) spytialDeriveDatumKw term : tactic
-
-open Tactic in
-@[tactic spytialDeriveDatumTactic]
-meta def elabSpytialDeriveDatumTactic : Tactic := fun stx => do
-  withMainContext do
-    let subject ← elabTermInstantiated stx[1]
-    let (_, state) ← (walkInContext {} subject none (derive := true)).run {}
-    logInfo m!"{(toJson state.toDataInstance).pretty}"
 
 /-! ## Proof tactic -/
 

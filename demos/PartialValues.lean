@@ -117,21 +117,29 @@ then p holds and q holds.
 
 `hor` is an `∨`, and `∨` cannot be split: one half is true, but we do not
 know which, so drawing either half would be a guess. It is counted, and the
-tactic prints a note. `hsymm` is a rule about all values (`∀`), not one
-fact about these ones — and it never mentions `x` anyway — so it is
-ignored. -/
+tactic prints a note. -/
 
 set_option linter.unusedVariables false in
 example {α : Type} (R : α → α → Prop) (x y : α)
-    (h : R x y) (hb : R y x ∧ R x x) (hor : R x y ∨ R y x)
-    (hsymm : ∀ a b, R a b → R b a) : R y x := by
+    (h : R x y) (hb : R y x ∧ R x x) (hor : R x y ∨ R y x) : True := by
   spytial x
-  exact hsymm x y h
+  trivial
+
+/-! A `∀` is a rule, not one fact — it cannot draw as an arrow. But applied
+to the facts at hand it *proves* new facts, and those draw. Below, `hs`
+applied to `h` proves `R y x`, so the diagram has both arrows. Every derived
+arrow has a real, type-checked proof term behind it; derivation never
+guesses. -/
 
 example {α : Type} (R : α → α → Prop) (x y : α)
-    (h : R x y) (hsymm : ∀ a b, R a b → R b a) : R y x := by
+    (h : R x y) (hs : ∀ a b, R a b → R b a) : R y x := by
+  spytial x
+  exact hs x y h
+
+example {α : Type} (R : α → α → Prop) (x y : α)
+    (h : R x y) (hs : ∀ a b, R a b → R b a) : R y x := by
   spytial.datum x
-  exact hsymm x y h
+  exact hs x y h
 
 /-! ## 6. You pick the facts
 
@@ -188,26 +196,6 @@ example (t u : DTree) (h : t.height = 3) (hr : t.left = u) : True := by
   spytial.datum t
   trivial
 
-/-! ## 8. Universal facts put to work
-
-`spytial t` only counts a `∀` — a rule is not one fact. `spytial.derive t`
-applies the rules: every `∀ …, … → …` hypothesis is applied to the facts at
-hand, and a conclusion is drawn only when it comes with a real,
-type-checked proof term. Below, `hs` applied to `h` proves `R y x`, so the
-diagram has both arrows. Derivation never guesses. -/
-
-set_option linter.unusedVariables false in
-example {α : Type} (R : α → α → Prop) (x y : α)
-    (h : R x y) (hs : ∀ a b, R a b → R b a) : True := by
-  spytial.derive x
-  trivial
-
-set_option linter.unusedVariables false in
-example {α : Type} (R : α → α → Prop) (x y : α)
-    (h : R x y) (hs : ∀ a b, R a b → R b a) : True := by
-  spytial.derive.datum x
-  trivial
-
 /-! ## Styling
 
 Nothing is ever styled by default — how the diagram looks is the spec
@@ -233,8 +221,8 @@ example (t u : DTree) (h : t ≠ u) : True := by
 - Measurements like `t.height = 3` attach to the value as function arrows,
   refute impossible constructors, and expand the value one level — holes
   become atoms, and facts that reduce to hole assignments fill them
-  (section 7). `spytial.derive` puts `∀`-rules to work, by proof
-  (section 8). Nothing is ever styled unless a spec says so.
+  (section 7). `∀`-rules fire automatically, by proof (section 5). Nothing
+  is ever styled unless a spec says so.
 
 **Do not have:**
 - **Deep shapes.** Expansion goes one level and only when a single

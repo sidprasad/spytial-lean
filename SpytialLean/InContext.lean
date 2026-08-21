@@ -204,11 +204,13 @@ private meta def mentionsAny (ty : Expr) (fvars : Array FVarId) : Bool :=
     picture), or, with `subjectOnly`, does not mention the subject. Returns
     the number of subject-relevant parts that could not be drawn. -/
 private meta def walkHypFacts (cfg : WalkConfig) (subjFVars : Array FVarId)
-    (subjectOnly : Bool) (hypTy : Expr) (absorbed : Array Expr := #[]) :
-    StateT WalkState MetaM Nat := do
+    (subjectOnly : Bool) (hypTy : Expr) (absorbed : Array Expr := #[])
+    (rulesHandled : Bool := false) : StateT WalkState MetaM Nat := do
   let mut skipped : Nat := 0
   for part in conjuncts hypTy do
     if subjectOnly && !mentionsAny part subjFVars then continue
+    -- a rule is derivation's business (`rulesHandled`), not an undrawn fact
+    if rulesHandled && part.isForall && !(peelNot part).2 then continue
     if absorbed.any (·.equal part) then continue
     if let some (var, rhs) ← refinementOf? part then
       if let some applied := cfg.refinements[var]? then
@@ -436,7 +438,7 @@ meta def walkInContext (cfg : WalkConfig) (subject : Expr)
   | some facts =>
     for fvarId in facts do
       skipped := skipped + (← walkHypFacts cfg subjFVars false
-        (← instantiateMVars (← fvarId.getType)) absorbed)
+        (← instantiateMVars (← fvarId.getType)) absorbed (rulesHandled := derive))
   | none =>
     for decl in ← getLCtx do
       if decl.isImplementationDetail then continue
@@ -444,10 +446,11 @@ meta def walkInContext (cfg : WalkConfig) (subject : Expr)
       unless mentionsAny hypTy subjFVars do continue
       if (← Meta.isClass? hypTy).isSome then continue
       unless ← Meta.isProp hypTy do continue
-      skipped := skipped + (← walkHypFacts cfg subjFVars true hypTy absorbed)
+      skipped := skipped +
+        (← walkHypFacts cfg subjFVars true hypTy absorbed (rulesHandled := derive))
   if derive then
     for p in ← deriveFacts do
-      let _ ← walkHypFacts cfg subjFVars true p absorbed
+      let _ ← walkHypFacts cfg subjFVars true p absorbed (rulesHandled := true)
   return skipped
 
 /-! ## The spec-checker vocabulary of a value in context -/
@@ -462,9 +465,9 @@ meta def walkInContext (cfg : WalkConfig) (subject : Expr)
     expressions — the query language cannot lex them. Equations are predicted
     as `=` tuples even when the walk refines them away: a superset vocabulary
     is always safe. With `facts?`, the prediction covers exactly the listed
-    hypotheses, mirroring `walkInContext`. With `derive`, the vocabulary is
-    open — a rule's conclusion can name relations no ground fact does — so
-    the scope turns lenient. -/
+    hypotheses, mirroring `walkInContext`. With `derive`, the prediction
+    runs the same derivation the walk does, so derived relation names are
+    predicted exactly. -/
 meta def scopeInContext (subject : Expr) (facts? : Option (Array FVarId) := none)
     (derive : Bool := false) : MetaM SelScope := do
   let subject ← instantiateMVars subject
@@ -473,7 +476,8 @@ meta def scopeInContext (subject : Expr) (facts? : Option (Array FVarId) := none
     | some root => SelScope.ofType root
     | none => pure { root := `_subject, lenient := true }
   -- the same selection walkInContext draws from: the listed hypotheses, or
-  -- every subject-relevant Prop hypothesis
+  -- every subject-relevant Prop hypothesis — plus, with `derive`, the same
+  -- derivation the walk performs, so predicted names stay exact
   let hypTys ← match facts? with
     | some facts => facts.mapM (fun fvarId => do instantiateMVars (← fvarId.getType))
     | none => do
@@ -485,6 +489,7 @@ meta def scopeInContext (subject : Expr) (facts? : Option (Array FVarId) := none
         if (← Meta.isClass? hypTy).isSome then continue
         tys := tys.push hypTy
       pure tys
+  let hypTys ← if derive then pure (hypTys ++ (← deriveFacts)) else pure hypTys
   -- one head per walked fact argument; `none` marks an unpredictable
   -- vocabulary. propTupleShape? mirrors walkPropTuple, so names cannot drift.
   let mut heads : Array (Option Name) := #[]
@@ -506,7 +511,7 @@ meta def scopeInContext (subject : Expr) (facts? : Option (Array FVarId) := none
       | some (o, some a') => if a' == a then scope.rels else scope.rels.insert n (o, none)
       | some (_, none) => scope.rels
       | none => scope.rels.insert n (scope.root, some a) }
-  return { scope with lenient := scope.lenient || heads.contains none || derive }
+  return { scope with lenient := scope.lenient || heads.contains none }
 
 end
 
