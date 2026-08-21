@@ -56,17 +56,46 @@ meta partial def conjuncts (ty : Expr) : Array Expr :=
   | some (p, q) => conjuncts p ++ conjuncts q
   | none => #[ty]
 
+/-- The function-graph reading of one equation side: `t.height = 3` states
+    that `(t, 3)` is a point of `height`'s graph, so it can draw as a
+    `height` tuple attached to `t` — not as a floating `=` between a stuck
+    atom and a literal. Applies when the side applies a named function (not
+    a constructor — a constructor application is a value) to at least one
+    data argument. -/
+private meta def graphSide? (side : Expr) : MetaM (Option (String × Array Expr)) := do
+  let name? ← match side.getAppFn with
+    | .const n _ =>
+      match (← getEnv).find? n with
+      | some (.ctorInfo _) => pure none
+      | _ => pure (some (shortName n))
+    | .fvar id => pure (some (hypLabel (← id.getUserName)))
+    | _ => pure none
+  let some name := name? | return none
+  let mut args : Array Expr := #[]
+  for a in side.getAppArgs do
+    if ← isProofArg a then continue
+    if (← Meta.isClass? (← inferType a)).isSome then continue
+    args := args.push a
+  if args.isEmpty then return none
+  return some (name, args)
+
 /-- The refinement one Prop states, if any: an equation with a plain
-    variable on one side that does not occur in the other. Shared between
-    the harvest and the fact walk, so a fact that merely restates an applied
-    refinement is recognized and not drawn again. -/
-meta def refinementOf? (ty : Expr) : Option (FVarId × Expr) :=
-  match ty.eq? with
-  | some (_, .fvar id, rhs) =>
-    if rhs.containsFVar id then none else some (id, rhs)
-  | some (_, lhs, .fvar id) =>
-    if lhs.containsFVar id then none else some (id, lhs)
-  | _ => none
+    variable on one side that does not occur in the other. An equation
+    against a function application is a graph point (`a = root x` draws as
+    `root[x, a]`), not a refinement into a stuck term — refining only pays
+    when the other side brings structure. Shared between the harvest and the
+    fact walk, so a fact that merely restates an applied refinement is
+    recognized and not drawn again. -/
+meta def refinementOf? (ty : Expr) : MetaM (Option (FVarId × Expr)) := do
+  let some (_, lhs, rhs) := ty.eq? | return none
+  let pick (id : FVarId) (other : Expr) : MetaM (Option (FVarId × Expr)) := do
+    if other.containsFVar id then return none
+    if (← graphSide? other).isSome then return none
+    return some (id, other)
+  match lhs, rhs with
+  | .fvar id, _ => pick id rhs
+  | _, .fvar id => pick id lhs
+  | _, _ => return none
 
 /-- The refinement candidates of one local context, in context order: `let`
     bindings (elaborator-known structure), and equations with a plain
@@ -83,7 +112,7 @@ meta def equationRefinements (lctx : LocalContext) : MetaM (Array Refinement) :=
         let v ← instantiateMVars v
         pure (if v.containsFVar decl.fvarId then #[] else #[(decl.fvarId, v)])
       else
-        pure <| (conjuncts (← instantiateMVars decl.type)).filterMap refinementOf?
+        (conjuncts (← instantiateMVars decl.type)).filterMapM refinementOf?
     for (var, t) in picks do
       unless seen.contains var do
         seen := seen.insert var
@@ -105,11 +134,22 @@ private meta def peelNot (ty : Expr) : Expr × Bool :=
     name, the data arguments, and whether the Prop was negated. Shared with
     `scopeInContext` so predicted names cannot drift from emitted ones.
     `none` when the Prop does not decompose: no named head, or no data
-    arguments to anchor a tuple. -/
+    arguments to anchor a tuple. An equation with a function application on
+    one side takes the function-graph shape (`graphSide?`). -/
 meta def propTupleShape? (ty : Expr) :
     MetaM (Option (String × Array Expr × Bool)) := do
   unless ← Meta.isProp ty do return none
   let (body, negated) := peelNot ty
+  if let some (_, lhs, rhs) := body.eq? then
+    let graph? ← do
+      match ← graphSide? lhs with
+      | some (n, args) => pure (some (n, args.push rhs))
+      | none =>
+        match ← graphSide? rhs with
+        | some (n, args) => pure (some (n, args.push lhs))
+        | none => pure none
+    if let some (n, args) := graph? then
+      return some ((if negated then negRelName n else n), args, negated)
   let some base ← propRelName? body.getAppFn | return none
   let relName :=
     if negated then
@@ -168,7 +208,7 @@ private meta def walkHypFacts (cfg : WalkConfig) (subjFVars : Array FVarId)
   let mut skipped : Nat := 0
   for part in conjuncts hypTy do
     if subjectOnly && !mentionsAny part subjFVars then continue
-    if let some (var, rhs) := refinementOf? part then
+    if let some (var, rhs) ← refinementOf? part then
       if let some applied := cfg.refinements[var]? then
         if applied.equal rhs then continue
     unless ← walkPropTuple cfg part do

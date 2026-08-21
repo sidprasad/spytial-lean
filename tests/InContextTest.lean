@@ -15,6 +15,10 @@ public inductive STree where
   | leaf (value : Nat)
   | node (left right : STree)
 
+public def STree.depth : STree → Nat
+  | .leaf _ => 0
+  | .node l r => max l.depth r.depth + 1
+
 private meta def sTree : Expr := .const ``STree []
 
 private meta def sLeaf (n : Nat) : Expr :=
@@ -233,6 +237,30 @@ rendering. -/
     let (_, st) ← runCtx x
     assertCanon "ctx.arrowFalse" st.toDataInstance
       "α|x\nα|y\n¬R[α,α]:0,1"
+
+/-! ## Function-graph equations: inside-knowledge attaches to the value -/
+
+-- `depth x = 3` is a point of `depth`'s graph: one `depth` tuple from `x`
+-- to `3`, attached to the value — not a floating `=` between a stuck atom
+-- and a literal
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x sTree fun x => do
+  withLocalDeclD `h (← mkAppM ``Eq #[← mkAppM ``STree.depth #[x], mkRawNatLit 3]) fun _ => do
+    let (skipped, st) ← runCtx x
+    unless skipped == 0 do throwError "ctx.graph: skipped {skipped}"
+    assertCanon "ctx.graph" st.toDataInstance
+      "STree|x\nNat|3\ndepth[STree,Nat]:0,1"
+
+-- the reversed orientation reads the same way, and does NOT refine the
+-- variable into a stuck term: `a = depth x` keeps `a` and draws the edge
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x sTree fun x => do
+  withLocalDeclD `a (mkConst ``Nat) fun a => do
+  withLocalDeclD `h (← mkAppM ``Eq #[a, ← mkAppM ``STree.depth #[x]]) fun _ => do
+    let (skipped, st) ← runCtx x
+    unless skipped == 0 do throwError "ctx.graph.rev: skipped {skipped}"
+    assertCanon "ctx.graph.rev" st.toDataInstance
+      "STree|x\nNat|a\ndepth[STree,Nat]:0,1"
 
 /-! ## Conjunctions split into their parts -/
 
