@@ -151,21 +151,40 @@ example (a b : Nat) (h : a < b) (h2 : b < a) : True := by
 
 /-! ## 7. Knowledge about the inside of the value
 
-`h : t.height = 3` does not say what `t` *is* — it measures it. Such an
-equation is a point of the function's graph, so it draws as one `height`
-arrow from `t` to `3`, attached to the value — not as a floating `=`
-between a stuck term and a literal.
+`h : t.height = 3` does not say what `t` *is* — it measures it. Two things
+happen:
 
-What this does **not** do yet: shape `t`'s own drawing (a tree of height 3
-has at least three levels). Working that out from `height` means searching
-over candidate trees — the model-finding side, parked on its own branch. -/
+1. The equation is a point of `height`'s graph, so it draws as one `height`
+   arrow from `t` to `3`.
+2. It *refutes* `leaf`: the height of a leaf is `0`, and `0 = 3` decides
+   false. A value must be some constructor, so `t` expands to the one
+   surviving shape — a `node` with holes for the children. As we get to
+   know about a hole, it becomes atoms.
+
+A fact that reduces to a hole assignment fills the hole and disappears into
+the structure: with `hr : t.left = u` below, the `node` shape turns
+`t.left` into the `?left` hole, so `u` sits as the left child and no extra
+arrow is drawn.
+
+Still missing: the deeper shape. `height = 3` forces one child to have
+height 2, but not which — that is an `∨`, and going further is search
+(the model-finding branch). -/
 
 def DTree.height : DTree → Nat
   | .leaf _ => 0
   | .node l r => max l.height r.height + 1
 
+def DTree.left : DTree → DTree
+  | .leaf v => .leaf v
+  | .node l _ => l
+
 set_option linter.unusedVariables false in
 example (t : DTree) (h : t.height = 3) : True := by
+  spytial.datum t
+  trivial
+
+set_option linter.unusedVariables false in
+example (t u : DTree) (h : t.height = 3) (hr : t.left = u) : True := by
   spytial.datum t
   trivial
 
@@ -211,14 +230,17 @@ example (t u : DTree) (h : t ≠ u) : True := by
   and `∧` splits into its parts (section 5). `≠`/`¬` arrows connect values
   that exist, and never invent atoms (section 4).
 - You hand-pick the facts with `using` (section 6).
-- Measurements like `t.height = 3` attach to the value as function arrows
+- Measurements like `t.height = 3` attach to the value as function arrows,
+  refute impossible constructors, and expand the value one level — holes
+  become atoms, and facts that reduce to hole assignments fill them
   (section 7). `spytial.derive` puts `∀`-rules to work, by proof
   (section 8). Nothing is ever styled unless a spec says so.
 
 **Do not have:**
-- **True inversion.** `t.height = 3` attaches to `t`, but it does not yet
-  bound or shape `t`'s own drawing. Working that out is search over
-  candidates — built, parked on the `model-finding` branch.
+- **Deep shapes.** Expansion goes one level and only when a single
+  constructor survives; distributing `height = 3` over the children is an
+  `∨`. Deeper is search over candidates — built, parked on the
+  `model-finding` branch.
 - **`∨`.** One side holds, but we do not know which; it stays counted
   (section 5).
 - **Ruled-out values on request.** A `spytial.not t` that draws the shapes

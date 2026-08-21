@@ -204,16 +204,88 @@ private meta def mentionsAny (ty : Expr) (fvars : Array FVarId) : Bool :=
     picture), or, with `subjectOnly`, does not mention the subject. Returns
     the number of subject-relevant parts that could not be drawn. -/
 private meta def walkHypFacts (cfg : WalkConfig) (subjFVars : Array FVarId)
-    (subjectOnly : Bool) (hypTy : Expr) : StateT WalkState MetaM Nat := do
+    (subjectOnly : Bool) (hypTy : Expr) (absorbed : Array Expr := #[]) :
+    StateT WalkState MetaM Nat := do
   let mut skipped : Nat := 0
   for part in conjuncts hypTy do
     if subjectOnly && !mentionsAny part subjFVars then continue
+    if absorbed.any (·.equal part) then continue
     if let some (var, rhs) ← refinementOf? part then
       if let some applied := cfg.refinements[var]? then
         if applied.equal rhs then continue
     unless ← walkPropTuple cfg part do
       skipped := skipped + 1
   return skipped
+
+/-! ## Expansion by refutation: as knowledge grows, holes become atoms
+
+A value of an inductive type must be *some* constructor. When the facts
+refute every constructor but one — by `decide`, so refutation is
+proof-backed, never a guess — the variable may take the survivor's shape,
+with fresh holes for its fields. Facts that then reduce to hole
+assignments (`leftChild (node ?l ?r) = y` reducing to `?l = y`) fill the
+holes and are absorbed: they became structure, so they draw as nothing
+else. -/
+
+/-- Try to expand `x` into the one constructor shape its facts allow.
+    `parts` are the Prop facts mentioning `x`. Succeeds only when the
+    knowledge did something: at least one constructor was refuted, or at
+    least one hole was filled — otherwise an abstract variable stays one
+    atom. `Nat` is excluded (its values draw as literals, and `n ≠ 0`
+    expanding to `succ ?m` is noise, not insight). Returns the shape and
+    the absorbed facts. -/
+private meta def expandByRefutation? (x : FVarId) (parts : Array Expr) :
+    MetaM (Option (Expr × Array Expr)) := do
+  let xe := mkFVar x
+  let ty ← whnf (← instantiateMVars (← x.getType))
+  let .const indName lvls := ty.getAppFn | return none
+  if indName == ``Nat then return none
+  let some (.inductInfo ii) := (← getEnv).find? indName | return none
+  unless ii.numIndices == 0 do return none
+  let tyParams := ty.getAppArgs
+  let mut survivors : Array Expr := #[]
+  let mut pruned := 0
+  for ctorName in ii.ctors do
+    -- the candidate shape: the constructor applied to fresh field holes
+    let mut cand := mkAppN (mkConst ctorName lvls) tyParams
+    let mut rest ← whnf (← inferType cand)
+    let mut buildable := true
+    while rest.isForall do
+      if rest.bindingBody!.hasLooseBVar 0 then
+        buildable := false
+        break
+      let m ← mkFreshExprMVar (some rest.bindingDomain!)
+        (userName := rest.bindingName!)
+      cand := mkApp cand m
+      rest ← whnf rest.bindingBody!
+    -- a shape we cannot build we also cannot refute: no sound expansion
+    unless buildable do return none
+    let mut refuted := false
+    for p in parts do
+      if (← decideProp? (p.replaceFVar xe cand)) == some false then
+        refuted := true
+        break
+    if refuted then pruned := pruned + 1
+    else survivors := survivors.push cand
+    if survivors.size > 1 then return none
+  let #[cand] := survivors | return none
+  -- fill holes: a fact reducing to `?hole = value` assigns and is absorbed
+  let mut absorbed : Array Expr := #[]
+  for p in parts do
+    let p' ← instantiateMVars (p.replaceFVar xe cand)
+    if let some (_, l, r) := p'.eq? then
+      let l ← whnf l
+      let r ← whnf r
+      let assign? : Option (MVarId × Expr) := match l, r with
+        | .mvar m, t => if t.hasExprMVar then none else some (m, t)
+        | t, .mvar m => if t.hasExprMVar then none else some (m, t)
+        | _, _ => none
+      if let some (m, t) := assign? then
+        unless ← m.isAssigned do
+          m.assign t
+          absorbed := absorbed.push p
+  if pruned == 0 && absorbed.isEmpty then return none
+  return some (← instantiateMVars cand, absorbed)
 
 /-! ## Derivation: universal knowledge put to work
 
@@ -340,14 +412,31 @@ meta def walkInContext (cfg : WalkConfig) (subject : Expr)
   for e in ← equationRefinements (← getLCtx) do
     unless map.contains e.var do
       map := map.insert e.var e.rhs
+  -- a subject variable with no stated shape may still take one by
+  -- refutation: as knowledge grows, holes become atoms
+  let mut absorbed : Array Expr := #[]
+  if let .fvar x := subject then
+    unless map.contains x do
+      let mut parts : Array Expr := #[]
+      for decl in ← getLCtx do
+        if decl.isImplementationDetail then continue
+        let ty ← instantiateMVars decl.type
+        unless ← Meta.isProp ty do continue
+        for part in conjuncts ty do
+          if part.containsFVar x then
+            parts := parts.push part
+      unless parts.isEmpty do
+        if let some (shape, abs) ← expandByRefutation? x parts then
+          map := map.insert x shape
+          absorbed := abs
   let cfg := { cfg with refinements := map }
   let _ ← walkExpr cfg subject
   let mut skipped : Nat := 0
   match facts? with
   | some facts =>
     for fvarId in facts do
-      skipped := skipped +
-        (← walkHypFacts cfg subjFVars false (← instantiateMVars (← fvarId.getType)))
+      skipped := skipped + (← walkHypFacts cfg subjFVars false
+        (← instantiateMVars (← fvarId.getType)) absorbed)
   | none =>
     for decl in ← getLCtx do
       if decl.isImplementationDetail then continue
@@ -355,10 +444,10 @@ meta def walkInContext (cfg : WalkConfig) (subject : Expr)
       unless mentionsAny hypTy subjFVars do continue
       if (← Meta.isClass? hypTy).isSome then continue
       unless ← Meta.isProp hypTy do continue
-      skipped := skipped + (← walkHypFacts cfg subjFVars true hypTy)
+      skipped := skipped + (← walkHypFacts cfg subjFVars true hypTy absorbed)
   if derive then
     for p in ← deriveFacts do
-      let _ ← walkHypFacts cfg subjFVars true p
+      let _ ← walkHypFacts cfg subjFVars true p absorbed
   return skipped
 
 /-! ## The spec-checker vocabulary of a value in context -/

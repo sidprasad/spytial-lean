@@ -19,6 +19,14 @@ public def STree.depth : STree → Nat
   | .leaf _ => 0
   | .node l r => max l.depth r.depth + 1
 
+public def STree.leftChild : STree → STree
+  | .leaf _ => .leaf 0
+  | .node l _ => l
+
+public structure SPair where
+  a : Nat
+  b : Nat
+
 private meta def sTree : Expr := .const ``STree []
 
 private meta def sLeaf (n : Nat) : Expr :=
@@ -241,16 +249,18 @@ rendering. -/
 
 /-! ## Function-graph equations: inside-knowledge attaches to the value -/
 
--- `depth x = 3` is a point of `depth`'s graph: one `depth` tuple from `x`
--- to `3`, attached to the value — not a floating `=` between a stuck atom
--- and a literal
+-- `depth x = 3` is a point of `depth`'s graph: one `depth` tuple attached
+-- to the value. It also refutes `leaf` (depth of a leaf is 0, and 0 = 3
+-- decides false), so `x` expands to the one surviving shape, `node`, with
+-- holes for the fields
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `x sTree fun x => do
   withLocalDeclD `h (← mkAppM ``Eq #[← mkAppM ``STree.depth #[x], mkRawNatLit 3]) fun _ => do
     let (skipped, st) ← runCtx x
     unless skipped == 0 do throwError "ctx.graph: skipped {skipped}"
     assertCanon "ctx.graph" st.toDataInstance
-      "STree|x\nNat|3\ndepth[STree,Nat]:0,1"
+      "STree|node\nSTree|?left\nSTree|?right\nNat|3\n\
+       depth[STree,Nat]:0,3\nleft[STree,STree]:0,1\nright[STree,STree]:0,2"
 
 -- the reversed orientation reads the same way, and does NOT refine the
 -- variable into a stuck term: `a = depth x` keeps `a` and draws the edge
@@ -262,6 +272,44 @@ rendering. -/
     unless skipped == 0 do throwError "ctx.graph.rev: skipped {skipped}"
     assertCanon "ctx.graph.rev" st.toDataInstance
       "STree|x\nNat|a\ndepth[STree,Nat]:0,1"
+
+/-! ## Expansion by refutation: as knowledge grows, holes become atoms -/
+
+-- the sketch: `depth x = 3` rules out `leaf`; `leftChild x = y` then
+-- reduces on the `node` shape to `?left = y`, filling the hole and
+-- absorbing the fact. x draws as a node with y on the left, a hole on the
+-- right, and the depth arrow
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x sTree fun x => do
+  withLocalDeclD `y sTree fun y => do
+  withLocalDeclD `hd (← mkAppM ``Eq #[← mkAppM ``STree.depth #[x], mkRawNatLit 3]) fun _ => do
+  withLocalDeclD `hl (← mkAppM ``Eq #[← mkAppM ``STree.leftChild #[x], y]) fun _ => do
+    let (skipped, st) ← runCtx x
+    unless skipped == 0 do throwError "ctx.expand.fill: skipped {skipped}"
+    assertCanon "ctx.expand.fill" st.toDataInstance
+      "STree|node\nSTree|y\nSTree|?right\nNat|3\n\
+       depth[STree,Nat]:0,3\nleft[STree,STree]:0,1\nright[STree,STree]:0,2"
+
+-- a structure has one constructor, so a projection fact alone expands it:
+-- `p.a = 5` gives ⟨5, ?b⟩
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `p (mkConst ``SPair) fun p => do
+  withLocalDeclD `h (← mkAppM ``Eq #[← mkAppM ``SPair.a #[p], mkRawNatLit 5]) fun _ => do
+    let (skipped, st) ← runCtx p
+    unless skipped == 0 do throwError "ctx.expand.struct: skipped {skipped}"
+    assertCanon "ctx.expand.struct" st.toDataInstance
+      "SPair|mk\nNat|5\nNat|?b\na[SPair,Nat]:0,1\nb[SPair,Nat]:0,2"
+
+-- refutation needs a decidable ground statement: `x ≠ y` (no DecidableEq,
+-- abstract y) refutes nothing, so nothing expands
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x sTree fun x => do
+  withLocalDeclD `y sTree fun y => do
+  withLocalDeclD `h (← mkAppM ``Ne #[x, y]) fun _ => do
+    let (skipped, st) ← runCtx x
+    unless skipped == 0 do throwError "ctx.expand.none: skipped {skipped}"
+    assertCanon "ctx.expand.none" st.toDataInstance
+      "STree|x\nSTree|y\n≠[STree,STree]:0,1"
 
 /-! ## Conjunctions split into their parts -/
 
