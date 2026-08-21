@@ -10,6 +10,7 @@ public meta import SpytialLean.Spec
 public meta import SpytialLean.Selector
 public meta import SpytialLean.SelectorElab
 public meta import SpytialLean.Relationalizer
+public meta import SpytialLean.InContext
 public meta import SpytialLean.Widget
 public meta import SpytialLean.Attr
 
@@ -582,34 +583,143 @@ meta def elabSpytialProofDatumDebug : CommandElab := fun
     logInfo m!"{(toJson di).pretty}"
   | stx => throwError "Unexpected syntax {stx}."
 
-/-! ## spytial tactic -/
+/-! ## spytial tactic: a value drawn with what the context knows about it
+
+In tactic position the subject sits in a live local context, and that context
+knows things about it: refinements (equations, `let` bindings, elaborator
+assignments) and Prop facts. `spytialInContextProps` is the tactic-side
+sibling of `spytialPayloadProps` — same payload shape, context knowledge
+folded in. -/
+
+/-- The payload the `spytial` tactic hands the infoview: the subject walked
+    together with what the local context knows about it (`walkInContext`),
+    plus the count of subject-relevant Prop hypotheses that did not decompose
+    (the caller reports them). An explicit `with [<ops>]` overrides the
+    subject type's attached `spytial_spec`, exactly like `#spytial`; ops
+    elaborate against the subject type's scope extended with the fact
+    vocabulary (`scopeInContext`). The library never adds styling of its
+    own: negative facts are distinguished by relation name (`≠`, `¬R`) in
+    the data, and how they look is the spec author's choice. -/
+public meta def spytialInContextProps (subject : Expr)
+    (ops? : Option (Array (TSyntax `spytial_op)) := none)
+    (cfg : WalkConfig := {})
+    (facts? : Option (Array FVarId) := none)
+    (derive : Bool := false) : TermElabM (Json × Nat) := do
+  let (skipped, state) ← (walkInContext cfg subject facts? derive).run {}
+  let di := state.toDataInstance
+  let spec? ← match ops? with
+    | some ops => do
+      pure (some (← elabSpytialOps (← scopeInContext subject facts? derive) ops))
+    | none => lookupTypeSpec subject
+  return (spytialProps di (spec?.map SpytialSpec.render), skipped)
+
+/-- Resolve a `using [h, …]` group: each entry must name a Prop-typed local
+    hypothesis. `none` when the group is absent (automatic selection). -/
+private meta def resolveFacts (stx : Syntax) : TermElabM (Option (Array FVarId)) := do
+  if stx.getNumArgs == 0 then return none
+  let mut out : Array FVarId := #[]
+  for idStx in stx[2].getSepArgs do
+    let e ← Term.elabTerm idStx none
+    let .fvar fvarId := e
+      | throwErrorAt idStx m!"'using' expects a local hypothesis, got {e}"
+    let ty ← instantiateMVars (← fvarId.getType)
+    unless ← Meta.isProp ty do
+      throwErrorAt idStx m!"'using' expects a Prop-typed hypothesis; \
+        '{e}' has type {ty}"
+    out := out.push fvarId
+  return some out
 
 open Tactic in
-/-- `spytial <term>` displays a spatial relational diagram in the Lean infoview
-    during tactic mode. Hypothesis names and local bindings are in scope.
+/-- Shared body of the context-aware tactic arms: elaborate the subject and
+    the `using` list in the main goal's context (hypotheses introduced by
+    earlier tactics live there, not in the by-block's ambient one), build the
+    payload, report facts that were not drawn, render. -/
+private meta def spytialInContextTac (t : Syntax) (usingStx : Syntax)
+    (ops? : Option (Array (TSyntax `spytial_op))) (stx : Syntax) :
+    TacticM Unit := do
+  let (props, skipped) ← withMainContext do
+    spytialInContextProps (← elabTermInstantiated t) ops? {} (← resolveFacts usingStx)
+      (derive := true)
+  if skipped > 0 then
+    logInfo m!"spytial: {skipped} fact(s) about the subject not drawn \
+      (an `∨`, or a negative fact against values not in the diagram)."
+  savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
 
-    Use `spytial <term> with [<ops>]` to specify layout operations, just like the
-    `#spytial` command.
+open Tactic in
+/-- `spytial <term>` displays a spatial relational diagram in the Lean
+    infoview during tactic mode — the value drawn with everything the local
+    context knows about it:
+
+    - Metavariable assignments are instantiated: structure the elaborator has
+      already determined (a `refine`, a `let`) draws as structure, with the
+      still-open holes as atoms inside it.
+    - `h : x = t` (and `let x := t`) refines `x`: its atom shows `t`'s
+      structure instead of an opaque leaf.
+    - A Prop hypothesis mentioning the subject becomes relation tuples
+      anchored on its atoms: `h : R x y` in relation `R`; `h : x ≠ y` and
+      `h : ¬ P x` in the distinguished ruled-out relations `≠` / `¬P` (the
+      name carries the semantics; styling is the spec author's). A
+      conjunction splits — each `∧`-part draws on its own. A negative
+      fact draws only between values already in the world — ruling a term
+      out is not license to materialize it, so `h : x ≠ node a b` against an
+      absent term is counted, not drawn.
+    - Universal knowledge is put to work: every rule-shaped hypothesis
+      (`∀ …, … → …`) is applied to the known facts, and a conclusion draws
+      only with a type-checked proof term behind it. A rule is never drawn
+      as itself.
+    - Hypotheses not mentioning the subject are ignored; subject-relevant
+      facts that cannot draw (an `∨` — one side holds, but which is unknown
+      — an unfired rule, a withheld negative fact) are counted, with one
+      note reporting the count.
+
+    The goal is deliberately not drawn: hypotheses are established knowledge,
+    the goal is what is still being proven.
+
+    `spytial x using [h1, h2]` lets you pick the facts yourself: exactly the
+    listed hypotheses are drawn, in that order, whether or not they mention
+    `x`. Leave one out and it is not drawn; list one the automatic filter
+    would skip and it is. Refinements (`h : x = t`, `let`) still apply either
+    way — they are what the value *is*, not a fact hung on it.
+
+    `spytial <term> with [<ops>]` specifies layout operations, just like the
+    `#spytial` command; without ops, the subject type's `spytial_spec`
+    applies. Negative relation names are addressable in field positions as
+    escaped idents (`edgeStyle «≠» …`); they cannot occur inside selector
+    expressions — the query language cannot lex them.
 
     ```
-    example (t : RBTree Nat) : True := by
+    example (t u : RBTree Nat) (h : t ≠ u) : True := by
       spytial t
       trivial
     ```
 -/
-syntax (name := spytialTactic) "spytial " term (" with " "[" spytial_op,* "]")? : tactic
+syntax (name := spytialTactic) "spytial " term (" using " "[" ident,* "]")?
+  (" with " "[" spytial_op,* "]")? : tactic
 
 open Tactic in
 @[tactic spytialTactic]
 meta def elabSpytialTactic : Tactic := fun stx => do
-  match stx with
-  | `(tactic| spytial $t:term) => do
-    let props ← spytialPayloadProps t
-    savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
-  | `(tactic| spytial $t:term with [$ops,*]) => do
-    let props ← spytialPayloadProps t (some ops.getElems)
-    savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
-  | _ => throwError "Unexpected syntax {stx}."
+  spytialInContextTac stx[1] stx[2] (optionalOps stx[3]) stx
+
+meta def spytialDatumKw : Lean.Parser.Parser :=
+  Lean.Parser.nonReservedSymbol "spytial.datum" (includeIdent := true)
+
+open Tactic in
+/-- `spytial.datum <term>` prints the JSON data instance the `spytial` tactic
+    would draw — the debugging counterpart, mirroring `#spytial.datum`. Takes
+    the same optional `using [h, …]` fact list. -/
+syntax (name := spytialDatumTactic) spytialDatumKw term
+  (" using " "[" ident,* "]")? : tactic
+
+open Tactic in
+@[tactic spytialDatumTactic]
+meta def elabSpytialDatumTactic : Tactic := fun stx => do
+  withMainContext do
+    let subject ← elabTermInstantiated stx[1]
+    let (_, state) ←
+      (walkInContext {} subject (← resolveFacts stx[2]) (derive := true)).run {}
+    logInfo m!"{(toJson state.toDataInstance).pretty}"
+
 
 /-! ## Proof tactic -/
 
@@ -633,7 +743,8 @@ open Tactic in
 meta def elabSpytialProofTactic : Tactic := fun stx => do
   -- A quotation pattern would lex `spytial.proof` as one dotted ident and never
   -- match; extract positionally.
-  let props ← spytialPayloadProps stx[1] (optionalOps stx[2]) { filterProofs := false }
+  let props ← withMainContext do
+    spytialPayloadProps stx[1] (optionalOps stx[2]) { filterProofs := false }
   savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
 
 end

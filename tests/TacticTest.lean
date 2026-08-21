@@ -48,3 +48,78 @@ example (h : TEven 4) : True := by
 example : True := by
   spytial.proof teven_four with [hideAtom Nat]
   trivial
+
+-- the tactics see hypotheses introduced by earlier tactics (withMainContext)
+set_option linter.unusedVariables false in
+example : ∀ n : Nat, True := by
+  intro n
+  spytial n
+  trivial
+
+set_option linter.unusedVariables false in
+example : ∀ h : TEven 4, True := by
+  intro h
+  spytial.proof h
+  trivial
+
+-- context knowledge: an equation refines the subject in place
+set_option linter.unusedVariables false in
+example (xs : List Nat) (h : xs = [1]) : True := by
+  spytial xs
+  trivial
+
+-- context knowledge after intro
+set_option linter.unusedVariables false in
+example : ∀ a b : Nat, a < b → True := by
+  intro a b h
+  spytial a
+  trivial
+
+-- ops elaborate against the merged scope: subject type plus fact vocabulary,
+-- with a negative name addressable as an escaped ident
+set_option linter.unusedVariables false in
+example (a b : Nat) (h : a < b) (h2 : a ≠ 0) : True := by
+  spytial a with [edgeStyle lt (lineStyle "blue"),
+                  edgeStyle «≠» (lineStyle "green")]
+  trivial
+
+-- ∧ splits: both halves draw
+set_option linter.unusedVariables false in
+example (a b : Nat) (h : a < b ∧ b < a) : True := by
+  spytial a
+  trivial
+
+-- derivation is part of spytial: symmetry proves the reverse arrow
+set_option linter.unusedVariables false in
+example {α : Type} (R : α → α → Prop) (x y : α)
+    (h : R x y) (hs : ∀ a b, R a b → R b a) : True := by
+  spytial x
+  trivial
+
+set_option linter.unusedVariables false in
+example {α : Type} (R : α → α → Prop) (x y : α)
+    (h : R x y) (hs : ∀ a b, R a b → R b a) : True := by
+  spytial.datum x
+  trivial
+
+-- the caller picks the facts: `using` draws exactly the listed hypotheses
+set_option linter.unusedVariables false in
+example (a b : Nat) (h : a < b) (h2 : b < a) : True := by
+  spytial a using [h]
+  trivial
+
+set_option linter.unusedVariables false in
+example (a b : Nat) (h : a < b) : True := by
+  spytial a using [h] with [edgeStyle lt (lineStyle "blue")]
+  trivial
+
+-- datum tactic, with and without a fact list
+set_option linter.unusedVariables false in
+example (a b : Nat) (h : a < b) : True := by
+  spytial.datum a
+  trivial
+
+set_option linter.unusedVariables false in
+example (a b : Nat) (h : a < b) : True := by
+  spytial.datum a using [h]
+  trivial

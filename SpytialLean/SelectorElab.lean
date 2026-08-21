@@ -95,6 +95,22 @@ meta def SelScope.ofType (root : Name) : MetaM SelScope := do
 meta def SelScope.introduce (scope : SelScope) (name : String) (arity : Nat) : SelScope :=
   { scope with introduced := scope.introduced.insert name arity }
 
+/-- Union of two scopes, for specs whose subject spans several types (a proof
+    state). Lenient if either side is; a relation name claimed at two
+    different arities keeps the name with its width unchecked. -/
+meta def SelScope.merge (a b : SelScope) : SelScope := Id.run do
+  let mut rels := a.rels
+  for (n, owner, arity?) in b.rels do
+    rels := match rels.get? n with
+      | some (o, a?) => if a? == arity? then rels else rels.insert n (o, none)
+      | none => rels.insert n (owner, arity?)
+  return { root := a.root
+           types := b.types.fold (init := a.types) fun m k v => m.insert k v
+           rels
+           ctorLabels := b.ctorLabels.fold (init := a.ctorLabels) fun m k v => m.insert k v
+           introduced := b.introduced.fold (init := a.introduced) fun m k v => m.insert k v
+           lenient := a.lenient || b.lenient }
+
 /-! ## Diagnostics -/
 
 private meta def editDistance (a b : String) : Nat := Id.run do
@@ -138,7 +154,7 @@ private meta def codepoint (c : Char) : String :=
     we cannot predict). Returns `recovery` when lenient. -/
 private meta def unknownName {α} (scope : SelScope) (ref : Syntax) (what : String)
     (recovery : α) : TermElabM α := do
-  let msg := m!"unknown {what}{suggest scope ref.getId.toString}"
+  let msg := m!"unknown {what}{suggest scope (ref.getId.toString (escape := false))}"
   if scope.lenient then
     logWarningAt ref (msg ++ m!" — the vocabulary of '{scope.root}' is open (a \
       custom relationalizer, type parameter, or function field makes it \
@@ -609,7 +625,8 @@ private meta partial def resolveExprIdent (scope : SelScope) (env : LEnv)
       return e
   if let some v ← resolveCtorLit? scope stx then
     return .val v
-  let s := name.toString
+  -- escape := false so a decorated name (`«⊢ lt»`) matches its wire spelling
+  let s := name.toString (escape := false)
   if let some (_, arity?) := scope.rels.get? s then return .rel (.rel s) arity?
   if let some arity := scope.introduced.get? s then
     warnGraphSideName stx s
@@ -830,7 +847,9 @@ meta def elabSelector (scope : SelScope) (expect : ArityExpect)
   return sel
 
 meta def elabFieldName (scope : SelScope) (stx : TSyntax `ident) : TermElabM String := do
-  let s := stx.getId.toString
+  -- escape := false so `edgeStyle «⊢ lt» …` resolves against the walker's
+  -- relation name `⊢ lt` (Name.toString would re-escape it)
+  let s := stx.getId.toString (escape := false)
   if scope.rels.contains s || scope.introduced.contains s then
     return s
   unknownName scope stx s!"relation '{s}'" s

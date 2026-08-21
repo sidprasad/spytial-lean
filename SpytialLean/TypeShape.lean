@@ -67,6 +67,35 @@ public meta def hypLabel (userName : Name) : String :=
 public meta def isProofLikeType (ty : Expr) : MetaM Bool := do
   return (← Meta.isProp ty) || ty.isSort
 
+/-! ## Context-fact naming
+
+Names the in-context walker (`walkInContext`) can emit, kept here so the
+static checker (`scopeInContext`) predicts exactly what the walker produces. -/
+
+/-- The relation an equality hypothesis emits into when it does not refine a
+    variable (`f a = g b`). -/
+public meta def eqRelName : String := "="
+
+/-- The relation a disequality (`Ne`, or a negated `Eq`) emits into. -/
+public meta def neRelName : String := "≠"
+
+/-- The relation a negated Prop application emits into: `¬ (R a b)` becomes a
+    tuple in `¬R` — a *different* relation than `R`, so nothing downstream can
+    read "ruled out" as "holds". -/
+public meta def negRelName (base : String) : String := s!"¬{base}"
+
+/-- The relation name for a decomposable Prop application, from its head: a
+    constant's short name, a local relation's user name (`variable
+    (R : α → α → Prop)` is a free variable, not a constant). `Eq` and `Ne`
+    take their notation names. `none` for heads that name nothing. -/
+public meta def propRelName? (head : Expr) : MetaM (Option String) := do
+  match head with
+  | .const ``Eq _ => return some eqRelName
+  | .const ``Ne _ => return some neRelName
+  | .const n _ => return some (shortName n)
+  | .fvar fvarId => return some (hypLabel (← fvarId.getUserName))
+  | _ => return none
+
 /-! ## Function tabulation
 
 Shared with the static checkers, so a predicted relation cannot drift from an
