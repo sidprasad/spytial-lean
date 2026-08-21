@@ -14,10 +14,14 @@ kinds of holes:
    the hypotheses (`h : t = node l r` says what `t` is; `h : t ≠ leaf 0`
    says what it is not).
 
-`spytial.state` renders the current proof state — hypotheses and goals — so
-both kinds are visible. Because tactics run during elaboration, `lake build
-Demos` exercises everything below; the `.datum` variants print their JSON to
-the build log, which is the headless verification mechanism. -/
+`spytial.state` renders the main goal — its hypotheses and its target — so
+both kinds are visible. One diagram is one goal: sibling goals (the branches
+of a `cases`) assume contradictory things about the same variables, so each
+gets its own picture — put `spytial.state` inside the branch you want to see.
+
+Tactics run during elaboration, so `lake build Demos` exercises everything
+below; the `.datum` variants print their JSON to the build log, which is the
+headless verification mechanism. -/
 
 inductive DTree where
   | leaf (value : Nat)
@@ -36,18 +40,24 @@ example (t : DTree) : True := by
 
 /-! ## 2. The elaborator knows structure
 
-After `refine ⟨DTree.node ?l ?r, ?h⟩` the witness metavariable is assigned
-`DTree.node ?l ?r`. Instantiating reveals it: the goal `?h` mentions the
-node with the two still-open holes `?l` and `?r` as atoms — those hole atoms
-*are* the open goals. What the elaborator has figured out draws as
-structure; what is still unknown draws as an atom. -/
+After `refine ⟨DTree.node ?l ?r, ?h⟩` the witness is the partially-built term
+`DTree.node ?l ?r`, and three goals are open: `?l`, `?r`, and the equation
+`?h`. The built structure appears in `?h`'s target, so we focus that goal
+with `case h` — the main goal right after the `refine` is `?l : DTree`,
+which is just an opaque hole again.
+
+Inside `case h`, both sides of the `⊢ =` tuple draw the `node` the
+elaborator built, sharing the still-open holes `?l` and `?r` as atoms —
+those hole atoms *are* the remaining goals. What the elaborator has figured
+out draws as structure; what is still unknown draws as an atom. -/
 
 example : ∃ t : DTree, t = t := by
   refine ⟨DTree.node ?l ?r, ?h⟩
-  spytial.state
+  case h =>
+    spytial.state
+    rfl
   case l => exact .leaf 1
   case r => exact .leaf 2
-  case h => rfl
 
 /-! ## 3. A hypothesis knows structure (positive)
 
@@ -61,24 +71,20 @@ example (t l r : DTree) (h : t = DTree.node l r) : True := by
   spytial.state t
   trivial
 
--- the same refinement arises inside a case split: `cases h : t` leaves the
--- branch equation in the context
+-- the same refinement arises from a case split: `cases h : t` leaves the
+-- branch's equation in its context. The two branches assume contradictory
+-- things about `t` (`t = leaf v` in one, `t = node l r` in the other) —
+-- exactly why one diagram is one goal: each `spytial.state` below draws its
+-- own branch's refinement, never a merged picture
 set_option linter.unusedVariables false in
 example (t : DTree) : True := by
   cases h : t with
-  | leaf v => trivial
+  | leaf v =>
+    spytial.state
+    trivial
   | node l r =>
     spytial.state
     trivial
-
--- with BOTH branch goals open at once, the goals disagree about `t`. The
--- first branch's equation refines it; the second branch's stays an explicit
--- `=` edge against the drawn atom, so neither branch's knowledge is lost
-set_option linter.unusedVariables false in
-example (t : DTree) : True := by
-  cases h : t
-  spytial.state
-  all_goals trivial
 
 /-! ## 4. A hypothesis rules structure out (negative)
 
