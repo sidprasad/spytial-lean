@@ -623,8 +623,9 @@ private meta def spytialInContextTac (t : Syntax)
   let (props, skipped) ← withMainContext do
     spytialInContextProps (← elabTermInstantiated t) ops?
   if skipped > 0 then
-    logInfo m!"spytial: skipped {skipped} hypothesis(es) about the subject \
-      that do not decompose into relation tuples (e.g. `∀`, `∧`)."
+    logInfo m!"spytial: {skipped} hypothesis(es) about the subject not drawn \
+      (non-decomposable, e.g. `∀`/`∧`, or negative facts against values not \
+      in the diagram); `spytial.find` can still use them."
   savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
 
 open Tactic in
@@ -638,12 +639,15 @@ open Tactic in
     - `h : x = t` (and `let x := t`) refines `x`: its atom shows `t`'s
       structure instead of an opaque leaf.
     - A Prop hypothesis mentioning the subject becomes a relation tuple
-      anchored on its atoms: `h : R x y` in relation `R`; `h : x ≠ t` and
+      anchored on its atoms: `h : R x y` in relation `R`; `h : x ≠ y` and
       `h : ¬ P x` in the distinguished ruled-out relations `≠` / `¬P` (the
-      name carries the semantics; styling is the spec author's).
+      name carries the semantics; styling is the spec author's). A negative
+      fact draws only between values already in the world — ruling a term
+      out is not license to materialize it, so `h : x ≠ node a b` against an
+      absent term is counted, not drawn (`spytial.find` still consumes it).
     - Hypotheses not mentioning the subject are ignored; subject-relevant
-      Props that do not decompose (`∀ …`, `A ∧ B`) are skipped, with one note
-      reporting the count.
+      Props that are not drawn (`∀ …`, `A ∧ B`, withheld negative facts) are
+      counted, with one note reporting the count.
 
     The goal is deliberately not drawn: hypotheses are established knowledge,
     the goal is what is still being proven.
@@ -769,10 +773,11 @@ open Tactic in
     silently assumed.
 
     The first surviving model is injected as a refinement and `x` is drawn
-    as by the `spytial` tactic: the model's structure, with every fact —
-    relations, `≠` edges — anchored on it. When nothing survives the bound,
-    that is the finding: the hole cannot look like any candidate, and the
-    diagram falls back to what is known.
+    as by the `spytial` tactic: the model's structure, with the facts
+    between existing values anchored on it. The exclusions that carved the
+    search are reported, not drawn. When nothing survives the bound, that is
+    the finding: the hole cannot look like any candidate, and the diagram
+    falls back to what is known.
 
     `with [<ops>]` attaches layout ops, as in the `spytial` tactic. -/
 syntax (name := spytialFindTactic) spytialFindKw (colGt ident)? (num)?
@@ -787,8 +792,9 @@ meta def elabSpytialFindTactic : Tactic := fun stx => do
     let (subject, cfg) ← runFindSearch stx[1][0] stx[2]
     spytialInContextProps subject (optionalOps stx[3]) cfg
   if skipped > 0 then
-    logInfo m!"spytial.find: skipped {skipped} hypothesis(es) that do not \
-      decompose into relation tuples (e.g. `∀`, `∧`, `→`)."
+    logInfo m!"spytial.find: {skipped} hypothesis(es) not drawn \
+      (non-decomposable, or negative facts against values not in the \
+      diagram — the search used them either way)."
   savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
 
 meta def spytialFindDatumKw : Lean.Parser.Parser :=

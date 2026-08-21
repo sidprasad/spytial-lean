@@ -28,9 +28,12 @@ draw:
   structure (the refinement map, consumed by `holeAtom?`).
 - **The hypotheses know facts.** A Prop hypothesis mentioning the subject
   becomes one tuple anchored on the subject's atoms: `h : R x y` in relation
-  `R`; `h : x ≠ t` and `h : ¬ P x` in the distinguished negative relations
+  `R`; `h : x ≠ y` and `h : ¬ P x` in the distinguished negative relations
   (`≠`, `¬P`) — the name carries the semantics on the wire; the library
-  never styles them, or anything else, by default.
+  never styles them, or anything else, by default. A negative fact draws
+  only between values already in the world: ruling a term out is not license
+  to materialize it, so `h : x ≠ node a b` against a term not in the diagram
+  is counted, not drawn (`spytial.find` still consumes it).
 
 The goal is deliberately *not* drawn: hypotheses are established knowledge,
 the goal is what is still being proven. -/
@@ -84,11 +87,12 @@ private meta def peelNot (ty : Expr) : Expr × Bool :=
   | _ => (ty, false)
 
 /-- The decomposition `walkPropTuple` performs, without walking: the relation
-    name and the data arguments. Shared with `scopeInContext` so predicted
-    names cannot drift from emitted ones. `none` when the Prop does not
-    decompose: no named head, or no data arguments to anchor a tuple. -/
+    name, the data arguments, and whether the Prop was negated. Shared with
+    `scopeInContext` so predicted names cannot drift from emitted ones.
+    `none` when the Prop does not decompose: no named head, or no data
+    arguments to anchor a tuple. -/
 meta def propTupleShape? (ty : Expr) :
-    MetaM (Option (String × Array Expr)) := do
+    MetaM (Option (String × Array Expr × Bool)) := do
   unless ← Meta.isProp ty do return none
   let (body, negated) := peelNot ty
   let some base ← propRelName? body.getAppFn | return none
@@ -96,6 +100,8 @@ meta def propTupleShape? (ty : Expr) :
     if negated then
       if base == eqRelName then neRelName else negRelName base
     else base
+  -- `Ne` arrives negative through the head name, not through `peelNot`
+  let negated := negated || base == neRelName
   let mut dataArgs : Array Expr := #[]
   for a in body.getAppArgs do
     if ← isProofArg a then continue
@@ -104,17 +110,22 @@ meta def propTupleShape? (ty : Expr) :
     if (← Meta.isClass? (← inferType a)).isSome then continue
     dataArgs := dataArgs.push a
   if dataArgs.isEmpty then return none
-  return some (relName, dataArgs)
+  return some (relName, dataArgs, negated)
 
 /-- One relation tuple from a Prop that names a relation: `R a₁ … aₙ` walks
     its data arguments into the shared state and emits one tuple in relation
-    `R`; a negation emits into the ruled-out relation (`≠`, `¬R`) instead.
-    `false` when the Prop does not decompose (a `∀`, a conjunction, a nullary
-    Prop) — the caller counts it as skipped. With exactly one data argument
-    the lone atom appears with no tuple. -/
+    `R`; a negation emits into the ruled-out relation (`≠`, `¬R`) instead —
+    but only between values already in the world (variables, holes): ruling a
+    term out is not license to materialize it, so a negative fact against an
+    absent term is not drawn. `false` when the Prop is not drawn — it does
+    not decompose (a `∀`, a conjunction, a nullary Prop), or it is such a
+    withheld negative fact — and the caller counts it. With exactly one data
+    argument the lone atom appears with no tuple. -/
 meta def walkPropTuple (cfg : WalkConfig) (ty : Expr) :
     StateT WalkState MetaM Bool := do
-  let some (relName, dataArgs) ← propTupleShape? ty | return false
+  let some (relName, dataArgs, negated) ← propTupleShape? ty | return false
+  if negated && !dataArgs.all (fun a => a.isFVar || a.isMVar) then
+    return false
   let mut ids : Array String := #[]
   let mut types : Array String := #[]
   for a in dataArgs do
@@ -208,7 +219,8 @@ meta def scopeInContext (subject : Expr) : MetaM SelScope := do
     let hypTy ← instantiateMVars decl.type
     unless mentionsAny hypTy subjFVars do continue
     if (← Meta.isClass? hypTy).isSome then continue
-    if let some (relName, dataArgs) ← propTupleShape? hypTy then
+    -- negative facts the walk withholds are still predicted: superset safe
+    if let some (relName, dataArgs, _) ← propTupleShape? hypTy then
       if dataArgs.size ≥ 2 then propRels := propRels.push (relName, dataArgs.size)
       for a in dataArgs do
         heads := heads.push (← typeHead? (← inferType a))

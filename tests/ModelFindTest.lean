@@ -69,7 +69,10 @@ private meta def fLeaf (n : Nat) : Expr :=
     unless search.checked == 1 && search.unchecked == 1 do
       throwError "find.unsat: checked {search.checked}, unchecked {search.unchecked}"
 
-/-! ## A found model draws as the hole's structure, constraints against it -/
+/-! ## A found model draws as the hole's structure
+
+The `≠` that carved the search names a term not in the world, so it is
+counted, not drawn: the diagram is the model, nothing else. -/
 
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `x fTree fun x => do
@@ -78,10 +81,10 @@ private meta def fLeaf (n : Nat) : Expr :=
     let some m := search.models[0]? | throwError "find.walk: no model"
     let cfg : WalkConfig :=
       { refinements := ({} : Std.HashMap FVarId Expr).insert x.fvarId! m }
-    let (_, st) ← (walkInContext cfg x).run {}
+    let (skipped, st) ← (walkInContext cfg x).run {}
+    unless skipped == 1 do throwError "find.walk: skipped {skipped}"
     assertCanon "find.walk" st.toDataInstance
-      "FTree|leaf\nNat|1\nFTree|leaf\nNat|0\n\
-       value[FTree,Nat]:0,1;2,3\n≠[FTree,FTree]:0,2"
+      "FTree|leaf\nNat|1\nvalue[FTree,Nat]:0,1"
 
 /-! ## Honesty at the edges -/
 

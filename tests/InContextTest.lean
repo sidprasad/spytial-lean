@@ -189,14 +189,27 @@ rendering. -/
 
 /-! ## Negative information -/
 
--- `h : x ≠ leaf 0` is a `≠` tuple; nothing claims the equality holds
+-- a negative fact draws only between values already in the world: `x ≠ y`
+-- (both real) draws, against y's structure refined by its own equation;
+-- nothing claims the equality holds
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `x sTree fun x => do
-  withLocalDeclD `h (← mkAppM ``Ne #[x, sLeaf 0]) fun _ => do
+  withLocalDeclD `y sTree fun y => do
+  withLocalDeclD `hy (← mkAppM ``Eq #[y, sLeaf 0]) fun _ => do
+  withLocalDeclD `h (← mkAppM ``Ne #[x, y]) fun _ => do
     let (skipped, st) ← runCtx x
     unless skipped == 0 do throwError "ctx.ne: skipped {skipped}"
     assertCanon "ctx.ne" st.toDataInstance
       "STree|x\nSTree|leaf\nNat|0\nvalue[STree,Nat]:1,2\n≠[STree,STree]:0,1"
+
+-- ruling a term out is not license to materialize it: `x ≠ leaf 0` against
+-- a term not in the diagram is counted, not drawn
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x sTree fun x => do
+  withLocalDeclD `h (← mkAppM ``Ne #[x, sLeaf 0]) fun _ => do
+    let (skipped, st) ← runCtx x
+    unless skipped == 1 do throwError "ctx.ne.absent: skipped {skipped}"
+    assertCanon "ctx.ne.absent" st.toDataInstance "STree|x"
 
 -- `h : ¬ (R x y)` is a `¬R` tuple
 #eval show Lean.Elab.TermElabM Unit from do

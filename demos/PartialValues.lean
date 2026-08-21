@@ -84,21 +84,27 @@ example (t : DTree) : True := by
 
 /-! ## 4. A hypothesis rules structure out (negative)
 
-`h2 : t ≠ DTree.node (leaf 0) (leaf 0)` emits into the `≠` relation against
-`t`'s *known* structure from `h`. The relation *name* carries the semantics
-— `≠` is simply a different relation than `=`, so nothing downstream can
-read "ruled out" as "holds" — and how it looks is the spec author's choice
-(see the styling section below). -/
+A negative fact draws only between values already in the world — ruling a
+term out is not license to materialize it. Here `u` is a real value whose
+structure is known (`hu`), and `h : t ≠ u` draws one `≠` edge from `t` into
+that structure: what `t` is not, without inventing atoms. The relation
+*name* carries the semantics — `≠` is simply a different relation than `=`,
+so nothing downstream can read "ruled out" as "holds" — and how it looks is
+the spec author's choice (see the styling section below).
+
+A negative fact against a term that is *not* in the world (`t ≠ leaf 0`) is
+counted, not drawn — the tactic logs one note, and `spytial.find` below
+still uses it. -/
 
 set_option linter.unusedVariables false in
-example (t l r : DTree) (h : t = DTree.node l r)
-    (h2 : t ≠ DTree.node (DTree.leaf 0) (DTree.leaf 0)) : True := by
+example (t u : DTree) (hu : u = DTree.node (DTree.leaf 0) (DTree.leaf 0))
+    (h : t ≠ u) : True := by
   spytial t
   trivial
 
 set_option linter.unusedVariables false in
-example (t l r : DTree) (h : t = DTree.node l r)
-    (h2 : t ≠ DTree.node (DTree.leaf 0) (DTree.leaf 0)) : True := by
+example (t u : DTree) (hu : u = DTree.node (DTree.leaf 0) (DTree.leaf 0))
+    (h : t ≠ u) : True := by
   spytial.datum t
   trivial
 
@@ -125,22 +131,23 @@ example {α : Type} (R : α → α → Prop) (x y : α)
 
 /-! ## 6. Model finding: what CAN the value be?
 
-Everything above renders what is *known*. `spytial.find` searches: it
-enumerates every `DTree` up to a constructor depth (default 3), keeps the
-candidates on which all decidable hypotheses hold (`≠` is decidable here
-because `DTree` derives `DecidableEq`), and draws the first survivor as `t`
-— with the ruled-out value in the `≠` relation against the found model.
-Hypotheses without a decision procedure are reported as unchecked, never
-assumed. Zero survivors is an answer too: within the bound, no such value
-exists. -/
+Everything above renders what is *known*. `spytial.find` answers the
+possibility question positively: it enumerates every `DTree` up to a
+constructor depth (default 3), keeps the candidates on which all decidable
+hypotheses hold (`≠` is decidable here because `DTree` derives
+`DecidableEq`), and draws the first survivor as `t`. The exclusions carved
+the search — they are reported, not drawn. Hypotheses without a decision
+procedure are reported as unchecked, never assumed. Zero survivors is an
+answer too: within the bound, no such value exists. -/
 
 set_option linter.unusedVariables false in
 example (t : DTree) (h : t ≠ DTree.leaf 0) : True := by
   spytial.find t
   trivial
 
--- the JSON view, at an explicit depth: the only depth-2 survivor of the two
--- disequalities is `node (leaf 0) (leaf 0)`
+-- the JSON view, at an explicit depth: the sole depth-2 survivor of the two
+-- disequalities is `node (leaf 0) (leaf 0)`, and the diagram is exactly that
+-- model — nothing else
 set_option linter.unusedVariables false in
 example (t : DTree) (h : t ≠ DTree.leaf 0) (h2 : t ≠ DTree.leaf 1) : True := by
   spytial.find.datum t 2
@@ -156,6 +163,6 @@ names use escaped idents in field positions — the ruled-out look, if you
 want one, is one op: -/
 
 set_option linter.unusedVariables false in
-example (t : DTree) (h : t ≠ DTree.leaf 0) : True := by
+example (t u : DTree) (h : t ≠ u) : True := by
   spytial t with [edgeStyle «≠» (lineStyle "#cc0000" dashed)]
   trivial
