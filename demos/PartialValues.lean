@@ -4,13 +4,18 @@ open SpytialLean
 
 /-! # Diagramming partially-known values
 
-Mid-proof, you often hold a value you do not fully know. The context knows
-things about it: equations, `let` bindings, facts. `spytial t` draws `t`
-using that knowledge. The diagram always shows the *value*. The context is
-only the source of knowledge — it is never drawn itself, and the goal is
-never drawn either.
+**The diagram shows your current knowledge of a value — not the proof
+state.**
 
-Each section below is one kind of knowledge. Tactics run at build time, so
+Proof-state tools answer: "what am I asked to prove, and what assumptions
+are in scope?" `spytial t` answers a different question: "given everything
+Lean knows right now, what can I say about `t`?" The hypotheses are not the
+thing shown. They are evidence, and they disappear into the drawing: an
+equation shapes the value, a fact becomes an arrow, and the goal is never
+drawn at all.
+
+Each section below is one kind of knowledge. The last section says plainly
+what this prototype has and what it does not. Tactics run at build time, so
 `lake build Demos` checks all of it; the `spytial.datum` variants print
 their JSON to the build log. -/
 
@@ -155,4 +160,41 @@ name): -/
 set_option linter.unusedVariables false in
 example (t u : DTree) (h : t ≠ u) : True := by
   spytial t with [edgeStyle «≠» (lineStyle "#cc0000" dashed)]
+  trivial
+
+/-! ## What we have, what we do not have
+
+**Have:**
+- An unknown value is one atom; what Lean has built (`let`, `refine`) draws
+  as structure, with holes as atoms (sections 1–2).
+- `h : t = …` and `let` shape the value (section 3). Facts become arrows,
+  and `∧` splits into its parts (section 5). `≠`/`¬` arrows connect values
+  that exist, and never invent atoms (section 4).
+- You hand-pick the facts with `using` (section 6). Nothing is ever styled
+  unless a spec says so (previous section).
+
+**Do not have:**
+- **Knowledge about the inside of a value.** Below, `h : t.height = 3` is
+  real knowledge about `t`'s shape — but it draws as a floating `t.height`
+  atom, an `=` arrow, and `3`. It does not bound or shape `t`'s own
+  drawing, and it is not even connected to `t`'s atom. Absorbing it means
+  inverting functions like `height`.
+- **Universal facts put to work.** `∀ a b, R a b → R b a` plus a drawn
+  `R x y` *proves* `R y x`. We could add the arrows the rules force; today
+  a `∀` is only counted (section 5).
+- **What the value CAN be.** Enumerate candidates, keep the ones the
+  hypotheses allow, draw one. Built, parked on the `model-finding` branch —
+  it is search, not diagramming.
+- **Ruled-out values on request.** A `spytial.not t` that draws the shapes
+  `t` cannot be. Not built. -/
+
+def DTree.height : DTree → Nat
+  | .leaf _ => 0
+  | .node l r => max l.height r.height + 1
+
+-- knowledge about the INSIDE of the value: shown honestly, but not
+-- absorbed — `t` stays an opaque atom, and `t.height` floats next to it
+set_option linter.unusedVariables false in
+example (t : DTree) (h : t.height = 3) : True := by
+  spytial.datum t
   trivial
