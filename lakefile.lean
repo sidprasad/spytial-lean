@@ -127,14 +127,14 @@ lean_lib Demos where
   srcDir := "demos"
   roots := #[`Showcase, `ProofFieldFiltering, `FunctionFields, `TypeClassInstances,
              `CustomRelationalizer, `ProofTerms, `HoareLogic, `OperationalSemantics,
-             `PartialTerms, `BDD, `Automata, `ProofState]
+             `PartialTerms, `BDD, `Automata, `PartialValues]
   needs := #[widgetJsAll]
 
 /-- Headless unit tests: `lake build SpytialTests`. -/
 lean_lib SpytialTests where
   srcDir := "tests"
   roots := #[`WalkCanon, `TypeShapeTest, `CoverageTest, `TacticTest, `SelectorTest,
-             `IdentityTest, `IdentityWalkTest, `RelationShapeTest, `ProofStateTest,
+             `IdentityTest, `IdentityWalkTest, `RelationShapeTest, `InContextTest,
              `ModelFindTest]
 
 require proofwidgets from

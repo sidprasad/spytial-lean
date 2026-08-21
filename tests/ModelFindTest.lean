@@ -1,7 +1,7 @@
 module
 
 meta import SpytialLean.ModelFind
-meta import SpytialLean.ProofState
+meta import SpytialLean.InContext
 meta import WalkCanon
 
 open SpytialLean Lean Meta
@@ -72,12 +72,11 @@ private meta def fLeaf (n : Nat) : Expr :=
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `x fTree fun x => do
   withLocalDeclD `h (← mkAppM ``Ne #[x, fLeaf 0]) fun _ => do
-    let goal ← Meta.mkFreshExprMVar (some (mkConst ``True))
     let search ← findModels x.fvarId! 2
     let some m := search.models[0]? | throwError "find.walk: no model"
     let cfg : WalkConfig :=
       { refinements := ({} : Std.HashMap FVarId Expr).insert x.fvarId! m }
-    let (_, st) ← (walkProofState cfg goal.mvarId! (subject? := some x)).run {}
+    let (_, st) ← (walkInContext cfg x).run {}
     assertCanon "find.walk" st.toDataInstance
-      "FTree|leaf\nNat|1\nFTree|leaf\nNat|0\nGoal|True\n\
+      "FTree|leaf\nNat|1\nFTree|leaf\nNat|0\n\
        value[FTree,Nat]:0,1;2,3\n≠[FTree,FTree]:0,2"

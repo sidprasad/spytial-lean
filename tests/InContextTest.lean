@@ -1,0 +1,246 @@
+module
+
+meta import SpytialLean.InContext
+meta import WalkCanon
+
+open SpytialLean Lean Meta
+
+/-! # In-context walker goldens
+
+The subject is a value; the local context is the knowledge source. Contexts
+are built by hand (`withLocalDeclD`, `withLetDecl`, fresh metavariables), so
+the tests run headlessly — no tactic framework involved. -/
+
+public inductive STree where
+  | leaf (value : Nat)
+  | node (left right : STree)
+
+private meta def sTree : Expr := .const ``STree []
+
+private meta def sLeaf (n : Nat) : Expr :=
+  mkApp (mkConst ``STree.leaf) (mkRawNatLit n)
+
+private meta def sNode (l r : Expr) : Expr :=
+  mkApp2 (mkConst ``STree.node) l r
+
+private meta def runCtx (subject : Expr) (cfg : WalkConfig := {}) :
+    MetaM (Nat × WalkState) :=
+  (walkInContext cfg subject).run {}
+
+/-! ## Facts anchor on the subject's atoms
+
+`h : x < y` mentions the subject `x`, so it becomes the `lt` tuple — and `y`
+enters the picture only because the fact brings it in. -/
+
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x (mkConst ``Nat) fun x => do
+  withLocalDeclD `y (mkConst ``Nat) fun y => do
+  withLocalDeclD `h (← mkAppM ``LT.lt #[x, y]) fun _ => do
+    let (skipped, st) ← runCtx x
+    unless skipped == 0 do throwError "ctx.lt: skipped {skipped}"
+    assertCanon "ctx.lt" st.toDataInstance
+      "Nat|x\nNat|y\nlt[Nat,Nat]:0,1"
+
+/-! ## A local relation names a relation too
+
+`R` is a free variable, not a constant. Its type mentions only `α`, never the
+subject, so `R` itself contributes no atom. -/
+
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `α (mkSort Level.one) fun a => do
+  withLocalDeclD `R (← mkArrow a (← mkArrow a (mkSort Level.zero))) fun R => do
+  withLocalDeclD `x a fun x => do
+  withLocalDeclD `y a fun y => do
+  withLocalDeclD `h (mkApp2 R x y) fun _ => do
+    let (skipped, st) ← runCtx x
+    unless skipped == 0 do throwError "ctx.fvarRel: skipped {skipped}"
+    assertCanon "ctx.fvarRel" st.toDataInstance
+      "α|x\nα|y\nR[α,α]:0,1"
+
+/-! ## Subject-relevant Props that do not decompose are counted -/
+
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x sTree fun x => do
+    let allTy ← withLocalDeclD `n (mkConst ``Nat) fun n => do
+      mkForallFVars #[n] (← mkAppM ``Eq #[x, x])
+    withLocalDeclD `h allTy fun _ => do
+      let (skipped, st) ← runCtx x
+      unless skipped == 1 do throwError "ctx.skip: skipped {skipped}"
+      assertCanon "ctx.skip" st.toDataInstance "STree|x"
+
+/-! ## Elaborator-known structure
+
+An assigned metavariable — the way `refine ⟨STree.node ?l ?r, ?h⟩` leaves the
+witness — draws as structure with the still-open holes as atoms:
+instantiate-then-walk. -/
+
+#eval show Lean.Elab.TermElabM Unit from do
+  let l ← Meta.mkFreshExprMVar (some sTree) (userName := `l)
+  let r ← Meta.mkFreshExprMVar (some sTree) (userName := `r)
+  let w ← Meta.mkFreshExprMVar (some sTree)
+  w.mvarId!.assign (sNode l r)
+  let (skipped, st) ← runCtx w
+  unless skipped == 0 do throwError "ctx.assigned: skipped {skipped}"
+  assertCanon "ctx.assigned" st.toDataInstance
+    "STree|node\nSTree|?l\nSTree|?r\n\
+     left[STree,STree]:0,1\nright[STree,STree]:0,2"
+
+-- a `let` binding is elaborator-known structure as well: the bound variable
+-- refines into its value
+#eval show Lean.Elab.TermElabM Unit from do
+  withLetDecl `t sTree (sNode (sLeaf 1) (sLeaf 2)) fun t => do
+    let (skipped, st) ← runCtx t
+    unless skipped == 0 do throwError "ctx.let: skipped {skipped}"
+    assertCanon "ctx.let" st.toDataInstance
+      "STree|node\nSTree|leaf\nNat|1\nSTree|leaf\nNat|2\n\
+       left[STree,STree]:0,1\nright[STree,STree]:0,3\nvalue[STree,Nat]:1,2;3,4"
+
+/-! ## Refinement: `h : x = t` draws `x` as `t`
+
+No opaque `x` atom, no `=` tuple — the structure is the hypothesis's
+rendering. -/
+
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x sTree fun x => do
+  withLocalDeclD `h (← mkAppM ``Eq #[x, sNode (sLeaf 1) (sLeaf 2)]) fun _ => do
+    let (skipped, st) ← runCtx x
+    unless skipped == 0 do throwError "ctx.refined: skipped {skipped}"
+    assertCanon "ctx.refined" st.toDataInstance
+      "STree|node\nSTree|leaf\nNat|1\nSTree|leaf\nNat|2\n\
+       left[STree,STree]:0,1\nright[STree,STree]:0,3\nvalue[STree,Nat]:1,2;3,4"
+
+-- the reversed orientation `h : t = x` refines the same way
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x sTree fun x => do
+  withLocalDeclD `h (← mkAppM ``Eq #[sLeaf 7, x]) fun _ => do
+    let (_, st) ← runCtx x
+    assertCanon "ctx.refined.rev" st.toDataInstance
+      "STree|leaf\nNat|7\nvalue[STree,Nat]:0,1"
+
+-- `h : x = y` merges two hypothesis variables into one atom
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x sTree fun x => do
+  withLocalDeclD `y sTree fun y => do
+  withLocalDeclD `h (← mkAppM ``Eq #[x, y]) fun _ => do
+    let (_, st) ← runCtx x
+    assertCanon "ctx.refined.var" st.toDataInstance "STree|y"
+
+-- a mutual chain terminates: the re-entered variable is the opaque leaf
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x sTree fun x => do
+  withLocalDeclD `y sTree fun y => do
+  withLocalDeclD `h1 (← mkAppM ``Eq #[x, y]) fun _ => do
+  withLocalDeclD `h2 (← mkAppM ``Eq #[y, x]) fun _ => do
+    let (skipped, st) ← runCtx x
+    unless skipped == 0 do throwError "ctx.refined.cycle: skipped {skipped}"
+    assertCanon "ctx.refined.cycle" st.toDataInstance "STree|x"
+
+-- two equations on one variable: the first refines, the second stays an
+-- explicit `=` tuple against the refined structure — nothing is silently
+-- absorbed
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x sTree fun x => do
+  withLocalDeclD `h1 (← mkAppM ``Eq #[x, sLeaf 1]) fun _ => do
+  withLocalDeclD `h2 (← mkAppM ``Eq #[x, sLeaf 2]) fun _ => do
+    let (skipped, st) ← runCtx x
+    unless skipped == 0 do throwError "ctx.refined.second: skipped {skipped}"
+    assertCanon "ctx.refined.second" st.toDataInstance
+      "STree|leaf\nNat|1\nSTree|leaf\nNat|2\n\
+       =[STree,STree]:0,2\nvalue[STree,Nat]:0,1;2,3"
+
+-- an injected refinement (`cfg.refinements` — a found model) wins over the
+-- context: a disagreeing equation demotes to an `=` tuple …
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x sTree fun x => do
+  withLocalDeclD `h (← mkAppM ``Eq #[x, sLeaf 2]) fun _ => do
+    let cfg : WalkConfig :=
+      { refinements := ({} : Std.HashMap FVarId Expr).insert x.fvarId! (sLeaf 1) }
+    let (_, st) ← runCtx x (cfg := cfg)
+    assertCanon "ctx.inject.conflict" st.toDataInstance
+      "STree|leaf\nNat|1\nSTree|leaf\nNat|2\n\
+       =[STree,STree]:0,2\nvalue[STree,Nat]:0,1;2,3"
+
+-- … and an agreeing equation is absorbed: no duplicate `=` self-edge
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x sTree fun x => do
+  withLocalDeclD `h (← mkAppM ``Eq #[x, sLeaf 1]) fun _ => do
+    let cfg : WalkConfig :=
+      { refinements := ({} : Std.HashMap FVarId Expr).insert x.fvarId! (sLeaf 1) }
+    let (_, st) ← runCtx x (cfg := cfg)
+    assertCanon "ctx.inject.agree" st.toDataInstance
+      "STree|leaf\nNat|1\nvalue[STree,Nat]:0,1"
+
+-- an equation whose sides are not plain variables stays an `=` tuple
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x sTree fun x => do
+  withLocalDeclD `h (← mkAppM ``Eq #[sNode x x, sLeaf 1]) fun _ => do
+    let (_, st) ← runCtx x
+    assertCanon "ctx.eqTuple" st.toDataInstance
+      "STree|x\nSTree|node\nSTree|leaf\nNat|1\n\
+       =[STree,STree]:1,2\nleft[STree,STree]:1,0\nright[STree,STree]:1,0\n\
+       value[STree,Nat]:2,3"
+
+-- the fused walker and the two-pass reference agree on a refined walk
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x sTree fun x => do
+    let refinements : Std.HashMap FVarId Expr :=
+      (({} : Std.HashMap FVarId Expr).insert x.fvarId! (sNode (sLeaf 1) (sLeaf 2)))
+    assertMatchesReference "ctx.refined.oracle" x { refinements }
+
+/-! ## Negative information -/
+
+-- `h : x ≠ leaf 0` is a `≠` tuple; nothing claims the equality holds
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x sTree fun x => do
+  withLocalDeclD `h (← mkAppM ``Ne #[x, sLeaf 0]) fun _ => do
+    let (skipped, st) ← runCtx x
+    unless skipped == 0 do throwError "ctx.ne: skipped {skipped}"
+    assertCanon "ctx.ne" st.toDataInstance
+      "STree|x\nSTree|leaf\nNat|0\nvalue[STree,Nat]:1,2\n≠[STree,STree]:0,1"
+
+-- `h : ¬ (R x y)` is a `¬R` tuple
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `α (mkSort Level.one) fun a => do
+  withLocalDeclD `R (← mkArrow a (← mkArrow a (mkSort Level.zero))) fun R => do
+  withLocalDeclD `x a fun x => do
+  withLocalDeclD `y a fun y => do
+  withLocalDeclD `h (mkApp (mkConst ``Not) (mkApp2 R x y)) fun _ => do
+    let (skipped, st) ← runCtx x
+    unless skipped == 0 do throwError "ctx.notR: skipped {skipped}"
+    assertCanon "ctx.notR" st.toDataInstance
+      "α|x\nα|y\n¬R[α,α]:0,1"
+
+-- the definitional spelling `R x y → False` peels the same way
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `α (mkSort Level.one) fun a => do
+  withLocalDeclD `R (← mkArrow a (← mkArrow a (mkSort Level.zero))) fun R => do
+  withLocalDeclD `x a fun x => do
+  withLocalDeclD `y a fun y => do
+  withLocalDeclD `h (← mkArrow (mkApp2 R x y) (mkConst ``False)) fun _ => do
+    let (_, st) ← runCtx x
+    assertCanon "ctx.arrowFalse" st.toDataInstance
+      "α|x\nα|y\n¬R[α,α]:0,1"
+
+/-! ## Hypotheses not mentioning the subject are not this diagram's business -/
+
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x sTree fun x => do
+  withLocalDeclD `n (mkConst ``Nat) fun n => do
+  withLocalDeclD `h (← mkAppM ``LT.lt #[n, n]) fun _ => do
+    let (skipped, st) ← runCtx x
+    unless skipped == 0 do throwError "ctx.unrelated: skipped {skipped}"
+    assertCanon "ctx.unrelated" st.toDataInstance "STree|x"
+
+/-! ## The scope is the subject type's, extended with the fact vocabulary -/
+
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x (mkConst ``Nat) fun x => do
+  withLocalDeclD `y (mkConst ``Nat) fun y => do
+  withLocalDeclD `h (← mkAppM ``LT.lt #[x, y]) fun _ => do
+    let scope ← scopeInContext x
+    unless scope.root == ``Nat do
+      throwError "scope: root is {scope.root}, expected Nat"
+    unless (scope.rels.get? "lt").map (·.2) == some (some 2) do
+      throwError "scope: lt missing or wrong arity"
+    unless scope.types.contains ``Nat do
+      throwError "scope: Nat missing"

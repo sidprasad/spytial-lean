@@ -10,7 +10,7 @@ public meta import SpytialLean.Spec
 public meta import SpytialLean.Selector
 public meta import SpytialLean.SelectorElab
 public meta import SpytialLean.Relationalizer
-public meta import SpytialLean.ProofState
+public meta import SpytialLean.InContext
 public meta import SpytialLean.ModelFind
 public meta import SpytialLean.Widget
 public meta import SpytialLean.Attr
@@ -584,17 +584,89 @@ meta def elabSpytialProofDatumDebug : CommandElab := fun
     logInfo m!"{(toJson di).pretty}"
   | stx => throwError "Unexpected syntax {stx}."
 
-/-! ## spytial tactic -/
+/-! ## spytial tactic: a value drawn with what the context knows about it
+
+In tactic position the subject sits in a live local context, and that context
+knows things about it: refinements (equations, `let` bindings, elaborator
+assignments) and Prop facts. `spytialInContextProps` is the tactic-side
+sibling of `spytialPayloadProps` — same payload shape, context knowledge
+folded in. -/
+
+/-- Default styling for negative relations (`≠`, `¬R`): dashed red edges, the
+    ruled-out look. Prepended before user ops, so an explicit `with [...]`
+    overrides. Sorted for a deterministic spec string. -/
+private meta def negativeStyleOps (di : JsonDataInstance) : SpytialSpec :=
+  let names := di.relations.filterMap fun r =>
+    if isNegativeRelName r.name then some r.name else none
+  names.qsort (· < ·) |>.toList.map fun n =>
+    .edgeStyle n (line := some { color := some "#cc0000", pattern := some .dashed })
+
+/-- The payload the `spytial` tactic hands the infoview: the subject walked
+    together with what the local context knows about it (`walkInContext`),
+    plus the count of subject-relevant Prop hypotheses that did not decompose
+    (the caller reports them). An explicit `with [<ops>]` overrides the
+    subject type's attached `spytial_spec`, exactly like `#spytial`; ops
+    elaborate against the subject type's scope extended with the fact
+    vocabulary (`scopeInContext`). Either way, the default negative-relation
+    styling is prepended when negative relations were emitted, so explicit
+    ops override it. -/
+public meta def spytialInContextProps (subject : Expr)
+    (ops? : Option (Array (TSyntax `spytial_op)) := none)
+    (cfg : WalkConfig := {}) : TermElabM (Json × Nat) := do
+  let (skipped, state) ← (walkInContext cfg subject).run {}
+  let di := state.toDataInstance
+  let defaults := negativeStyleOps di
+  let spec ← match ops? with
+    | some ops => do
+      pure (defaults ++ (← elabSpytialOps (← scopeInContext subject) ops))
+    | none => pure (defaults ++ ((← lookupTypeSpec subject).getD []))
+  let spec? := if spec.isEmpty then none else some (SpytialSpec.render spec)
+  return (spytialProps di spec?, skipped)
 
 open Tactic in
-/-- `spytial <term>` displays a spatial relational diagram in the Lean infoview
-    during tactic mode. Hypothesis names and local bindings are in scope.
+/-- Shared body of the context-aware tactic arms: elaborate the subject in
+    the main goal's context (hypotheses introduced by earlier tactics live
+    there, not in the by-block's ambient one), build the payload, report
+    skipped facts, render. -/
+private meta def spytialInContextTac (t : Syntax)
+    (ops? : Option (Array (TSyntax `spytial_op))) (stx : Syntax) :
+    TacticM Unit := do
+  let (props, skipped) ← withMainContext do
+    spytialInContextProps (← elabTermInstantiated t) ops?
+  if skipped > 0 then
+    logInfo m!"spytial: skipped {skipped} hypothesis(es) about the subject \
+      that do not decompose into relation tuples (e.g. `∀`, `∧`)."
+  savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
 
-    Use `spytial <term> with [<ops>]` to specify layout operations, just like the
-    `#spytial` command.
+open Tactic in
+/-- `spytial <term>` displays a spatial relational diagram in the Lean
+    infoview during tactic mode — the value drawn with everything the local
+    context knows about it:
+
+    - Metavariable assignments are instantiated: structure the elaborator has
+      already determined (a `refine`, a `let`) draws as structure, with the
+      still-open holes as atoms inside it.
+    - `h : x = t` (and `let x := t`) refines `x`: its atom shows `t`'s
+      structure instead of an opaque leaf.
+    - A Prop hypothesis mentioning the subject becomes a relation tuple
+      anchored on its atoms: `h : R x y` in relation `R`; `h : x ≠ t` and
+      `h : ¬ P x` in the ruled-out relations `≠` / `¬P`, drawn dashed red by
+      default.
+    - Hypotheses not mentioning the subject are ignored; subject-relevant
+      Props that do not decompose (`∀ …`, `A ∧ B`) are skipped, with one note
+      reporting the count.
+
+    The goal is deliberately not drawn: hypotheses are established knowledge,
+    the goal is what is still being proven.
+
+    `spytial <term> with [<ops>]` specifies layout operations, just like the
+    `#spytial` command; without ops, the subject type's `spytial_spec`
+    applies. Negative relation names are addressable in field positions as
+    escaped idents (`edgeStyle «≠» …`); they cannot occur inside selector
+    expressions — the query language cannot lex them.
 
     ```
-    example (t : RBTree Nat) : True := by
+    example (t : RBTree Nat) (h : t ≠ .leaf) : True := by
       spytial t
       trivial
     ```
@@ -605,15 +677,25 @@ open Tactic in
 @[tactic spytialTactic]
 meta def elabSpytialTactic : Tactic := fun stx => do
   match stx with
-  | `(tactic| spytial $t:term) => do
-    -- withMainContext: hypotheses introduced by earlier tactics (intro, cases)
-    -- live in the goal's context, not the by-block's ambient one
-    let props ← withMainContext do spytialPayloadProps t
-    savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
-  | `(tactic| spytial $t:term with [$ops,*]) => do
-    let props ← withMainContext do spytialPayloadProps t (some ops.getElems)
-    savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
+  | `(tactic| spytial $t:term) => spytialInContextTac t none stx
+  | `(tactic| spytial $t:term with [$ops,*]) => spytialInContextTac t (some ops.getElems) stx
   | _ => throwError "Unexpected syntax {stx}."
+
+meta def spytialDatumKw : Lean.Parser.Parser :=
+  Lean.Parser.nonReservedSymbol "spytial.datum" (includeIdent := true)
+
+open Tactic in
+/-- `spytial.datum <term>` prints the JSON data instance the `spytial` tactic
+    would draw — the debugging counterpart, mirroring `#spytial.datum`. -/
+syntax (name := spytialDatumTactic) spytialDatumKw term : tactic
+
+open Tactic in
+@[tactic spytialDatumTactic]
+meta def elabSpytialDatumTactic : Tactic := fun stx => do
+  withMainContext do
+    let subject ← elabTermInstantiated stx[1]
+    let (_, state) ← (walkInContext {} subject).run {}
+    logInfo m!"{(toJson state.toDataInstance).pretty}"
 
 /-! ## Proof tactic -/
 
@@ -640,122 +722,6 @@ meta def elabSpytialProofTactic : Tactic := fun stx => do
   let props ← withMainContext do
     spytialPayloadProps stx[1] (optionalOps stx[2]) { filterProofs := false }
   savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
-
-/-! ## Proof-state tactic -/
-
-/-- Default styling for negative relations (`≠`, `¬R`): dashed red edges, the
-    ruled-out look. Prepended before user ops, so an explicit `with [...]`
-    overrides. Sorted for a deterministic spec string. -/
-private meta def negativeStyleOps (di : JsonDataInstance) : SpytialSpec :=
-  let names := di.relations.filterMap fun r =>
-    if isNegativeRelName r.name then some r.name else none
-  names.qsort (· < ·) |>.toList.map fun n =>
-    .edgeStyle n (line := some { color := some "#cc0000", pattern := some .dashed })
-
-/-- The payload `spytial.state` hands the infoview, plus the count of Prop
-    hypotheses that did not decompose (the tactic reports them). Public
-    sibling of `spytialPayloadProps`: there is no subject term — the walk and
-    the spec vocabulary come from the goal. Without ops there is no
-    single subject type, so no `spytial_spec` fallback applies; only the
-    default negative-relation styling is sent, when negative relations were
-    emitted. -/
-public meta def spytialStateProps (goal : MVarId)
-    (ops? : Option (Array (TSyntax `spytial_op)) := none)
-    (subject? : Option Expr := none)
-    (cfg : WalkConfig := {}) : TermElabM (Json × Nat) := do
-  let (skipped, state) ← (walkProofState cfg goal subject?).run {}
-  let di := state.toDataInstance
-  let defaults := negativeStyleOps di
-  let spec ← match ops? with
-    | some ops => do
-      let scope ← proofStateScope goal subject?
-      pure (defaults ++ (← elabSpytialOps scope ops))
-    | none => pure defaults
-  let spec? := if spec.isEmpty then none else some (SpytialSpec.render spec)
-  return (spytialProps di spec?, skipped)
-
-/-- Leading parser for the `spytial.state` tactic; see `spytialProofKw` for
-    why a dotted name needs `nonReservedSymbol`. -/
-meta def spytialStateKw : Lean.Parser.Parser :=
-  Lean.Parser.nonReservedSymbol "spytial.state" (includeIdent := true)
-
-open Tactic in
-/-- `spytial.state` renders the main goal — its hypotheses and its target —
-    as one spatial diagram in the Lean infoview. One diagram is one goal:
-    sibling goals (the branches of a `cases`) assume contradictory things, so
-    to see another goal, focus it (`case …`, `·`) — or `all_goals
-    spytial.state` to draw each in turn.
-
-    Inside the goal's context, with metavariable assignments instantiated (so
-    structure the elaborator has already determined — e.g. from `refine` —
-    shows up):
-
-    - A hypothesis whose type is a Prop application `R a b` (head a constant,
-      or a local relation variable) becomes one tuple in relation `R`. Proofs,
-      types, and typeclass instances among the arguments are dropped.
-    - A data hypothesis `t : T` walks structurally; an abstract variable is
-      one `T`-typed atom.
-    - `h : x = t` refines `x`: its atom shows `t`'s structure instead of an
-      opaque leaf. Equations between non-variables emit `=` tuples.
-    - `h : x ≠ t` and `h : ¬ (R a b)` emit into the ruled-out relations `≠` /
-      `¬R`, drawn dashed red by default.
-    - Hypotheses that are types, relations, or instances (`α : Type`,
-      `R : α → α → Prop`, `[DecidableEq α]`) are skipped — their names appear
-      as atom types and relation names already.
-    - The goal target gets the tuple treatment under the `⊢ ` prefix; a goal
-      that does not decompose is one `Goal` atom.
-    - Prop hypotheses that do not decompose (`∀ …`, `A ∧ B`) are skipped, with
-      one note reporting the count.
-
-    Everything shares one walk state: a term in a hypothesis and in the goal
-    is the same atom.
-
-    `spytial.state x` focuses on subject `x`: only `x`, hypotheses mentioning
-    it, and the goal target are drawn. `spytial.state … with [<ops>]` attaches
-    layout ops, checked against the live proof state; decorated relation names
-    are addressable as escaped idents (`edgeStyle «⊢ lt» …`) and the `Goal`
-    atom type as a raw string selector (`atomStyle "Goal" …`). There is no
-    single subject type, so no `spytial_spec` fallback applies.
-
-    Not shown: values consistent-but-unmentioned (this is not a model finder),
-    and constructors eliminated by `cases` (they leave no trace in the
-    context). -/
-syntax (name := spytialStateTactic) spytialStateKw (colGt term)?
-  (" with " "[" spytial_op,* "]")? : tactic
-
-open Tactic in
-@[tactic spytialStateTactic]
-meta def elabSpytialStateTactic : Tactic := fun stx => do
-  let (props, skipped) ← withMainContext do
-    let subject? ← if stx[1].getNumArgs == 0 then pure none else do
-      let e ← Term.elabTerm stx[1][0] none
-      Term.synthesizeSyntheticMVarsNoPostponing
-      pure (some (← instantiateMVars e))
-    spytialStateProps (← getMainGoal) (optionalOps stx[2]) subject?
-  if skipped > 0 then
-    logInfo m!"spytial.state: skipped {skipped} hypothesis(es) that do not \
-      decompose into relation tuples (e.g. `∀`, `∧`, `→`)."
-  savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
-
-meta def spytialStateDatumKw : Lean.Parser.Parser :=
-  Lean.Parser.nonReservedSymbol "spytial.state.datum" (includeIdent := true)
-
-open Tactic in
-/-- `spytial.state.datum` prints the proof-state JSON data instance — the
-    debugging counterpart of `spytial.state`, mirroring the `.datum`
-    commands. -/
-syntax (name := spytialStateDatumTactic) spytialStateDatumKw (colGt term)? : tactic
-
-open Tactic in
-@[tactic spytialStateDatumTactic]
-meta def elabSpytialStateDatumTactic : Tactic := fun stx => do
-  withMainContext do
-    let subject? ← if stx[1].getNumArgs == 0 then pure none else do
-      let e ← Term.elabTerm stx[1][0] none
-      Term.synthesizeSyntheticMVarsNoPostponing
-      pure (some (← instantiateMVars e))
-    let (_, state) ← (walkProofState {} (← getMainGoal) subject?).run {}
-    logInfo m!"{(toJson state.toDataInstance).pretty}"
 
 /-! ## Model finding -/
 
@@ -812,13 +778,13 @@ open Tactic in
     Hypotheses that cannot be decided are reported as *unchecked*, never
     silently assumed.
 
-    The first surviving model is injected as a refinement and the state is
-    drawn focused on `x`: the model's structure, with every constraint —
-    relations, `≠` edges, the goal — pointing into it. When nothing survives
-    the bound, that is the finding: the hole cannot look like any candidate,
-    and the diagram falls back to what is known.
+    The first surviving model is injected as a refinement and `x` is drawn
+    as by the `spytial` tactic: the model's structure, with every fact —
+    relations, `≠` edges — anchored on it. When nothing survives the bound,
+    that is the finding: the hole cannot look like any candidate, and the
+    diagram falls back to what is known.
 
-    `with [<ops>]` attaches layout ops, as in `spytial.state`. -/
+    `with [<ops>]` attaches layout ops, as in the `spytial` tactic. -/
 syntax (name := spytialFindTactic) spytialFindKw (colGt ident)? (num)?
   (" with " "[" spytial_op,* "]")? : tactic
 
@@ -829,7 +795,7 @@ meta def elabSpytialFindTactic : Tactic := fun stx => do
     throwError "spytial.find expects the local variable to search for: `spytial.find x`"
   let (props, skipped) ← withMainContext do
     let (subject, cfg) ← runFindSearch stx[1][0] stx[2]
-    spytialStateProps (← getMainGoal) (optionalOps stx[3]) (some subject) cfg
+    spytialInContextProps subject (optionalOps stx[3]) cfg
   if skipped > 0 then
     logInfo m!"spytial.find: skipped {skipped} hypothesis(es) that do not \
       decompose into relation tuples (e.g. `∀`, `∧`, `→`)."
@@ -850,7 +816,7 @@ meta def elabSpytialFindDatumTactic : Tactic := fun stx => do
     throwError "spytial.find.datum expects the local variable to search for"
   withMainContext do
     let (subject, cfg) ← runFindSearch stx[1][0] stx[2]
-    let (_, state) ← (walkProofState cfg (← getMainGoal) (some subject)).run {}
+    let (_, state) ← (walkInContext cfg subject).run {}
     logInfo m!"{(toJson state.toDataInstance).pretty}"
 
 end

@@ -67,10 +67,10 @@ public meta def hypLabel (userName : Name) : String :=
 public meta def isProofLikeType (ty : Expr) : MetaM Bool := do
   return (← Meta.isProp ty) || ty.isSort
 
-/-! ## Proof-state naming
+/-! ## Context-fact naming
 
-Names the proof-state walker (`walkProofState`) can emit, kept here so the
-static checker (`proofStateScope`) predicts exactly what the walker produces. -/
+Names the in-context walker (`walkInContext`) can emit, kept here so the
+static checker (`scopeInContext`) predicts exactly what the walker produces. -/
 
 /-- The relation an equality hypothesis emits into when it does not refine a
     variable (`f a = g b`). -/
@@ -84,21 +84,10 @@ public meta def neRelName : String := "≠"
     read "ruled out" as "holds". -/
 public meta def negRelName (base : String) : String := s!"¬{base}"
 
-/-- Goal relations are prefixed so a spec can style goal structure apart from
-    hypothesis structure (`edgeStyle «⊢ lt» …`). -/
-public meta def goalRelPrefix : String := "⊢ "
-
-/-- The atom type of a goal that does not decompose into a relation tuple. -/
-public meta def goalAtomType : String := "Goal"
-
-/-- Whether a relation name carries negative information (`≠`, `¬R`), with or
-    without the goal prefix. These relations get the default ruled-out edge
-    styling. -/
+/-- Whether a relation name carries negative information (`≠`, `¬R`). These
+    relations get the default ruled-out edge styling. -/
 public meta def isNegativeRelName (name : String) : Bool :=
-  let core : String :=
-    if name.startsWith goalRelPrefix then (name.drop goalRelPrefix.length).toString
-    else name
-  core == neRelName || core.startsWith "¬"
+  name == neRelName || name.startsWith "¬"
 
 /-- The relation name for a decomposable Prop application, from its head: a
     constant's short name, a local relation's user name (`variable
@@ -111,13 +100,6 @@ public meta def propRelName? (head : Expr) : MetaM (Option String) := do
   | .const n _ => return some (shortName n)
   | .fvar fvarId => return some (hypLabel (← fvarId.getUserName))
   | _ => return none
-
-/-- Types whose inhabitants are vocabulary rather than data: the
-    forall-telescope body is a sort. `α : Type` and `R : α → α → Prop` fall
-    here — their names already appear as atom types and relation names, so
-    the proof-state walker skips them. -/
-public meta def isVocabularyType (ty : Expr) : MetaM Bool :=
-  Meta.forallTelescopeReducing ty fun _ body => return body.isSort
 
 /-! ## Function tabulation
 

@@ -62,36 +62,31 @@ example : ∀ h : TEven 4, True := by
   spytial.proof h
   trivial
 
--- proof-state tactic, bare
+-- context knowledge: an equation refines the subject in place
 set_option linter.unusedVariables false in
-example (a b : Nat) (h : a < b) : True := by
-  spytial.state
+example (xs : List Nat) (h : xs = [1]) : True := by
+  spytial xs
   trivial
 
--- proof-state tactic after intro
+-- context knowledge after intro
 set_option linter.unusedVariables false in
 example : ∀ a b : Nat, a < b → True := by
   intro a b h
-  spytial.state
+  spytial a
   trivial
 
--- proof-state tactic with a subject
+-- ops elaborate against the merged scope: subject type plus fact vocabulary,
+-- with a negative name addressable as an escaped ident
 set_option linter.unusedVariables false in
-example (xs ys : List Nat) (h : xs = ys) : True := by
-  spytial.state xs
+example (a b : Nat) (h : a < b) (h2 : a ≠ 0) : True := by
+  spytial a with [edgeStyle lt (lineStyle "blue"),
+                  edgeStyle «≠» (lineStyle "green")]
   trivial
 
--- proof-state tactic with ops: a hypothesis relation and an escaped goal
--- relation are both addressable in field positions
-example (a b : Nat) (h : a < b) : a < b := by
-  spytial.state with [edgeStyle lt (lineStyle "blue"),
-                      edgeStyle «⊢ lt» (lineStyle "green")]
-  exact h
-
--- proof-state datum tactic
+-- datum tactic
 set_option linter.unusedVariables false in
 example (a b : Nat) (h : a < b) : True := by
-  spytial.state.datum
+  spytial.datum a
   trivial
 
 -- model finding: search, and search with an explicit depth
