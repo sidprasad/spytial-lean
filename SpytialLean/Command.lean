@@ -655,20 +655,20 @@ private meta def negativeStyleOps (di : JsonDataInstance) : SpytialSpec :=
 /-- The payload `spytial.state` hands the infoview, plus the count of Prop
     hypotheses that did not decompose (the tactic reports them). Public
     sibling of `spytialPayloadProps`: there is no subject term — the walk and
-    the spec vocabulary come from the goal list. Without ops there is no
+    the spec vocabulary come from the goal. Without ops there is no
     single subject type, so no `spytial_spec` fallback applies; only the
     default negative-relation styling is sent, when negative relations were
     emitted. -/
-public meta def spytialStateProps (goals : List MVarId)
+public meta def spytialStateProps (goal : MVarId)
     (ops? : Option (Array (TSyntax `spytial_op)) := none)
     (subject? : Option Expr := none)
     (cfg : WalkConfig := {}) : TermElabM (Json × Nat) := do
-  let (skipped, state) ← (walkProofState cfg goals subject?).run {}
+  let (skipped, state) ← (walkProofState cfg goal subject?).run {}
   let di := state.toDataInstance
   let defaults := negativeStyleOps di
   let spec ← match ops? with
     | some ops => do
-      let scope ← proofStateScope goals subject?
+      let scope ← proofStateScope goal subject?
       pure (defaults ++ (← elabSpytialOps scope ops))
     | none => pure defaults
   let spec? := if spec.isEmpty then none else some (SpytialSpec.render spec)
@@ -680,12 +680,15 @@ meta def spytialStateKw : Lean.Parser.Parser :=
   Lean.Parser.nonReservedSymbol "spytial.state" (includeIdent := true)
 
 open Tactic in
-/-- `spytial.state` renders the current proof state — every goal's hypotheses
-    and target — as one spatial diagram in the Lean infoview.
+/-- `spytial.state` renders the main goal — its hypotheses and its target —
+    as one spatial diagram in the Lean infoview. One diagram is one goal:
+    sibling goals (the branches of a `cases`) assume contradictory things, so
+    to see another goal, focus it (`case …`, `·`) — or `all_goals
+    spytial.state` to draw each in turn.
 
-    Per goal, inside its own context, with metavariable assignments
-    instantiated (so structure the elaborator has already determined — e.g.
-    from `refine` — shows up):
+    Inside the goal's context, with metavariable assignments instantiated (so
+    structure the elaborator has already determined — e.g. from `refine` —
+    shows up):
 
     - A hypothesis whose type is a Prop application `R a b` (head a constant,
       or a local relation variable) becomes one tuple in relation `R`. Proofs,
@@ -708,7 +711,7 @@ open Tactic in
     is the same atom.
 
     `spytial.state x` focuses on subject `x`: only `x`, hypotheses mentioning
-    it, and the (main) goal are drawn. `spytial.state … with [<ops>]` attaches
+    it, and the goal target are drawn. `spytial.state … with [<ops>]` attaches
     layout ops, checked against the live proof state; decorated relation names
     are addressable as escaped idents (`edgeStyle «⊢ lt» …`) and the `Goal`
     atom type as a raw string selector (`atomStyle "Goal" …`). There is no
@@ -723,15 +726,12 @@ syntax (name := spytialStateTactic) spytialStateKw (colGt term)?
 open Tactic in
 @[tactic spytialStateTactic]
 meta def elabSpytialStateTactic : Tactic := fun stx => do
-  let goals ← getGoals
   let (props, skipped) ← withMainContext do
     let subject? ← if stx[1].getNumArgs == 0 then pure none else do
       let e ← Term.elabTerm stx[1][0] none
       Term.synthesizeSyntheticMVarsNoPostponing
       pure (some (← instantiateMVars e))
-    -- a subject's variables live in the main goal's context; focus there
-    let goals := if subject?.isSome then goals.take 1 else goals
-    spytialStateProps goals (optionalOps stx[2]) subject?
+    spytialStateProps (← getMainGoal) (optionalOps stx[2]) subject?
   if skipped > 0 then
     logInfo m!"spytial.state: skipped {skipped} hypothesis(es) that do not \
       decompose into relation tuples (e.g. `∀`, `∧`, `→`)."
@@ -749,14 +749,12 @@ syntax (name := spytialStateDatumTactic) spytialStateDatumKw (colGt term)? : tac
 open Tactic in
 @[tactic spytialStateDatumTactic]
 meta def elabSpytialStateDatumTactic : Tactic := fun stx => do
-  let goals ← getGoals
   withMainContext do
     let subject? ← if stx[1].getNumArgs == 0 then pure none else do
       let e ← Term.elabTerm stx[1][0] none
       Term.synthesizeSyntheticMVarsNoPostponing
       pure (some (← instantiateMVars e))
-    let goals := if subject?.isSome then goals.take 1 else goals
-    let (_, state) ← (walkProofState {} goals subject?).run {}
+    let (_, state) ← (walkProofState {} (← getMainGoal) subject?).run {}
     logInfo m!"{(toJson state.toDataInstance).pretty}"
 
 /-! ## Model finding -/
@@ -831,7 +829,7 @@ meta def elabSpytialFindTactic : Tactic := fun stx => do
     throwError "spytial.find expects the local variable to search for: `spytial.find x`"
   let (props, skipped) ← withMainContext do
     let (subject, cfg) ← runFindSearch stx[1][0] stx[2]
-    spytialStateProps [← getMainGoal] (optionalOps stx[3]) (some subject) cfg
+    spytialStateProps (← getMainGoal) (optionalOps stx[3]) (some subject) cfg
   if skipped > 0 then
     logInfo m!"spytial.find: skipped {skipped} hypothesis(es) that do not \
       decompose into relation tuples (e.g. `∀`, `∧`, `→`)."
@@ -852,7 +850,7 @@ meta def elabSpytialFindDatumTactic : Tactic := fun stx => do
     throwError "spytial.find.datum expects the local variable to search for"
   withMainContext do
     let (subject, cfg) ← runFindSearch stx[1][0] stx[2]
-    let (_, state) ← (walkProofState cfg [← getMainGoal] (some subject)).run {}
+    let (_, state) ← (walkProofState cfg (← getMainGoal) (some subject)).run {}
     logInfo m!"{(toJson state.toDataInstance).pretty}"
 
 end

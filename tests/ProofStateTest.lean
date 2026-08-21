@@ -22,9 +22,9 @@ private meta def sLeaf (n : Nat) : Expr :=
 private meta def sNode (l r : Expr) : Expr :=
   mkApp2 (mkConst ``STree.node) l r
 
-private meta def runState (goals : List MVarId) (subject? : Option Expr := none) :
-    MetaM (Nat × WalkState) :=
-  (walkProofState {} goals subject?).run {}
+private meta def runState (goal : MVarId) (subject? : Option Expr := none)
+    (cfg : WalkConfig := {}) : MetaM (Nat × WalkState) :=
+  (walkProofState cfg goal subject?).run {}
 
 /-! ## A Prop hypothesis and the goal share atoms
 
@@ -36,7 +36,7 @@ both point at the same two atoms. -/
   withLocalDeclD `y (mkConst ``Nat) fun y => do
   withLocalDeclD `h (← mkAppM ``LT.lt #[x, y]) fun _ => do
     let goal ← Meta.mkFreshExprMVar (some (← mkAppM ``LT.lt #[y, x]))
-    let (skipped, st) ← runState [goal.mvarId!]
+    let (skipped, st) ← runState goal.mvarId!
     unless skipped == 0 do throwError "state.lt: skipped {skipped}"
     assertCanon "state.lt" st.toDataInstance
       "Nat|x\nNat|y\nlt[Nat,Nat]:0,1\n⊢ lt[Nat,Nat]:1,0"
@@ -53,7 +53,7 @@ vocabulary, not data — no atoms for them. -/
   withLocalDeclD `y a fun y => do
   withLocalDeclD `h (mkApp2 R x y) fun _ => do
     let goal ← Meta.mkFreshExprMVar (some (mkApp2 R y x))
-    let (skipped, st) ← runState [goal.mvarId!]
+    let (skipped, st) ← runState goal.mvarId!
     unless skipped == 0 do throwError "state.fvarRel: skipped {skipped}"
     assertCanon "state.fvarRel" st.toDataInstance
       "α|x\nα|y\nR[α,α]:0,1\n⊢ R[α,α]:1,0"
@@ -65,7 +65,7 @@ vocabulary, not data — no atoms for them. -/
     mkForallFVars #[n] (← mkAppM ``Eq #[n, n])
   withLocalDeclD `h allTy fun _ => do
     let goal ← Meta.mkFreshExprMVar (some (mkConst ``True))
-    let (skipped, st) ← runState [goal.mvarId!]
+    let (skipped, st) ← runState goal.mvarId!
     unless skipped == 1 do throwError "state.skip: skipped {skipped}"
     assertCanon "state.skip" st.toDataInstance "Goal|True"
 
@@ -81,7 +81,7 @@ are shared. -/
   let w ← Meta.mkFreshExprMVar (some sTree)
   w.mvarId!.assign (sNode l r)
   let goal ← Meta.mkFreshExprMVar (some (← mkAppM ``Eq #[w, w]))
-  let (skipped, st) ← runState [goal.mvarId!]
+  let (skipped, st) ← runState goal.mvarId!
   unless skipped == 0 do throwError "state.assigned: skipped {skipped}"
   assertCanon "state.assigned" st.toDataInstance
     "STree|node\nSTree|?l\nSTree|?r\nSTree|node\n\
@@ -96,7 +96,7 @@ rendering. The goal's two `x` occurrences share the refined root. -/
   withLocalDeclD `x sTree fun x => do
   withLocalDeclD `h (← mkAppM ``Eq #[x, sNode (sLeaf 1) (sLeaf 2)]) fun _ => do
     let goal ← Meta.mkFreshExprMVar (some (← mkAppM ``Eq #[x, x]))
-    let (skipped, st) ← runState [goal.mvarId!]
+    let (skipped, st) ← runState goal.mvarId!
     unless skipped == 0 do throwError "state.refined: skipped {skipped}"
     assertCanon "state.refined" st.toDataInstance
       "STree|node\nSTree|leaf\nNat|1\nSTree|leaf\nNat|2\n\
@@ -108,7 +108,7 @@ rendering. The goal's two `x` occurrences share the refined root. -/
   withLocalDeclD `x sTree fun x => do
   withLocalDeclD `h (← mkAppM ``Eq #[sLeaf 7, x]) fun _ => do
     let goal ← Meta.mkFreshExprMVar (some (← mkAppM ``Eq #[x, x]))
-    let (_, st) ← runState [goal.mvarId!]
+    let (_, st) ← runState goal.mvarId!
     assertCanon "state.refined.rev" st.toDataInstance
       "STree|leaf\nNat|7\nvalue[STree,Nat]:0,1\n⊢ =[STree,STree]:0,0"
 
@@ -118,7 +118,7 @@ rendering. The goal's two `x` occurrences share the refined root. -/
   withLocalDeclD `y sTree fun y => do
   withLocalDeclD `h (← mkAppM ``Eq #[x, y]) fun _ => do
     let goal ← Meta.mkFreshExprMVar (some (← mkAppM ``Eq #[y, x]))
-    let (_, st) ← runState [goal.mvarId!]
+    let (_, st) ← runState goal.mvarId!
     assertCanon "state.refined.var" st.toDataInstance
       "STree|y\n⊢ =[STree,STree]:0,0"
 
@@ -129,42 +129,53 @@ rendering. The goal's two `x` occurrences share the refined root. -/
   withLocalDeclD `h1 (← mkAppM ``Eq #[x, y]) fun _ => do
   withLocalDeclD `h2 (← mkAppM ``Eq #[y, x]) fun _ => do
     let goal ← Meta.mkFreshExprMVar (some (mkConst ``True))
-    let (skipped, st) ← runState [goal.mvarId!]
+    let (skipped, st) ← runState goal.mvarId!
     unless skipped == 0 do throwError "state.refined.cycle: skipped {skipped}"
     assertCanon "state.refined.cycle" st.toDataInstance "STree|x\nGoal|True"
 
--- goals disagreeing about a variable (branches of `cases h : t`): the first
--- goal refines, the second keeps its equation as an `=` tuple against the
--- already-drawn atom — nothing is silently absorbed
+-- two equations on one variable in one context: the first refines, the
+-- second stays an explicit `=` tuple against the refined structure —
+-- nothing is silently absorbed
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `x sTree fun x => do
-    let g1 ← withLocalDeclD `h (← mkAppM ``Eq #[x, sLeaf 1]) fun _ => do
-      Meta.mkFreshExprMVar (some (← mkAppM ``Eq #[x, x]))
-    let g2 ← withLocalDeclD `h (← mkAppM ``Eq #[x, sLeaf 2]) fun _ => do
-      Meta.mkFreshExprMVar (some (← mkAppM ``Eq #[x, x]))
-    let (skipped, st) ← runState [g1.mvarId!, g2.mvarId!]
-    unless skipped == 0 do throwError "state.refine.conflict: skipped {skipped}"
-    assertCanon "state.refine.conflict" st.toDataInstance
+  withLocalDeclD `h1 (← mkAppM ``Eq #[x, sLeaf 1]) fun _ => do
+  withLocalDeclD `h2 (← mkAppM ``Eq #[x, sLeaf 2]) fun _ => do
+    let goal ← Meta.mkFreshExprMVar (some (← mkAppM ``Eq #[x, x]))
+    let (skipped, st) ← runState goal.mvarId!
+    unless skipped == 0 do throwError "state.refined.second: skipped {skipped}"
+    assertCanon "state.refined.second" st.toDataInstance
       "STree|leaf\nNat|1\nSTree|leaf\nNat|2\n\
-       =[STree,STree]:0,2\nvalue[STree,Nat]:0,1;2,3\n⊢ =[STree,STree]:0,0;0,0"
+       =[STree,STree]:0,2\nvalue[STree,Nat]:0,1;2,3\n⊢ =[STree,STree]:0,0"
 
--- a variable drawn opaque by an earlier goal is not retroactively refined:
--- the later goal's equation stays an `=` tuple
+-- an injected refinement (`cfg.refinements` — a found model) wins over the
+-- context: a disagreeing equation demotes to an `=` tuple …
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `x sTree fun x => do
-    let g1 ← Meta.mkFreshExprMVar (some (← mkAppM ``Eq #[x, x]))
-    let g2 ← withLocalDeclD `h (← mkAppM ``Eq #[x, sLeaf 1]) fun _ => do
-      Meta.mkFreshExprMVar (some (mkConst ``True))
-    let (_, st) ← runState [g1.mvarId!, g2.mvarId!]
-    assertCanon "state.refine.late" st.toDataInstance
-      "STree|x\nSTree|leaf\nNat|1\nGoal|True\n\
-       =[STree,STree]:0,1\nvalue[STree,Nat]:1,2\n⊢ =[STree,STree]:0,0"
+  withLocalDeclD `h (← mkAppM ``Eq #[x, sLeaf 2]) fun _ => do
+    let goal ← Meta.mkFreshExprMVar (some (← mkAppM ``Eq #[x, x]))
+    let cfg : WalkConfig :=
+      { refinements := ({} : Std.HashMap FVarId Expr).insert x.fvarId! (sLeaf 1) }
+    let (_, st) ← runState goal.mvarId! (cfg := cfg)
+    assertCanon "state.inject.conflict" st.toDataInstance
+      "STree|leaf\nNat|1\nSTree|leaf\nNat|2\n\
+       =[STree,STree]:0,2\nvalue[STree,Nat]:0,1;2,3\n⊢ =[STree,STree]:0,0"
+
+-- … and an agreeing equation is absorbed: no duplicate `=` self-edge
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x sTree fun x => do
+  withLocalDeclD `h (← mkAppM ``Eq #[x, sLeaf 1]) fun _ => do
+    let goal ← Meta.mkFreshExprMVar (some (← mkAppM ``Eq #[x, x]))
+    let cfg : WalkConfig :=
+      { refinements := ({} : Std.HashMap FVarId Expr).insert x.fvarId! (sLeaf 1) }
+    let (_, st) ← runState goal.mvarId! (cfg := cfg)
+    assertCanon "state.inject.agree" st.toDataInstance
+      "STree|leaf\nNat|1\nvalue[STree,Nat]:0,1\n⊢ =[STree,STree]:0,0"
 
 -- an equation between non-variables stays an `=` tuple
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `h (← mkAppM ``Eq #[sLeaf 1, sLeaf 2]) fun _ => do
     let goal ← Meta.mkFreshExprMVar (some (mkConst ``True))
-    let (_, st) ← runState [goal.mvarId!]
+    let (_, st) ← runState goal.mvarId!
     assertCanon "state.eqTuple" st.toDataInstance
       "STree|leaf\nNat|1\nSTree|leaf\nNat|2\nGoal|True\n\
        =[STree,STree]:0,2\nvalue[STree,Nat]:0,1;2,3"
@@ -183,7 +194,7 @@ rendering. The goal's two `x` occurrences share the refined root. -/
   withLocalDeclD `x sTree fun x => do
   withLocalDeclD `h (← mkAppM ``Ne #[x, sLeaf 0]) fun _ => do
     let goal ← Meta.mkFreshExprMVar (some (mkConst ``True))
-    let (skipped, st) ← runState [goal.mvarId!]
+    let (skipped, st) ← runState goal.mvarId!
     unless skipped == 0 do throwError "state.ne: skipped {skipped}"
     assertCanon "state.ne" st.toDataInstance
       "STree|x\nSTree|leaf\nNat|0\nGoal|True\nvalue[STree,Nat]:1,2\n≠[STree,STree]:0,1"
@@ -196,7 +207,7 @@ rendering. The goal's two `x` occurrences share the refined root. -/
   withLocalDeclD `y a fun y => do
   withLocalDeclD `h (mkApp (mkConst ``Not) (mkApp2 R x y)) fun _ => do
     let goal ← Meta.mkFreshExprMVar (some (mkConst ``True))
-    let (skipped, st) ← runState [goal.mvarId!]
+    let (skipped, st) ← runState goal.mvarId!
     unless skipped == 0 do throwError "state.notR: skipped {skipped}"
     assertCanon "state.notR" st.toDataInstance
       "α|x\nα|y\nGoal|True\n¬R[α,α]:0,1"
@@ -209,20 +220,9 @@ rendering. The goal's two `x` occurrences share the refined root. -/
   withLocalDeclD `y a fun y => do
   withLocalDeclD `h (← mkArrow (mkApp2 R x y) (mkConst ``False)) fun _ => do
     let goal ← Meta.mkFreshExprMVar (some (mkConst ``True))
-    let (_, st) ← runState [goal.mvarId!]
+    let (_, st) ← runState goal.mvarId!
     assertCanon "state.arrowFalse" st.toDataInstance
       "α|x\nα|y\nGoal|True\n¬R[α,α]:0,1"
-
-/-! ## Multiple goals share one diagram -/
-
-#eval show Lean.Elab.TermElabM Unit from do
-  withLocalDeclD `x (mkConst ``Nat) fun x => do
-  withLocalDeclD `y (mkConst ``Nat) fun y => do
-    let g1 ← Meta.mkFreshExprMVar (some (← mkAppM ``LT.lt #[x, y]))
-    let g2 ← Meta.mkFreshExprMVar (some (← mkAppM ``LT.lt #[y, x]))
-    let (_, st) ← runState [g1.mvarId!, g2.mvarId!]
-    assertCanon "state.twoGoals" st.toDataInstance
-      "Nat|x\nNat|y\n⊢ lt[Nat,Nat]:0,1;1,0"
 
 /-! ## Subject focus drops unrelated hypotheses, keeps the goal -/
 
@@ -231,7 +231,7 @@ rendering. The goal's two `x` occurrences share the refined root. -/
   withLocalDeclD `n (mkConst ``Nat) fun n => do
   withLocalDeclD `h (← mkAppM ``LT.lt #[n, n]) fun _ => do
     let goal ← Meta.mkFreshExprMVar (some (← mkAppM ``Eq #[x, x]))
-    let (_, st) ← runState [goal.mvarId!] (subject? := some x)
+    let (_, st) ← runState goal.mvarId! (subject? := some x)
     assertCanon "state.subject" st.toDataInstance
       "STree|x\n⊢ =[STree,STree]:0,0"
 
@@ -242,7 +242,7 @@ rendering. The goal's two `x` occurrences share the refined root. -/
   withLocalDeclD `y (mkConst ``Nat) fun y => do
   withLocalDeclD `h (← mkAppM ``LT.lt #[x, y]) fun _ => do
     let goal ← Meta.mkFreshExprMVar (some (← mkAppM ``LT.lt #[y, x]))
-    let scope ← proofStateScope [goal.mvarId!]
+    let scope ← proofStateScope goal.mvarId!
     unless scope.rels.get? "lt" == some (`_proofState, some 2) do
       throwError "scope: lt missing or wrong arity"
     unless scope.rels.get? "⊢ lt" == some (`_proofState, some 2) do

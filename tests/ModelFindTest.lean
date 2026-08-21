@@ -77,7 +77,7 @@ private meta def fLeaf (n : Nat) : Expr :=
     let some m := search.models[0]? | throwError "find.walk: no model"
     let cfg : WalkConfig :=
       { refinements := ({} : Std.HashMap FVarId Expr).insert x.fvarId! m }
-    let (_, st) ← (walkProofState cfg [goal.mvarId!] (subject? := some x)).run {}
+    let (_, st) ← (walkProofState cfg goal.mvarId! (subject? := some x)).run {}
     assertCanon "find.walk" st.toDataInstance
       "FTree|leaf\nNat|1\nFTree|leaf\nNat|0\nGoal|True\n\
        value[FTree,Nat]:0,1;2,3\n≠[FTree,FTree]:0,2"

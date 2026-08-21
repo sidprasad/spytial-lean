@@ -14,8 +14,11 @@ public section
 
 /-! # Proof-state relationalization
 
-Walks a proof state — every goal's hypotheses and target — into one shared
-diagram, on top of the single-value walker (`walkExpr`).
+Walks one goal — its hypotheses and its target — into one diagram, on top of
+the single-value walker (`walkExpr`). One diagram is one goal: sibling goals
+(the branches of a `cases`) assume contradictory things, so each gets its own
+picture, never a merged one. Within the goal everything shares one walk
+state, so a term appearing in a hypothesis and in the target is one atom.
 
 There are two kinds of partially-known values here. An *opaque* hole (an
 abstract hypothesis `x : T`, an unassigned metavariable `?m`) renders as one
@@ -63,38 +66,6 @@ meta def equationRefinements (lctx : LocalContext) : MetaM (Array Refinement) :=
         seen := seen.insert var
         out := out.push { hyp := decl.fvarId, var, rhs := t }
   return out
-
-/-- The refinements one goal actually applies: the map fed to the walker,
-    and the hypotheses it absorbs — they emit no tuple, because the refined
-    structure *is* their rendering. -/
-meta structure Refinements where
-  map : Std.HashMap FVarId Expr := {}
-  consumed : Std.HashSet FVarId := {}
-
-/-- Reconcile one goal's candidates against the shared walk so far. Goals
-    share atoms (`fvarAtoms`), so a variable an earlier goal already drew —
-    opaque, or refined to a *different* term (branches of `cases h : t`) —
-    cannot be re-refined here: the memoized atom would win and this goal's
-    equation would silently vanish. Such a candidate is demoted — not
-    consumed — so it renders as an ordinary `=` tuple against the
-    already-drawn atom. A candidate agreeing (structurally) with what an
-    earlier goal applied stays a refinement. `applied` accumulates applied
-    terms across goals; `drawn` is the walk's `fvarAtoms` at goal entry. -/
-meta def planRefinements (applied : Std.HashMap FVarId Expr)
-    (drawn : Std.HashMap FVarId String) (entries : Array Refinement) :
-    Refinements × Std.HashMap FVarId Expr := Id.run do
-  let mut refs : Refinements := {}
-  let mut applied := applied
-  for e in entries do
-    let keep :=
-      match applied[e.var]? with
-      | some prev => prev.equal e.rhs
-      | none => !drawn.contains e.var
-    if keep then
-      applied := applied.insert e.var e.rhs
-      refs := { map := refs.map.insert e.var e.rhs,
-                consumed := refs.consumed.insert e.hyp }
-  return (refs, applied)
 
 /-! ## Prop applications as relation tuples -/
 
@@ -156,72 +127,73 @@ private meta def exprFVars (e : Expr) : Array FVarId :=
 private meta def mentionsAny (ty : Expr) (fvars : Array FVarId) : Bool :=
   fvars.any (ty.containsFVar ·)
 
-/-- Walk every goal's local context and target into one shared walk state, so
-    a term appearing in a hypothesis and in the goal is the same atom.
+/-- Walk one goal's local context and target into the walk state. One diagram
+    is one goal; within it, a term appearing in a hypothesis and in the target
+    is the same atom.
 
-    Per goal, inside its own context, with every type `instantiateMVars`'d:
+    Inside the goal's own context, with every type `instantiateMVars`'d:
     a Prop hypothesis becomes a relation tuple (`walkPropTuple`); a data
     hypothesis walks through the normal walker (an abstract variable is one
     typed atom); hypotheses that are themselves types or relations
     (`isVocabularyType`) and typeclass instances are skipped; equational
-    hypotheses feed the refinement map instead of emitting tuples — except
-    where goals disagree: a variable an earlier goal already drew keeps this
-    goal's equation as an `=` tuple (`planRefinements`). The goal
+    hypotheses feed the refinement map instead of emitting tuples. The goal
     target gets the tuple treatment under `goalRelPrefix`, falling back to one
     `goalAtomType` atom labeled with the pretty-printed goal.
 
     With a `subject?`, only the subject, the hypotheses whose types mention
-    its variables, and the goal targets are walked.
+    its variables, and the goal target are walked.
 
     Refinements already present in `cfg.refinements` are *injected* — a found
-    model, say — and pre-applied: they win over the context's equations, and
-    an equation disagreeing with one demotes to an `=` tuple like any other
-    cross-goal conflict.
+    model, say — and win: a context equation on the same variable is absorbed
+    when it agrees (structurally), and otherwise stays an ordinary `=` tuple —
+    same as a second equation on an already-refined variable
+    (`equationRefinements` is first-wins).
 
     Returns the number of Prop hypotheses that did not decompose (the caller
     reports them; headless tests stay silent). -/
-meta def walkProofState (cfg : WalkConfig) (goals : List MVarId)
+meta def walkProofState (cfg : WalkConfig) (goal : MVarId)
     (subject? : Option Expr := none) : StateT WalkState MetaM Nat := do
   let subjFVars := match subject? with
     | some subj => exprFVars subj
     | none => #[]
-  let mut skipped : Nat := 0
-  let mut applied : Std.HashMap FVarId Expr := cfg.refinements
-  for mvarId in goals do
-    let (skipped', applied') ← mvarId.withContext do
-      let mut skipped := skipped
-      let (refs, applied') := planRefinements applied (← get).fvarAtoms
-        (← equationRefinements (← getLCtx))
-      -- injected entries win; a conflicting context equation was demoted
-      -- above (planRefinements saw it in `applied`), so this union is clash-free
-      let cfg := { cfg with refinements :=
-        cfg.refinements.fold (init := refs.map) fun m k v => m.insert k v }
-      if let some subj := subject? then
-        let _ ← walkExpr cfg subj
-      for decl in ← getLCtx do
-        if decl.isImplementationDetail then continue
-        let hypTy ← instantiateMVars decl.type
-        if subject?.isSome && !mentionsAny hypTy subjFVars then continue
-        if refs.consumed.contains decl.fvarId then continue
-        if ← Meta.isProp hypTy then
-          unless ← walkPropTuple cfg "" hypTy do
-            skipped := skipped + 1
-        else if (← Meta.isClass? hypTy).isSome then
-          continue
-        else if ← isVocabularyType hypTy then
-          continue
-        else
-          let _ ← walkExpr cfg decl.toExpr
-      let goalTy ← instantiateMVars (← mvarId.getType)
-      unless ← walkPropTuple cfg goalRelPrefix goalTy do
-        let label ← ppLabel goalTy
-        let s ← get
-        let (atomId, s) := s.freshId
-        set (s.addAtom { id := atomId, type := goalAtomType, label })
-      return (skipped, applied')
-    skipped := skipped'
-    applied := applied'
-  return skipped
+  goal.withContext do
+    -- reconcile the context's equations with the injected refinements:
+    -- injected entries win, and an equation is consumed (emits no tuple)
+    -- only when it is the refinement actually applied
+    let mut map := cfg.refinements
+    let mut consumed : Std.HashSet FVarId := {}
+    for e in ← equationRefinements (← getLCtx) do
+      match map[e.var]? with
+      | some prev =>
+        if prev.equal e.rhs then consumed := consumed.insert e.hyp
+      | none =>
+        map := map.insert e.var e.rhs
+        consumed := consumed.insert e.hyp
+    let cfg := { cfg with refinements := map }
+    let mut skipped : Nat := 0
+    if let some subj := subject? then
+      let _ ← walkExpr cfg subj
+    for decl in ← getLCtx do
+      if decl.isImplementationDetail then continue
+      let hypTy ← instantiateMVars decl.type
+      if subject?.isSome && !mentionsAny hypTy subjFVars then continue
+      if consumed.contains decl.fvarId then continue
+      if ← Meta.isProp hypTy then
+        unless ← walkPropTuple cfg "" hypTy do
+          skipped := skipped + 1
+      else if (← Meta.isClass? hypTy).isSome then
+        continue
+      else if ← isVocabularyType hypTy then
+        continue
+      else
+        let _ ← walkExpr cfg decl.toExpr
+    let goalTy ← instantiateMVars (← goal.getType)
+    unless ← walkPropTuple cfg goalRelPrefix goalTy do
+      let label ← ppLabel goalTy
+      let s ← get
+      let (atomId, s) := s.freshId
+      set (s.addAtom { id := atomId, type := goalAtomType, label })
+    return skipped
 
 /-! ## The spec-checker vocabulary of a proof state -/
 
@@ -234,60 +206,51 @@ meta def walkProofState (cfg : WalkConfig) (goals : List MVarId)
     escaped idents (`edgeStyle «⊢ lt» …`), and the `Goal` atom type via a raw
     string selector (`atomStyle "Goal" …`); neither can occur inside selector
     expressions — the query language cannot lex them. -/
-meta def proofStateScope (goals : List MVarId) (subject? : Option Expr := none) :
+meta def proofStateScope (goal : MVarId) (subject? : Option Expr := none) :
     MetaM SelScope := do
   let subjFVars := match subject? with
     | some subj => exprFVars subj
     | none => #[]
-  let mut scope : SelScope := { root := `_proofState }
-  scope := { scope with rels := scope.rels.insert "scrutinee" (`_proofState, some 3) }
-  let mut typeHeads : Array Name := #[]
-  let mut propRels : Array (String × Nat) := #[]
-  let mut lenient := false
-  for mvarId in goals do
-    let (heads, rels, len) ← mvarId.withContext do
-      -- one head per walked root; `none` marks an unpredictable vocabulary.
-      -- propTupleShape? mirrors walkPropTuple, so names cannot drift.
-      let mut heads : Array (Option Name) := #[]
-      let mut rels : Array (String × Nat) := #[]
-      if let some subj := subject? then
-        heads := heads.push (← typeHead? (← inferType subj))
-      for decl in ← getLCtx do
-        if decl.isImplementationDetail then continue
-        let hypTy ← instantiateMVars decl.type
-        if subject?.isSome && !mentionsAny hypTy subjFVars then continue
-        -- equations are predicted as `=` tuples even when the walk refines
-        -- them away: a superset vocabulary is always safe, and whether a
-        -- refinement is demoted depends on the shared walk state
-        if ← Meta.isProp hypTy then
-          if let some (relName, dataArgs) ← propTupleShape? "" hypTy then
-            if dataArgs.size ≥ 2 then rels := rels.push (relName, dataArgs.size)
-            for a in dataArgs do
-              heads := heads.push (← typeHead? (← inferType a))
-        else if (← Meta.isClass? hypTy).isSome then
-          continue
-        else if ← isVocabularyType hypTy then
-          continue
-        else
-          heads := heads.push (← typeHead? hypTy)
-      let goalTy ← instantiateMVars (← mvarId.getType)
-      if let some (relName, dataArgs) ← propTupleShape? goalRelPrefix goalTy then
-        if dataArgs.size ≥ 2 then rels := rels.push (relName, dataArgs.size)
-        for a in dataArgs do
-          heads := heads.push (← typeHead? (← inferType a))
-      return (heads.filterMap id, rels, heads.contains none)
-    typeHeads := typeHeads ++ heads
-    propRels := propRels ++ rels
-    lenient := lenient || len
-  for h in typeHeads do
-    scope := scope.merge (← SelScope.ofType h)
-  for (n, a) in propRels do
-    scope := { scope with rels :=
-      match scope.rels.get? n with
-      | some (o, some a') => if a' == a then scope.rels else scope.rels.insert n (o, none)
-      | some (_, none) => scope.rels
-      | none => scope.rels.insert n (`_proofState, some a) }
-  return { scope with lenient := scope.lenient || lenient }
+  goal.withContext do
+    -- one head per walked root; `none` marks an unpredictable vocabulary.
+    -- propTupleShape? mirrors walkPropTuple, so names cannot drift.
+    let mut heads : Array (Option Name) := #[]
+    let mut propRels : Array (String × Nat) := #[]
+    if let some subj := subject? then
+      heads := heads.push (← typeHead? (← inferType subj))
+    for decl in ← getLCtx do
+      if decl.isImplementationDetail then continue
+      let hypTy ← instantiateMVars decl.type
+      if subject?.isSome && !mentionsAny hypTy subjFVars then continue
+      -- equations are predicted as `=` tuples even when the walk refines
+      -- them away: a superset vocabulary is always safe
+      if ← Meta.isProp hypTy then
+        if let some (relName, dataArgs) ← propTupleShape? "" hypTy then
+          if dataArgs.size ≥ 2 then propRels := propRels.push (relName, dataArgs.size)
+          for a in dataArgs do
+            heads := heads.push (← typeHead? (← inferType a))
+      else if (← Meta.isClass? hypTy).isSome then
+        continue
+      else if ← isVocabularyType hypTy then
+        continue
+      else
+        heads := heads.push (← typeHead? hypTy)
+    let goalTy ← instantiateMVars (← goal.getType)
+    if let some (relName, dataArgs) ← propTupleShape? goalRelPrefix goalTy then
+      if dataArgs.size ≥ 2 then propRels := propRels.push (relName, dataArgs.size)
+      for a in dataArgs do
+        heads := heads.push (← typeHead? (← inferType a))
+    let mut scope : SelScope := { root := `_proofState }
+    scope := { scope with rels := scope.rels.insert "scrutinee" (`_proofState, some 3) }
+    for h in heads.filterMap id do
+      scope := scope.merge (← SelScope.ofType h)
+    for (n, a) in propRels do
+      scope := { scope with rels :=
+        match scope.rels.get? n with
+        | some (o, some a') => if a' == a then scope.rels else scope.rels.insert n (o, none)
+        | some (_, none) => scope.rels
+        | none => scope.rels.insert n (`_proofState, some a) }
+    return { scope with lenient := scope.lenient || heads.contains none }
 
 end
 
