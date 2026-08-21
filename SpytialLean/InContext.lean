@@ -33,7 +33,7 @@ draw:
   never styles them, or anything else, by default. A negative fact draws
   only between values already in the world: ruling a term out is not license
   to materialize it, so `h : x ≠ node a b` against a term not in the diagram
-  is counted, not drawn (`spytial.find` still consumes it).
+  is counted, not drawn.
 
 The goal is deliberately *not* drawn: hypotheses are established knowledge,
 the goal is what is still being proven. -/
@@ -154,8 +154,8 @@ private meta def mentionsAny (ty : Expr) (fvars : Array FVarId) : Bool :=
     hypotheses that do not mention the subject are not this diagram's
     business.
 
-    Refinements already present in `cfg.refinements` are *injected* — a found
-    model, say — and win: a context equation on the same variable is absorbed
+    Refinements already present in `cfg.refinements` are *injected* — the
+    caller supplied them — and win: a context equation on the same variable is absorbed
     when it agrees (structurally), and otherwise stays an ordinary `=` tuple —
     same as a second equation on an already-refined variable
     (`equationRefinements` is first-wins).

@@ -11,7 +11,6 @@ public meta import SpytialLean.Selector
 public meta import SpytialLean.SelectorElab
 public meta import SpytialLean.Relationalizer
 public meta import SpytialLean.InContext
-public meta import SpytialLean.ModelFind
 public meta import SpytialLean.Widget
 public meta import SpytialLean.Attr
 
@@ -625,7 +624,7 @@ private meta def spytialInContextTac (t : Syntax)
   if skipped > 0 then
     logInfo m!"spytial: {skipped} hypothesis(es) about the subject not drawn \
       (non-decomposable, e.g. `∀`/`∧`, or negative facts against values not \
-      in the diagram); `spytial.find` can still use them."
+      in the diagram)."
   savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
 
 open Tactic in
@@ -644,7 +643,7 @@ open Tactic in
       name carries the semantics; styling is the spec author's). A negative
       fact draws only between values already in the world — ruling a term
       out is not license to materialize it, so `h : x ≠ node a b` against an
-      absent term is counted, not drawn (`spytial.find` still consumes it).
+      absent term is counted, not drawn.
     - Hypotheses not mentioning the subject are ignored; subject-relevant
       Props that are not drawn (`∀ …`, `A ∧ B`, withheld negative facts) are
       counted, with one note reporting the count.
@@ -715,105 +714,6 @@ meta def elabSpytialProofTactic : Tactic := fun stx => do
   let props ← withMainContext do
     spytialPayloadProps stx[1] (optionalOps stx[2]) { filterProofs := false }
   savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
-
-/-! ## Model finding -/
-
-/-- Default constructor-depth bound for `spytial.find`. -/
-meta def defaultFindDepth : Nat := 3
-
-/-- Run the bounded search for `spytial.find`: resolve the subject to a local
-    variable, search, report, and return the walk config with the first model
-    injected as a refinement (unchanged when nothing was found). -/
-private meta def runFindSearch (subjStx : Syntax) (depthStx : Syntax) :
-    TermElabM (Expr × WalkConfig) := do
-  let e ← Term.elabTerm subjStx none
-  Term.synthesizeSyntheticMVarsNoPostponing
-  let e ← instantiateMVars e
-  let .fvar fvarId := e
-    | throwErrorAt subjStx m!"spytial.find expects a local variable (the hole \
-        to search for), got {e}"
-  let depth := if depthStx.getNumArgs == 0 then defaultFindDepth
-    else (depthStx[0].isNatLit?).getD defaultFindDepth
-  let search ← findModels fvarId depth
-  if search.candidates == 0 then
-    logWarningAt subjStx m!"spytial.find: cannot enumerate values of \
-      {← inferType e} — the diagram shows the hole as known, without a model."
-    return (e, {})
-  let atLeast := if search.capped then "at least " else ""
-  let uncheckedNote :=
-    if search.unchecked == 0 then m!""
-    else m!" ({search.unchecked} hypothesis(es) unchecked: no decision \
-      procedure, or no candidates left to decide on)"
-  match search.models[0]? with
-  | some m =>
-    logInfo m!"spytial.find: {search.models.size} of {atLeast}{search.candidates} \
-      candidate(s) at depth ≤ {depth} satisfy all {search.checked} checked \
-      hypothesis(es){uncheckedNote}; showing the first."
-    return (e, { refinements := ({} : Std.HashMap FVarId Expr).insert fvarId m })
-  | none =>
-    logWarningAt subjStx m!"spytial.find: no candidate at depth ≤ {depth} \
-      satisfies the {search.checked} checked hypothesis(es) — \
-      {atLeast}{search.candidates} candidate(s) ruled out{uncheckedNote}. \
-      The diagram shows the hole as known, without a model."
-    return (e, {})
-
-meta def spytialFindKw : Lean.Parser.Parser :=
-  Lean.Parser.nonReservedSymbol "spytial.find" (includeIdent := true)
-
-open Tactic in
-/-- `spytial.find x` searches for concrete values the hole `x` can be, and
-    draws one.
-
-    Candidates are every value of `x`'s type up to a constructor depth
-    (default `3`; `spytial.find x 5` raises it), Alloy-style scope-bounded
-    enumeration. A candidate survives when every hypothesis mentioning `x`
-    that has a decision procedure (`Decidable` after substituting the
-    candidate — so `x ≠ t` needs `DecidableEq`) evaluates to true.
-    Hypotheses that cannot be decided are reported as *unchecked*, never
-    silently assumed.
-
-    The first surviving model is injected as a refinement and `x` is drawn
-    as by the `spytial` tactic: the model's structure, with the facts
-    between existing values anchored on it. The exclusions that carved the
-    search are reported, not drawn. When nothing survives the bound, that is
-    the finding: the hole cannot look like any candidate, and the diagram
-    falls back to what is known.
-
-    `with [<ops>]` attaches layout ops, as in the `spytial` tactic. -/
-syntax (name := spytialFindTactic) spytialFindKw (colGt ident)? (num)?
-  (" with " "[" spytial_op,* "]")? : tactic
-
-open Tactic in
-@[tactic spytialFindTactic]
-meta def elabSpytialFindTactic : Tactic := fun stx => do
-  if stx[1].getNumArgs == 0 then
-    throwError "spytial.find expects the local variable to search for: `spytial.find x`"
-  let (props, skipped) ← withMainContext do
-    let (subject, cfg) ← runFindSearch stx[1][0] stx[2]
-    spytialInContextProps subject (optionalOps stx[3]) cfg
-  if skipped > 0 then
-    logInfo m!"spytial.find: {skipped} hypothesis(es) not drawn \
-      (non-decomposable, or negative facts against values not in the \
-      diagram — the search used them either way)."
-  savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
-
-meta def spytialFindDatumKw : Lean.Parser.Parser :=
-  Lean.Parser.nonReservedSymbol "spytial.find.datum" (includeIdent := true)
-
-open Tactic in
-/-- `spytial.find.datum x` prints the JSON data instance `spytial.find x`
-    would draw — the debugging counterpart. -/
-syntax (name := spytialFindDatumTactic) spytialFindDatumKw (colGt ident)? (num)? : tactic
-
-open Tactic in
-@[tactic spytialFindDatumTactic]
-meta def elabSpytialFindDatumTactic : Tactic := fun stx => do
-  if stx[1].getNumArgs == 0 then
-    throwError "spytial.find.datum expects the local variable to search for"
-  withMainContext do
-    let (subject, cfg) ← runFindSearch stx[1][0] stx[2]
-    let (_, state) ← (walkInContext cfg subject).run {}
-    logInfo m!"{(toJson state.toDataInstance).pretty}"
 
 end
 

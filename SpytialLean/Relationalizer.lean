@@ -557,7 +557,7 @@ private meta def pick [Inhabited α] (columns : Array (Array α)) (pt : Array Na
 /-- Decide a closed proposition: `whnf` the `Decidable` instance to a
     constructor, compiled `decide p` when that sticks. `none` is undecided,
     never a guess. -/
-public meta def decideProp? (p : Expr) : MetaM (Option Bool) := do
+private meta def decideProp? (p : Expr) : MetaM (Option Bool) := do
   try
     let some inst ← Meta.synthInstance? (← mkAppM ``Decidable #[p]) | return none
     match (← Meta.whnf inst).getAppFn with

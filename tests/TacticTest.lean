@@ -88,14 +88,3 @@ set_option linter.unusedVariables false in
 example (a b : Nat) (h : a < b) : True := by
   spytial.datum a
   trivial
-
--- model finding: search, and search with an explicit depth
-set_option linter.unusedVariables false in
-example (xs : List Nat) (h : xs ≠ []) : True := by
-  spytial.find xs
-  trivial
-
-set_option linter.unusedVariables false in
-example (xs : List Nat) (h : xs ≠ []) : True := by
-  spytial.find.datum xs 2
-  trivial

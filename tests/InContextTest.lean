@@ -148,7 +148,7 @@ rendering. -/
       "STree|leaf\nNat|1\nSTree|leaf\nNat|2\n\
        =[STree,STree]:0,2\nvalue[STree,Nat]:0,1;2,3"
 
--- an injected refinement (`cfg.refinements` — a found model) wins over the
+-- an injected refinement (caller-supplied `cfg.refinements`) wins over the
 -- context: a disagreeing equation demotes to an `=` tuple …
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `x sTree fun x => do
