@@ -14,15 +14,10 @@ public section
 
 /-! # Values in context
 
-**The diagram is a faithful visualization of the user's current knowledge
-of a value — not a visualization of the proof state.** (The design note
-`docs/partial-values.md` derives every rule below from that sentence.)
-
 In a proof you often hold a value you don't fully know — an abstract
 hypothesis, a term with holes. The subject of a diagram is that *value*; the
 local context is the knowledge source that decides how much of it we can
-draw. Hypotheses are evidence, not content — they disappear into the
-representation:
+draw:
 
 - **Opaque hole.** All the context knows is the type: one atom of that type
   (`holeAtom?` in the walker already does that).
