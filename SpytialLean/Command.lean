@@ -639,9 +639,9 @@ private meta def spytialInContextTac (t : Syntax) (usingStx : Syntax)
   let (props, skipped) ← withMainContext do
     spytialInContextProps (← elabTermInstantiated t) ops? {} (← resolveFacts usingStx)
   if skipped > 0 then
-    logInfo m!"spytial: {skipped} hypothesis(es) about the subject not drawn \
-      (non-decomposable, e.g. `∀`/`∧`, or negative facts against values not \
-      in the diagram)."
+    logInfo m!"spytial: {skipped} fact(s) about the subject not drawn \
+      (an `∨`/`∀`/`→`, or a negative fact against values not in the \
+      diagram)."
   savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
 
 open Tactic in
@@ -654,16 +654,18 @@ open Tactic in
       still-open holes as atoms inside it.
     - `h : x = t` (and `let x := t`) refines `x`: its atom shows `t`'s
       structure instead of an opaque leaf.
-    - A Prop hypothesis mentioning the subject becomes a relation tuple
+    - A Prop hypothesis mentioning the subject becomes relation tuples
       anchored on its atoms: `h : R x y` in relation `R`; `h : x ≠ y` and
       `h : ¬ P x` in the distinguished ruled-out relations `≠` / `¬P` (the
-      name carries the semantics; styling is the spec author's). A negative
+      name carries the semantics; styling is the spec author's). A
+      conjunction splits — each `∧`-part draws on its own. A negative
       fact draws only between values already in the world — ruling a term
       out is not license to materialize it, so `h : x ≠ node a b` against an
       absent term is counted, not drawn.
     - Hypotheses not mentioning the subject are ignored; subject-relevant
-      Props that are not drawn (`∀ …`, `A ∧ B`, withheld negative facts) are
-      counted, with one note reporting the count.
+      facts that cannot draw (an `∨` — one side holds, but which is unknown
+      — a `∀`, a `→`, a withheld negative fact) are counted, with one note
+      reporting the count.
 
     The goal is deliberately not drawn: hypotheses are established knowledge,
     the goal is what is still being proven.

@@ -83,6 +83,12 @@ example (a b : Nat) (h : a < b) (h2 : a ≠ 0) : True := by
                   edgeStyle «≠» (lineStyle "green")]
   trivial
 
+-- ∧ splits: both halves draw
+set_option linter.unusedVariables false in
+example (a b : Nat) (h : a < b ∧ b < a) : True := by
+  spytial a
+  trivial
+
 -- the caller picks the facts: `using` draws exactly the listed hypotheses
 set_option linter.unusedVariables false in
 example (a b : Nat) (h : a < b) (h2 : b < a) : True := by

@@ -234,6 +234,56 @@ rendering. -/
     assertCanon "ctx.arrowFalse" st.toDataInstance
       "α|x\nα|y\n¬R[α,α]:0,1"
 
+/-! ## Conjunctions split into their parts -/
+
+-- `∧` glues facts together; each part draws on its own, nested included
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `α (mkSort Level.one) fun a => do
+  withLocalDeclD `R (← mkArrow a (← mkArrow a (mkSort Level.zero))) fun R => do
+  withLocalDeclD `x a fun x => do
+  withLocalDeclD `y a fun y => do
+  withLocalDeclD `h (← mkAppM ``And #[mkApp2 R x y,
+      ← mkAppM ``And #[mkApp2 R y x, mkApp2 R x x]]) fun _ => do
+    let (skipped, st) ← runCtx x
+    unless skipped == 0 do throwError "ctx.and: skipped {skipped}"
+    assertCanon "ctx.and" st.toDataInstance
+      "α|x\nα|y\nR[α,α]:0,1;1,0;0,0"
+
+-- an equation inside an `∧` still refines; the other part still draws
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x sTree fun x => do
+  withLocalDeclD `y sTree fun y => do
+  withLocalDeclD `h (← mkAppM ``And #[← mkAppM ``Eq #[x, sLeaf 1],
+      ← mkAppM ``Ne #[x, y]]) fun _ => do
+    let (skipped, st) ← runCtx x
+    unless skipped == 0 do throwError "ctx.and.refine: skipped {skipped}"
+    assertCanon "ctx.and.refine" st.toDataInstance
+      "STree|leaf\nNat|1\nSTree|y\nvalue[STree,Nat]:0,1\n≠[STree,STree]:0,2"
+
+-- a part that does not mention the subject is ignored, not counted
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `α (mkSort Level.one) fun a => do
+  withLocalDeclD `R (← mkArrow a (← mkArrow a (mkSort Level.zero))) fun R => do
+  withLocalDeclD `x a fun x => do
+  withLocalDeclD `y a fun y => do
+  withLocalDeclD `n a fun n => do
+  withLocalDeclD `h (← mkAppM ``And #[mkApp2 R x y, mkApp2 R n n]) fun _ => do
+    let (skipped, st) ← runCtx x
+    unless skipped == 0 do throwError "ctx.and.partial: skipped {skipped}"
+    assertCanon "ctx.and.partial" st.toDataInstance
+      "α|x\nα|y\nR[α,α]:0,1"
+
+-- `∨` cannot split — one side holds, but which is unknown: counted
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `α (mkSort Level.one) fun a => do
+  withLocalDeclD `R (← mkArrow a (← mkArrow a (mkSort Level.zero))) fun R => do
+  withLocalDeclD `x a fun x => do
+  withLocalDeclD `y a fun y => do
+  withLocalDeclD `h (← mkAppM ``Or #[mkApp2 R x y, mkApp2 R y x]) fun _ => do
+    let (skipped, st) ← runCtx x
+    unless skipped == 1 do throwError "ctx.or: skipped {skipped}"
+    assertCanon "ctx.or" st.toDataInstance "α|x"
+
 /-! ## Hypotheses not mentioning the subject are not this diagram's business -/
 
 #eval show Lean.Elab.TermElabM Unit from do

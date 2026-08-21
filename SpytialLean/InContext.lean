@@ -27,52 +27,67 @@ draw:
 - **The hypotheses know structure.** `h : x = t` refines `x` into `t`'s
   structure (the refinement map, consumed by `holeAtom?`).
 - **The hypotheses know facts.** A Prop hypothesis mentioning the subject
-  becomes one tuple anchored on the subject's atoms: `h : R x y` in relation
+  becomes tuples anchored on the subject's atoms: `h : R x y` in relation
   `R`; `h : x ≠ y` and `h : ¬ P x` in the distinguished negative relations
   (`≠`, `¬P`) — the name carries the semantics on the wire; the library
-  never styles them, or anything else, by default. A negative fact draws
-  only between values already in the world: ruling a term out is not license
-  to materialize it, so `h : x ≠ node a b` against a term not in the diagram
-  is counted, not drawn.
+  never styles them, or anything else, by default. A conjunction splits:
+  each `∧`-part draws on its own, because every part of a true conjunction
+  holds. An `∨` does not split — one side holds but we do not know which —
+  and a `∀` is a rule, not one fact; both are counted, not guessed. A
+  negative fact draws only between values already in the world: ruling a
+  term out is not license to materialize it, so `h : x ≠ node a b` against
+  a term not in the diagram is counted, not drawn.
 
 The goal is deliberately *not* drawn: hypotheses are established knowledge,
 the goal is what is still being proven. -/
 
 /-! ## Refinements: what the context says a variable is -/
 
-/-- One context entry usable as a refinement of `var` into `rhs`: an
-    equational hypothesis `hyp : var = rhs` (or `rhs = var`), or a
-    `let var := rhs` binding — in that case `hyp = var`. -/
+/-- One refinement the context states: `var` is `rhs`. -/
 meta structure Refinement where
-  hyp : FVarId
   var : FVarId
   rhs : Expr
 
+/-- Split nested conjunctions: `p ∧ q ∧ r` is three facts glued together
+    with `∧`, and each part stands on its own — if the conjunction holds,
+    every part holds. A non-conjunction is one part. -/
+meta partial def conjuncts (ty : Expr) : Array Expr :=
+  match ty.app2? ``And with
+  | some (p, q) => conjuncts p ++ conjuncts q
+  | none => #[ty]
+
+/-- The refinement one Prop states, if any: an equation with a plain
+    variable on one side that does not occur in the other. Shared between
+    the harvest and the fact walk, so a fact that merely restates an applied
+    refinement is recognized and not drawn again. -/
+meta def refinementOf? (ty : Expr) : Option (FVarId × Expr) :=
+  match ty.eq? with
+  | some (_, .fvar id, rhs) =>
+    if rhs.containsFVar id then none else some (id, rhs)
+  | some (_, lhs, .fvar id) =>
+    if lhs.containsFVar id then none else some (id, lhs)
+  | _ => none
+
 /-- The refinement candidates of one local context, in context order: `let`
     bindings (elaborator-known structure), and equations with a plain
-    variable on one side that does not occur in the other. The first entry on
-    a variable wins; later equations render as ordinary `=` tuples. -/
+    variable on one side — conjunctions split, so an equation inside an `∧`
+    refines too. The first entry on a variable wins; later equations render
+    as ordinary `=` tuples. -/
 meta def equationRefinements (lctx : LocalContext) : MetaM (Array Refinement) := do
   let mut seen : Std.HashSet FVarId := {}
   let mut out : Array Refinement := #[]
   for decl in lctx do
     if decl.isImplementationDetail then continue
-    let pick? : Option (FVarId × Expr) ← do
+    let picks : Array (FVarId × Expr) ← do
       if let some v := decl.value? then
         let v ← instantiateMVars v
-        pure (if v.containsFVar decl.fvarId then none else some (decl.fvarId, v))
+        pure (if v.containsFVar decl.fvarId then #[] else #[(decl.fvarId, v)])
       else
-        let ty ← instantiateMVars decl.type
-        pure <| match ty.eq? with
-          | some (_, .fvar id, rhs) =>
-            if rhs.containsFVar id then none else some (id, rhs)
-          | some (_, lhs, .fvar id) =>
-            if lhs.containsFVar id then none else some (id, lhs)
-          | _ => none
-    if let some (var, t) := pick? then
+        pure <| (conjuncts (← instantiateMVars decl.type)).filterMap refinementOf?
+    for (var, t) in picks do
       unless seen.contains var do
         seen := seen.insert var
-        out := out.push { hyp := decl.fvarId, var, rhs := t }
+        out := out.push { var, rhs := t }
   return out
 
 /-! ## Prop facts as relation tuples -/
@@ -143,67 +158,74 @@ private meta def exprFVars (e : Expr) : Array FVarId :=
 private meta def mentionsAny (ty : Expr) (fvars : Array FVarId) : Bool :=
   fvars.any (ty.containsFVar ·)
 
+/-- Draw one hypothesis's facts: conjunctions split into parts
+    (`conjuncts`), and each part draws on its own — unless it merely
+    restates an applied refinement (the refined structure is already the
+    picture), or, with `subjectOnly`, does not mention the subject. Returns
+    the number of subject-relevant parts that could not be drawn. -/
+private meta def walkHypFacts (cfg : WalkConfig) (subjFVars : Array FVarId)
+    (subjectOnly : Bool) (hypTy : Expr) : StateT WalkState MetaM Nat := do
+  let mut skipped : Nat := 0
+  for part in conjuncts hypTy do
+    if subjectOnly && !mentionsAny part subjFVars then continue
+    if let some (var, rhs) := refinementOf? part then
+      if let some applied := cfg.refinements[var]? then
+        if applied.equal rhs then continue
+    unless ← walkPropTuple cfg part do
+      skipped := skipped + 1
+  return skipped
+
 /-- Walk one value together with what the local context knows about it, in
     the ambient local context (tactic callers wrap with `withMainContext`).
 
     The subject walks first — metavariables instantiated, refinements
     applied — then every Prop hypothesis whose type mentions the subject's
-    variables becomes a relation tuple (`walkPropTuple`) sharing the
-    subject's atoms. A hypothesis consumed as a refinement emits nothing: the
+    variables contributes its facts (`walkHypFacts`): conjunctions split
+    into parts, each part one relation tuple sharing the subject's atoms. A
+    part that merely restates an applied refinement emits nothing: the
     refined structure *is* its rendering. Typeclass instances are skipped;
     hypotheses that do not mention the subject are not this diagram's
     business.
 
     Refinements already present in `cfg.refinements` are *injected* — the
-    caller supplied them — and win: a context equation on the same variable is absorbed
-    when it agrees (structurally), and otherwise stays an ordinary `=` tuple —
-    same as a second equation on an already-refined variable
-    (`equationRefinements` is first-wins).
+    caller supplied them — and win: a context equation on the same variable
+    is absorbed when it agrees (structurally), and otherwise stays an
+    ordinary `=` tuple — same as a second equation on an already-refined
+    variable (`equationRefinements` is first-wins).
 
     With `facts?`, the automatic selection is replaced: exactly the listed
     hypotheses are drawn as facts, in the listed order, whether or not they
     mention the subject. Refinements are unaffected — they are what the
-    value *is*, not a fact hung on it — and a listed equation consumed as a
-    refinement still emits nothing.
+    value *is*, not a fact hung on it.
 
-    Returns the number of selected Prop hypotheses that were not drawn
-    (the caller reports them; headless tests stay silent). -/
+    Returns the number of selected facts that were not drawn (the caller
+    reports them; headless tests stay silent). -/
 meta def walkInContext (cfg : WalkConfig) (subject : Expr)
     (facts? : Option (Array FVarId) := none) :
     StateT WalkState MetaM Nat := do
   let subject ← instantiateMVars subject
   let subjFVars := exprFVars subject
-  -- reconcile the context's refinements with the injected ones: injected
-  -- entries win, and an entry is consumed (emits no tuple) only when it is
-  -- the refinement actually applied
+  -- injected refinements win; the context's candidates fill in, first-wins
   let mut map := cfg.refinements
-  let mut consumed : Std.HashSet FVarId := {}
   for e in ← equationRefinements (← getLCtx) do
-    match map[e.var]? with
-    | some prev =>
-      if prev.equal e.rhs then consumed := consumed.insert e.hyp
-    | none =>
+    unless map.contains e.var do
       map := map.insert e.var e.rhs
-      consumed := consumed.insert e.hyp
   let cfg := { cfg with refinements := map }
   let _ ← walkExpr cfg subject
   let mut skipped : Nat := 0
   match facts? with
   | some facts =>
     for fvarId in facts do
-      if consumed.contains fvarId then continue
-      unless ← walkPropTuple cfg (← instantiateMVars (← fvarId.getType)) do
-        skipped := skipped + 1
+      skipped := skipped +
+        (← walkHypFacts cfg subjFVars false (← instantiateMVars (← fvarId.getType)))
   | none =>
     for decl in ← getLCtx do
       if decl.isImplementationDetail then continue
-      if consumed.contains decl.fvarId then continue
       let hypTy ← instantiateMVars decl.type
       unless mentionsAny hypTy subjFVars do continue
       if (← Meta.isClass? hypTy).isSome then continue
-      if ← Meta.isProp hypTy then
-        unless ← walkPropTuple cfg hypTy do
-          skipped := skipped + 1
+      unless ← Meta.isProp hypTy do continue
+      skipped := skipped + (← walkHypFacts cfg subjFVars true hypTy)
   return skipped
 
 /-! ## The spec-checker vocabulary of a value in context -/
@@ -244,11 +266,14 @@ meta def scopeInContext (subject : Expr) (facts? : Option (Array FVarId) := none
   let mut heads : Array (Option Name) := #[]
   let mut propRels : Array (String × Nat) := #[]
   for hypTy in hypTys do
-    -- negative facts the walk withholds are still predicted: superset safe
-    if let some (relName, dataArgs, _) ← propTupleShape? hypTy then
-      if dataArgs.size ≥ 2 then propRels := propRels.push (relName, dataArgs.size)
-      for a in dataArgs do
-        heads := heads.push (← typeHead? (← inferType a))
+    -- split exactly as the walk does; facts the walk withholds (negatives
+    -- against absent terms, restated refinements) are still predicted:
+    -- a superset vocabulary is always safe
+    for part in conjuncts hypTy do
+      if let some (relName, dataArgs, _) ← propTupleShape? part then
+        if dataArgs.size ≥ 2 then propRels := propRels.push (relName, dataArgs.size)
+        for a in dataArgs do
+          heads := heads.push (← typeHead? (← inferType a))
   for h in heads.filterMap id do
     scope := scope.merge (← SelScope.ofType h)
   for (n, a) in propRels do

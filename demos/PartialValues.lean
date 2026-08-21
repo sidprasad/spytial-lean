@@ -106,13 +106,19 @@ relation named `R`. Any fact that mentions the subject becomes an arrow like
 this — that is how `y` gets into the picture at all. It works even though
 `R` here is a local variable, not a global definition.
 
-The other two hypotheses show the limits. `hb` mentions `x` but is an AND of
-two facts, so it is not one arrow — it is not drawn, and the tactic prints a
-note counting it. `hsymm` never mentions `x`, so it is simply ignored. -/
+`hb` is two facts glued together with `∧`, so it is split and both halves
+draw — two more `R` arrows. Splitting is safe for `∧`: if "p and q" holds,
+then p holds and q holds.
+
+`hor` is an `∨`, and `∨` cannot be split: one half is true, but we do not
+know which, so drawing either half would be a guess. It is counted, and the
+tactic prints a note. `hsymm` is a rule about all values (`∀`), not one
+fact about these ones — and it never mentions `x` anyway — so it is
+ignored. -/
 
 set_option linter.unusedVariables false in
 example {α : Type} (R : α → α → Prop) (x y : α)
-    (h : R x y) (hb : R x y ∧ R y x)
+    (h : R x y) (hb : R y x ∧ R x x) (hor : R x y ∨ R y x)
     (hsymm : ∀ a b, R a b → R b a) : R y x := by
   spytial x
   exact hsymm x y h
