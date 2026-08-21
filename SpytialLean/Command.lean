@@ -592,36 +592,25 @@ assignments) and Prop facts. `spytialInContextProps` is the tactic-side
 sibling of `spytialPayloadProps` — same payload shape, context knowledge
 folded in. -/
 
-/-- Default styling for negative relations (`≠`, `¬R`): dashed red edges, the
-    ruled-out look. Prepended before user ops, so an explicit `with [...]`
-    overrides. Sorted for a deterministic spec string. -/
-private meta def negativeStyleOps (di : JsonDataInstance) : SpytialSpec :=
-  let names := di.relations.filterMap fun r =>
-    if isNegativeRelName r.name then some r.name else none
-  names.qsort (· < ·) |>.toList.map fun n =>
-    .edgeStyle n (line := some { color := some "#cc0000", pattern := some .dashed })
-
 /-- The payload the `spytial` tactic hands the infoview: the subject walked
     together with what the local context knows about it (`walkInContext`),
     plus the count of subject-relevant Prop hypotheses that did not decompose
     (the caller reports them). An explicit `with [<ops>]` overrides the
     subject type's attached `spytial_spec`, exactly like `#spytial`; ops
     elaborate against the subject type's scope extended with the fact
-    vocabulary (`scopeInContext`). Either way, the default negative-relation
-    styling is prepended when negative relations were emitted, so explicit
-    ops override it. -/
+    vocabulary (`scopeInContext`). The library never adds styling of its
+    own: negative facts are distinguished by relation name (`≠`, `¬R`) in
+    the data, and how they look is the spec author's choice. -/
 public meta def spytialInContextProps (subject : Expr)
     (ops? : Option (Array (TSyntax `spytial_op)) := none)
     (cfg : WalkConfig := {}) : TermElabM (Json × Nat) := do
   let (skipped, state) ← (walkInContext cfg subject).run {}
   let di := state.toDataInstance
-  let defaults := negativeStyleOps di
-  let spec ← match ops? with
+  let spec? ← match ops? with
     | some ops => do
-      pure (defaults ++ (← elabSpytialOps (← scopeInContext subject) ops))
-    | none => pure (defaults ++ ((← lookupTypeSpec subject).getD []))
-  let spec? := if spec.isEmpty then none else some (SpytialSpec.render spec)
-  return (spytialProps di spec?, skipped)
+      pure (some (← elabSpytialOps (← scopeInContext subject) ops))
+    | none => lookupTypeSpec subject
+  return (spytialProps di (spec?.map SpytialSpec.render), skipped)
 
 open Tactic in
 /-- Shared body of the context-aware tactic arms: elaborate the subject in
@@ -650,8 +639,8 @@ open Tactic in
       structure instead of an opaque leaf.
     - A Prop hypothesis mentioning the subject becomes a relation tuple
       anchored on its atoms: `h : R x y` in relation `R`; `h : x ≠ t` and
-      `h : ¬ P x` in the ruled-out relations `≠` / `¬P`, drawn dashed red by
-      default.
+      `h : ¬ P x` in the distinguished ruled-out relations `≠` / `¬P` (the
+      name carries the semantics; styling is the spec author's).
     - Hypotheses not mentioning the subject are ignored; subject-relevant
       Props that do not decompose (`∀ …`, `A ∧ B`) are skipped, with one note
       reporting the count.

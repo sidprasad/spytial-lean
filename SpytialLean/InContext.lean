@@ -29,7 +29,8 @@ draw:
 - **The hypotheses know facts.** A Prop hypothesis mentioning the subject
   becomes one tuple anchored on the subject's atoms: `h : R x y` in relation
   `R`; `h : x ≠ t` and `h : ¬ P x` in the distinguished negative relations
-  (`≠`, `¬P`) that default styling draws as ruled out.
+  (`≠`, `¬P`) — the name carries the semantics on the wire; the library
+  never styles them, or anything else, by default.
 
 The goal is deliberately *not* drawn: hypotheses are established knowledge,
 the goal is what is still being proven. -/

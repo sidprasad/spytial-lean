@@ -84,11 +84,6 @@ public meta def neRelName : String := "≠"
     read "ruled out" as "holds". -/
 public meta def negRelName (base : String) : String := s!"¬{base}"
 
-/-- Whether a relation name carries negative information (`≠`, `¬R`). These
-    relations get the default ruled-out edge styling. -/
-public meta def isNegativeRelName (name : String) : Bool :=
-  name == neRelName || name.startsWith "¬"
-
 /-- The relation name for a decomposable Prop application, from its head: a
     constant's short name, a local relation's user name (`variable
     (R : α → α → Prop)` is a free variable, not a constant). `Eq` and `Ne`

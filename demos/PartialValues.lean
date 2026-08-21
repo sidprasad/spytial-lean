@@ -84,9 +84,11 @@ example (t : DTree) : True := by
 
 /-! ## 4. A hypothesis rules structure out (negative)
 
-`h2 : t ≠ DTree.node (leaf 0) (leaf 0)` emits into the `≠` relation — drawn
-dashed red by default — against `t`'s *known* structure from `h`. What the
-value looks like and what it does not, in one picture. -/
+`h2 : t ≠ DTree.node (leaf 0) (leaf 0)` emits into the `≠` relation against
+`t`'s *known* structure from `h`. The relation *name* carries the semantics
+— `≠` is simply a different relation than `=`, so nothing downstream can
+read "ruled out" as "holds" — and how it looks is the spec author's choice
+(see the styling section below). -/
 
 set_option linter.unusedVariables false in
 example (t l r : DTree) (h : t = DTree.node l r)
@@ -127,9 +129,10 @@ Everything above renders what is *known*. `spytial.find` searches: it
 enumerates every `DTree` up to a constructor depth (default 3), keeps the
 candidates on which all decidable hypotheses hold (`≠` is decidable here
 because `DTree` derives `DecidableEq`), and draws the first survivor as `t`
-— with the ruled-out value dashed red against the found model. Hypotheses
-without a decision procedure are reported as unchecked, never assumed.
-Zero survivors is an answer too: within the bound, no such value exists. -/
+— with the ruled-out value in the `≠` relation against the found model.
+Hypotheses without a decision procedure are reported as unchecked, never
+assumed. Zero survivors is an answer too: within the bound, no such value
+exists. -/
 
 set_option linter.unusedVariables false in
 example (t : DTree) (h : t ≠ DTree.leaf 0) : True := by
@@ -145,12 +148,14 @@ example (t : DTree) (h : t ≠ DTree.leaf 0) (h2 : t ≠ DTree.leaf 1) : True :=
 
 /-! ## Styling
 
-The subject has a type, so a registered `spytial_spec` for it applies
+The library never styles anything by default — that is the spec author's
+job. The subject has a type, so a registered `spytial_spec` for it applies
 unchanged; inline ops go through `with [...]`, elaborated against the
 subject type's scope extended with the fact vocabulary. Negative relation
-names use escaped idents in field positions. -/
+names use escaped idents in field positions — the ruled-out look, if you
+want one, is one op: -/
 
 set_option linter.unusedVariables false in
 example (t : DTree) (h : t ≠ DTree.leaf 0) : True := by
-  spytial t with [edgeStyle «≠» (lineStyle "green")]
+  spytial t with [edgeStyle «≠» (lineStyle "#cc0000" dashed)]
   trivial
