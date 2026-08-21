@@ -89,6 +89,19 @@ example (a b : Nat) (h : a < b ∧ b < a) : True := by
   spytial a
   trivial
 
+-- derivation: symmetry proves the reverse arrow, and it draws
+set_option linter.unusedVariables false in
+example {α : Type} (R : α → α → Prop) (x y : α)
+    (h : R x y) (hs : ∀ a b, R a b → R b a) : True := by
+  spytial.derive x
+  trivial
+
+set_option linter.unusedVariables false in
+example {α : Type} (R : α → α → Prop) (x y : α)
+    (h : R x y) (hs : ∀ a b, R a b → R b a) : True := by
+  spytial.derive.datum x
+  trivial
+
 -- the caller picks the facts: `using` draws exactly the listed hypotheses
 set_option linter.unusedVariables false in
 example (a b : Nat) (h : a < b) (h2 : b < a) : True := by

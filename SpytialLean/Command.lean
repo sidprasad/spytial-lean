@@ -603,12 +603,13 @@ folded in. -/
 public meta def spytialInContextProps (subject : Expr)
     (ops? : Option (Array (TSyntax `spytial_op)) := none)
     (cfg : WalkConfig := {})
-    (facts? : Option (Array FVarId) := none) : TermElabM (Json × Nat) := do
-  let (skipped, state) ← (walkInContext cfg subject facts?).run {}
+    (facts? : Option (Array FVarId) := none)
+    (derive : Bool := false) : TermElabM (Json × Nat) := do
+  let (skipped, state) ← (walkInContext cfg subject facts? derive).run {}
   let di := state.toDataInstance
   let spec? ← match ops? with
     | some ops => do
-      pure (some (← elabSpytialOps (← scopeInContext subject facts?) ops))
+      pure (some (← elabSpytialOps (← scopeInContext subject facts? derive) ops))
     | none => lookupTypeSpec subject
   return (spytialProps di (spec?.map SpytialSpec.render), skipped)
 
@@ -634,10 +635,11 @@ open Tactic in
     earlier tactics live there, not in the by-block's ambient one), build the
     payload, report facts that were not drawn, render. -/
 private meta def spytialInContextTac (t : Syntax) (usingStx : Syntax)
-    (ops? : Option (Array (TSyntax `spytial_op))) (stx : Syntax) :
-    TacticM Unit := do
+    (ops? : Option (Array (TSyntax `spytial_op))) (stx : Syntax)
+    (derive : Bool := false) : TacticM Unit := do
   let (props, skipped) ← withMainContext do
     spytialInContextProps (← elabTermInstantiated t) ops? {} (← resolveFacts usingStx)
+      derive
   if skipped > 0 then
     logInfo m!"spytial: {skipped} fact(s) about the subject not drawn \
       (an `∨`/`∀`/`→`, or a negative fact against values not in the \
@@ -712,6 +714,42 @@ meta def elabSpytialDatumTactic : Tactic := fun stx => do
   withMainContext do
     let subject ← elabTermInstantiated stx[1]
     let (_, state) ← (walkInContext {} subject (← resolveFacts stx[2])).run {}
+    logInfo m!"{(toJson state.toDataInstance).pretty}"
+
+meta def spytialDeriveKw : Lean.Parser.Parser :=
+  Lean.Parser.nonReservedSymbol "spytial.derive" (includeIdent := true)
+
+open Tactic in
+/-- `spytial.derive <term>` draws the value like the `spytial` tactic, and
+    additionally puts universal knowledge to work: every rule-shaped
+    hypothesis (`∀ …, … → …`) is applied to the known facts, and each
+    conclusion that carries a type-checked proof term is drawn as well.
+    Derivation never guesses — a derived arrow always has a real proof
+    behind it. `with [<ops>]` works as in `spytial`; the vocabulary is open
+    (a rule can conclude in relations no plain fact names), so op checking
+    is lenient. -/
+syntax (name := spytialDeriveTactic) spytialDeriveKw term
+  (" with " "[" spytial_op,* "]")? : tactic
+
+open Tactic in
+@[tactic spytialDeriveTactic]
+meta def elabSpytialDeriveTactic : Tactic := fun stx => do
+  spytialInContextTac stx[1] .missing (optionalOps stx[2]) stx (derive := true)
+
+meta def spytialDeriveDatumKw : Lean.Parser.Parser :=
+  Lean.Parser.nonReservedSymbol "spytial.derive.datum" (includeIdent := true)
+
+open Tactic in
+/-- `spytial.derive.datum <term>` prints the JSON `spytial.derive` would
+    draw — the debugging counterpart. -/
+syntax (name := spytialDeriveDatumTactic) spytialDeriveDatumKw term : tactic
+
+open Tactic in
+@[tactic spytialDeriveDatumTactic]
+meta def elabSpytialDeriveDatumTactic : Tactic := fun stx => do
+  withMainContext do
+    let subject ← elabTermInstantiated stx[1]
+    let (_, state) ← (walkInContext {} subject none (derive := true)).run {}
     logInfo m!"{(toJson state.toDataInstance).pretty}"
 
 /-! ## Proof tactic -/

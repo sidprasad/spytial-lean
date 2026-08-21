@@ -28,8 +28,9 @@ private meta def sNode (l r : Expr) : Expr :=
   mkApp2 (mkConst ``STree.node) l r
 
 private meta def runCtx (subject : Expr) (cfg : WalkConfig := {})
-    (facts? : Option (Array FVarId) := none) : MetaM (Nat × WalkState) :=
-  (walkInContext cfg subject facts?).run {}
+    (facts? : Option (Array FVarId) := none) (derive : Bool := false) :
+    MetaM (Nat × WalkState) :=
+  (walkInContext cfg subject facts? derive).run {}
 
 /-! ## Facts anchor on the subject's atoms
 
@@ -353,6 +354,42 @@ rendering. -/
     unless skipped == 0 do throwError "ctx.using.consumed: skipped {skipped}"
     assertCanon "ctx.using.consumed" st.toDataInstance
       "STree|leaf\nNat|1\nvalue[STree,Nat]:0,1"
+
+/-! ## Derivation: universal facts put to work -/
+
+-- symmetry applied to a drawn fact: `R x y` proves `R y x`, and both draw
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `α (mkSort Level.one) fun a => do
+  withLocalDeclD `R (← mkArrow a (← mkArrow a (mkSort Level.zero))) fun R => do
+  withLocalDeclD `x a fun x => do
+  withLocalDeclD `y a fun y => do
+  withLocalDeclD `h (mkApp2 R x y) fun _ => do
+    let symTy ← withLocalDeclD `p a fun p => withLocalDeclD `q a fun q => do
+      mkForallFVars #[p, q] (← mkArrow (mkApp2 R p q) (mkApp2 R q p))
+    withLocalDeclD `hs symTy fun _ => do
+      let (skipped, st) ← runCtx x (derive := true)
+      unless skipped == 0 do throwError "ctx.derive: skipped {skipped}"
+      assertCanon "ctx.derive" st.toDataInstance
+        "α|x\nα|y\nR[α,α]:0,1;1,0"
+
+-- transitivity chains: from R x y and R y x it proves R x x (drawn) and
+-- R y y (also proved, but not about the subject, so not drawn — derived
+-- facts follow the same rules as any fact)
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `α (mkSort Level.one) fun a => do
+  withLocalDeclD `R (← mkArrow a (← mkArrow a (mkSort Level.zero))) fun R => do
+  withLocalDeclD `x a fun x => do
+  withLocalDeclD `y a fun y => do
+  withLocalDeclD `h1 (mkApp2 R x y) fun _ => do
+  withLocalDeclD `h2 (mkApp2 R y x) fun _ => do
+    let transTy ← withLocalDeclD `p a fun p => withLocalDeclD `q a fun q => do
+      withLocalDeclD `r a fun r => do
+        mkForallFVars #[p, q, r] (← mkArrow (mkApp2 R p q)
+          (← mkArrow (mkApp2 R q r) (mkApp2 R p r)))
+    withLocalDeclD `ht transTy fun _ => do
+      let (_, st) ← runCtx x (derive := true)
+      assertCanon "ctx.derive.chain" st.toDataInstance
+        "α|x\nα|y\nR[α,α]:0,1;1,0;0,0"
 
 /-! ## The scope is the subject type's, extended with the fact vocabulary -/
 

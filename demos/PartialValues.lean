@@ -149,6 +149,46 @@ example (a b : Nat) (h : a < b) (h2 : b < a) : True := by
   spytial a using [h]
   trivial
 
+/-! ## 7. Knowledge about the inside of the value
+
+`h : t.height = 3` does not say what `t` *is* — it measures it. Such an
+equation is a point of the function's graph, so it draws as one `height`
+arrow from `t` to `3`, attached to the value — not as a floating `=`
+between a stuck term and a literal.
+
+What this does **not** do yet: shape `t`'s own drawing (a tree of height 3
+has at least three levels). Working that out from `height` means searching
+over candidate trees — the model-finding side, parked on its own branch. -/
+
+def DTree.height : DTree → Nat
+  | .leaf _ => 0
+  | .node l r => max l.height r.height + 1
+
+set_option linter.unusedVariables false in
+example (t : DTree) (h : t.height = 3) : True := by
+  spytial.datum t
+  trivial
+
+/-! ## 8. Universal facts put to work
+
+`spytial t` only counts a `∀` — a rule is not one fact. `spytial.derive t`
+applies the rules: every `∀ …, … → …` hypothesis is applied to the facts at
+hand, and a conclusion is drawn only when it comes with a real,
+type-checked proof term. Below, `hs` applied to `h` proves `R y x`, so the
+diagram has both arrows. Derivation never guesses. -/
+
+set_option linter.unusedVariables false in
+example {α : Type} (R : α → α → Prop) (x y : α)
+    (h : R x y) (hs : ∀ a b, R a b → R b a) : True := by
+  spytial.derive x
+  trivial
+
+set_option linter.unusedVariables false in
+example {α : Type} (R : α → α → Prop) (x y : α)
+    (h : R x y) (hs : ∀ a b, R a b → R b a) : True := by
+  spytial.derive.datum x
+  trivial
+
 /-! ## Styling
 
 Nothing is ever styled by default — how the diagram looks is the spec
@@ -170,31 +210,16 @@ example (t u : DTree) (h : t ≠ u) : True := by
 - `h : t = …` and `let` shape the value (section 3). Facts become arrows,
   and `∧` splits into its parts (section 5). `≠`/`¬` arrows connect values
   that exist, and never invent atoms (section 4).
-- You hand-pick the facts with `using` (section 6). Nothing is ever styled
-  unless a spec says so (previous section).
+- You hand-pick the facts with `using` (section 6).
+- Measurements like `t.height = 3` attach to the value as function arrows
+  (section 7). `spytial.derive` puts `∀`-rules to work, by proof
+  (section 8). Nothing is ever styled unless a spec says so.
 
 **Do not have:**
-- **Knowledge about the inside of a value.** Below, `h : t.height = 3` is
-  real knowledge about `t`'s shape — but it draws as a floating `t.height`
-  atom, an `=` arrow, and `3`. It does not bound or shape `t`'s own
-  drawing, and it is not even connected to `t`'s atom. Absorbing it means
-  inverting functions like `height`.
-- **Universal facts put to work.** `∀ a b, R a b → R b a` plus a drawn
-  `R x y` *proves* `R y x`. We could add the arrows the rules force; today
-  a `∀` is only counted (section 5).
-- **What the value CAN be.** Enumerate candidates, keep the ones the
-  hypotheses allow, draw one. Built, parked on the `model-finding` branch —
-  it is search, not diagramming.
+- **True inversion.** `t.height = 3` attaches to `t`, but it does not yet
+  bound or shape `t`'s own drawing. Working that out is search over
+  candidates — built, parked on the `model-finding` branch.
+- **`∨`.** One side holds, but we do not know which; it stays counted
+  (section 5).
 - **Ruled-out values on request.** A `spytial.not t` that draws the shapes
   `t` cannot be. Not built. -/
-
-def DTree.height : DTree → Nat
-  | .leaf _ => 0
-  | .node l r => max l.height r.height + 1
-
--- knowledge about the INSIDE of the value: shown honestly, but not
--- absorbed — `t` stays an opaque atom, and `t.height` floats next to it
-set_option linter.unusedVariables false in
-example (t : DTree) (h : t.height = 3) : True := by
-  spytial.datum t
-  trivial

@@ -215,6 +215,92 @@ private meta def walkHypFacts (cfg : WalkConfig) (subjFVars : Array FVarId)
       skipped := skipped + 1
   return skipped
 
+/-! ## Derivation: universal knowledge put to work
+
+A `∀`/`→`-shaped hypothesis is a rule, not one fact — it cannot draw. But
+applied to the finite facts at hand it *proves* new ground facts, and those
+can draw. Derivation never guesses: a conclusion is kept only with an
+actual type-checked proof term behind it. -/
+
+/-- The conjunct parts of a proof's Prop, each with its own proof
+    (`And.left`/`And.right` projections). -/
+private meta partial def conjunctsWithProofs (ty proof : Expr) :
+    MetaM (Array (Expr × Expr)) := do
+  match ty.app2? ``And with
+  | some (p, q) =>
+    return (← conjunctsWithProofs p (← mkAppM ``And.left #[proof]))
+      ++ (← conjunctsWithProofs q (← mkAppM ``And.right #[proof]))
+  | none => return #[(ty, proof)]
+
+/-- Every ground fact one rule proves from the known facts: the rule's
+    binders become metavariables, each Prop premise is matched against every
+    known fact (backtracking; value binders fall out of the unification),
+    and a conclusion is kept only when it is fully ground and its proof term
+    type-checks. Rules concluding `False` are skipped — negated Props are
+    facts (`≠`, `¬R`), not rules worth firing. -/
+private meta partial def applyRule (facts : Array (Expr × Expr))
+    (ruleTy ruleProof : Expr) (cap : Nat) : MetaM (Array (Expr × Expr)) := do
+  let (ms, _, concl) ← Meta.forallMetaTelescope ruleTy
+  if concl.isConstOf ``False then return #[]
+  let rec go (i : Nat) (out : Array (Expr × Expr)) : MetaM (Array (Expr × Expr)) := do
+    if out.size ≥ cap then return out
+    if i == ms.size then
+      let conclI ← instantiateMVars concl
+      if conclI.hasExprMVar then return out
+      let args ← ms.mapM (instantiateMVars ·)
+      if args.any (·.hasExprMVar) then return out
+      let pf := mkAppN ruleProof args
+      let ok ← try Meta.check pf; pure true catch _ => pure false
+      unless ok do return out
+      return out.push (conclI, pf)
+    else
+      let m := ms[i]!
+      let mTy ← instantiateMVars (← Meta.inferType m)
+      if ← Meta.isProp mTy then
+        let mut acc := out
+        for (fTy, fPf) in facts do
+          if acc.size ≥ cap then break
+          let s ← saveState
+          if ← Meta.isDefEq mTy fTy then
+            m.mvarId!.assign fPf
+            acc ← go (i + 1) acc
+          restoreState s
+        return acc
+      else
+        go (i + 1) out
+  go 0 #[]
+
+/-- Saturate: apply every rule-shaped hypothesis of the local context to the
+    known ground facts, round by round, until nothing new appears or `cap`
+    derived facts accumulate. Conclusions split into conjuncts and feed
+    later rounds. Returns the derived ground Props, in derivation order. -/
+meta def deriveFacts (cap : Nat := 32) : MetaM (Array Expr) := do
+  let mut ground : Array (Expr × Expr) := #[]
+  let mut rules : Array (Expr × Expr) := #[]
+  for decl in ← getLCtx do
+    if decl.isImplementationDetail then continue
+    let ty ← instantiateMVars decl.type
+    unless ← Meta.isProp ty do continue
+    for (p, pf) in ← conjunctsWithProofs ty decl.toExpr do
+      if p.isForall then rules := rules.push (p, pf)
+      else ground := ground.push (p, pf)
+  let mut all := ground
+  let mut derived : Array Expr := #[]
+  for _ in [0:3] do
+    if derived.size ≥ cap then break
+    let mut fresh : Array (Expr × Expr) := #[]
+    for (rTy, rPf) in rules do
+      for (p, pf) in ← applyRule all rTy rPf cap do
+        for (part, partPf) in ← conjunctsWithProofs p pf do
+          unless all.any (·.1.equal part) || fresh.any (·.1.equal part) do
+            if derived.size + fresh.size < cap then
+              fresh := fresh.push (part, partPf)
+    if fresh.isEmpty then break
+    for (p, _) in fresh do
+      derived := derived.push p
+    all := all ++ fresh
+  return derived
+
 /-- Walk one value together with what the local context knows about it, in
     the ambient local context (tactic callers wrap with `withMainContext`).
 
@@ -238,10 +324,14 @@ private meta def walkHypFacts (cfg : WalkConfig) (subjFVars : Array FVarId)
     mention the subject. Refinements are unaffected — they are what the
     value *is*, not a fact hung on it.
 
+    With `derive`, universal knowledge is put to work afterwards
+    (`deriveFacts`): proved conclusions draw under the same rules as any
+    fact; ones that cannot draw are bonus knowledge, not counted.
+
     Returns the number of selected facts that were not drawn (the caller
     reports them; headless tests stay silent). -/
 meta def walkInContext (cfg : WalkConfig) (subject : Expr)
-    (facts? : Option (Array FVarId) := none) :
+    (facts? : Option (Array FVarId) := none) (derive : Bool := false) :
     StateT WalkState MetaM Nat := do
   let subject ← instantiateMVars subject
   let subjFVars := exprFVars subject
@@ -266,6 +356,9 @@ meta def walkInContext (cfg : WalkConfig) (subject : Expr)
       if (← Meta.isClass? hypTy).isSome then continue
       unless ← Meta.isProp hypTy do continue
       skipped := skipped + (← walkHypFacts cfg subjFVars true hypTy)
+  if derive then
+    for p in ← deriveFacts do
+      let _ ← walkHypFacts cfg subjFVars true p
   return skipped
 
 /-! ## The spec-checker vocabulary of a value in context -/
@@ -280,9 +373,11 @@ meta def walkInContext (cfg : WalkConfig) (subject : Expr)
     expressions — the query language cannot lex them. Equations are predicted
     as `=` tuples even when the walk refines them away: a superset vocabulary
     is always safe. With `facts?`, the prediction covers exactly the listed
-    hypotheses, mirroring `walkInContext`. -/
-meta def scopeInContext (subject : Expr) (facts? : Option (Array FVarId) := none) :
-    MetaM SelScope := do
+    hypotheses, mirroring `walkInContext`. With `derive`, the vocabulary is
+    open — a rule's conclusion can name relations no ground fact does — so
+    the scope turns lenient. -/
+meta def scopeInContext (subject : Expr) (facts? : Option (Array FVarId) := none)
+    (derive : Bool := false) : MetaM SelScope := do
   let subject ← instantiateMVars subject
   let subjFVars := exprFVars subject
   let mut scope : SelScope ← match ← typeHead? (← inferType subject) with
@@ -322,7 +417,7 @@ meta def scopeInContext (subject : Expr) (facts? : Option (Array FVarId) := none
       | some (o, some a') => if a' == a then scope.rels else scope.rels.insert n (o, none)
       | some (_, none) => scope.rels
       | none => scope.rels.insert n (scope.root, some a) }
-  return { scope with lenient := scope.lenient || heads.contains none }
+  return { scope with lenient := scope.lenient || heads.contains none || derive }
 
 end
 
