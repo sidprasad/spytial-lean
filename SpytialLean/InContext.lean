@@ -160,9 +160,16 @@ private meta def mentionsAny (ty : Expr) (fvars : Array FVarId) : Bool :=
     same as a second equation on an already-refined variable
     (`equationRefinements` is first-wins).
 
-    Returns the number of subject-relevant Prop hypotheses that did not
-    decompose (the caller reports them; headless tests stay silent). -/
-meta def walkInContext (cfg : WalkConfig) (subject : Expr) :
+    With `facts?`, the automatic selection is replaced: exactly the listed
+    hypotheses are drawn as facts, in the listed order, whether or not they
+    mention the subject. Refinements are unaffected — they are what the
+    value *is*, not a fact hung on it — and a listed equation consumed as a
+    refinement still emits nothing.
+
+    Returns the number of selected Prop hypotheses that were not drawn
+    (the caller reports them; headless tests stay silent). -/
+meta def walkInContext (cfg : WalkConfig) (subject : Expr)
+    (facts? : Option (Array FVarId) := none) :
     StateT WalkState MetaM Nat := do
   let subject ← instantiateMVars subject
   let subjFVars := exprFVars subject
@@ -181,15 +188,22 @@ meta def walkInContext (cfg : WalkConfig) (subject : Expr) :
   let cfg := { cfg with refinements := map }
   let _ ← walkExpr cfg subject
   let mut skipped : Nat := 0
-  for decl in ← getLCtx do
-    if decl.isImplementationDetail then continue
-    if consumed.contains decl.fvarId then continue
-    let hypTy ← instantiateMVars decl.type
-    unless mentionsAny hypTy subjFVars do continue
-    if (← Meta.isClass? hypTy).isSome then continue
-    if ← Meta.isProp hypTy then
-      unless ← walkPropTuple cfg hypTy do
+  match facts? with
+  | some facts =>
+    for fvarId in facts do
+      if consumed.contains fvarId then continue
+      unless ← walkPropTuple cfg (← instantiateMVars (← fvarId.getType)) do
         skipped := skipped + 1
+  | none =>
+    for decl in ← getLCtx do
+      if decl.isImplementationDetail then continue
+      if consumed.contains decl.fvarId then continue
+      let hypTy ← instantiateMVars decl.type
+      unless mentionsAny hypTy subjFVars do continue
+      if (← Meta.isClass? hypTy).isSome then continue
+      if ← Meta.isProp hypTy then
+        unless ← walkPropTuple cfg hypTy do
+          skipped := skipped + 1
   return skipped
 
 /-! ## The spec-checker vocabulary of a value in context -/
@@ -203,22 +217,33 @@ meta def walkInContext (cfg : WalkConfig) (subject : Expr) :
     idents (`edgeStyle «≠» …`); they cannot occur *inside* selector
     expressions — the query language cannot lex them. Equations are predicted
     as `=` tuples even when the walk refines them away: a superset vocabulary
-    is always safe. -/
-meta def scopeInContext (subject : Expr) : MetaM SelScope := do
+    is always safe. With `facts?`, the prediction covers exactly the listed
+    hypotheses, mirroring `walkInContext`. -/
+meta def scopeInContext (subject : Expr) (facts? : Option (Array FVarId) := none) :
+    MetaM SelScope := do
   let subject ← instantiateMVars subject
   let subjFVars := exprFVars subject
   let mut scope : SelScope ← match ← typeHead? (← inferType subject) with
     | some root => SelScope.ofType root
     | none => pure { root := `_subject, lenient := true }
+  -- the same selection walkInContext draws from: the listed hypotheses, or
+  -- every subject-relevant Prop hypothesis
+  let hypTys ← match facts? with
+    | some facts => facts.mapM (fun fvarId => do instantiateMVars (← fvarId.getType))
+    | none => do
+      let mut tys : Array Expr := #[]
+      for decl in ← getLCtx do
+        if decl.isImplementationDetail then continue
+        let hypTy ← instantiateMVars decl.type
+        unless mentionsAny hypTy subjFVars do continue
+        if (← Meta.isClass? hypTy).isSome then continue
+        tys := tys.push hypTy
+      pure tys
   -- one head per walked fact argument; `none` marks an unpredictable
   -- vocabulary. propTupleShape? mirrors walkPropTuple, so names cannot drift.
   let mut heads : Array (Option Name) := #[]
   let mut propRels : Array (String × Nat) := #[]
-  for decl in ← getLCtx do
-    if decl.isImplementationDetail then continue
-    let hypTy ← instantiateMVars decl.type
-    unless mentionsAny hypTy subjFVars do continue
-    if (← Meta.isClass? hypTy).isSome then continue
+  for hypTy in hypTys do
     -- negative facts the walk withholds are still predicted: superset safe
     if let some (relName, dataArgs, _) ← propTupleShape? hypTy then
       if dataArgs.size ≥ 2 then propRels := propRels.push (relName, dataArgs.size)

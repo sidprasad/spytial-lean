@@ -602,25 +602,42 @@ folded in. -/
     the data, and how they look is the spec author's choice. -/
 public meta def spytialInContextProps (subject : Expr)
     (ops? : Option (Array (TSyntax `spytial_op)) := none)
-    (cfg : WalkConfig := {}) : TermElabM (Json × Nat) := do
-  let (skipped, state) ← (walkInContext cfg subject).run {}
+    (cfg : WalkConfig := {})
+    (facts? : Option (Array FVarId) := none) : TermElabM (Json × Nat) := do
+  let (skipped, state) ← (walkInContext cfg subject facts?).run {}
   let di := state.toDataInstance
   let spec? ← match ops? with
     | some ops => do
-      pure (some (← elabSpytialOps (← scopeInContext subject) ops))
+      pure (some (← elabSpytialOps (← scopeInContext subject facts?) ops))
     | none => lookupTypeSpec subject
   return (spytialProps di (spec?.map SpytialSpec.render), skipped)
 
+/-- Resolve a `using [h, …]` group: each entry must name a Prop-typed local
+    hypothesis. `none` when the group is absent (automatic selection). -/
+private meta def resolveFacts (stx : Syntax) : TermElabM (Option (Array FVarId)) := do
+  if stx.getNumArgs == 0 then return none
+  let mut out : Array FVarId := #[]
+  for idStx in stx[2].getSepArgs do
+    let e ← Term.elabTerm idStx none
+    let .fvar fvarId := e
+      | throwErrorAt idStx m!"'using' expects a local hypothesis, got {e}"
+    let ty ← instantiateMVars (← fvarId.getType)
+    unless ← Meta.isProp ty do
+      throwErrorAt idStx m!"'using' expects a Prop-typed hypothesis; \
+        '{e}' has type {ty}"
+    out := out.push fvarId
+  return some out
+
 open Tactic in
-/-- Shared body of the context-aware tactic arms: elaborate the subject in
-    the main goal's context (hypotheses introduced by earlier tactics live
-    there, not in the by-block's ambient one), build the payload, report
-    skipped facts, render. -/
-private meta def spytialInContextTac (t : Syntax)
+/-- Shared body of the context-aware tactic arms: elaborate the subject and
+    the `using` list in the main goal's context (hypotheses introduced by
+    earlier tactics live there, not in the by-block's ambient one), build the
+    payload, report facts that were not drawn, render. -/
+private meta def spytialInContextTac (t : Syntax) (usingStx : Syntax)
     (ops? : Option (Array (TSyntax `spytial_op))) (stx : Syntax) :
     TacticM Unit := do
   let (props, skipped) ← withMainContext do
-    spytialInContextProps (← elabTermInstantiated t) ops?
+    spytialInContextProps (← elabTermInstantiated t) ops? {} (← resolveFacts usingStx)
   if skipped > 0 then
     logInfo m!"spytial: {skipped} hypothesis(es) about the subject not drawn \
       (non-decomposable, e.g. `∀`/`∧`, or negative facts against values not \
@@ -651,6 +668,12 @@ open Tactic in
     The goal is deliberately not drawn: hypotheses are established knowledge,
     the goal is what is still being proven.
 
+    `spytial x using [h1, h2]` lets you pick the facts yourself: exactly the
+    listed hypotheses are drawn, in that order, whether or not they mention
+    `x`. Leave one out and it is not drawn; list one the automatic filter
+    would skip and it is. Refinements (`h : x = t`, `let`) still apply either
+    way — they are what the value *is*, not a fact hung on it.
+
     `spytial <term> with [<ops>]` specifies layout operations, just like the
     `#spytial` command; without ops, the subject type's `spytial_spec`
     applies. Negative relation names are addressable in field positions as
@@ -658,35 +681,35 @@ open Tactic in
     expressions — the query language cannot lex them.
 
     ```
-    example (t : RBTree Nat) (h : t ≠ .leaf) : True := by
+    example (t u : RBTree Nat) (h : t ≠ u) : True := by
       spytial t
       trivial
     ```
 -/
-syntax (name := spytialTactic) "spytial " term (" with " "[" spytial_op,* "]")? : tactic
+syntax (name := spytialTactic) "spytial " term (" using " "[" ident,* "]")?
+  (" with " "[" spytial_op,* "]")? : tactic
 
 open Tactic in
 @[tactic spytialTactic]
 meta def elabSpytialTactic : Tactic := fun stx => do
-  match stx with
-  | `(tactic| spytial $t:term) => spytialInContextTac t none stx
-  | `(tactic| spytial $t:term with [$ops,*]) => spytialInContextTac t (some ops.getElems) stx
-  | _ => throwError "Unexpected syntax {stx}."
+  spytialInContextTac stx[1] stx[2] (optionalOps stx[3]) stx
 
 meta def spytialDatumKw : Lean.Parser.Parser :=
   Lean.Parser.nonReservedSymbol "spytial.datum" (includeIdent := true)
 
 open Tactic in
 /-- `spytial.datum <term>` prints the JSON data instance the `spytial` tactic
-    would draw — the debugging counterpart, mirroring `#spytial.datum`. -/
-syntax (name := spytialDatumTactic) spytialDatumKw term : tactic
+    would draw — the debugging counterpart, mirroring `#spytial.datum`. Takes
+    the same optional `using [h, …]` fact list. -/
+syntax (name := spytialDatumTactic) spytialDatumKw term
+  (" using " "[" ident,* "]")? : tactic
 
 open Tactic in
 @[tactic spytialDatumTactic]
 meta def elabSpytialDatumTactic : Tactic := fun stx => do
   withMainContext do
     let subject ← elabTermInstantiated stx[1]
-    let (_, state) ← (walkInContext {} subject).run {}
+    let (_, state) ← (walkInContext {} subject (← resolveFacts stx[2])).run {}
     logInfo m!"{(toJson state.toDataInstance).pretty}"
 
 /-! ## Proof tactic -/

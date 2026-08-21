@@ -4,49 +4,39 @@ open SpytialLean
 
 /-! # Diagramming partially-known values
 
-In a proof you often hold a value you don't fully know — and mid-proof, the
-local context knows things about it. The `spytial` tactic draws the value
-using that knowledge. The subject is always the *value*; the context is the
-knowledge source, never the thing drawn. There are two kinds of holes:
+Mid-proof, you often hold a value you do not fully know. The context knows
+things about it: equations, `let` bindings, facts. `spytial t` draws `t`
+using that knowledge. The diagram always shows the *value*. The context is
+only the source of knowledge — it is never drawn itself, and the goal is
+never drawn either.
 
-1. **Opaque hole** — all the context knows is the type. `t : DTree` with no
-   facts draws as one atom of that type.
-2. **Structured hole** — the context knows more. The knowledge comes from
-   the elaborator (a `refine` or `let` partially built the term) or from the
-   hypotheses (`h : t = node l r` says what `t` is; `h : t ≠ leaf 0` says
-   what it is not; `h : R t u` is a fact anchored on it).
-
-The goal is deliberately not drawn: hypotheses are established knowledge,
-the goal is what is still being proven.
-
-Tactics run during elaboration, so `lake build Demos` exercises everything
-below; the `spytial.datum` variants print their JSON to the build log, which
-is the headless verification mechanism. -/
+Each section below is one kind of knowledge. Tactics run at build time, so
+`lake build Demos` checks all of it; the `spytial.datum` variants print
+their JSON to the build log. -/
 
 inductive DTree where
   | leaf (value : Nat)
   | node (left right : DTree)
   deriving DecidableEq
 
-/-! ## 1. An opaque hole
+/-! ## 1. Nothing is known
 
-`t` is an abstract variable and nothing in the context mentions it: no
-structure to descend into, so it renders as a single `DTree`-typed atom
-labeled `t`. -/
+We know nothing about `t` except its type.
+
+**What you see:** one `DTree` atom named `t`. That is the whole diagram. -/
 
 set_option linter.unusedVariables false in
 example (t : DTree) : True := by
   spytial t
   trivial
 
-/-! ## 2. The elaborator knows structure
+/-! ## 2. Lean has already built part of the value
 
-`let t := DTree.node ?l ?r` binds `t` to a partially built term. Drawing `t`
-shows the `node` the elaborator has, with the still-open holes `?l` and `?r`
-as atoms inside it — those hole atoms *are* the remaining goals, closed
-below with `case`. What is already determined draws as structure; what is
-still unknown draws as an atom. (The same applies to a metavariable assigned
-by `refine`: assignments are instantiated before walking.) -/
+`let t := DTree.node ?l ?r` builds the top of `t` but leaves two holes.
+
+**What you see:** the `node`, with two atoms `?l` and `?r` for the parts not
+filled in yet. Those two atoms are exactly the two open goals — closed below
+with `case`. Built parts draw as structure; unbuilt parts draw as atoms. -/
 
 example : True := by
   let t : DTree := DTree.node ?l ?r
@@ -55,23 +45,23 @@ example : True := by
   case r => exact .leaf 2
   trivial
 
-/-! ## 3. A hypothesis knows structure (positive)
+/-! ## 3. A hypothesis says what the value IS
 
-`h : t = DTree.node l r` refines `t`: its atom shows the `node` structure —
-with `l` and `r` as opaque sub-holes — instead of an opaque leaf. The
-hypothesis itself emits no extra edge; the refined structure is its
-rendering. -/
+`h : t = DTree.node l r` tells us `t`'s shape.
+
+**What you see:** `t` drawn as that `node`, with `l` and `r` as plain atoms
+inside it. `h` itself adds no extra arrow — the shape *is* its picture. -/
 
 set_option linter.unusedVariables false in
 example (t l r : DTree) (h : t = DTree.node l r) : True := by
   spytial t
   trivial
 
--- the same refinement arises from a case split: `cases h : t` leaves the
--- branch's equation in its context. The branches know contradictory things
--- about `t` (`t = leaf v` in one, `t = node l r` in the other), so the same
--- `spytial t` draws a different picture in each — the diagram always shows
--- what is known *here*
+/-! `cases h : t` gives each branch its own equation about `t`. So the same
+`spytial t` draws a different picture in each branch: a `leaf` in the leaf
+branch, a `node` in the node branch. The diagram always shows what is known
+*here*. -/
+
 set_option linter.unusedVariables false in
 example (t : DTree) : True := by
   cases h : t with
@@ -82,18 +72,18 @@ example (t : DTree) : True := by
     spytial t
     trivial
 
-/-! ## 4. A hypothesis rules structure out (negative)
+/-! ## 4. A hypothesis says what the value is NOT
 
-A negative fact draws only between values already in the world — ruling a
-term out is not license to materialize it. Here `u` is a real value whose
-structure is known (`hu`), and `h : t ≠ u` draws one `≠` edge from `t` into
-that structure: what `t` is not, without inventing atoms. The relation
-*name* carries the semantics — `≠` is simply a different relation than `=`,
-so nothing downstream can read "ruled out" as "holds" — and how it looks is
-the spec author's choice (see the styling section below).
+`hu` says what `u` is. `h : t ≠ u` says `t` is not that.
 
-A negative fact against a term that is *not* in the world (`t ≠ leaf 0`) is
-counted, not drawn — the tactic logs one note. -/
+**What you see:** the atom `t`, the known structure of `u`, and one arrow
+from `t` to `u` in the relation named `≠`. The arrow's *name* carries the
+meaning; nothing is styled unless you ask (see the last section).
+
+One rule keeps this honest: a `≠` arrow only connects values that are
+already in the diagram. `t ≠ DTree.leaf 0` names a tree that exists nowhere
+in the context, so nothing is drawn for it — the tactic prints a note
+counting it instead. Ruling a value out does not make it real. -/
 
 set_option linter.unusedVariables false in
 example (t u : DTree) (hu : u = DTree.node (DTree.leaf 0) (DTree.leaf 0))
@@ -107,14 +97,18 @@ example (t u : DTree) (hu : u = DTree.node (DTree.leaf 0) (DTree.leaf 0))
   spytial.datum t
   trivial
 
-/-! ## 5. Relational facts
+/-! ## 5. A hypothesis relates the value to others
 
-Any Prop hypothesis mentioning the subject becomes a tuple anchored on its
-atoms — here `R` is a *local* relation (a variable, hence a free variable
-rather than a constant), and `h : R x y` still names the relation `R`.
-`hsymm` never mentions `x`, so it is simply not this diagram's business; a
-fact about `x` that does not decompose (the conjunction `hb`) is skipped,
-and the tactic logs a note saying so. -/
+`h : R x y` is a fact linking `x` and `y`.
+
+**What you see:** two atoms `x` and `y`, and one arrow from `x` to `y` in a
+relation named `R`. Any fact that mentions the subject becomes an arrow like
+this — that is how `y` gets into the picture at all. It works even though
+`R` here is a local variable, not a global definition.
+
+The other two hypotheses show the limits. `hb` mentions `x` but is an AND of
+two facts, so it is not one arrow — it is not drawn, and the tactic prints a
+note counting it. `hsymm` never mentions `x`, so it is simply ignored. -/
 
 set_option linter.unusedVariables false in
 example {α : Type} (R : α → α → Prop) (x y : α)
@@ -128,14 +122,29 @@ example {α : Type} (R : α → α → Prop) (x y : α)
   spytial.datum x
   exact hsymm x y h
 
+/-! ## 6. You pick the facts
+
+`using [h, …]` replaces the automatic choice of facts with your own list.
+Exactly the listed hypotheses are drawn, in that order — even ones that do
+not mention the subject. Leave the list empty to draw no facts at all.
+
+Refinements are not facts: `h : t = …` and `let` still shape the value
+either way. They are what the value *is*, not an arrow hung on it.
+
+**What you see below:** only the `h` arrow. `h2` is left out on purpose. -/
+
+set_option linter.unusedVariables false in
+example (a b : Nat) (h : a < b) (h2 : b < a) : True := by
+  spytial a using [h]
+  trivial
+
 /-! ## Styling
 
-The library never styles anything by default — that is the spec author's
-job. The subject has a type, so a registered `spytial_spec` for it applies
-unchanged; inline ops go through `with [...]`, elaborated against the
-subject type's scope extended with the fact vocabulary. Negative relation
-names use escaped idents in field positions — the ruled-out look, if you
-want one, is one op: -/
+Nothing is ever styled by default — how the diagram looks is the spec
+author's job. A `spytial_spec` registered for the subject's type applies
+as-is, and inline ops go through `with [...]`. The ruled-out look for `≠`,
+if you want it, is one op (the `«…»` quotes are how Lean spells the unusual
+name): -/
 
 set_option linter.unusedVariables false in
 example (t u : DTree) (h : t ≠ u) : True := by

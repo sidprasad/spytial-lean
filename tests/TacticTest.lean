@@ -83,8 +83,24 @@ example (a b : Nat) (h : a < b) (h2 : a ≠ 0) : True := by
                   edgeStyle «≠» (lineStyle "green")]
   trivial
 
--- datum tactic
+-- the caller picks the facts: `using` draws exactly the listed hypotheses
+set_option linter.unusedVariables false in
+example (a b : Nat) (h : a < b) (h2 : b < a) : True := by
+  spytial a using [h]
+  trivial
+
+set_option linter.unusedVariables false in
+example (a b : Nat) (h : a < b) : True := by
+  spytial a using [h] with [edgeStyle lt (lineStyle "blue")]
+  trivial
+
+-- datum tactic, with and without a fact list
 set_option linter.unusedVariables false in
 example (a b : Nat) (h : a < b) : True := by
   spytial.datum a
+  trivial
+
+set_option linter.unusedVariables false in
+example (a b : Nat) (h : a < b) : True := by
+  spytial.datum a using [h]
   trivial

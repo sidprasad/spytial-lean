@@ -23,9 +23,9 @@ private meta def sLeaf (n : Nat) : Expr :=
 private meta def sNode (l r : Expr) : Expr :=
   mkApp2 (mkConst ``STree.node) l r
 
-private meta def runCtx (subject : Expr) (cfg : WalkConfig := {}) :
-    MetaM (Nat × WalkState) :=
-  (walkInContext cfg subject).run {}
+private meta def runCtx (subject : Expr) (cfg : WalkConfig := {})
+    (facts? : Option (Array FVarId) := none) : MetaM (Nat × WalkState) :=
+  (walkInContext cfg subject facts?).run {}
 
 /-! ## Facts anchor on the subject's atoms
 
@@ -243,6 +243,38 @@ rendering. -/
     let (skipped, st) ← runCtx x
     unless skipped == 0 do throwError "ctx.unrelated: skipped {skipped}"
     assertCanon "ctx.unrelated" st.toDataInstance "STree|x"
+
+/-! ## `using`: the caller picks the facts -/
+
+-- a listed fact draws even when it does not mention the subject
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x sTree fun x => do
+  withLocalDeclD `n (mkConst ``Nat) fun n => do
+  withLocalDeclD `h (← mkAppM ``LT.lt #[n, n]) fun h => do
+    let (skipped, st) ← runCtx x (facts? := some #[h.fvarId!])
+    unless skipped == 0 do throwError "ctx.using.include: skipped {skipped}"
+    assertCanon "ctx.using.include" st.toDataInstance
+      "STree|x\nNat|n\nlt[Nat,Nat]:1,1"
+
+-- an empty list draws no facts at all — even ones the automatic selection
+-- would draw
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x (mkConst ``Nat) fun x => do
+  withLocalDeclD `y (mkConst ``Nat) fun y => do
+  withLocalDeclD `h (← mkAppM ``LT.lt #[x, y]) fun _ => do
+    let (skipped, st) ← runCtx x (facts? := some #[])
+    unless skipped == 0 do throwError "ctx.using.none: skipped {skipped}"
+    assertCanon "ctx.using.none" st.toDataInstance "Nat|x"
+
+-- refinements are not facts: a listed equation consumed as a refinement
+-- still emits nothing, and the refinement applies with or without `using`
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x sTree fun x => do
+  withLocalDeclD `h (← mkAppM ``Eq #[x, sLeaf 1]) fun h => do
+    let (skipped, st) ← runCtx x (facts? := some #[h.fvarId!])
+    unless skipped == 0 do throwError "ctx.using.consumed: skipped {skipped}"
+    assertCanon "ctx.using.consumed" st.toDataInstance
+      "STree|leaf\nNat|1\nvalue[STree,Nat]:0,1"
 
 /-! ## The scope is the subject type's, extended with the fact vocabulary -/
 
