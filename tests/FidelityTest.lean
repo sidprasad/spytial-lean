@@ -100,6 +100,17 @@ public inductive Color where
 /-- info: Color.green -/
 #guard_msgs in #spytial.fidelity Color.green
 
+namespace FNS
+public inductive Wrapped where
+  | box (n : Nat)
+  deriving Repr
+end FNS
+
+-- the datum records only the short head name `Wrapped`; outside `FNS` that
+-- resolves through the environment fallback, not the command-site scope
+/-- info: FNS.Wrapped.box 7 -/
+#guard_msgs in #spytial.fidelity (FNS.Wrapped.box 7)
+
 /-! ## Structures -/
 
 public structure FPoint where

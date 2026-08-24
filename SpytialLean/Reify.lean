@@ -62,6 +62,35 @@ private meta def buildIndex (di : JsonDataInstance) : TermElabM DatumIndex := do
   | #[r] => return { atoms, children, root := r }
   | _ => throwError "reify: expected exactly one root atom, found {roots}"
 
+/-- Resolve the constructor a `(type, label)` atom names. The datum records
+    only the short head name (`sigOfType`), so resolution at the command site
+    is tried first; a type not in scope there falls back to the unique
+    non-private environment inductive with that short name carrying a
+    constructor matching the label — more than one is genuine ambiguity the
+    datum cannot settle. -/
+private meta def resolveAtomCtor (tyShort ctorLabel : String) : TermElabM Name := do
+  let matching (iv : InductiveVal) : Option Name :=
+    iv.ctors.find? (fun c => shortName c == ctorLabel)
+  let fromScope? ← try
+      some <$> resolveGlobalConstNoOverload (mkIdent (Name.mkSimple tyShort))
+    catch _ => pure none
+  if let some n := fromScope? then
+    if let some (.inductInfo iv) := (← getEnv).find? n then
+      if let some c := matching iv then return c
+  let cands := (← getEnv).constants.fold (init := #[]) fun acc n ci =>
+    match ci with
+    | .inductInfo iv =>
+      if shortName n == tyShort && !isPrivateName n then
+        match matching iv with
+        | some c => acc.push c
+        | none => acc
+      else acc
+    | _ => acc
+  match cands with
+  | #[c] => return c
+  | #[] => throwError "reify: no inductive `{tyShort}` has a constructor `{ctorLabel}`"
+  | _ => throwError "reify: atom `{tyShort}|{ctorLabel}` is ambiguous between {cands}"
+
 /-- Rebuild the term drawn at atom `id` as surface syntax. Literal leaves keep
     their printed form in the label; a constructor atom resolves its inductive
     from the type head and its constructor from the label, then recovers each
@@ -75,10 +104,7 @@ private meta partial def reifyTerm (idx : DatumIndex) (id : String) : TermElabM 
     -- the label is `"` ++ contents ++ `"`, contents unescaped
     let s : Term := Syntax.mkStrLit ((atom.label.drop 1).dropEnd 1).copy
     return ← `(($s : String))
-  let tyName ← resolveGlobalConstNoOverload (mkIdent (Name.mkSimple atom.type))
-  let iv ← getConstInfoInduct tyName
-  let some ctorName := iv.ctors.find? (fun c => shortName c == atom.label)
-    | throwError "reify: atom {id} ({atom.type}|{atom.label}) names no constructor of {tyName}"
+  let ctorName ← resolveAtomCtor atom.type atom.label
   let ci ← getConstInfoCtor ctorName
   let binderNames := ctorDataBinderNames ci
   let ctorShort := shortName ctorName
