@@ -33,7 +33,9 @@ public meta def assertCanon (label : String) (di : JsonDataInstance) (expected :
 /-- Differential oracle: the fused walker must agree with the literal two-pass
     reference (fresh atoms, then merge by `(type, identity)`). -/
 public meta def assertMatchesReference (label : String) (e : Expr) (cfg : WalkConfig := {}) :
-    MetaM Unit := do
+    MetaM Unit := withoutModifyingEnv do
+  -- `walkExpr`/`referenceRelationalize` skip `relationalize`'s rollback, so
+  -- without this the oracle runs under an environment the commands never see.
   let (rootF, stF) ← (walkExpr cfg e).run {}
   let diF := stF.toDataInstance
   let (rootR, diR) ← referenceRelationalize e cfg
