@@ -469,12 +469,17 @@ private meta def elabUseSiteOps (e : Expr) (ops : Array (TSyntax `spytial_op)) :
     `..` element splices it back in. The spec is rendered to its wire string
     once, here. -/
 private meta def elabSpytialPayload (t : Syntax) (ops? : Option (Array (TSyntax `spytial_op)))
-    (cfg : WalkConfig) : TermElabM (JsonDataInstance × Option String) := do
-  let (e, di) ← elabRelationalized t cfg
-  let spec? ← match ops? with
-    | some ops => some <$> elabUseSiteOps e ops
-    | none => lookupTypeSpec e
-  return (di, spec?.map SpytialSpec.render)
+    (cfg : WalkConfig) : TermElabM (JsonDataInstance × Option String) :=
+  -- The command boundary is where `#eval` discards what it derived, and both
+  -- halves below derive: the walk needs `SpytialIdentity`, and building the
+  -- selector scope needs `SpytialEnum`. Wrapping only the walk would leave the
+  -- spec half persisting its instances. Both results are plain data.
+  withoutModifyingEnv do
+    let (e, di) ← elabRelationalized t cfg
+    let spec? ← match ops? with
+      | some ops => some <$> elabUseSiteOps e ops
+      | none => lookupTypeSpec e
+    return (di, spec?.map SpytialSpec.render)
 
 private meta def spytialProps (di : JsonDataInstance) (cndSpec? : Option String) : Json :=
   Json.mkObj <|

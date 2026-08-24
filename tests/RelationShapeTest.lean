@@ -128,15 +128,15 @@ public def mixedVal : Mixed := { m := fun b s => if b then s.length else 0 }
 
 #eval show MetaM Unit from do
   assertCanon "table.enum" (← relationalize (mkConst ``qStepVal))
-    "QStep|mk\nQ|q0\nQ|q1\nQ|q2\nQ|q1\nQ|q2\nQ|q0\nstep[QStep,Q,Q]:0,1,4;0,2,5;0,3,6"
+    "QStep|mk\nQ|q0\nQ|q1\nQ|q2\nstep[QStep,Q,Q]:0,1,2;0,2,3;0,3,1"
 
 #eval show MetaM Unit from do
   assertCanon "table.fin" (← relationalize (mkConst ``finFVal))
-    "FinF|mk\nFin|mk\nNat|0\nFin|mk\nNat|1\nNat|0\nNat|1\ng[FinF,Fin,Nat]:0,1,5;0,3,6\nval[Fin,Nat]:1,2;3,4"
+    "FinF|mk\nFin|mk\nNat|0\nFin|mk\nNat|1\ng[FinF,Fin,Nat]:0,1,2;0,3,4\nval[Fin,Nat]:1,2;3,4"
 
 #eval show MetaM Unit from do
   assertCanon "table.product" (← relationalize (mkConst ``daVal))
-    "DA|mk\nQ|q0\nQ|q1\nQ|q2\nBool|false\nBool|true\nQ|q0\nQ|q1\nQ|q2\nQ|q0\nQ|q1\nQ|q2\ntr[DA,Q,Bool,Q]:0,1,4,6;0,1,5,7;0,2,4,8;0,2,5,9;0,3,4,10;0,3,5,11"
+    "DA|mk\nQ|q0\nQ|q1\nQ|q2\nBool|false\nBool|true\ntr[DA,Q,Bool,Q]:0,1,4,1;0,1,5,2;0,2,4,3;0,2,5,1;0,3,4,2;0,3,5,3"
 
 /-! ## What stays a labeled λ leaf
 
@@ -200,7 +200,7 @@ public def undecVal : Undec := { p := fun q => myProp q }
 
 #eval show MetaM Unit from do
   assertCanon "prop.table" (← relationalize (mkConst ``propRelVal))
-    "PropRel|mk\nQ|q0\nQ|q0\nQ|q2\nQ|q1\nQ|q1\nQ|q2\nrel[PropRel,Q,Q]:0,1,2;0,1,3;0,4,5;0,6,3"
+    "PropRel|mk\nQ|q0\nQ|q2\nQ|q1\nrel[PropRel,Q,Q]:0,1,1;0,1,2;0,3,3;0,2,2"
 
 #eval show MetaM Unit from do
   assertCanon "prop.sparse" (← relationalize (mkConst ``sparseVal))
@@ -350,4 +350,4 @@ public def boxed : Boxed := { rel := fun a b => Linked a b }
 
 #eval show Lean.Elab.TermElabM Unit from do
   assertCanon "prop.behind.def" (← relationalize (mkConst ``boxed))
-    "Boxed|mk\nBool|false\nBool|false\nBool|true\nBool|true\nrel[Boxed,Bool,Bool]:0,1,2;0,3,4"
+    "Boxed|mk\nBool|false\nBool|true\nrel[Boxed,Bool,Bool]:0,1,1;0,2,2"

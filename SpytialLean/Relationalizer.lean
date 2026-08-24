@@ -26,8 +26,9 @@ the fused walker draws the first-walked occurrence. -/
 /-- How subterms of a type decide identity, resolved once per type per walk
     from its `SpytialIdentity` instance (see `resolveRoute`). -/
 public meta inductive IdentityRoute where
-  /-- No instance ⇒ no merging: every occurrence a fresh atom (node-local;
-      children still consult their own types in `declared` mode). -/
+  /-- No merging: every occurrence a fresh atom (node-local; children still
+      consult their own types in `declared` mode). Reached by declaring
+      `asWritten`, or when nothing could be derived. -/
   | noInstance
   /-- The derived structural instance (verified: the instance that resolved
       is the registered twin's): keys are computed meta-side during the walk,
@@ -74,6 +75,8 @@ public meta structure WalkState where
   /-- Exact-occurrence shortcut for `.eqv` types: a structurally identical
       subterm rejoins its group without re-evaluating the relation. -/
   eqvSeen : ExprStructMap String := {}
+  /-- `r w w` per closed subterm on the `.eqv` route — see `identityVerdict`. -/
+  eqvRefl : ExprStructMap Bool := {}
   /-- Per-walk cache: whnf'd type → its `Repr` instance, when usable for leaf
       labels (`none` records both "no instance" and "failed to evaluate"). -/
   reprInstCache : ExprStructMap (Option Expr) := {}
@@ -240,37 +243,71 @@ private meta def evalBool? (e : Expr) : MetaM (Option Bool) := do
 -- `Expr` reification (a `ToExpr` for arbitrary user types), which doesn't
 -- generally exist. Merging is unaffected, by `identity (norm x) = identity x`.
 
-/-- Resolve how subterms of (whnf'd, closed) type `tyKey` decide identity:
-    synthesize `SpytialIdentity tyKey`, expose its presentation with `whnf`,
-    and take the structural route only when the instance that resolved *is*
-    the derived one (checked against the registered twin's parent name, so an
-    instance shadowing a derived one routes as an ordinary classifier — meta
-    and eval then agree by construction). Memoized per type in the walk state
-    under confirmed structural equality. -/
+/-- Read a resolved instance's presentation: expose it with `whnf`, and take
+    the structural route only when the instance that resolved *is* the derived
+    one (checked against the registered twin's parent name, so an instance
+    shadowing a derived one routes as an ordinary classifier — meta and eval
+    then agree by construction). -/
+private meta def routeOfInstance (tyKey inst : Expr) : MetaM IdentityRoute := do
+  let viaW ← whnf (← mkAppOptM ``SpytialIdentity.via #[some tyKey, some inst])
+  if viaW.isAppOfArity ``IdentityVia.asWritten 1 then
+    return .noInstance
+  if viaW.isAppOfArity ``IdentityVia.identity 2 then
+    let env ← getEnv
+    let structural := match tyKey.getAppFn, inst.getAppFn.constName? with
+      | .const h _, some instName =>
+        match structuralTwinName? env h with
+        | some twin => twin.getPrefix == instName
+        | none => false
+      | _, _ => false
+    return (if structural then .structural else .classifier viaW.appArg!)
+  if viaW.isAppOfArity ``IdentityVia.eqv 2 then
+    return .eqvRel viaW.appArg!
+  -- presentation opaque to whnf (a non-`@[expose]` instance body). `toEqv` is
+  -- total and correct for the merging arms, at group-comparison cost — but the
+  -- `.eqvRel` route memoizes per expression, so an `asWritten` reached this way
+  -- would merge on the memo alone. Ask the compiled code first.
+  if (← evalBool? (← mkAppM ``IdentityVia.isAsWritten #[viaW])) == some true then
+    return .noInstance
+  return .eqvRel (← mkAppM ``IdentityVia.toEqv #[viaW])
+
+/-- Resolve how subterms of (whnf'd, closed) type `tyKey` decide identity.
+
+    A declared instance wins. Failing that the walker supplies one: a
+    `ToIdentityKey` encoding if the type has one — the primitives, where the
+    hand-written classifier is O(1) and carries a `MetaEncode` twin, and a
+    structural walk would key `Nat` by its unary spine — else structural
+    identity derived on demand. A type that could have merged and could not be
+    derived says so once; `SpytialIdentity.asWritten` is how a type accepts
+    drawing as written, and silences it. `spytial.identity.auto` turns the
+    supplying off wholesale.
+
+    Memoized per type in the walk state under confirmed structural equality,
+    so the derivation attempt and any warning happen once per type per walk. -/
 private meta def resolveRoute (tyKey : Expr) : StateT WalkState MetaM IdentityRoute := do
   if let some r := (← get).routeCache[(⟨tyKey⟩ : ExprStructEq)]? then
     return r
   let r ← do
     try
-      match ← synthInstance? (← mkAppM ``SpytialIdentity #[tyKey]) with
-      | none => pure .noInstance
-      | some inst =>
-        let viaW ← whnf (← mkAppOptM ``SpytialIdentity.via #[some tyKey, some inst])
-        if viaW.isAppOfArity ``IdentityVia.identity 2 then
-          let env ← getEnv
-          let structural := match tyKey.getAppFn, inst.getAppFn.constName? with
-            | .const h _, some instName =>
-              match structuralTwinName? env h with
-              | some twin => twin.getPrefix == instName
-              | none => false
-            | _, _ => false
-          pure (if structural then .structural else .classifier viaW.appArg!)
-        else if viaW.isAppOfArity ``IdentityVia.eqv 2 then
-          pure (.eqvRel viaW.appArg!)
-        else
-          -- presentation opaque to whnf: `toEqv` is total and correct for
-          -- both arms, at group-comparison cost
-          pure (.eqvRel (← mkAppM ``IdentityVia.toEqv #[viaW]))
+      if let some inst ← synthInstance? (← mkAppM ``SpytialIdentity #[tyKey]) then
+        routeOfInstance tyKey inst
+      else if !(spytial.identity.auto.get (← getOptions)) then
+        pure .noInstance
+      else if let some enc ← synthInstance? (← mkAppM ``ToIdentityKey #[tyKey]) then
+        pure (.classifier (← mkAppOptM ``ToIdentityKey.toKey #[some tyKey, some enc]))
+      else
+        match ← deriveIdentity tyKey with
+        | .derived =>
+          match ← synthInstance? (← mkAppM ``SpytialIdentity #[tyKey]) with
+          | some inst => routeOfInstance tyKey inst
+          | none => pure .noInstance
+        | .refused why =>
+          let applied := if tyKey.getAppNumArgs == 0 then m!"{tyKey}" else m!"({tyKey})"
+          logWarning m!"'{tyKey}' has no `SpytialIdentity` and none can be derived: \
+            {why}\nEqual subterms draw as separate atoms. Declare \
+            `instance : SpytialIdentity {applied} := .asWritten` to accept that."
+          pure .noInstance
+        | .notApplicable => pure .noInstance
     catch _ => pure .noInstance
   modify fun s => { s with routeCache := s.routeCache.insert ⟨tyKey⟩ r }
   return r
@@ -428,6 +465,18 @@ private meta def identityVerdict (tyKey e : Expr) : StateT WalkState MetaM IdVer
     | none => return .fresh
   | .eqvRel r =>
     let w ← whnf e
+    -- `eqvSeen` and the group scan both assume the decider is reflexive. A
+    -- derived instance over an `asWritten` field is not: the type as a whole
+    -- still has merging arms, so it cannot present `.asWritten`, but `w`
+    -- itself must not merge — with an identical spelling least of all.
+    let refl ← do
+      match (← get).eqvRefl[(⟨w⟩ : ExprStructEq)]? with
+      | some b => pure b
+      | none =>
+        let b := (← evalBool? (mkApp2 r w w)) == some true
+        modify fun s => { s with eqvRefl := s.eqvRefl.insert ⟨w⟩ b }
+        pure b
+    unless refl do return .fresh
     if let some id := (← get).eqvSeen[(⟨w⟩ : ExprStructEq)]? then
       return .reuse id
     for (rep, gid) in (← get).eqvGroups[(⟨tyKey⟩ : ExprStructEq)]?.getD #[] do
@@ -804,10 +853,18 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
     e ty tyKey origName atomId
   return atomId
 
-/-- Walk an expression and produce a complete JsonDataInstance. -/
-public meta def relationalize (e : Expr) (cfg : WalkConfig := {}) : MetaM JsonDataInstance := do
-  let (_, state) ← walkExpr cfg e |>.run {}
-  return state.toDataInstance
+/-- Walk an expression and produce a complete JsonDataInstance.
+
+    `withoutModifyingEnv` because the walk derives `SpytialIdentity` instances
+    on demand, and those are an artifact of drawing, not declarations the user
+    wrote: `#eval` discards its derived `Repr` the same way and for the same
+    reason. Persisting them would let two sibling modules that draw the same
+    third-party type mint the same instance name, so importing both would
+    fail. The result is plain data, so nothing outlives the rollback. -/
+public meta def relationalize (e : Expr) (cfg : WalkConfig := {}) : MetaM JsonDataInstance :=
+  withoutModifyingEnv do
+    let (_, state) ← walkExpr cfg e |>.run {}
+    return state.toDataInstance
 
 /-! ## Two-pass reference implementation
 

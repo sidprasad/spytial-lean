@@ -11,7 +11,8 @@ open Lean Meta Elab
 
 `SpytialIdentity` declares, per type, which occurrences of a value merge into
 one atom: every value gets an identity; subterms with the same identity are one
-atom. No instance ⇒ no merging — the term draws as written. This module is the
+atom. No instance ⇒ the walker derives one on demand; `asWritten` declines it.
+This module is the
 value layer only: the identity token, the encoding class (`ToIdentityKey`), the
 two presentations, the identity class, the `deriving` handler for structural
 identity, and the `Raw`/`Viewed` view wrappers. The walker (`Relationalizer`)
@@ -61,11 +62,12 @@ atoms are two different judgments about a type, so they are two classes.
 Deriving over a `Nat` field writes the field's value into the parent's key via
 `ToIdentityKey` — without ever making `Nat` atoms merge. -/
 
-/-- Values of `α` can be written into a key; grants NO merge behavior.
-    (`SpytialIdentity` remains purely the merge declaration — no primitive has
-    one by default; the ruled as-written default stands, literals included.)
-    `toKey` must be injective — distinct values, distinct keys — so parent
-    identities built from it never conflate fields. -/
+/-- Values of `α` can be written into a key; grants NO merge behavior on its
+    own — `SpytialIdentity` remains the merge declaration. It is what the
+    walker reaches for first when a type declares no identity, so in practice
+    an encoding does decide how a primitive merges. `toKey` must be injective —
+    distinct values, distinct keys — so parent identities built from it never
+    conflate fields. -/
 public class ToIdentityKey (α : Type u) where
   /-- Encode a value as a key. -/
   toKey : α → IdentityKey
@@ -139,6 +141,13 @@ public inductive IdentityVia (α : Type u) where
       quotients this design exists for. Cost: up to one comparison per existing
       group of the type, vs a classifier's lookup. -/
   | eqv (r : α → α → Bool)
+  /-- Nothing merges: every occurrence draws as written. The opt-out from the
+      derive-on-demand default, and the only presentation whose induced decider
+      is deliberately not reflexive — a composite over an as-written field has
+      no classifier, so it presents `.eqv` and inherits never-merging for the
+      constructors that reach the field, while its other arms still merge. The
+      walker's reflexivity gate is what carries that through. -/
+  | asWritten
 
 /-- The classifier, when this presentation has one. Derived instances dispatch
     on this to decide whether a composite can stay classifier-presented.
@@ -147,12 +156,22 @@ public inductive IdentityVia (α : Type u) where
 @[expose] public def IdentityVia.classifier? {α : Type u} : IdentityVia α → Option (α → IdentityKey)
   | .identity f => some f
   | .eqv _ => none
+  | .asWritten => none
+
+/-- Whether this presentation declines to merge at all. The walker asks the
+    compiled code, because a module-opaque instance body stops `whnf` short of
+    the arm and the `.eqv` route it would otherwise fall back to memoizes per
+    expression — sound only for a reflexive decider, which this arm is not. -/
+public def IdentityVia.isAsWritten {α : Type u} : IdentityVia α → Bool
+  | .asWritten => true
+  | _ => false
 
 /-- Every presentation induces a decider — classifiers compare by key. The
     reverse does not exist, which is why derived instances degrade to `.eqv`. -/
 public def IdentityVia.toEqv {α : Type u} : IdentityVia α → (α → α → Bool)
   | .identity f => fun a b => f a == f b
   | .eqv r => r
+  | .asWritten => fun _ _ => false
 
 /-- Pull a presentation back along a function: identify `a` with `b` iff `v`
     identifies `n a` with `n b`. Classifiers stay classifiers. -/
@@ -161,13 +180,15 @@ public def IdentityVia.comap {α : Type u} {β : Type v} (v : IdentityVia β) (n
   match v with
   | .identity f => .identity (f ∘ n)
   | .eqv r => .eqv fun a b => r (n a) (n b)
+  | .asWritten => .asWritten
 
 /-! ## The class -/
 
-/-- Declared diagram identity for `α`: subterms with the same identity merge
-    into one atom. No instance ⇒ no merging — the term draws as written; no
-    primitive ships one. `deriving SpytialIdentity` gives structural identity —
-    right where sameness is content, wrong where position is meaning. -/
+/-- Diagram identity for `α`: subterms with the same identity merge into one
+    atom. No instance ⇒ the walker supplies one — a primitive's `ToIdentityKey`
+    encoding, else structural identity derived on demand — so sameness is
+    content by default. `SpytialIdentity.asWritten` opts back out, for the types
+    where position is the meaning. -/
 public class SpytialIdentity (α : Type u) where
   /-- Which occurrences are one atom. -/
   via : IdentityVia α
@@ -193,6 +214,12 @@ public def SpytialIdentity.runtimeKey? {α : Type u} [SpytialIdentity α] (a : �
     triggers merging. -/
 @[reducible] public def SpytialIdentity.ofBEq {α : Type u} [BEq α] : SpytialIdentity α :=
   { via := .eqv (· == ·) }
+
+/-- Opt out of the derive-on-demand default: `α` draws as written, one atom per
+    occurrence. Declaring this is what stops the walker supplying an identity,
+    and it silences the decline warning for a type that cannot have one. -/
+@[reducible] public def SpytialIdentity.asWritten {α : Type u} : SpytialIdentity α :=
+  { via := .asWritten }
 
 /-- Normalize, then use the underlying identity: `base` pulled back along `n`,
     with `n` the display representative. The `norm?` law holds exactly when
@@ -266,6 +293,53 @@ ordinary instance-synthesis error; parameter-dependent dependencies always
 route through `SpytialIdentity` (containers merge iff their elements do).
 The result is classifier-presented iff every identity-routed dependency has a
 classifier; encoded dependencies never force degradation. -/
+
+/-- Whether the walker may supply an identity for a type that declares none.
+    `false` restores opt-in identity: only a declared `SpytialIdentity` merges
+    anything, and `deriving SpytialIdentity` demands its fields have one. The
+    counterpart of `eval.derive.repr`, covering the `ToIdentityKey` fallback
+    too, since the walker supplying an encoding is part of the same default. -/
+public meta register_option spytial.identity.auto : Bool := {
+  defValue := true
+  descr := "supply a `SpytialIdentity` for types that declare none — the \
+            primitives' `ToIdentityKey` encoding, else structural identity \
+            derived on demand"
+}
+
+/-- Whether on-demand derivation ran, and what it said. `notApplicable` is
+    silent — a function type or a proposition was never a candidate, or
+    `spytial.identity.auto` is off — while `refused` is a type that could
+    plausibly have merged and did not, which is the only case worth a
+    diagnostic. -/
+public meta inductive DeriveResult where
+  | derived
+  | refused (why : MessageData)
+  | notApplicable
+
+/-- `SpytialIdentity α` derived on the spot, for a type that declares none.
+
+    The same device as `#eval`'s missing `Repr` (`eval.derive.repr`) and
+    `SpytialEnum`'s `deriveEnum`: a plain type should merge equal subterms
+    without anyone writing a `deriving` clause.
+
+    The mutual recursion with `depPath` terminates: a field whose head is a
+    member of the block being derived is classified `.recursive` and never
+    reaches here, and Lean admits no cross-declaration type cycle outside a
+    mutual block. -/
+public meta def deriveIdentity (ty : Expr) : MetaM DeriveResult := do
+  unless spytial.identity.auto.get (← getOptions) do return .notApplicable
+  let ty ← whnf ty
+  -- the class is `Type u`-indexed, so a `Prop` would be a type error, not a decline
+  let .sort u ← whnf (← inferType ty) | return .notApplicable
+  if u.isZero then return .notApplicable
+  let .const declName _ := ty.getAppFn | return .notApplicable
+  unless (← getEnv).find? declName matches some (.inductInfo _) do
+    return .notApplicable
+  try
+    Lean.liftCommandElabM <| Lean.Elab.applyDerivingHandlers ``SpytialIdentity #[declName]
+    resetSynthInstanceCache
+    return .derived
+  catch e => return .refused e.toMessageData
 
 namespace Identity
 
@@ -348,11 +422,16 @@ private meta partial def renderDepType (declName : Name) (paramIds : Array (FVar
   | e => unsupported declName m!"unsupported field type{indentExpr e}"
 
 /-- The field rule, resolved against the deriving site's instances:
-    `SpytialIdentity` when declared, else `ToIdentityKey`, else the ordinary
-    instance-synthesis error (thrown by the final `synthInstance`). Parameter-
-    dependent dependencies (loose bvars in `canon`) are not synthesizable here
-    and always route through `SpytialIdentity` — the generated instance binds
-    `[SpytialIdentity α]`, so containers merge iff their elements do. -/
+    `SpytialIdentity` when declared or derivable on demand, else
+    `ToIdentityKey`, else the ordinary instance-synthesis error (thrown by the
+    final `synthInstance`). Parameter-dependent dependencies (loose bvars in
+    `canon`) are not synthesizable here and always route through
+    `SpytialIdentity` — the generated instance binds `[SpytialIdentity α]`, so
+    containers merge iff their elements do.
+
+    `ToIdentityKey` is tried before derivation so a primitive keeps its O(1)
+    hand-written encoding (and its `MetaEncode` twin) instead of a structural
+    walk — `Nat` would otherwise key by unary spine. -/
 private meta def depPath (canon : Expr) : TermElabM DepPath := do
   if canon.hasLooseBVars then
     return .identity
@@ -360,6 +439,9 @@ private meta def depPath (canon : Expr) : TermElabM DepPath := do
     return .identity
   if (← synthInstance? (← mkAppM ``ToIdentityKey #[canon])).isSome then
     return .encoding
+  if (← deriveIdentity canon) matches .derived then
+    if (← synthInstance? (← mkAppM ``SpytialIdentity #[canon])).isSome then
+      return .identity
   discard <| synthInstance (← mkAppM ``ToIdentityKey #[canon])
   return .encoding
 
@@ -506,9 +588,9 @@ private meta def mkAuxFn (ctx : DerivCtx) (m : MemberPlan) (i : Nat) (forKey : B
   let retTy : Term ← if forKey then `(IdentityKey) else `(Bool)
   let fnName := mkIdent (if forKey then ctx.keyFnNames[i]! else ctx.eqvFnNames[i]!)
   if ctx.usePartial then
-    `(partial def $fnName:ident $binders:bracketedBinder* : $retTy := $body)
+    `(@[no_expose] partial def $fnName:ident $binders:bracketedBinder* : $retTy := $body)
   else
-    `(def $fnName:ident $binders:bracketedBinder* : $retTy := $body)
+    `(@[no_expose] def $fnName:ident $binders:bracketedBinder* : $retTy := $body)
 
 open TSyntax.Compat in
 private meta def mkInstanceCmd (ctx : DerivCtx) (declName : Name) :
@@ -552,8 +634,12 @@ private meta def mkInstanceCmd (ctx : DerivCtx) (declName : Name) :
       let alts := #[← `(matchAltExpr| | $[$somePats:term],* => $someRhs),
                     ← `(matchAltExpr| | $[$underPats:term],* => $elseRhs)]
       `(match $[$discrs],* with $alts:matchAlt*)
-  `(instance $(mkIdent instName):ident $binders:bracketedBinder* : SpytialIdentity $indApp :=
-      SpytialIdentity.mk $viaTerm Option.none)
+  -- `@[no_expose]`, like the aux functions: this body dispatches on each field
+  -- type's own instance, so it must elaborate with private constants visible.
+  -- Lean's `Repr` handler gets this for free by keeping every instance
+  -- reference inside its aux function; our presentation match cannot.
+  `(@[no_expose] instance $(mkIdent instName):ident $binders:bracketedBinder* :
+      SpytialIdentity $indApp := SpytialIdentity.mk $viaTerm Option.none)
 
 /-- The key and eqv families each go in their own `mutual` block: members of a
     block share universe parameters, so mixing the families would give every

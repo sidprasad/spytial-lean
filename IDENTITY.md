@@ -41,8 +41,11 @@ typeclass.
 ## The design in one sentence
 
 **Every value gets an identity; subterms with the same identity merge into one
-atom; no declaration means no value-based merging — the term draws as written,
-literals included.** The one undeclared merge is not value-based: a
+atom; and where a type declares nothing the walker supplies the obvious
+identity — an encoding for a primitive, structural identity derived on the
+spot for anything else — so equal values are one atom until a type says
+otherwise.** `SpytialIdentity.asWritten` is how a type says otherwise. The one
+merge no type can decline is not value-based: a
 *reference* — a metavariable, a hypothesis — is drawn once however often it
 occurs (the references rule below).
 
@@ -64,11 +67,26 @@ class SpytialIdentity (α : Type u) where
 inductive IdentityVia (α : Type u)
   | identity (f : α → IdentityKey)  -- a classifier: merge iff equal keys
   | eqv (r : α → α → Bool)          -- reuse your equality (see below)
+  | asWritten                       -- decline: every occurrence its own atom
 ```
 
-- **No instance** — the term as written. The default, because merging without
-  a declaration asserts a sameness nobody stated.
+- **No instance** — the walker supplies one, and says so only when it cannot:
+  a `ToIdentityKey` encoding if the type has one, else the structural identity
+  below, derived on demand the way `#eval` derives a missing `Repr`. A type
+  that could merge and cannot be derived — a function-typed field, an indexed
+  family — draws as written and warns once. `set_option
+  spytial.identity.auto false` turns the supplying off entirely, the
+  counterpart of `eval.derive.repr`: only declared instances merge anything.
+- **`SpytialIdentity.asWritten`** — the term as written. Node-local: the
+  children of a declining type still consult their own types, which is what
+  separates it from a `Raw` region. A type that carries an `asWritten` field
+  declines for the constructors that carry it and keeps merging elsewhere:
+  its derived decider is false there and true on the arms that do not reach
+  the field, so `stump` still merges with `stump` while `hold t` never merges
+  with `hold t`.
 - **`deriving SpytialIdentity`** — the structural identity, for any inductive.
+  Now mostly redundant with the default; write it to pin the choice, or where
+  you want the instance exported rather than local to the module that drew it.
   Precisely: the structural congruence induced by the fields — each field
   routes through its own type's declared identity when one exists, else
   through its exact value encoding — computed on values, so `leaf (0+1)`
@@ -76,9 +94,10 @@ inductive IdentityVia (α : Type u)
   exactly when no field declares something coarser. This is the flagship:
   naive data opts into sharing with one deriving clause. The demo
   (`demos/BDD.lean`) Shannon-expands a boolean function with no unique table,
-  no manager, no hash-consing — 22 atoms as written, 12 under the derived
-  instance (one `tt`, one `ff`, equal subtrees merged), 6 after the reduction
-  pass. For purposes of the rendered graph, the identity table plays the
+  no manager, no hash-consing — 22 atoms as written, 10 under declared
+  identity (one `tt`, one `ff`, equal subtrees merged), 6 after the reduction
+  pass. Of those, 15 / 7 / 4 are `BDD` atoms; the rest are the `var` labels,
+  which the spec hides. For purposes of the rendered graph, the identity table plays the
   unique table so the program never has to build one.
 - **A custom classifier** — for domains whose sameness is a genuine quotient
   of the representation: key on the fields that matter
@@ -177,13 +196,15 @@ Two further rules keep pictures honest:
   identical closed terms are the same term, hence certainly the same value,
   so this merges only what the declared identity already licenses — a sound
   under-approximation, whose cost runs the other way: `f 3` and `f (2+1)`
-  stay distinct atoms, since identifying them would mean unfolding `f`. Under
-  a type with no declared identity the gate never fires — stuck leaves draw
-  as written, one atom per occurrence — so opacity introduces no undeclared
-  merging anywhere. An explicit `.identity`/`.eqv` instance runs compiled
-  code, which cannot see reducibility attributes: a declaration computes
-  through barriers by necessity. Barriers hold against defaults, not against
-  declarations.
+  stay distinct atoms, since identifying them would mean unfolding `f`. An
+  explicit `.identity`/`.eqv` instance runs compiled code, which cannot see
+  reducibility attributes: a declaration computes through barriers by
+  necessity. Barriers hold against the structural route, not against a
+  classifier — and since the default the walker supplies for a primitive *is*
+  a classifier (its `ToIdentityKey` encoding), a barrier no longer holds for
+  primitives: `@[irreducible] def h : Nat := 97` merges with the literal `97`.
+  Whether a supplied default should honour the barrier where a declared
+  classifier does not is open; the walker knows which of the two it used.
 
 ## What the implementation guarantees
 
@@ -238,4 +259,21 @@ data structure anywhere keys on a bare hash.
 - **`.eqv` costs** scale with the number of groups per type, and an
   ill-behaved relation (e.g. `Float`'s `==`, which is not reflexive at `NaN`)
   makes the grouping walk-order-dependent — the relation's equivalence laws
-  are the declaration's obligation.
+  are the declaration's obligation. Non-reflexivity is the exception: the
+  walker evaluates `r x x` before merging anything, so a value its own
+  relation rejects gets a fresh atom instead of joining a group. That is what
+  carries `asWritten` through a derived composite, and it costs one extra
+  evaluation per subterm on the `.eqv` route.
+- **The opacity barrier no longer holds for a primitive.** `@[irreducible]
+  def h : Nat := 97` draws as one atom with the literal `97`, labelled `97`.
+  The `.structural` route declines to evaluate under an `@[irreducible]` or
+  `opaque` head; the `.classifier` route a supplied `ToIdentityKey` takes does
+  not, and every primitive now goes that way. `resolveRoute` knows whether the
+  classifier was declared or supplied, so gating only the supplied one is a
+  small change. Not done.
+- **An opted-out element does not reach its container.** `SpytialIdentity α
+  := .asWritten` leaves `Option α` and `List α` merging, because the walker
+  reaches for `ToIdentityKey (Option α)` — which composes only with
+  `ToIdentityKey α` — before it looks at what `α` declared. Opt the container
+  out too, or turn `spytial.identity.auto` off. There is no container
+  `SpytialIdentity` instance to inherit the presentation.

@@ -31,6 +31,21 @@ public inductive UTree where
   | leaf (n : Nat)
   | node (l r : UTree)
 
+/-- The same shape, declining the derive-on-demand default. -/
+public inductive OTree where
+  | leaf (n : Nat)
+  | node (l r : OTree)
+
+public instance : SpytialIdentity OTree := SpytialIdentity.asWritten
+
+/-- Derived over an `asWritten` field. `Holder` keeps merging arms of its own,
+    so it cannot present `asWritten`; it degrades to `.eqv` with a decider that
+    is false on `hold` and true on `stump`. -/
+public inductive Holder where
+  | stump
+  | hold (t : OTree)
+  | both (a b : Holder)
+
 /-- Parity: a genuinely relational (`.eqv`) identity. -/
 public structure ModTwo where
   n : Nat
@@ -65,6 +80,10 @@ private meta def wleaf (n : Nat) : Expr := mkApp (mkConst ``WTree.leaf) (mkRawNa
 private meta def wnode (l r : Expr) : Expr := mkApp2 (mkConst ``WTree.node) l r
 private meta def uleaf (n : Nat) : Expr := mkApp (mkConst ``UTree.leaf) (mkRawNatLit n)
 private meta def unode (l r : Expr) : Expr := mkApp2 (mkConst ``UTree.node) l r
+private meta def oleaf (n : Nat) : Expr := mkApp (mkConst ``OTree.leaf) (mkRawNatLit n)
+private meta def onode (l r : Expr) : Expr := mkApp2 (mkConst ``OTree.node) l r
+private meta def hold (t : Expr) : Expr := mkApp (mkConst ``Holder.hold) t
+private meta def hboth (a b : Expr) : Expr := mkApp2 (mkConst ``Holder.both) a b
 private meta def mod2 (n : Nat) : Expr := mkApp (mkConst ``ModTwo.mk) (mkRawNatLit n)
 private meta def trio (a b c : Expr) : Expr := mkApp3 (mkConst ``Trio.mk) a b c
 
@@ -85,11 +104,30 @@ private meta def checkMetaMatchesRuntime (label : String) (val : Expr) : MetaM U
   unless mkey == rkey do
     throwError "{label}: meta key {repr mkey} ≠ runtime key {repr rkey}"
 
-/-! ## As-written default: no instance ⇒ no merging, literals included -/
+/-! ## Derive-on-demand default: no clause ⇒ equal subterms merge. `asWritten`
+declines, node-locally — the `Nat` children keep consulting their own type,
+which is what separates it from a `Raw` region. -/
 
 #eval show MetaM Unit from do
   let di ← relationalize (unode (uleaf 1) (uleaf 1))
-  assertEq "aswritten.labels" (di.atoms.map (·.label)) #["node", "leaf", "1", "leaf", "1"]
+  assertEq "autoderive.labels" (di.atoms.map (·.label)) #["node", "leaf", "1"]
+
+#eval show MetaM Unit from do
+  let di ← relationalize (onode (oleaf 1) (oleaf 1))
+  assertEq "aswritten.labels" (di.atoms.map (·.label)) #["node", "leaf", "1", "leaf"]
+
+/-! An `asWritten` field disqualifies the constructors that carry it, and only
+those: the composite's decider is non-reflexive exactly there, so the walker's
+exact-spelling shortcut must not fire. -/
+
+#eval show MetaM Unit from do
+  let di ← relationalize (hboth (hold (oleaf 1)) (hold (oleaf 1)))
+  assertEq "aswritten.field.labels" (di.atoms.map (·.label))
+    #["both", "hold", "leaf", "1", "hold", "leaf"]
+
+#eval show MetaM Unit from do
+  let di ← relationalize (hboth (mkConst ``Holder.stump) (mkConst ``Holder.stump))
+  assertEq "aswritten.field.other-arms" (di.atoms.map (·.label)) #["both", "stump"]
 
 /-! ## Derived structural identity: sharing, and the A/B example
 
@@ -317,6 +355,7 @@ spytial_relationalizer Boxy boxyRel
   let B := wnode (wleaf 1) (mkApp (mkConst ``WTree.leaf)
     (mkApp2 (mkConst ``Nat.add) (mkRawNatLit 0) (mkRawNatLit 1)))
   assertMatchesReference "diff.aswritten" (unode (uleaf 1) (uleaf 1))
+  assertMatchesReference "diff.aswritten.field" (hboth (hold (oleaf 1)) (hold (oleaf 1)))
   assertMatchesReference "diff.derived" A
   assertMatchesReference "diff.chimera" B
   assertMatchesReference "diff.deep"
@@ -376,7 +415,7 @@ structure KB where
   let ka := mkApp (mkConst ``KA.mk) (mkRawNatLit 1)
   let kb := mkApp (mkConst ``KB.mk) (mkRawNatLit 1)
   let di ← relationalize (← mkAppM ``Prod.mk #[ka, kb])
-  assertEq "typekey.types" (di.atoms.map (·.type)) #["Prod", "KA", "Nat", "KB", "Nat"]
+  assertEq "typekey.types" (di.atoms.map (·.type)) #["Prod", "KA", "Nat", "KB"]
 
 /-! Shadowing a derived instance: the shadow wins coherently — the route is an
 ordinary classifier, and the twin is never consulted. -/
@@ -410,10 +449,14 @@ public inductive Coin where
 #eval show MetaM Unit from do
   let di ← relationalize (mkConst ``opaque97)
   assertEq "leaflabel.repr" (di.atoms.map (·.label)) #["97"]
-  -- no `SpytialIdentity Nat`: identical labels, still two atoms — the label
-  -- never feeds identity
+  -- `Nat` now takes the supplied `ToIdentityKey` default, and the classifier
+  -- route evaluates through an `@[irreducible]` head where the structural route
+  -- would have keyed by spelling. So an opaque primitive merges by its value:
+  -- pinned here because it is a live ruling, not a settled one.
   let di ← relationalize (← mkAppM ``Prod.mk #[mkConst ``opaque97, mkConst ``opaque97])
-  assertEq "leaflabel.not-identity" (di.atoms.map (·.label)) #["mk", "97", "97"]
+  assertEq "leaflabel.opaque.evaluated" (di.atoms.map (·.label)) #["mk", "97"]
+  let di ← relationalize (← mkAppM ``Prod.mk #[mkConst ``opaque97, mkRawNatLit 97])
+  assertEq "leaflabel.opaque.pierced" (di.atoms.map (·.label)) #["mk", "97"]
   -- spelling merges the occurrences, `Repr` labels the one atom
   let di ← relationalize (← mkAppM ``Prod.mk #[mkConst ``hiddenCoin, mkConst ``hiddenCoin])
   assertEq "leaflabel.opaque.merged" (di.atoms.map (·.label)) #["mk", "Coin.heads"]
