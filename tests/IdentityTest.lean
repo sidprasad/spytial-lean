@@ -63,7 +63,7 @@ private def eqvOf {α : Type} [SpytialIdentity α] : α → α → Bool :=
 private def isEqvArm {α : Type u} (s : SpytialIdentity α) : Bool :=
   match s.via with
   | .eqv _ => true
-  | .identity _ => false
+  | .identity _ | .asWritten => false
 
 -- same value, different spelling — one identity
 #guard keyOf (ITree.node (.leaf 1) (.leaf 1)) == keyOf (ITree.node (.leaf 1) (.leaf (0 + 1)))

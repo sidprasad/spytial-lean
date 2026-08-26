@@ -53,5 +53,5 @@ open Lean Meta in
   let asWritten ← count (← mkAppM ``Raw.mk #[mkConst ``fTree])
   let shared ← count (mkConst ``fTree)
   let robdd ← count (mkConst ``fReduced)
-  unless (asWritten, shared, robdd) == (22, 12, 6) do
-    throwError "BDD narrative counts drifted: got {(asWritten, shared, robdd)}, expected (22, 12, 6)"
+  unless (asWritten, shared, robdd) == (22, 10, 6) do
+    throwError "BDD narrative counts drifted: got {(asWritten, shared, robdd)}, expected (22, 10, 6)"
