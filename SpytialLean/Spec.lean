@@ -97,6 +97,12 @@ public meta inductive SpytialOp where
 /-- A list of Spytial operations forming a complete layout specification. -/
 public meta abbrev SpytialSpec := List SpytialOp
 
+/-- The graph-side name an op introduces, with its arity. -/
+public meta def SpytialOp.introduces? : SpytialOp → Option (String × Nat)
+  | .group _ name _ => some (name, 1)
+  | .inferredEdge name _ _ => some (name, 2)
+  | _ => none
+
 /-! ## Spec serialization
 
 `parseLayoutSpec` in spytial-core is js-yaml's `yaml.load`, and JSON is valid

@@ -104,7 +104,13 @@ spytial_spec Tree [
 
 The target resolves like a Lean name, so `open` works. The spec is stored
 structurally in the environment and survives into downstream modules. An
-explicit `with [...]` overrides the attached spec.
+explicit `with [...]` overrides the attached spec; a `..` element splices the
+attached spec back in at that position:
+
+```lean
+-- The attached spec, plus one op for this value only
+#spytial t with [.., hideAtom String]
+```
 
 ### Red-Black Tree example
 
@@ -321,7 +327,9 @@ spytial_spec ElectricCar [
 #spytial myEV
 ```
 
-An explicit `with [...]` still fully overrides the inherited spec.
+An explicit `with [...]` still fully overrides the inherited spec, and `..`
+splices it back in — for an extending type it carries the composed parent
+chain.
 
 ## TODO
 
