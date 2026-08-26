@@ -45,7 +45,7 @@ public meta def ctorDataBinderNames (ci : ConstructorVal) : Array Name := Id.run
 public meta def fieldRelName (ctorShort : String) (binderNames : Array Name) (i : Nat) : String :=
   if h : i < binderNames.size then
     let n := binderNames[i]
-    if n.isAnonymous || n.hasMacroScopes then s!"{ctorShort}_{i}" else toString n
+    if n.isAnonymous || n.hasMacroScopes then s!"{ctorShort}_{i}" else n.toString (escape := false)
   else
     s!"{ctorShort}_{i}"
 

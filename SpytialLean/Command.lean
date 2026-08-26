@@ -1,5 +1,6 @@
 module
 
+public import SpytialLean.Enum
 public import Lean
 public import Lean.Elab.Command
 public import Lean.Elab.Term
@@ -292,7 +293,7 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
       let a := mkArgs "group <selector> <name> [(addEdge togroup|fromgroup (lineStyle …)?)]"
       let s ← sel a 0 .unaryOrPair
       let gname ← match a.ident? 1, a.str? 1 with
-        | some x, _ => pure x.getId.toString
+        | some x, _ => pure (x.getId.toString (escape := false))
         | _, some s => pure s
         | _, _ => throwErrorAt head m!"missing group name; usage: {a.usage}"
       let p ← collectStyleArgs a 2 ["addEdge"]
@@ -345,13 +346,13 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
     | "inferredEdge" => do
       let a := mkArgs "inferredEdge <name> <selector> (lineStyle <color> \
         [solid|dashed|dotted] [<weight>])?"
-      let n := (← a.ident 0 "an edge name").getId.toString
+      let n := (← a.ident 0 "an edge name").getId.toString (escape := false)
       let s ← sel a 1 .edge
       let p ← collectStyleArgs a 2 ["lineStyle"]
       return (.inferredEdge n s p.line, scope.introduce n 2)
     | "flag" => do
       let a := mkArgs "flag <name>"
-      let n := (← a.ident 0 "a flag name").getId.toString
+      let n := (← a.ident 0 "a flag name").getId.toString (escape := false)
       a.checkNoExtra 1
       return (.flag n, scope)
     | _ =>
@@ -371,8 +372,12 @@ meta def elabSpytialOps (scope : SelScope) (ops : Array (TSyntax `spytial_op)) :
 
 /-- A term whose type has no head constant gets a fully lenient scope. -/
 meta def scopeForExpr (e : Expr) : MetaM SelScope := do
-  match ← typeHead? (← inferType e) with
-  | some n => SelScope.ofType n
+  let ty ← inferType e
+  match ← typeHead? ty with
+  | some n =>
+    let seeds ← ty.getAppArgs.filterMapM fun a => do
+      if (← Meta.whnf (← inferType a)) matches .sort _ then typeHead? a else pure none
+    SelScope.ofType n seeds
   | none => return { root := `_anonymous, lenient := true }
 
 /-! ## Widget payload
@@ -486,7 +491,7 @@ syntax (name := spytialSpecCmd) "spytial_spec " ident " [" spytial_op,* "]" : co
 @[command_elab spytialSpecCmd]
 meta def elabSpytialSpecCmd : CommandElab := fun
   | `(spytial_spec $id:ident [$ops,*]) => do
-    let declName ← resolveGlobalConstNoOverload id
+    let declName ← liftCoreM <| realizeGlobalConstNoOverloadWithInfo id
     liftTermElabM do
       let scope ← SelScope.ofType declName
       let spec ← elabSpytialOps scope ops.getElems
@@ -510,8 +515,8 @@ syntax (name := spytialRelationalizerCmd) "spytial_relationalizer " ident ident 
 @[command_elab spytialRelationalizerCmd]
 meta def elabSpytialRelationalizerCmd : CommandElab := fun
   | `(spytial_relationalizer $typeId:ident $defId:ident) => do
-    let typeName ← resolveGlobalConstNoOverload typeId
-    let defName ← resolveGlobalConstNoOverload defId
+    let typeName ← liftCoreM <| realizeGlobalConstNoOverloadWithInfo typeId
+    let defName ← liftCoreM <| realizeGlobalConstNoOverloadWithInfo defId
     -- fail mistyped registrations here, not opaquely at dispatch
     liftTermElabM do
       let declType := (← getConstInfo defName).type

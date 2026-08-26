@@ -15,7 +15,7 @@ public section
 
 Selectors are Lean syntax (categories `spytial_sel` and `spytial_sel_form`),
 elaborated against a `SelScope`: the vocabulary of sigs, relations, and
-nullary-constructor labels the relationalizer can emit for the target type.
+constructor labels the relationalizer can emit for the target type.
 Every identifier must resolve and every operator's arity must check. A renamed
 field or a typo is a compile error at the ident, not an empty selection at
 render time.
@@ -42,7 +42,7 @@ meta structure SelScope where
   /-- Relation name → the emitting type and the walker's arity; `none`
       (`FieldShape.arity?`) leaves the name known and its width unchecked. -/
   rels : Std.HashMap String (Name × Option Nat) := {}
-  /-- Nullary-constructor label → constructor, for `@:x = tt` literals. -/
+  /-- Constructor label → constructor, for `@:x = tt` literals. -/
   ctorLabels : Std.HashMap String Name := {}
   /-- Names introduced by earlier ops in the same spec (group names arity 1,
       inferred edges arity 2). -/
@@ -57,12 +57,16 @@ meta structure SelScope where
 private meta def scalarTypes : List Name :=
   [``Nat, ``String, ``Float]
 
-meta def SelScope.ofType (root : Name) : MetaM SelScope := do
+/-- `seeds` are extra types the value is known to contain — a container's type
+    arguments, which the head constant alone cannot predict: `DA.FinAcc Seen2
+    Letter` emits `Seen2`'s fields, but `DA.FinAcc`'s `tr` is a function over
+    its own parameters and fixes no head to follow. -/
+meta def SelScope.ofType (root : Name) (seeds : Array Name := #[]) : MetaM SelScope := do
   let env ← getEnv
   let mut scope : SelScope := { root }
   -- stuck matches appear in any open value; the walker emits one ternary
   scope := { scope with rels := scope.rels.insert "scrutinee" (root, some 3) }
-  let mut queue : Array Name := #[root]
+  let mut queue : Array Name := #[root] ++ seeds
   let mut seen : NameSet := {}
   while !queue.isEmpty do
     let t := queue.back!
@@ -81,8 +85,7 @@ meta def SelScope.ofType (root : Name) : MetaM SelScope := do
       scope := { scope with lenient := true }
     | some ts =>
       for c in ts.ctors do
-        if c.fields.isEmpty then
-          scope := { scope with ctorLabels := scope.ctorLabels.insert c.ctorShort c.ctorName }
+        scope := { scope with ctorLabels := scope.ctorLabels.insert c.ctorShort c.ctorName }
         for f in c.fields do
           unless f.isProofLike do
             scope := { scope with rels := scope.rels.insert f.relName (t, f.arity?) }
@@ -180,7 +183,8 @@ syntax:40 spytial_sel:40 " & " spytial_sel:41 : spytial_sel
 -- arrow-multiplicity annotations stay non-reserving.
 syntax:55 spytial_sel:55 " <: " spytial_sel:56 : spytial_sel
 syntax:55 spytial_sel:55 " :> " spytial_sel:56 : spytial_sel
-syntax:60 spytial_sel:60 " . " spytial_sel:61 : spytial_sel
+-- The join `.` is the hand-written `selJoinOp` below, so a Lean token that
+-- merely starts with a dot cannot maximal-munch it away.
 syntax:60 (name := selBox) spytial_sel:60 noWs "[" sepBy(spytial_sel, ", ") "]" : spytial_sel
 syntax:70 "^" spytial_sel:70 : spytial_sel
 syntax:70 "*" spytial_sel:70 : spytial_sel
@@ -265,6 +269,13 @@ private meta def arrowMultP : Parser :=
     (Lean.Parser.optional arrowMultP >> symbol "->" >>
       ((Lean.Parser.atomic (arrowMultP >> categoryParser `spytial_sel 51)) <|>
         (Lean.Parser.pushNone >> categoryParser `spytial_sel 51)))
+
+/-- Relational join. The dot is a raw character, not a token: Lean's token table
+    holds `.(` and `.{`, and maximal munch would take either one whole, so
+    `a.(b)` and `a.{c : T | ...}` would not parse against a token-level `.`. -/
+@[spytial_sel_parser] meta def selJoinOp : TrailingParser :=
+  trailingNode `selJoin 60 60
+    (rawCh '.' (trailingWs := true) >> categoryParser `spytial_sel 61)
 
 /-! ### Formulas (`spytial_sel_form`) -/
 
@@ -387,6 +398,17 @@ private meta def resolveGlobal? (stx : Syntax) : TermElabM (Option Name) := do
   catch _ =>
     pure none
 
+/-- Hover/go-to-def for a relation name, which is not a Lean identifier. Aim at
+    the projection when the owner is a structure, else at the owner type — a
+    non-structure field is written in its constructors. -/
+private meta def addRelInfo (stx : Syntax) (owner : Name) (relName : String) :
+    TermElabM Unit := do
+  let env ← getEnv
+  let proj := Name.mkStr owner relName
+  let target := if env.contains proj then proj else owner
+  if env.contains target then
+    addConstInfo stx target
+
 private meta def intBuiltinOf? : String → Option IntBuiltin
   | "add" => some .add | "subtract" => some .subtract | "multiply" => some .multiply
   | "divide" => some .divide | "remainder" => some .remainder
@@ -399,9 +421,9 @@ private meta def IntBuiltin.arity : IntBuiltin → Nat
 private meta def intAggOf? : String → Option IntAgg
   | "sum" => some .sum | "min" => some .min | "max" => some .max | _ => none
 
-/-- The nullary-constructor label a bare ident denotes, with hover info. -/
+/-- The constructor label a bare ident denotes, with hover info. -/
 private meta def resolveCtorLit? (scope : SelScope) (stx : Syntax) : TermElabM (Option SelVal) := do
-  if let some ctorName := scope.ctorLabels.get? stx.getId.toString then
+  if let some ctorName := scope.ctorLabels.get? (stx.getId.toString (escape := false)) then
     if let some e ← try pure (some (← mkConstWithLevelParams ctorName)) catch _ => pure none then
       discard <| Term.addTermInfo stx e
     return some (.ctorLit ctorName (shortName ctorName))
@@ -440,10 +462,6 @@ private meta partial def elabExpr (scope : SelScope) (env : LEnv) :
     let (sa, aa) ← elabRel scope env a
     let (sb, _) ← elabRel scope env b
     return .rel (.restrictRan sa sb) aa
-  | stx@`(spytial_sel| $a . $b) => do
-    let (sa, aa) ← elabRel scope env a
-    let (sb, ab) ← elabRel scope env b
-    return .rel (.join sa sb) (← joinArity stx aa ab)
   | stx@`(spytial_sel| ^$a) => elabClosure scope env stx .trans "^" a
   | stx@`(spytial_sel| *$a) => elabClosure scope env stx .reflTrans "*" a
   | stx@`(spytial_sel| ~$a) => elabClosure scope env stx .transpose "~" a
@@ -468,6 +486,11 @@ private meta partial def elabExpr (scope : SelScope) (env : LEnv) :
       checkArity stx[1] "a label projection's operand" arity 1
       return .int (.proj sel)
     | `selProd => elabProd scope env stx
+    -- node shape: `[lhs, ".", rhs]` (see `selJoinOp`)
+    | `selJoin => do
+      let (sa, aa) ← elabRel scope env stx[0]
+      let (sb, ab) ← elabRel scope env stx[2]
+      return .rel (.join sa sb) (← joinArity stx aa ab)
     | _ => elabBoxJoin? scope env stx
 
 private meta partial def elabBoxJoin? (scope : SelScope) (env : LEnv) (stx : Syntax) :
@@ -577,7 +600,7 @@ private meta partial def elabLabel (scope : SelScope) (env : LEnv)
   checkArity e "a label projection's operand" arity 1
   return .label proj sel
 
-/-- Resolution order: local binding, nullary-constructor label, vocabulary. -/
+/-- Resolution order: local binding, constructor label, vocabulary. -/
 private meta partial def resolveExprIdent (scope : SelScope) (env : LEnv)
     (stx : TSyntax `ident) : TermElabM EExpr := do
   -- Source text, not the name, decides: `«univ»` is a field spelled differently
@@ -609,8 +632,10 @@ private meta partial def resolveExprIdent (scope : SelScope) (env : LEnv)
       return e
   if let some v ← resolveCtorLit? scope stx then
     return .val v
-  let s := name.toString
-  if let some (_, arity?) := scope.rels.get? s then return .rel (.rel s) arity?
+  let s := name.toString (escape := false)
+  if let some (owner, arity?) := scope.rels.get? s then
+    addRelInfo stx owner s
+    return .rel (.rel s) arity?
   if let some arity := scope.introduced.get? s then
     warnGraphSideName stx s
     return .rel (.rel s) (some arity)
@@ -645,18 +670,15 @@ private meta partial def coerceVal (scope : SelScope) (stx : Syntax) :
           '{scope.root}': {", ".intercalate (sortDedup (scope.ctorLabels.toList.map (·.1)).toArray).toList}"
     match (← getEnv).find? constName with
     | some (.ctorInfo ci) =>
-      unless ci.numFields == 0 do
-        throwErrorAt x m!"'{constName}' has fields — only nullary constructors \
-          are atom labels"
       if !scope.types.contains ci.induct && !scope.lenient then
         throwErrorAt x m!"constructor '{constName}' belongs to '{ci.induct}', \
           which cannot occur in values of '{scope.root}'"
       return .ctorLit constName (shortName constName)
     | _ =>
       throwErrorAt x m!"'{constName}' is not a constructor; label comparisons \
-        expect a nullary constructor or a literal"
+        expect a constructor or a literal"
   | s => throwErrorAt s "cannot compare a label value with this operand; a label \
-      value compares against a nullary constructor or a string literal — for a \
+      value compares against a constructor or a string literal — for a \
       numeric label, project with `@num:`"
 
 private meta partial def elabCmp (scope : SelScope) (env : LEnv) (stx : Syntax)
@@ -830,7 +852,7 @@ meta def elabSelector (scope : SelScope) (expect : ArityExpect)
   return sel
 
 meta def elabFieldName (scope : SelScope) (stx : TSyntax `ident) : TermElabM String := do
-  let s := stx.getId.toString
+  let s := stx.getId.toString (escape := false)
   if scope.rels.contains s || scope.introduced.contains s then
     return s
   unknownName scope stx s!"relation '{s}'" s

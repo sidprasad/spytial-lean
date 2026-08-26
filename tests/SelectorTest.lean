@@ -183,7 +183,7 @@ info: {"constraints":
 ]
 
 /--
-warning: unknown name 'lft' (did you mean 'left'?) — the vocabulary of 'STree' is open (a custom relationalizer, type parameter, or function field makes it unpredictable), so the name passes through unchecked
+warning: unknown name 'lft' (did you mean 'Nat', 'left'?) — the vocabulary of 'STree' is open (a custom relationalizer, type parameter, or function field makes it unpredictable), so the name passes through unchecked
 ---
 info: {"constraints": [{"orientation": {"selector": "lft", "directions": ["below"]}}]}
 -/
@@ -243,9 +243,28 @@ info: {"directives":
 #guard_msgs in
 #spytial.spec sExample with [hideAtom STree]
 
-/-- error: unknown constructor label 'ttt'; known labels of 'SBDD': ff, tt -/
+/-- error: unknown constructor label 'ttt'; known labels of 'SBDD': ff, node, tt -/
 #guard_msgs in
 #spytial.spec sExample with [atomStyle {x : SBDD | @:x = ttt} (borderStyle "red")]
+
+-- A constructor with fields is an atom label like any other: the walker writes
+-- the constructor's short name into `label` whether or not it takes arguments.
+/--
+info: {"directives":
+ [{"atomStyle":
+   {"selector": "{x : SBDD | @:x = \"node\"}",
+    "borderStyle": {"color": "red"}}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [atomStyle {x : SBDD | @:x = node} (borderStyle "red")]
+
+-- ...but its short name now shadows a same-named relation in expression
+-- position, where a label value is not what is wanted.
+/--
+error: this position expects a relational expression, but the selector is a label/literal value
+-/
+#guard_msgs in
+#spytial.spec sExample with [atomStyle {x : SBDD | some x.node} (borderStyle "red")]
 
 /-- error: constructor 'SRB.nil' belongs to 'SRB', which cannot occur in values of 'SBDD' -/
 #guard_msgs in
@@ -691,6 +710,21 @@ info: {"constraints":
   hideAtom (lo . SBDD)
 ]
 
+-- `.(` and `.{` are Lean tokens, so a token-level `.` would lose both to
+-- maximal munch; `selJoinOp` reads the dot as a raw character instead.
+/--
+info: {"constraints":
+ [{"hideAtom": {"selector": "{x : SBDD | some x.(lo + hi)}"}},
+  {"hideAtom": {"selector": "{x : SBDD | some x.(lo + hi)}"}},
+  {"hideAtom": {"selector": "{x : SBDD | some x.{y, z : SBDD | z in y.lo}}"}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [
+  hideAtom {x : SBDD | some x.(lo + hi)},
+  hideAtom {x : SBDD | some x . (lo + hi)},
+  hideAtom {x : SBDD | some x.{y, z : SBDD | z in y.lo}}
+]
+
 /-- error: this position selects atoms (arity 1), but the selector has arity 2 -/
 #guard_msgs in
 #spytial.spec sExample with [atomStyle (lo.hi) (borderStyle "#111")]
@@ -927,7 +961,7 @@ info: {"directives":
 #guard_msgs in
 #spytial.spec sExample with [atomStyle {x : SBDD | @:x = true} (borderStyle "red")]
 
-/-- error: cannot compare a label value with this operand; a label value compares against a nullary constructor or a string literal — for a numeric label, project with `@num:` -/
+/-- error: cannot compare a label value with this operand; a label value compares against a constructor or a string literal — for a numeric label, project with `@num:` -/
 #guard_msgs in
 #spytial.spec sExample with [hideAtom {x : SBDD | @:x = 5}]
 
@@ -1074,6 +1108,7 @@ SpytialLean.selAtomLit
 SpytialLean.selBox
 SpytialLean.selCard
 SpytialLean.selIdent
+SpytialLean.selJoinOp
 SpytialLean.selNegNum
 SpytialLean.selNum
 SpytialLean.selProdOp
@@ -1090,7 +1125,6 @@ SpytialLean.«spytial_sel_&_»
 SpytialLean.«spytial_sel_++_»
 SpytialLean.«spytial_sel_+_»
 SpytialLean.«spytial_sel_-_»
-SpytialLean.«spytial_sel_._»
 SpytialLean.«spytial_sel_:>_»
 SpytialLean.«spytial_sel_<:_»
 SpytialLean.«spytial_sel{_,|_}»
@@ -1137,3 +1171,15 @@ run_cmd do
     let some c := cats.find? cat | throwError "no category {cat}"
     let kinds := (c.kinds.toList.map (toString ·.1)).toArray.qsort (· < ·)
     Lean.logInfo (m!"{cat}:\n" ++ m!"{"\n".intercalate kinds.toList}")
+
+/-! A relation name outside SGQ's bare-identifier rule: resolved unescaped,
+lowered backtick-quoted. -/
+
+public structure SMem where
+  «∈» : Nat
+
+public def sMemVal : SMem := { «∈» := 1 }
+
+/-- info: {"constraints": [{"orientation": {"selector": "`∈`", "directions": ["below"]}}]} -/
+#guard_msgs in
+#spytial.spec sMemVal with [orientation «∈» below]
