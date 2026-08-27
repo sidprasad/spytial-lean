@@ -76,7 +76,7 @@ syntax (name := spytialOptOutCmd) "spytial_opt_out " ident (str)? : command
 @[command_elab spytialOptOutCmd]
 meta def elabSpytialOptOutCmd : CommandElab := fun
   | `(spytial_opt_out $id:ident $[$reason?:str]?) => do
-    let declName ← resolveGlobalConstNoOverload id
+    let declName ← liftCoreM <| realizeGlobalConstNoOverloadWithInfo id
     let reason := (reason?.map (·.getString)).getD ""
     liftCoreM <| setSpytialOptOut declName reason
   | stx => throwError "Unexpected syntax {stx}."

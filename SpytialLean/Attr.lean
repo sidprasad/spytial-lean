@@ -28,29 +28,41 @@ public meta def getSpytialSpec? (env : Environment) (declName : Name) : Option S
 public meta def setSpytialSpec (declName : Name) (spec : SpytialSpec) : CoreM Unit :=
   modifyEnv fun env => spytialSpecExt.addEntry env (declName, spec)
 
-/-! ## Spytial op-bundle extension -/
+/-! ## Named op lists -/
 
-/-- Environment extension storing named op bundles (`spytial_ops`).
-    Maps bundle name → structured `SpytialSpec`. -/
-public meta initialize spytialBundleExt :
-    SimplePersistentEnvExtension (Name × SpytialSpec) (Std.HashMap Name SpytialSpec) ←
+/-- The type of a `spytial_ops` binding. The declaration carries no data — the
+    ops live in `spytialOpsExt` under its name — but being a declaration is
+    what gives it a namespace, `open`, aliases and go-to-def. -/
+public inductive SpytialOps where
+  | mk
+
+/-- A named op list, with the root type its ops were elaborated against.
+
+    The ops are stored already elaborated, so a splice does not re-check them.
+    Without the root, a selector naming one type's field would ride into
+    another's spec and name a relation that does not exist there — silently, in
+    the emitted JSON. The splice compares roots instead. -/
+public meta structure RootedOps where
+  root : Name
+  ops : SpytialSpec
+
+/-- Environment extension storing named op lists (`spytial_ops`).
+    Maps the `SpytialOps` declaration's name → its `RootedOps`. -/
+public meta initialize spytialOpsExt :
+    SimplePersistentEnvExtension (Name × RootedOps) (Std.HashMap Name RootedOps) ←
   registerSimplePersistentEnvExtension {
-    addEntryFn := fun m (n, s) => m.insert n s
+    addEntryFn := fun m (n, b) => m.insert n b
     addImportedFn := fun arrays =>
-      arrays.foldl (fun m arr => arr.foldl (fun m (n, s) => m.insert n s) m) {}
+      arrays.foldl (fun m arr => arr.foldl (fun m (n, b) => m.insert n b) m) {}
   }
 
-/-- Look up the op bundle bound to `name`, if any. -/
-public meta def getSpytialBundle? (env : Environment) (name : Name) : Option SpytialSpec :=
-  spytialBundleExt.getState env |>.get? name
+/-- Look up the op list bound to a declaration name, if any. -/
+public meta def getSpytialOps? (env : Environment) (declName : Name) : Option RootedOps :=
+  spytialOpsExt.getState env |>.get? declName
 
-/-- Every bound bundle name, for error messages. -/
-public meta def spytialBundleNames (env : Environment) : List Name :=
-  spytialBundleExt.getState env |>.keys
-
-/-- Bind an op bundle to `name`. -/
-public meta def setSpytialBundle (name : Name) (spec : SpytialSpec) : CoreM Unit :=
-  modifyEnv fun env => spytialBundleExt.addEntry env (name, spec)
+/-- Bind an op list to a declaration name. -/
+public meta def setSpytialOps (declName : Name) (ops : RootedOps) : CoreM Unit :=
+  modifyEnv fun env => spytialOpsExt.addEntry env (declName, ops)
 
 /-! ## Spytial coverage opt-out extension -/
 

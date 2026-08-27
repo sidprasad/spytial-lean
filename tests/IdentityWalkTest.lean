@@ -20,7 +20,8 @@ private meta def assert (label : String) (b : Bool) : MetaM Unit := do
 /-! ## Fixtures
 
 `WTree` opts in to derived structural identity; `UTree` is its identical twin
-with no instance — the as-written control. -/
+with no clause, so it takes the derive-on-demand default. `OTree` below is the
+as-written control. -/
 
 public inductive WTree where
   | leaf (n : Nat)
@@ -438,8 +439,8 @@ evaluated value when its type declares `Repr`; `Repr` never feeds identity -/
 
 @[irreducible] public def opaque97 : Nat := 90 + 7
 
-/-- Opaque, with both `SpytialIdentity` and `Repr`: spelling decides identity,
-    `Repr` decides the label. -/
+/-- Declares both `SpytialIdentity` and `Repr`; `hiddenCoin` below is the
+    opaque occurrence. Spelling decides identity, `Repr` decides the label. -/
 public inductive Coin where
   | heads | tails
   deriving SpytialIdentity, Repr
@@ -466,3 +467,49 @@ public inductive Coin where
     (← mkAppM ``Prod.mk #[mkConst ``opaque97, mkConst ``opaque97])
   assertMatchesReference "diff.leaflabel.merged"
     (← mkAppM ``Prod.mk #[mkConst ``hiddenCoin, mkConst ``hiddenCoin])
+
+/-! ## Derive-on-demand reaches an applied type's arguments
+
+The generated instance for a parameterized type binds one `[SpytialIdentity _]`
+per parameter, so the arguments need instances of their own or nothing merges.
+`PSub` is the negative control: its inherited field is a function, so the
+generated command fails to elaborate and the derive must restore the
+environment. -/
+
+public inductive PTree (α : Type) where
+  | leaf (value : α)
+  | node (left right : PTree α)
+
+public structure PBox where
+  n : Nat
+
+public structure PFn (State Label : Type) where
+  tr : State → Label → State
+
+public structure PSub (State Label : Type) extends PFn State Label where
+  start : State
+
+private meta def pTreeOf (α : Name) (v : Expr) : Expr :=
+  let leaf := mkApp2 (mkConst ``PTree.leaf) (mkConst α) v
+  mkApp3 (mkConst ``PTree.node) (mkConst α) leaf leaf
+
+#eval show MetaM Unit from do
+  -- an argument whose identity comes from its encoding
+  let di ← relationalize (pTreeOf ``Nat (mkRawNatLit 1))
+  assertEq "param.encoded" (di.atoms.map (·.label)) #["node", "leaf", "1"]
+  -- an argument that has to be derived structurally
+  let di ← relationalize (pTreeOf ``PBox (mkApp (mkConst ``PBox.mk) (mkRawNatLit 1)))
+  assertEq "param.structural" (di.atoms.map (·.label)) #["node", "leaf", "mk", "1"]
+  -- the argument is itself applied
+  let inner := mkApp (mkConst ``PTree) (mkConst ``Nat)
+  let v := mkApp2 (mkConst ``PTree.leaf) inner
+    (mkApp2 (mkConst ``PTree.leaf) (mkConst ``Nat) (mkRawNatLit 1))
+  let di ← relationalize (mkApp3 (mkConst ``PTree.node) inner v v)
+  assertEq "param.nested" (di.atoms.map (·.label)) #["node", "leaf", "leaf", "1"]
+
+-- a failed derive leaves a sorryAx instance via error recovery
+#eval show MetaM Unit from do
+  let ty := mkApp2 (mkConst ``PSub) (mkConst ``Bool) (mkConst ``Bool)
+  assert "param.refused" ((← deriveIdentity ty) matches .refused _)
+  assert "param.no-sorry-instance"
+    (← Meta.synthInstance? (← mkAppM ``SpytialIdentity #[ty])).isNone

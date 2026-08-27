@@ -316,30 +316,63 @@ public meta inductive DeriveResult where
   | refused (why : MessageData)
   | notApplicable
 
-/-- `SpytialIdentity α` derived on the spot, for a type that declares none.
+/-- The class is `Type u`-indexed, so applying it to a proposition would be a
+    type error rather than a decline. -/
+public meta def isIdentityCandidate (ty : Expr) : MetaM Bool := do
+  let .sort u ← whnf (← inferType ty) | return false
+  return !u.isZero
 
-    The same device as `#eval`'s missing `Repr` (`eval.derive.repr`) and
-    `SpytialEnum`'s `deriveEnum`: a plain type should merge equal subterms
-    without anyone writing a `deriving` clause.
+/-- `SpytialIdentity` backed by the type's `ToIdentityKey`. The type already
+    classifies by its encoding; this wraps it for synthesis. -/
+private meta def installEncodedIdentity (ty : Expr) : MetaM Unit := do
+  let tyStx ← PrettyPrinter.delab ty
+  let cmd ← `(@[no_expose] instance : SpytialIdentity $tyStx :=
+    SpytialIdentity.mk (IdentityVia.identity ToIdentityKey.toKey) Option.none)
+  let env ← getEnv
+  try
+    Lean.liftCommandElabM <| Lean.Elab.Command.elabCommand cmd
+    resetSynthInstanceCache
+  catch _ => setEnv env
+
+mutual
+
+/-- `SpytialIdentity α` derived on the spot for a type that declares none —
+    what `#eval` does for a missing `Repr` (`eval.derive.repr`).
 
     The mutual recursion with `depPath` terminates: a field whose head is a
     member of the block being derived is classified `.recursive` and never
     reaches here, and Lean admits no cross-declaration type cycle outside a
     mutual block. -/
-public meta def deriveIdentity (ty : Expr) : MetaM DeriveResult := do
+public meta partial def deriveIdentity (ty : Expr) : MetaM DeriveResult := do
   unless spytial.identity.auto.get (← getOptions) do return .notApplicable
   let ty ← whnf ty
-  -- the class is `Type u`-indexed, so a `Prop` would be a type error, not a decline
-  let .sort u ← whnf (← inferType ty) | return .notApplicable
-  if u.isZero then return .notApplicable
+  unless ← isIdentityCandidate ty do return .notApplicable
   let .const declName _ := ty.getAppFn | return .notApplicable
   unless (← getEnv).find? declName matches some (.inductInfo _) do
     return .notApplicable
+  -- the derived instance binds one `[SpytialIdentity _]` per parameter
+  for a in ty.getAppArgs do
+    if ← isIdentityCandidate a then ensureIdentity a
+  let env ← getEnv
   try
     Lean.liftCommandElabM <| Lean.Elab.applyDerivingHandlers ``SpytialIdentity #[declName]
     resetSynthInstanceCache
     return .derived
-  catch e => return .refused e.toMessageData
+  catch e =>
+    setEnv env
+    return .refused e.toMessageData
+
+/-- Give `ty` a `SpytialIdentity` if it has none, in the order `resolveRoute`
+    reads: the encoding when one exists, else a structural derive. Deriving
+    first would key `Nat` by unary spine. -/
+public meta partial def ensureIdentity (ty : Expr) : MetaM Unit := do
+  if (← synthInstance? (← mkAppM ``SpytialIdentity #[ty])).isSome then return
+  if (← synthInstance? (← mkAppM ``ToIdentityKey #[ty])).isSome then
+    installEncodedIdentity ty
+  else
+    discard <| deriveIdentity ty
+
+end
 
 namespace Identity
 

@@ -22,7 +22,7 @@ Pre-built artifacts are downloaded automatically from GitHub Releases. **Node.js
 
 ### Prerequisites
 
-- [Lean 4](https://leanprover.github.io/lean4/doc/setup.html) (v4.32.0)
+- [Lean 4](https://leanprover.github.io/lean4/doc/setup.html) (v4.32.2)
 - [VS Code](https://code.visualstudio.com/) with the [Lean 4 extension](https://marketplace.visualstudio.com/items?itemName=leanprover.lean4)
 
 ### Building from source

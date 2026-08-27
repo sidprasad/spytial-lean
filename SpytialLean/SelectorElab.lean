@@ -15,7 +15,7 @@ public section
 
 Selectors are Lean syntax (categories `spytial_sel` and `spytial_sel_form`),
 elaborated against a `SelScope`: the vocabulary of sigs, relations, and
-nullary-constructor labels the relationalizer can emit for the target type.
+constructor labels the relationalizer can emit for the target type.
 Every identifier must resolve and every operator's arity must check. A renamed
 field or a typo is a compile error at the ident, not an empty selection at
 render time.
@@ -42,7 +42,7 @@ meta structure SelScope where
   /-- Relation name → the emitting type and the walker's arity; `none`
       (`FieldShape.arity?`) leaves the name known and its width unchecked. -/
   rels : Std.HashMap String (Name × Option Nat) := {}
-  /-- Nullary-constructor label → constructor, for `@:x = tt` literals. -/
+  /-- Constructor label → constructor, for `@:x = tt` literals. -/
   ctorLabels : Std.HashMap String Name := {}
   /-- Names introduced by earlier ops in the same spec (group names arity 1,
       inferred edges arity 2). -/
@@ -398,9 +398,9 @@ private meta def resolveGlobal? (stx : Syntax) : TermElabM (Option Name) := do
   catch _ =>
     pure none
 
-/-- Hover/go-to-def for a relation name, which is not a Lean identifier: aim at
-    the projection when the emitting type is a structure, else at the type
-    itself, whose constructors is where a non-structure field is written. -/
+/-- Hover/go-to-def for a relation name, which is not a Lean identifier. Aim at
+    the projection when the owner is a structure, else at the owner type — a
+    non-structure field is written in its constructors. -/
 private meta def addRelInfo (stx : Syntax) (owner : Name) (relName : String) :
     TermElabM Unit := do
   let env ← getEnv
@@ -423,7 +423,7 @@ private meta def intAggOf? : String → Option IntAgg
 
 /-- The constructor label a bare ident denotes, with hover info. -/
 private meta def resolveCtorLit? (scope : SelScope) (stx : Syntax) : TermElabM (Option SelVal) := do
-  if let some ctorName := scope.ctorLabels.get? stx.getId.toString then
+  if let some ctorName := scope.ctorLabels.get? (stx.getId.toString (escape := false)) then
     if let some e ← try pure (some (← mkConstWithLevelParams ctorName)) catch _ => pure none then
       discard <| Term.addTermInfo stx e
     return some (.ctorLit ctorName (shortName ctorName))
@@ -600,7 +600,7 @@ private meta partial def elabLabel (scope : SelScope) (env : LEnv)
   checkArity e "a label projection's operand" arity 1
   return .label proj sel
 
-/-- Resolution order: local binding, nullary-constructor label, vocabulary. -/
+/-- Resolution order: local binding, constructor label, vocabulary. -/
 private meta partial def resolveExprIdent (scope : SelScope) (env : LEnv)
     (stx : TSyntax `ident) : TermElabM EExpr := do
   -- Source text, not the name, decides: `«univ»` is a field spelled differently
@@ -632,7 +632,7 @@ private meta partial def resolveExprIdent (scope : SelScope) (env : LEnv)
       return e
   if let some v ← resolveCtorLit? scope stx then
     return .val v
-  let s := name.toString
+  let s := name.toString (escape := false)
   if let some (owner, arity?) := scope.rels.get? s then
     addRelInfo stx owner s
     return .rel (.rel s) arity?
@@ -852,8 +852,6 @@ meta def elabSelector (scope : SelScope) (expect : ArityExpect)
   return sel
 
 meta def elabFieldName (scope : SelScope) (stx : TSyntax `ident) : TermElabM String := do
-  -- unescaped, to match what the walker emits and what `introduce` stores: a
-  -- relation name is a string in the spec, never Lean source
   let s := stx.getId.toString (escape := false)
   if scope.rels.contains s || scope.introduced.contains s then
     return s

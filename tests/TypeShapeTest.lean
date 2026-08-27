@@ -141,10 +141,9 @@ Elaborated here exactly as a synthesized term containing `match` would be. -/
 
 /-! ## A domain is enumerated by `SpytialEnum`, derived on demand
 
-No `deriving SpytialEnum` is written below, and none is needed: the walker runs
-the handler itself when synthesis comes up empty, the way `#eval` derives a
-missing `Repr`. `Rec` is the negative control — its own field makes it
-infinite, so it must stay unenumerable. -/
+No `deriving SpytialEnum` is written below, and none is needed. `Rec` and
+`Tagged` are the negative controls: `Rec`'s own field makes it infinite, and
+`Tagged`'s `String` field has no `SpytialEnum` instance. -/
 
 public structure Win where
   prev : Bool
@@ -153,6 +152,10 @@ public structure Win where
 public inductive Rec where
   | nil
   | step (r : Rec)
+
+public structure Tagged where
+  tag : String
+  on : Bool
 
 #eval show Lean.Elab.TermElabM Unit from do
   let check (label : String) (b : Bool) : Lean.Elab.TermElabM Unit :=
@@ -167,3 +170,16 @@ public inductive Rec where
   check "enum.recursive" (← tryEnumerateDomain (mkConst ``Rec)).isNone
   check "enum.nat" (← tryEnumerateDomain (mkConst ``Nat)).isNone
   check "enum.string" (← tryEnumerateDomain (mkConst ``String)).isNone
+  check "enum.tagged" (← tryEnumerateDomain (mkConst ``Tagged)).isNone
+
+-- separate command: the stale instance cache hides the sorryAx until a fresh synthInstance?
+#eval show MetaM Unit from do
+  unless (← Meta.synthInstance? (← mkAppM ``SpytialEnum #[mkConst ``Tagged])).isNone do
+    throwError "the refused `Tagged` derive left an instance behind"
+
+-- maxRecDepth fires before enumFuel; Fin 600 first to pin that the abort is non-fatal
+#eval show Lean.Elab.TermElabM Unit from do
+  let fin (n : Nat) := mkApp (mkConst ``Fin) (mkNatLit n)
+  unless (← tryEnumerateDomain (fin 600)).isNone do throwError "Fin 600 did not decline"
+  let some narrow ← tryEnumerateDomain (fin 100) | throwError "Fin 100 did not enumerate"
+  unless narrow.size == 100 do throwError "Fin 100 listed {narrow.size} elements"

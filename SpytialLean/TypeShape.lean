@@ -45,7 +45,7 @@ public meta def ctorDataBinderNames (ci : ConstructorVal) : Array Name := Id.run
 public meta def fieldRelName (ctorShort : String) (binderNames : Array Name) (i : Nat) : String :=
   if h : i < binderNames.size then
     let n := binderNames[i]
-    if n.isAnonymous || n.hasMacroScopes then s!"{ctorShort}_{i}" else toString n
+    if n.isAnonymous || n.hasMacroScopes then s!"{ctorShort}_{i}" else n.toString (escape := false)
   else
     s!"{ctorShort}_{i}"
 
@@ -73,70 +73,16 @@ public meta def isProofLikeType (ty : Expr) : MetaM Bool := do
 Shared with the static checkers, so a predicted relation cannot drift from an
 emitted one. -/
 
-/-- How far the element list is unrolled before a domain is called too big.
-    Bounds a wide `Fin`, and anything whose instance builds a large product. -/
-private meta def enumFuel : Nat := 512
-
-/-- Elements of a `List α` expression whose spine reduces to literals. -/
-private meta partial def listElems? (e : Expr) (fuel : Nat) : MetaM (Option (Array Expr)) := do
-  if fuel == 0 then return none
-  match (← Meta.whnf e).getAppFnArgs with
-  | (``List.nil, _) => return some #[]
-  | (``List.cons, #[_, hd, tl]) => do
-    let some rest ← listElems? tl (fuel - 1) | return none
-    return some (#[hd] ++ rest)
-  | _ => return none
-
-/-- A type the class can even be applied to: `SpytialEnum` is `Type u`-only,
-    and a proposition is never a drawable domain. Without this the class
-    application is a type error rather than a decline. -/
-private meta def isEnumCandidate (ty : Expr) : MetaM Bool := do
-  let .sort u ← Meta.whnf (← inferType ty) | return false
-  return !u.isZero
-
-/-- Derive `SpytialEnum` for whatever in `ty` is missing one.
-
-    The type arguments matter as much as the head: `Par × St` fails to
-    synthesize even though `Prod` has an instance, because neither side does.
-    Deriving only the head would leave that domain undrawable. -/
-private meta partial def deriveEnum (ty : Expr) : MetaM Unit := do
-  let ty ← Meta.whnf ty
-  for a in ty.getAppArgs do
-    if ← isEnumCandidate a then deriveEnum a
-  if (← Meta.synthInstance? (← mkAppM ``SpytialEnum #[ty])).isSome then return
-  let .const declName _ := ty.getAppFn | return
-  try
-    Lean.liftCommandElabM <| Lean.Elab.applyDerivingHandlers ``SpytialEnum #[declName]
-    resetSynthInstanceCache
-  catch _ => pure ()
-
-/-- `SpytialEnum ty`, deriving what it needs on the spot.
-
-    This is what `#eval` does for a missing `Repr` (`eval.derive.repr`), and
-    for the same reason: a plain user inductive should draw without anyone
-    writing a `deriving` clause. The handler refuses recursive, indexed and
-    dependent types, so "no instance" stays a real answer. -/
-private meta def synthEnum? (ty : Expr) : MetaM (Option Expr) := do
-  unless ← isEnumCandidate ty do return none
-  if let some inst ← Meta.synthInstance? (← mkAppM ``SpytialEnum #[ty]) then
-    return some inst
-  deriveEnum ty
-  Meta.synthInstance? (← mkAppM ``SpytialEnum #[ty])
-
-/-- A constructor is worth its own name; anything else is pretty-printed. -/
+/-- `ppExpr` may qualify a constructor; a diagram label wants the short name. -/
 private meta def elemLabel (e : Expr) : MetaM String := do
   match e.getAppFn with
   | .const n _ =>
     if (← getEnv).find? n matches some (.ctorInfo _) then return shortName n else ppLabel e
   | _ => ppLabel e
 
-/-- Try to enumerate all elements of a finite type.
-    Returns `some [(label, expr)]` for finite types, `none` otherwise. -/
+/-- Every element of `ty` with its label; `none` where `enumElems?` declines. -/
 public meta def tryEnumerateDomain (ty : Expr) : MetaM (Option (Array (String × Expr))) := do
-  let ty ← Meta.whnf ty
-  let some inst ← synthEnum? ty | return none
-  let lst ← mkAppOptM ``SpytialEnum.elems #[some ty, some inst]
-  let some elems ← listElems? lst enumFuel | return none
+  let some elems ← enumElems? ty | return none
   elems.mapM fun e => return ((← elemLabel e), e)
 
 public meta inductive CodomainKind where

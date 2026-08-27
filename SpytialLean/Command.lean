@@ -46,7 +46,8 @@ syntax (name := spytialOpStx) ident spytialOpArg* : spytial_op
 syntax (name := spytialAttrOp) "attribute " spytialOpArg* : spytial_op
 /-- In a use-site `with [...]`, `..` splices the type's attached spec at that position. -/
 syntax (name := spytialSpliceStx) ".." : spytial_op
-/-- `..name` splices the bundle bound by `spytial_ops name` at that position. -/
+/-- `..name` splices the op list bound by `spytial_ops name` at that position,
+    which must have been bound against the same root type. -/
 syntax (name := spytialSpliceNamedStx) ".." noWs ident : spytial_op
 
 /-! ### Argument interpretation -/
@@ -354,7 +355,7 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
       return .inferredEdge n s p.line
     | "flag" => do
       let a := mkArgs "flag <name>"
-      let n := (← a.ident 0 "a flag name").getId.toString
+      let n := (← a.ident 0 "a flag name").getId.toString (escape := false)
       a.checkNoExtra 1
       return .flag n
     | _ =>
@@ -365,7 +366,8 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
 /-- Elaborate an op list, bringing each op's introduced names (groups, inferred
     edges) into scope for the ops after it. A `..` element splices `attached?`
     at that position; `none` means the context has no attached spec to splice.
-    A `..name` element splices the bundle bound by `spytial_ops name`. -/
+    A `..name` element splices the op list bound by `spytial_ops name`, which
+    must share this list's root type. -/
 meta def elabSpytialOps (scope : SelScope) (ops : Array (TSyntax `spytial_op))
     (attached? : Option SpytialSpec := none) : TermElabM SpytialSpec := do
   let introduce (scope : SelScope) (op : SpytialOp) : SelScope :=
@@ -375,7 +377,7 @@ meta def elabSpytialOps (scope : SelScope) (ops : Array (TSyntax `spytial_op))
   let mut scope := scope
   let mut spec : Array SpytialOp := #[]
   let mut spliced := false
-  let mut splicedBundles : NameSet := .empty
+  let mut splicedNames : NameSet := .empty
   for op in ops do
     if op.raw.isOfKind ``spytialSpliceStx then
       let some attached := attached?
@@ -388,20 +390,19 @@ meta def elabSpytialOps (scope : SelScope) (ops : Array (TSyntax `spytial_op))
       scope := attached.foldl introduce scope
     else if op.raw.isOfKind ``spytialSpliceNamedStx then
       let id : Ident := ⟨op.raw[1]⟩
-      let name := id.getId
-      match getSpytialBundle? (← getEnv) name with
-      | none =>
-        match spytialBundleNames (← getEnv) with
-        | [] => throwErrorAt id m!"unknown op bundle '{name}', and none are \
-            bound; `spytial_ops {name} : <RootType> [<ops>]` binds one"
-        | known => throwErrorAt id m!"unknown op bundle '{name}'; bound \
-            bundles: {known}"
-      | some bundle =>
-        if splicedBundles.contains name then
-          throwErrorAt id m!"duplicate `..{name}`"
-        splicedBundles := splicedBundles.insert name
-        spec := spec ++ bundle
-        scope := bundle.foldl introduce scope
+      let name ← realizeGlobalConstNoOverloadWithInfo id
+      let some bound := getSpytialOps? (← getEnv) name
+        | throwErrorAt id m!"'{name}' is not a `spytial_ops` declaration; \
+            `spytial_ops <name> : <RootType> [<ops>]` binds one"
+      -- `_anonymous` is the scrutinee with no type head: no root to check against
+      unless bound.root == scope.root || scope.root == `_anonymous do
+        throwErrorAt id m!"'{name}' is bound against '{bound.root}', but this op \
+          list is elaborated against '{scope.root}'"
+      if splicedNames.contains name then
+        throwErrorAt id m!"duplicate `..{name}`"
+      splicedNames := splicedNames.insert name
+      spec := spec ++ bound.ops
+      scope := bound.ops.foldl introduce scope
     else
       let o ← elabSpytialOp scope op
       spec := spec.push o
@@ -555,10 +556,14 @@ meta def elabSpytialSpecCmd : CommandElab := fun
       setSpytialSpec declName spec
   | stx => throwError "Unexpected syntax {stx}."
 
-/-- `spytial_ops <name> : <Type> [<ops>]` binds a named op bundle: a reusable
+/-- `spytial_ops <name> : <Type> [<ops>]` binds a named op list: a reusable
     spec fragment, elaborated here against `<Type>` as root. A `..<name>`
-    element splices it into any op list — an attached `spytial_spec` or a
-    use-site `with [...]`.
+    element splices it into any op list with that same root — an attached
+    `spytial_spec` or a use-site `with [...]`.
+
+    The name is declared as an `SpytialOps` constant, so it takes the current
+    namespace and is reached through `open`, `export` and aliases like any
+    other declaration.
 
     ```
     spytial_ops quiet : Tree [hideAtom Nat]
@@ -569,12 +574,17 @@ syntax (name := spytialOpsCmd) "spytial_ops " ident " : " ident " [" spytial_op,
 
 @[command_elab spytialOpsCmd]
 meta def elabSpytialOpsCmd : CommandElab := fun
-  | `(spytial_ops $bundle:ident : $ty:ident [$ops,*]) => do
-    let declName ← liftCoreM <| realizeGlobalConstNoOverloadWithInfo ty
-    liftTermElabM do
-      let scope ← SelScope.ofType declName
-      let spec ← elabSpytialOps scope ops.getElems
-      setSpytialBundle bundle.getId spec
+  | `(spytial_ops $name:ident : $ty:ident [$ops,*]) => do
+    let root ← liftCoreM <| realizeGlobalConstNoOverloadWithInfo ty
+    -- a `module` file makes declarations private by default, and a list nobody
+    -- downstream can splice is useless; the syntax has no visibility modifier
+    let (declName, _) ← mkDeclName (← getCurrNamespace) { visibility := .public } name.getId
+    let spec ← liftTermElabM do
+      let scope ← SelScope.ofType root
+      elabSpytialOps scope ops.getElems
+    let declId := mkIdentFrom name (`_root_ ++ declName)
+    elabCommand (← `(public meta def $declId : SpytialOps := .mk))
+    liftCoreM <| setSpytialOps declName { root, ops := spec }
   | stx => throwError "Unexpected syntax {stx}."
 
 /-! ## spytial_relationalizer command -/

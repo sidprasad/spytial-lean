@@ -336,10 +336,7 @@ public def subDAFin : SubDA (Fin 3) Bool where
 
 /-! ## A `Prop` behind a definition still tabulates
 
-Instance synthesis reduces beta but not delta, so `Decidable (Linked a b)`
-finds nothing until `Linked` is unfolded. Before that unfold the field bailed
-to a lambda leaf, which is how a `Set`-valued codomain silently stopped
-drawing. -/
+`Decidable (Linked a b)` matches nothing until `Linked` unfolds. -/
 
 public def Linked (a b : Bool) : Prop := a = b
 
@@ -351,3 +348,17 @@ public def boxed : Boxed := { rel := fun a b => Linked a b }
 #eval show Lean.Elab.TermElabM Unit from do
   assertCanon "prop.behind.def" (← relationalize (mkConst ``boxed))
     "Boxed|mk\nBool|false\nBool|true\nrel[Boxed,Bool,Bool]:0,1,1;0,2,2"
+
+/-! ## A field name outside Lean's identifier alphabet
+
+The guillemets are source syntax for writing the name, not part of it, so the
+emitted relation is `∈`. -/
+
+public structure SMem where
+  «∈» : Nat
+
+public def sMemVal : SMem := { «∈» := 1 }
+
+#eval show MetaM Unit from do
+  assertCanon "field.symbolic" (← relationalize (mkConst ``sMemVal))
+    "SMem|mk\nNat|1\n∈[SMem,Nat]:0,1"

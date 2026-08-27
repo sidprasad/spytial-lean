@@ -9,23 +9,17 @@ open Lean Meta Elab Command Term
 
 /-! # Listing a finite type
 
-The relationalizer turns a function into a relation by evaluating it at every
-point of its domain, so a domain is drawable exactly when it can be listed.
-This module is that judgement, as a class rather than as a match on the type
-head: the walker asks the type instead of knowing about it.
-
-Primitives ship instances here. Everything else is derived, and derived *on
-demand* — `tryEnumerateDomain` runs this handler itself when synthesis comes up
-empty, the way `#eval` derives a missing `Repr`. So a user type needs no
-`deriving` clause to be drawable, which is what the hard-coded all-nullary case
-used to buy. -/
+A function becomes a relation by evaluating it at every point of its domain, so
+a domain is drawable exactly when it can be listed. Making that a class
+rather than a match on the type head lets the walker ask the type instead of
+knowing about it, and lets `enumElems?` derive a missing instance on demand —
+so no `deriving` clause is needed to be drawable. -/
 
 /-- Every element of a finite type, each exactly once.
 
-    The order is the order they are drawn in, so it is part of the diagram:
-    constructor-declaration order for a derived instance. -/
+    Element order is draw order, so it is part of the diagram; a derived
+    instance lists in constructor-declaration order. -/
 public class SpytialEnum (α : Type u) where
-  /-- Every element, once. -/
   elems : List α
 
 namespace SpytialEnum
@@ -47,33 +41,31 @@ end SpytialEnum
 
 /-! ## Deriving
 
-Refused, rather than derived wrong: an indexed family, a dependent field (its
-type is not fixed until the earlier fields are chosen), and any constructor
-field mentioning the type itself — that last one is what stops `Nat` and `List`
-from producing an instance whose `elems` is defined in terms of itself. -/
+Only a monomorphic, non-indexed inductive derives: a parameter or a universe
+variable would need an instance-implicit binder the handler does not emit,
+which is why `Prod`, `Sum` and `Option` are written out above. Within a
+constructor, a dependent field (its type is not fixed until the earlier fields
+are chosen), a `Prop` field, and any field mentioning the type itself are each
+refused rather than derived wrong — the last is what stops `Nat` from producing
+an `elems` defined in terms of itself. A field whose own type has no instance
+is refused later still, when the generated command fails to elaborate; that is
+what keeps `String` out. -/
 
 private meta def ctorElemsTerm (declName : Name) (ctorName : Name) : MetaM (Option Term) := do
   let some (.ctorInfo ci) := (← getEnv).find? ctorName | return none
   forallTelescopeReducing ci.type fun fields _ => do
     let fields := fields.extract ci.numParams fields.size
-    let ctorId := mkIdent ctorName
     let mut binders : Array (Ident × Term) := #[]
     for f in fields do
       let ty ← inferType f
-      if ty.hasLooseBVars || (ty.getUsedConstants.contains declName) then return none
-      if (← isProp ty) then return none
+      if ty.hasLooseBVars || ty.getUsedConstants.contains declName then return none
+      if ← isProp ty then return none
       binders := binders.push (mkIdent (← mkFreshUserName `x), ← PrettyPrinter.delab ty)
-    let args := binders.map (·.1)
-    let mut body ← `([$(mkAppN' ctorId args):term])
+    let mut body ← `([$(Syntax.mkApp (mkIdent ctorName) (binders.map (·.1))):term])
     for (x, ty) in binders.reverse do
       body ← `((SpytialEnum.elems (α := $ty)).flatMap fun $x => $body)
     return some body
-where
-  mkAppN' (f : Ident) (args : Array Ident) : Term :=
-    args.foldl (fun acc a => Syntax.mkApp acc #[a]) (f : Term)
 
-/-- The instance command for one inductive, or `none` when a constructor
-    refuses. -/
 private meta def mkInstanceCmd (declName : Name) (ii : InductiveVal) :
     TermElabM (Option (TSyntax `command)) := do
   let declId := mkIdent declName
@@ -94,5 +86,66 @@ public meta def mkSpytialEnumHandler (declNames : Array Name) : CommandElabM Boo
 
 meta initialize
   registerDerivingHandler ``SpytialEnum mkSpytialEnumHandler
+
+/-! ## Listing on demand -/
+
+/-- Unrolling bound, so a wide `Fin` or a large product declines rather than
+    spending the walk on one domain. -/
+private meta def enumFuel : Nat := 512
+
+/-- Elements of a `List α` expression whose spine reduces to literals. -/
+private meta partial def listElems? (e : Expr) (fuel : Nat) : MetaM (Option (Array Expr)) := do
+  if fuel == 0 then return none
+  match (← Meta.whnf e).getAppFnArgs with
+  | (``List.nil, _) => return some #[]
+  | (``List.cons, #[_, hd, tl]) => do
+    let some rest ← listElems? tl (fuel - 1) | return none
+    return some (#[hd] ++ rest)
+  | _ => return none
+
+/-- The class is `Type u`-indexed, so applying it to a proposition would be a
+    type error rather than a decline. -/
+private meta def isEnumCandidate (ty : Expr) : MetaM Bool := do
+  let .sort u ← Meta.whnf (← inferType ty) | return false
+  return !u.isZero
+
+/-- The arguments matter as much as the head: `Par × St` fails to synthesize
+    even though `Prod` has an instance, because neither side does.
+
+    A failed derivation leaves a `sorryAx`-bodied instance in the
+    environment. -/
+private meta partial def deriveEnum (ty : Expr) : MetaM Unit := do
+  let ty ← Meta.whnf ty
+  for a in ty.getAppArgs do
+    if ← isEnumCandidate a then deriveEnum a
+  if (← Meta.synthInstance? (← mkAppM ``SpytialEnum #[ty])).isSome then return
+  let .const declName _ := ty.getAppFn | return
+  let env ← getEnv
+  try
+    Lean.liftCommandElabM <| Lean.Elab.applyDerivingHandlers ``SpytialEnum #[declName]
+    resetSynthInstanceCache
+  catch _ => setEnv env
+
+private meta def synthEnum? (ty : Expr) : MetaM (Option Expr) := do
+  unless ← isEnumCandidate ty do return none
+  if let some inst ← Meta.synthInstance? (← mkAppM ``SpytialEnum #[ty]) then
+    return some inst
+  deriveEnum ty
+  Meta.synthInstance? (← mkAppM ``SpytialEnum #[ty])
+
+/-- Every element of `ty`, deriving `SpytialEnum` on demand as `#eval` does for
+    a missing `Repr` (`eval.derive.repr`). Derivation mutates the environment,
+    which the signature does not suggest. `none` covers "cannot be listed",
+    "longer than `enumFuel`", and "does not reduce within `maxRecDepth`".
+
+    For wide types, `whnf` hits `maxRecDepth` before `enumFuel` counts an
+    element. `Core.tryCatch` rethrows that exception, so catching it to decline
+    takes `tryCatchRuntimeEx`. -/
+public meta def enumElems? (ty : Expr) : MetaM (Option (Array Expr)) := do
+  let ty ← Meta.whnf ty
+  let some inst ← synthEnum? ty | return none
+  let elems ← mkAppOptM ``SpytialEnum.elems #[some ty, some inst]
+  tryCatchRuntimeEx (listElems? elems enumFuel) fun e =>
+    if e.isMaxRecDepth then return none else throw e
 
 end SpytialLean
