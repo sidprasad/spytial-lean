@@ -94,8 +94,37 @@ public meta inductive SpytialOp where
   | flag (name : String)
   deriving Repr, Inhabited
 
+/-- Where an op was written. Spytial is a *generator* of specs, so the wire
+    form carries the Lean the user actually wrote: core cites this in conflict
+    reports and warnings in place of its own rendering of the rule, which for a
+    resolved Lean selector would otherwise be a list of atom ids. -/
+public meta structure OpSource where
+  /-- The op exactly as written, e.g. `hideAtom lean (RBNode.isLeaf)`. -/
+  text : String
+  /-- `File.lean:12`, appended to the displayed text. -/
+  location : Option String := none
+  deriving Repr, Inhabited
+
+/-- Stamp each layout constraint with the Lean it was written as. On by
+    default: it is what makes a conflict report cite the user's own line
+    instead of the engine's rendering. Turn it off to keep the emitted spec
+    free of source text — the goldens that pin lowering do, rather than
+    restate a stamp on every op. -/
+public meta register_option spytial.source : Bool := {
+  defValue := true
+  descr := "carry each layout constraint's own source text in the emitted \
+            spec, for conflict reports"
+}
+
+/-- An op together with the source it was written as. Attached specs store the
+    stamp, so a spec re-run in another file still cites where it was declared. -/
+public meta structure StampedOp where
+  op : SpytialOp
+  source : Option OpSource := none
+  deriving Repr, Inhabited
+
 /-- A list of Spytial operations forming a complete layout specification. -/
-public meta abbrev SpytialSpec := List SpytialOp
+public meta abbrev SpytialSpec := List StampedOp
 
 /-- The graph-side name an op introduces, with its arity. -/
 public meta def SpytialOp.introduces? : SpytialOp → Option (String × Nat)
@@ -118,8 +147,9 @@ environment stores the structured spec, and the wire string exists only in the
 widget payload.
 -/
 
-/-- Is this op a constraint (affects layout geometry)? -/
-private meta def SpytialOp.isConstraint : SpytialOp → Bool
+/-- Is this op a constraint (affects layout geometry)? Also decides which ops
+    carry their `source` on the wire: core cites the constraints. -/
+public meta def SpytialOp.isConstraint : SpytialOp → Bool
   | .orientation .. | .align .. | .cyclic .. | .group .. => true
   | .hideAtom .. | .size .. => true
   | _ => false
@@ -172,11 +202,34 @@ public meta instance : ToJson SpytialOp where
     | .flag name => Json.mkObj [("flag", toJson name)]
     | op => instToJsonSpytialOp.toJson op
 
+public meta instance : ToJson OpSource := ⟨fun s => objOpt
+  [("text", some (toJson s.text)), ("location", s.location.map toJson)]⟩
+
+/-- An op renders as `{opName: body}`, and core reads `source` from inside
+    `body`. Only the constraints carry it: those are the ops core cites in
+    conflict reports, and on a directive it would be payload core parses and
+    ignores. `flag`'s payload is the bare name, with nowhere to put it. -/
+public meta instance : ToJson StampedOp where
+  toJson s :=
+    let j := toJson s.op
+    match s.source with
+    | some src =>
+      if s.op.isConstraint then
+        match j.getObj? with
+        | .ok kvs =>
+          match kvs.toList with
+          | [(key, body@(.obj _))] =>
+            Json.mkObj [(key, body.setObjVal! "source" (toJson src))]
+          | _ => j
+        | _ => j
+      else j
+    | none => j
+
 /-- A spec with no ops renders as the empty string, not `{}`. -/
 public meta def SpytialSpec.render (spec : SpytialSpec) : String :=
   let mkSection (key : String) (ops : SpytialSpec) : List (String × Json) :=
     if ops.isEmpty then [] else [(key, toJson ops)]
-  let (constraints, directives) := spec.partition SpytialOp.isConstraint
+  let (constraints, directives) := spec.partition (SpytialOp.isConstraint ·.op)
   match mkSection "constraints" constraints ++ mkSection "directives" directives with
   | [] => ""
   | kvs => (Json.mkObj kvs).pretty

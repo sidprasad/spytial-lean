@@ -396,29 +396,34 @@ end
 
 /-- Whether any op in `spec` carries a raw Lean selector. -/
 meta def SpytialSpec.hasLeanRel (spec : SpytialSpec) : Bool :=
-  spec.any fun
+  spec.any fun stamped => match stamped.op with
     | .orientation s _ | .align s _ | .cyclic s _ | .group s _ _ | .hideAtom s
     | .size s _ _ | .atomStyle s _ _ _ _ | .tag s _ _ | .inferredEdge _ s _ =>
       s.hasLeanRel
     | .edgeStyle .. | .hideField .. | .attribute .. | .flag .. => false
 
+/-- One op's selectors, resolved against the datum. -/
+private meta def resolveOp (ctx : LeanSelCtx) : SpytialOp → MetaM SpytialOp
+  | .orientation s ds => return .orientation (← s.resolveLean ctx) ds
+  | .align s d => return .align (← s.resolveLean ctx) d
+  | .cyclic s d => return .cyclic (← s.resolveLean ctx) d
+  | .group s n e => return .group (← s.resolveLean ctx) n e
+  | .hideAtom s => return .hideAtom (← s.resolveLean ctx)
+  | .size s w h => return .size (← s.resolveLean ctx) w h
+  | .atomStyle s b f i l => return .atomStyle (← s.resolveLean ctx) b f i l
+  | .tag s n v => return .tag (← s.resolveLean ctx) n v
+  | .inferredEdge n s l => return .inferredEdge n (← s.resolveLean ctx) l
+  | op@(.edgeStyle ..) | op@(.hideField ..) | op@(.attribute ..) | op@(.flag ..) =>
+    return op
+
 /-- Rewrite every raw Lean selector in `spec` into the tuples it selects on
-    this datum. Runs before any lowering to SGQ; identity on specs with none. -/
+    this datum. Runs before any lowering to SGQ; identity on specs with none.
+    The stamp is the user's own text, so resolution leaves it alone: a conflict
+    report cites what they wrote, not the atom ids it resolved to. -/
 meta def resolveLeanSelectors (datum : Expr) (di : JsonDataInstance)
     (prov : Provenance) (spec : SpytialSpec) : MetaM SpytialSpec := do
   let ctx : LeanSelCtx := { datum, di, prov }
-  spec.mapM fun
-    | .orientation s ds => return .orientation (← s.resolveLean ctx) ds
-    | .align s d => return .align (← s.resolveLean ctx) d
-    | .cyclic s d => return .cyclic (← s.resolveLean ctx) d
-    | .group s n e => return .group (← s.resolveLean ctx) n e
-    | .hideAtom s => return .hideAtom (← s.resolveLean ctx)
-    | .size s w h => return .size (← s.resolveLean ctx) w h
-    | .atomStyle s b f i l => return .atomStyle (← s.resolveLean ctx) b f i l
-    | .tag s n v => return .tag (← s.resolveLean ctx) n v
-    | .inferredEdge n s l => return .inferredEdge n (← s.resolveLean ctx) l
-    | op@(.edgeStyle ..) | op@(.hideField ..) | op@(.attribute ..) | op@(.flag ..) =>
-      return op
+  spec.mapM fun stamped => return { stamped with op := ← resolveOp ctx stamped.op }
 
 end
 

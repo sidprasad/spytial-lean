@@ -10,6 +10,11 @@ public meta import SpytialLean.Command
 
 open SpytialLean Lean Elab Command
 
+-- These goldens pin the SGQ lowering, not the source stamp, so they leave the
+-- stamp out rather than restate it on every op. It has its own tests, under
+-- `## The source stamp` in LeanSelectorTest.
+set_option spytial.source false
+
 /-! # Tests for raw Lean selectors
 
 `lean (…)` selects by running an ordinary Lean function over the values the walk
@@ -53,11 +58,25 @@ public def lSmall : LRB := .node .black 1 .nil .nil
     2 key, 3 node, 4 black, 5 key, 6 nil (every leaf holds it). -/
 public def lBig : LRB := .node .red 1 (.node .black 2 .nil .nil) .nil
 
+/-- `Foo.lean:12` → `Foo.lean:N`. A source stamp's line is the one part of a
+    spec that moves when the lines above it move, so the goldens pin that a
+    location is emitted and which file it names, never which line. -/
+private meta def maskLines (s : String) : String :=
+  match s.splitOn ".lean:" with
+  | [] => s
+  | first :: rest =>
+    first ++ String.join (rest.map fun part =>
+      ".lean:N" ++ (part.dropWhile Char.isDigit).toString)
+
 public section
 
 /-- Dump the `cndSpec` the widget actually receives, so the deferred
     resolution of an attached spec is what gets tested — not a re-render. -/
 syntax (name := wireSpecCmd) "#wire_spec " term : command
+
+/-- `#spytial.spec`, with source-stamp lines masked (`maskLines`). -/
+syntax (name := maskedSpecCmd) "#masked_spec " term " with "
+  "[" spytial_op,*,? "]" : command
 
 end
 
@@ -65,7 +84,18 @@ end
 public meta def elabWireSpec : CommandElab := fun
   | `(#wire_spec $t:term) => do
     let props ← liftTermElabM <| spytialPayloadProps t
-    logInfo m!"{props.getObjValD "cndSpec"}"
+    logInfo (maskLines s!"{props.getObjValD "cndSpec"}")
+  | stx => throwError "Unexpected syntax {stx}."
+
+@[command_elab maskedSpecCmd]
+public meta def elabMaskedSpec : CommandElab := fun
+  | `(#masked_spec $t:term with [$ops,*]) => do
+    let props ← liftTermElabM <| spytialPayloadProps t (some (ops.getElems))
+    -- `cndSpec` is the rendered spec as a JSON string; unwrap it so the
+    -- golden reads as the spec, not as an escaped one-liner.
+    logInfo (maskLines <| match props.getObjValD "cndSpec" with
+      | .str spec => spec
+      | j => toString j)
   | stx => throwError "Unexpected syntax {stx}."
 
 /-! ## Arity 1
@@ -371,3 +401,47 @@ info: {"constraints":
 -/
 #guard_msgs in
 #spytial.spec lKw with [orientation lean below]
+
+/-! ## The source stamp
+
+`lean (…)` resolves to atom ids, which say nothing to a reader of a conflict
+report. Spytial is a generator, so the emitted spec carries the Lean the user
+wrote (`spytial.source`, on by default) and core cites that instead.
+
+`#masked_spec` and `#wire_spec` mask the stamp's line to `N`: what matters is
+that a location is emitted and which file it names, so these goldens do not
+move when the lines above them do. -/
+
+set_option spytial.source true in
+/--
+info: {"constraints":
+ [{"hideAtom":
+   {"source":
+    {"text": "hideAtom lean (fun n : LRB => n matches .nil)",
+     "location": "LeanSelectorTest.lean:N"},
+    "selector": "`atom_6"}}]}
+-/
+#guard_msgs in
+#masked_spec lBig with [hideAtom lean (fun n : LRB => n matches .nil)]
+
+-- Only the constraints are stamped: core cites those in conflict reports, and
+-- on a directive the block would be payload it parses and ignores.
+set_option spytial.source true in
+/--
+info: {"directives":
+ [{"atomStyle": {"selector": "`atom_3", "borderStyle": {"color": "black"}}}]}
+-/
+#guard_msgs in
+#masked_spec lBig with [atomStyle lean (LRB.isBlack) (borderStyle "black")]
+
+-- An attached spec stores its stamp, so a spec re-run against another value in
+-- another file still cites the line it was declared on.
+set_option spytial.source true in
+spytial_spec LKw [orientation lean below]
+
+set_option spytial.source true in
+/--
+info: "{\"constraints\":\n [{\"orientation\":\n   {\"source\":\n    {\"text\": \"orientation lean below\", \"location\": \"LeanSelectorTest.lean:N\"},\n    \"selector\": \"lean\",\n    \"directions\": [\"below\"]}}]}"
+-/
+#guard_msgs in
+#wire_spec lKw

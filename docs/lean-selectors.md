@@ -109,9 +109,22 @@ Use `#spytial.spec` to print what a selector resolved to (node ids like
   hypotheses) never match; use the relational language for those.
 - **At most 4 columns, at most 4096 selected tuples.** Wider or bigger cannot
   render legibly.
-- **Diagram errors show node ids, not your code.** A conflicting `lean (…)`
-  selector reports as `` `atom_3 + `atom_7 `` in the error panel — a known
-  gap.
+
+## What a conflict report shows
+
+A `lean (…)` selector resolves to node ids, so on its own an error panel would
+cite `` `atom_3 + `atom_7 `` — true, but unreadable. The emitted spec therefore
+carries the Lean you wrote, and spytial-core cites that instead:
+
+```
+hideAtom lean (fun n : RBNode => n matches .nil)   (MyTree.lean:12)
+```
+
+This applies to the layout constraints (`orientation`, `align`, `cyclic`,
+`group`, `size`, `hideAtom`) — the ops that appear in conflict reports. An
+attached `spytial_spec` keeps the line it was declared on, so a spec re-run
+against another value still points at where it was written. Turn it off with
+`set_option spytial.source false` to keep the emitted spec free of source text.
 
 `spytial_spec` stores the function and re-runs it for each value drawn, as
 compiled code. [demos/LeanSelectors.lean](../demos/LeanSelectors.lean) is a

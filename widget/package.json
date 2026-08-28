@@ -12,7 +12,7 @@
     "@leanprover/infoview": "~0.8.3",
     "react": "catalog:",
     "react-dom": "catalog:",
-    "spytial-core": "~4.4.3"
+    "spytial-core": "~5.4.0"
   },
   "devDependencies": {
     "@rollup/plugin-commonjs": "catalog:",

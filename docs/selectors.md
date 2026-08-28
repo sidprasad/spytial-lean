@@ -169,6 +169,11 @@ edge introduced by an earlier op, and it cannot name a relation the walker
 synthesizes. Those stay in the relational language, which composes with it:
 `hideAtom lean (p) + Color` is one selector.
 
+A resolved `lean (f)` is a list of atom ids, which says nothing to a reader of
+a conflict report, so each layout constraint also carries the source it was
+written as (`source.text`/`source.location`; `spytial.source`, on by default).
+Core cites that in place of its own rendering of the rule.
+
 [lean-selectors.md](lean-selectors.md) is the user-facing guide: how to use it,
 which shape to pick, what does not work, and what each error means.
 

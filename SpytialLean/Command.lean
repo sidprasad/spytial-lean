@@ -364,6 +364,20 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
         attribute, cyclic, edgeStyle, flag, group, hideAtom, hideField, \
         inferredEdge, orientation, size, tag"
 
+/-- The op as the user wrote it, with where they wrote it. Read back from the
+    file rather than reprinted from syntax, so what core cites in a conflict
+    report is the text on the line. -/
+private meta def opSource? (op : TSyntax `spytial_op) : TermElabM (Option OpSource) := do
+  unless spytial.source.get (← getOptions) do return none
+  let some startPos := op.raw.getPos? | return none
+  let some endPos := op.raw.getTailPos? | return none
+  let fileMap ← getFileMap
+  let text := (Substring.Raw.mk fileMap.source startPos endPos).toString.trim
+  if text.isEmpty then return none
+  let path := (← getFileName)
+  let base := (System.FilePath.mk path).fileName.getD path
+  return some { text, location := s!"{base}:{(fileMap.toPosition startPos).line}" }
+
 /-- Elaborate an op list, bringing each op's introduced names (groups, inferred
     edges) into scope for the ops after it. A `..` element splices `attached?`
     at that position; `none` means the context has no attached spec to splice.
@@ -371,12 +385,12 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
     must share this list's root type. -/
 meta def elabSpytialOps (scope : SelScope) (ops : Array (TSyntax `spytial_op))
     (attached? : Option SpytialSpec := none) : TermElabM SpytialSpec := do
-  let introduce (scope : SelScope) (op : SpytialOp) : SelScope :=
-    match op.introduces? with
+  let introduce (scope : SelScope) (s : StampedOp) : SelScope :=
+    match s.op.introduces? with
     | some (n, arity) => scope.introduce n arity
     | none => scope
   let mut scope := scope
-  let mut spec : Array SpytialOp := #[]
+  let mut spec : Array StampedOp := #[]
   let mut spliced := false
   let mut splicedNames : NameSet := .empty
   for op in ops do
@@ -405,7 +419,7 @@ meta def elabSpytialOps (scope : SelScope) (ops : Array (TSyntax `spytial_op))
       spec := spec ++ bound.ops
       scope := bound.ops.foldl introduce scope
     else
-      let o ← elabSpytialOp scope op
+      let o : StampedOp := { op := ← elabSpytialOp scope op, source := ← opSource? op }
       spec := spec.push o
       scope := introduce scope o
   return spec.toList
