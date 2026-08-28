@@ -31,8 +31,8 @@ info: {"constraints":
 #guard_msgs in
 #spytial.spec sG with [orientation lo below hold: never]
 
--- `always` is inert upstream but written is emitted: the wire carries what
--- the source said.
+-- `always` is inert upstream but written is emitted: the serialized spec
+-- carries what the source said.
 /-- info: {"constraints": [{"cyclic": {"selector": "lo", "hold": "always"}}]} -/
 #guard_msgs in
 #spytial.spec sG with [cyclic lo hold: always]
@@ -41,7 +41,7 @@ info: {"constraints":
 #guard_msgs in
 #spytial.spec sG with [hideAtom SG hold: never]
 
-/-- error: unknown hold value 'sometimes' (expected always, never) -/
+/-- error: unknown hold 'sometimes' (expected always, never) -/
 #guard_msgs in
 #spytial.spec sG with [orientation lo below hold: sometimes]
 

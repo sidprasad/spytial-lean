@@ -14,22 +14,17 @@ public section
 /-! # SelectorElab — checked selector syntax
 
 Selectors are Lean syntax (category `spytial_sel`), elaborated against a
-`SelScope`: the vocabulary of sigs, relations, and constructor labels
-the relationalizer can emit for the target type. Every identifier must resolve,
-every operand must be of the kind its slot accepts, and every arity must check.
-A renamed field or a typo is a compile error at the ident, not an empty
-selection at render time.
+`SelScope`: the sigs, relations, and constructor labels the relationalizer can
+emit for the target type. The grammar and the checks are the engine's, read
+off the `Sgq` tables: one parser rule per construct from its `template`,
+operand kinds from `kinds`, widths from `arity`. Nothing below names a
+construct.
 
-The grammar and the checks are the engine's, read off the `Sgq` tables:
-one parser rule per construct, built from its `template`; operand kinds from
-`kinds`; widths from `arity`. Nothing below names a construct, so a construct
-added upstream gets a rule, a kind check and an arity check by rebuilding.
-
-What is written here is this package's own: the vocabulary and its hover
-information, the constructor-label literal a spytial spec compares against, the
-`raw` escape hatch, `let` (which the engine parses and refuses, and which we
-desugar), and the leaves Lean's own lexer claims before any token table sees
-them.
+Written here because no manifest can carry it: the scope itself (it depends on
+the target type) and its hover information, the constructor-label literal a
+spytial spec compares against, the `raw` escape hatch, `let` (which the engine
+parses and refuses, and which we desugar), and the leaves Lean's own lexer
+claims before any token table sees them.
 
 A scope is strict when the vocabulary is closed: a monomorphic type built from
 monomorphic fields. A type parameter, a function field that does not tabulate,
@@ -187,26 +182,27 @@ private meta def lexesAsIdent (s : String) : Bool :=
 private meta def sgqSymbols : List String := Sgq.lexemes.filter (!lexesAsIdent ·)
 
 /-- What Lean's quotation machinery lexes inside a selector: `$x`, `$x:ident`,
-    `$_`, `$(e)`, `%$tk`, and the `$xs,*` splice, whose suffix `sepByElemParser`
-    spells as the separator followed by `*` and lexes as one token. The colon,
-    comma and parentheses are already the grammar's own. -/
+    `$_`, `$(e)`, `%$tk`, and the `$xs,*` splice suffix, which spells as the
+    separator followed by `*` and lexes as one token. Read off `mkAntiquot`,
+    `mkAntiquotSplice` and `sepByElemParser` (`Lean/Parser/Basic.lean`,
+    v4.32.2). The colon, comma and parentheses are already the grammar's own. -/
 private meta def antiquotSymbols : List String :=
   ["$", "_", "%", (Sgq.Construct.of .«quantifier» |>.part .«separator»).text ++ "*"]
 
-/-- The table a selector lexes under. It is the engine's symbols and nothing
-    else, so nothing here reaches the global table and none of Lean's own
-    tokens reach a selector: a relation named `fun` needs no escape, and no
-    longer Lean token can maximal-munch a shorter one of ours (`.` out of `.(`,
-    `!` out of `!=`).
+/-- The table a selector lexes under: the engine's symbols and nothing else.
+    Nothing here reaches the global table, and none of Lean's tokens reach a
+    selector, so a relation named `fun` needs no escape.
 
-    The cost is that a `$(term)` antiquotation inside a selector can spell only
-    what these tokens spell. Nothing in the package writes one. -/
+    Cost: a `$(term)` antiquotation inside a selector is lexed under this table
+    too, so a term spelled with other tokens will not parse there. Nothing in
+    the package writes one. -/
 private meta def selTokens : TokenTable :=
   (sgqSymbols ++ antiquotSymbols).foldl (fun t tk => t.insert tk tk) .empty
 
 /-- `ParserCache.tokenCache` is not part of what `adaptUncacheableContextFn`
-    resets, so a token lexed under one table would otherwise be served under the
-    other at a region edge. -/
+    resets. Without clearing it, the one-entry cache can replay a token lexed
+    under the other table at the region boundary, and the parse then sees a
+    token its own table cannot produce. -/
 private meta def clearTokenCache (c : ParserContext) (s : ParserState) : ParserState :=
   { s with cache.tokenCache := { startPos := c.inputString.rawEndPos + ' ' } }
 
@@ -219,14 +215,13 @@ meta def withSelTokens (p : Parser) : Parser where
 
 /-! ### The category
 
-One category, as the engine has one grammar: a formula and a relational
-expression sit in the same cascade, and which positions accept which is a
-question about kinds, which the elaborator answers from the manifest.
+One category, as the engine has one grammar: formulas and relational
+expressions sit in the same cascade, and the elaborator checks kinds.
 
-`behavior := both` indexes an identifier under its own text as well, so a
-keyword-led rule and a relation of the same name are both candidates and
-longest-match decides between them. That is what keeps a field named `some`
-writable without an escape. -/
+`behavior := both` also indexes an identifier-spelled leading rule under the
+identifier's own text, so a keyword-led rule and a relation of the same name
+are both candidates and longest-match decides. That is what keeps a field
+named `some` writable without an escape. -/
 
 declare_syntax_cat spytial_sel (behavior := both)
 
@@ -239,7 +234,11 @@ meta def selExpr : Parser := withSelTokens (categoryParser `spytial_sel Sgq.loos
 @[combinator_parenthesizer selExpr] meta def selExpr.parenthesizer :=
   PrettyPrinter.Parenthesizer.categoryParser.parenthesizer `spytial_sel Sgq.loosest
 
-/-! ### Spellings -/
+/-! ### Spellings
+
+A *spelling* is one concrete source text of a token — the manifest's own word
+for it (`Op.spellings`, `Part.spellings`); `or` and `||` are two spellings of
+one operator. -/
 
 /-- One spelling, classified by `lexesAsIdent` rather than by a list. A symbol
     is an atom of the category-local table and so contributes nothing to the
@@ -283,11 +282,16 @@ meta def anySpelling (trailing : Bool := false) : List String → Parser
 
 /-! ### Identifiers
 
-SGQ's identifier token cannot contain a `.`, so within a selector the dot is
-only ever the join operator: `a.b` lexes as `a . b`, and both grammars read the
-same text the same way with no spacing convention to remember. -/
+Names in a selector are Lean names — fields, types, binders — resolved against
+the scope, so they lex as Lean identifiers, «»-escapes included, not as the
+manifest's bare-name class: that class is the *output* alphabet, and
+`quoteIfNeeded` backquotes whatever falls outside it on the way out.
 
-/-- One identifier component: `identFnAux` without its `isIdCont` recursion.
+Lean's stock `ident` parser cannot be used as-is: its `isIdCont` recursion
+merges `a.b` into one dotted name, and within a selector the dot is the join
+operator. -/
+
+/-- `identFnAux` without the `isIdCont` recursion.
 
     An escaped component still holds dots, which is how a qualified Lean name is
     written (`«Untyped.Term»`), and how a field whose name collides with a
@@ -411,9 +415,10 @@ meta def ruleFor (c : Sgq.ConstructId) : Parser :=
   let cd := Sgq.Construct.of c
   match cd.template with
   | .operand lhs :: rest =>
-    -- The one place this package narrows the engine: an op argument list is
-    -- `spytialOpArg*`, so `hideAtom SBDD [a]` has to stay two arguments rather
-    -- than becoming a box join.
+    -- A box join must open its bracket with no space (`f[x]`). The engine
+    -- accepts `f [x]` too; requiring adjacency is the one place this package
+    -- narrows it, and it is what keeps `hideAtom SBDD [a]` two op arguments
+    -- rather than one box join.
     let body := itemsParser cd true rest
     let body := match rest with
       | .part .«open» _ :: _ => checkNoWsBefore >> body
@@ -598,7 +603,7 @@ private meta def resolveCtorLit? (scope : SelScope) (stx : Syntax) : TermElabM (
   if let some ctorName := scope.ctorLabels.get? (stx.getId.toString (escape := false)) then
     if let some e ← try pure (some (← mkConstWithLevelParams ctorName)) catch _ => pure none then
       discard <| Term.addTermInfo stx e
-    return some (.ctorLit ctorName (shortName ctorName))
+    return some (.ctorLit ctorName)
   return none
 
 /-- Builtins are named, not spelled: the engine's own lists are the vocabulary,
@@ -629,8 +634,11 @@ private meta def declaredKind? (stx : Syntax) : Option Sgq.Kind :=
       | none => cd.kinds.yields
     | none => none
 
-/-- A relational expression opposite a value: only a bare ident makes sense, as
-    a constructor-label literal, or as `true`/`false` against `@bool:`. -/
+/-- A bare ident opposite a label projection (`@:x = tt`): the engine compares
+    label strings, so the ident is read as a constructor label — resolved
+    against the scope, lowered to its label literal — not as a relation.
+    `declaredKind?` of the opposite operand chooses this reading before this
+    side elaborates, so the error names the right vocabulary. -/
 private meta def coerceVal (scope : SelScope) (stx : Syntax) (wantBool : Bool) :
     TermElabM EExpr := do
   unless stx.isOfKind selIdentKind do
@@ -653,7 +661,7 @@ private meta def coerceVal (scope : SelScope) (stx : Syntax) (wantBool : Bool) :
     if !scope.types.contains ci.induct && !scope.lenient then
       throwErrorAt x m!"constructor '{constName}' belongs to '{ci.induct}', \
         which cannot occur in values of '{scope.root}'"
-    return { sel := .ctorLit constName (shortName constName), kind := .«string» }
+    return { sel := .ctorLit constName, kind := .«string» }
   | _ =>
     throwErrorAt x m!"'{constName}' is not a constructor; label comparisons \
       expect a constructor or a literal"

@@ -17,6 +17,7 @@ public section
 by hand. What it does not cover is the manifests' tagged-union convention and
 which element of an array failed. -/
 
+-- v4.32.2 doesn't include FromJson Char
 meta instance : FromJson Char where
   fromJson? j := do
     let s ← j.getStr?
@@ -24,11 +25,6 @@ meta instance : FromJson Char where
     return c
 
 meta instance : Repr JsonObject := ⟨fun o _ => Std.Format.text (Json.obj o).compress⟩
-
-meta instance : FromJson JsonNumber where
-  fromJson?
-    | .num n => .ok n
-    | j => .error s!"number expected, got {j.compress}"
 
 /-- Decodes an array, naming each element by its own `key` member rather than
     by position. -/
@@ -58,16 +54,18 @@ meta def onlyMembers (known : List String) (o : JsonObject) : Except String Unit
 /-! ## Declaring a tagged union
 
     json_union ArityRule on "rule" where
-      | "slot"  => slot (index : Nat)
-      | "fixed" => fixed (width : Nat)
-      | "sum"   => sum
+      | slot (index : Nat)
+      | fixed (width : Nat)
+      | sum
 
 declares the inductive and its decoder from one list: a constructor's fields
-name the sibling members that carry them. Without `on`, the value is the tag
-itself. A tag with no alternative fails naming the value. -/
+name the sibling members that carry them. The constructor name is the JSON
+spelling; where the two differ, write it out (`| "n-ary" => nary`). Without
+`on`, the value is the tag itself. A tag with no alternative fails naming the
+value. -/
 
 syntax jsonField := "(" ident " : " term ")"
-syntax jsonAlt := ppLine "| " str " => " ident jsonField*
+syntax jsonAlt := ppLine "| " (str " => ")? ident jsonField*
 syntax (name := jsonUnion)
   (docComment)? "json_union " ident (" on " str)? " where" jsonAlt* : command
 
@@ -79,8 +77,10 @@ elab_rules : command
     let mut ctors := #[]
     let mut arms := #[]
     for alt in alts do
-      let `(jsonAlt| | $spelling:str => $ctor:ident $fields:jsonField*) := alt
-        | throwErrorAt alt "expected `| \"spelling\" => ctor (field : Type)*`"
+      let `(jsonAlt| | $[$spelling?:str => ]? $ctor:ident $fields:jsonField*) := alt
+        | throwErrorAt alt "expected `| ctor (field : Type)*`, with `\"spelling\" =>` \
+            ahead of a ctor spelled differently in JSON"
+      let spelling := spelling?.getD (Syntax.mkStrLit (ctor.getId.toString (escape := false)))
       if tag.isNone && !fields.isEmpty then
         throwErrorAt alt "an untagged union reads the value itself, so its \
           alternatives take no fields; give the union an `on \"member\"`"
@@ -90,14 +90,17 @@ elab_rules : command
         let `(jsonField| ($fname:ident : $ftype:term)) := field
           | throwErrorAt field "expected `(name : Type)`"
         binders := binders.push (← `(Lean.Parser.Term.bracketedBinderF| ($fname : $ftype)))
-        args := args.push (← `(← member _ $subject:ident $(quote fname.getId.toString)))
+        args := args.push
+          (← `(← member _ $subject:ident $(quote (fname.getId.toString (escape := false)))))
       ctors := ctors.push (← `(Lean.Parser.Command.ctor| | $ctor:ident $binders*))
       let built ← `(do return $(mkIdent (name.getId ++ ctor.getId)):ident $args*)
       arms := arms.push (← `(Lean.Parser.Term.matchAltExpr| | $spelling:str => $built))
     -- No `DecidableEq`: it has no handler for a union that nests itself.
-    elabCommand (← `($[$doc:docComment]? public meta inductive $name:ident where
+    -- The linter reads the spliced field binders as unused term bindings.
+    let ind ← `($[$doc:docComment]? public meta inductive $name:ident where
       $ctors*
-      deriving Repr, Inhabited))
+      deriving Repr, Inhabited)
+    elabCommand (← `(set_option linter.unusedVariables false in $ind:command))
     let unknown := match tag with
       | some t => s!"no representation for {t.getString} "
       | none => "no representation for "

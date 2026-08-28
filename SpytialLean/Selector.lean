@@ -2,6 +2,7 @@ module
 
 public import Lean
 public meta import SpytialLean.Sgq
+public meta import SpytialLean.TypeShape
 
 namespace SpytialLean
 
@@ -61,9 +62,8 @@ public meta inductive Sel where
   | var (x : Name)
   | num (n : Int)
   | str (s : String)
-  /-- A nullary-constructor literal (`@:x = tt`), which lowers to the
-      short-name label the relationalizer gives its atoms. -/
-  | ctorLit (ctor : Name) (label : String)
+  /-- A nullary-constructor literal (`@:x = tt`). -/
+  | ctorLit (ctor : Name)
   | boolLit (b : Bool)
   /-- Escape hatch: an unchecked SGQ string, lowered verbatim. The body is
       arbitrary SGQ, so it binds loosest and composition parenthesizes it. -/
@@ -77,9 +77,7 @@ public meta instance : Inhabited Arg := ⟨.atom none⟩
 
 /-! ## Names and literals
 
-Outside SGQ's bare-identifier rule the lexer fails open — `s₁` silently
-evaluates the prefix `s`, `σ` is a lexer error — so anything the rule does not
-cover is backquoted instead. -/
+Anything SGQ's bare-identifier rule does not cover is backquoted. -/
 
 /-- Whether `s` is spelled the way the engine's lexer spells a bare name. Both
     ends of the language need this: the encoder to decide what to quote, the
@@ -88,14 +86,6 @@ public meta def sgqBareName (s : String) : Bool :=
   match s.toList with
   | c :: cs => Sgq.bareHead c && cs.all Sgq.bareRest
   | [] => false
-
-/-- A builtin's name, checked against the engine's own lists so a rename
-    upstream is a loud failure rather than an unresolved call at render.
-    `tests/SgqCoverageTest.lean` makes the same mismatch a build failure; this
-    is the backstop for a name that reaches the lowering anyway. -/
-public meta def sgqBuiltin (name : String) : String :=
-  if (Sgq.binaryBuiltins ++ Sgq.unaryBuiltins ++ Sgq.setBuiltins).contains name then name
-  else panic! s!"simple-graph-query no longer spells `{name}`; this call site is stale"
 
 /-- FIXME: the empty name has no spelling at all (`Sgq.quoteMinLength` is 1),
     and this still emits the invalid `` `` `` for it. Nothing produces one
@@ -131,11 +121,11 @@ public meta def sgqStringLit (s : String) : String :=
 
 /-! ## Whitespace
 
-Both spacings parse — the engine's lexer skips whitespace between every token —
-so this is house style, not a language fact. It is stated as two tables over
-the generated enumerations rather than per construct, so a construct added
-upstream is formatted without an edit, and a *role* added upstream is a
-non-exhaustive match rather than a silent default. -/
+Both spacings parse — simple-graph-query's lexer skips whitespace between
+every token — so this is house style, not a language fact. It is stated as two
+tables over the generated enumerations rather than per construct, so a
+construct added upstream is formatted without an edit, and a *role* added
+upstream is a non-exhaustive match rather than a silent default. -/
 
 public meta structure Air where
   /-- Air before this chunk. -/
@@ -217,15 +207,19 @@ mutual
 /-- `ctx` is the level the enclosing position accepts. -/
 public meta partial def Sel.toSGQCtx (ctx : Nat) : Sel → String
   | .sig _ s => quoteIfNeeded s
+  -- Builtins are constructed only from the engine's own lists
+  -- (`elabBuiltinCall?`), so the name lowers verbatim.
+  | .builtin b => b
   | .rel r => quoteIfNeeded r
-  | .builtin b => sgqBuiltin b
   | .var x => quoteIfNeeded (toString x)
   | .num n => toString n
   -- The relationalizer labels a `String` atom with its Lean spelling, quotes
   -- included (`Relationalizer.lean`), so matching one takes a literal whose
   -- content carries those quotes too.
   | .str s => sgqStringLit s!"\"{s}\""
-  | .ctorLit _ label => sgqStringLit label
+  -- Likewise a nullary constructor's atom is labeled with the constructor's
+  -- short name, so that spelling is the comparison literal.
+  | .ctorLit c => sgqStringLit (shortName c)
   | .boolLit b => toString b
   -- Raw SGQ is arbitrary, so it binds looser than anything the cascade names.
   | .raw s => parenIf (Sgq.loosest < ctx) s

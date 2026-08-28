@@ -41,10 +41,9 @@ syntax spytial_op_block : spytial_block_arg
 syntax (name := spytialBlockStx)
   atomic("(" ident spytial_block_arg) spytial_block_arg* ")" : spytial_op_block
 
-/-- `name: value` — a scalar keyword argument, echoing the wire key
-    (`selector: Person`, `filter: (@:val = true)`, `hold: never`). The value
-    parses as a selector expression, which also carries the scalar leaves
-    (idents, strings, numerals). -/
+/-- `name: value` — a scalar keyword argument. The value parses as a selector
+    expression, whose leaves also carry the scalar shapes (words, strings,
+    numerals); the field's table entry decides how the value is read. -/
 syntax spytialKwArg := atomic(ident noWs ":" ) selExpr
 
 syntax spytialOpArg := num <|> spytial_op_block <|> spytialKwArg <|> selExpr
@@ -60,13 +59,11 @@ syntax (name := spytialSpliceNamedStx) ".." noWs ident : spytial_op
 
 /-! ### Argument interpretation
 
-Everything below reads `SpecLang`'s tables and names no item or field, so an
-item or field added upstream reaches the surface by rebuilding. The scheme, per
+Everything below reads `SpecLang`'s tables and names no item or field. Per
 item: required fields are positional, in table order (a trailing enum-list is
-variadic); the table's `leadingSelector` may fill the first slot; every other
-field is a keyword — a style block as `(blockName …)`, a scalar as
-`name: value` — plus the `boolSugar` bare words, a bare optional-enum value
-(`cyclic s counterclockwise`), and `hold: never` where the item supports it. -/
+variadic, and the table's `leadingSelector` may fill the first slot); every
+other field is a keyword — `(blockName …)` or `name: value` — or one of the
+bare words `bareWordVocab` lists. -/
 
 /-- Unwraps the `spytialOpArg` node to whichever alternative parsed. -/
 private meta def argInner (arg : TSyntax `spytialOpArg) : Syntax := arg.raw[0]
@@ -78,35 +75,37 @@ private meta def arityExpectOf : SpecLang.SelWidth → ArityExpect
 private meta def orVals (vs : List String) : String := "|".intercalate vs
 
 open SpecLang in
-/-- Synthesized from the table, so it is the op's whole surface. -/
-private meta def itemUsage (i : ItemSpec) : String := Id.run do
-  let mut parts : Array String := #[itemName i.id]
-  if let some f := i.leadingSelector then
-    parts := parts.push s!"[<{fieldName f}>]"
-  for fid in i.positional do
-    let some f := i.field? fid | continue
-    parts := parts.push <| match f.type with
-      | .«enum» vs _ => orVals vs
-      | .enumList _ _ => s!"<{fieldName fid}>+"
-      | _ => s!"<{fieldName fid}>"
-  for f in i.fields do
-    if i.positional.contains f.id || i.leadingSelector == some f.id then
-      continue
-    parts := parts.push <| match f.type with
-      | .block _ => s!"[({fieldName f.id} …)]"
-      | .«enum» vs _ =>
-        if f.alt.isSome then s!"[({fieldName f.id} {orVals vs} …)]"
-        else s!"[{orVals vs}]"
-      | .boolean _ =>
-        match boolSugar.filter (fun (_, bf, _) => bf == f.id) with
-        | [] => s!"[{fieldName f.id}: true|false]"
-        | sugars => s!"[{orVals (sugars.map (·.1))}]"
-      | .selector _ => s!"[{fieldName f.id}: <selector>]"
-      | .str => s!"[{fieldName f.id}: \"…\"]"
-      | _ => s!"[{fieldName f.id}: …]"
-  if i.supportsHold then
-    parts := parts.push s!"[hold: {orVals holdValues}]"
-  return " ".intercalate parts.toList
+/-- A field's surface form in a usage line. -/
+private meta def fieldUsage (i : ItemSpec) (f : FieldSpec) : String :=
+  if i.positional.contains f.id then
+    match f.type with
+    | .«enum» vs _ => orVals vs
+    | .enumList _ _ => s!"<{fieldName f.id}>+"
+    | _ => s!"<{fieldName f.id}>"
+  else match f.type with
+    | .block _ => s!"[({fieldName f.id} …)]"
+    | .«enum» vs _ =>
+      if f.alt.isSome then s!"[({fieldName f.id} {orVals vs} …)]"
+      else s!"[{orVals vs}]"
+    | .boolean _ =>
+      match boolSugar.filter (fun (_, bf, _) => bf == f.id) with
+      | [] => s!"[{fieldName f.id}: true|false]"
+      | sugars => s!"[{orVals (sugars.map (·.1))}]"
+    | .selector _ => s!"[{fieldName f.id}: <selector>]"
+    | .str => s!"[{fieldName f.id}: \"…\"]"
+    | _ => s!"[{fieldName f.id}: …]"
+
+open SpecLang in
+/-- The op's usage line, synthesized from its table entry: the name, the
+    positionals in table order, then every other field in its surface form. -/
+private meta def itemUsage (i : ItemSpec) : String :=
+  let lead := i.leadingSelector.toList.map fun f => s!"[<{fieldName f}>]"
+  let positional := i.positional.filterMap fun fid => (i.field? fid).map (fieldUsage i)
+  let rest := i.fields.filterMap fun f =>
+    if i.positional.contains f.id || i.leadingSelector == some f.id then none
+    else some (fieldUsage i f)
+  let hold := if i.supportsHold then [s!"[hold: {orVals holdValues}]"] else []
+  " ".intercalate ([itemName i.id] ++ lead ++ positional ++ rest ++ hold)
 
 private meta def isStringy : SpecLang.FieldType → Bool
   | .color | .iconPath | .str => true
@@ -132,7 +131,7 @@ private meta def jsonNumOf? (stx : Syntax) : Option JsonNumber :=
   if let some n := stx.isNatLit? then
     some (JsonNumber.fromNat n)
   else if let some (m, sign, e) := stx.isScientificLit? then
-    if sign then some ⟨Int.ofNat m, e⟩ else some ⟨Int.ofNat (m * 10 ^ e), 0⟩
+    some (OfScientific.ofScientific m sign e)
   else none
 
 open SpecLang in
@@ -166,6 +165,73 @@ private meta def checkEnumList (ref : Syntax) (what : String)
           throwErrorAt ref m!"'{k}' restricts {what} to {orVals allowed}; \
             '{c}' cannot join it"
 
+/-! ### Scalar values
+
+One reader serves the three places a scalar can sit — a nested block keyword,
+a `name: value`, a positional argument — which differ only in how the syntax
+carries the word/string/number, abstracted by `ArgView`. -/
+
+private meta structure ArgView where
+  ref : Syntax
+  word? : Option String := none
+  str? : Option String := none
+  num? : Option JsonNumber := none
+
+/-- A bare token, as blocks carry them. Only a string literal is a string. -/
+private meta def ArgView.ofToken (stx : Syntax) : ArgView :=
+  { ref := stx
+    word? := if stx.isIdent then some stx.getId.toString else none
+    str? := stx.isStrLit?
+    num? := jsonNumOf? stx }
+
+/-- A selector-expression leaf, as keyword values and positionals carry them.
+    A word also reads as a string, so a color can be written unquoted. -/
+private meta def ArgView.ofSel (stx : Syntax) : ArgView :=
+  let word? := if stx.isOfKind selIdentKind
+    then some (stx[0].getId.toString (escape := false)) else none
+  { ref := stx
+    word?
+    str? := if stx.isOfKind selStrKind then stx[0].isStrLit? else word?
+    num? := if stx.isOfKind selNumKind then stx[0].isNatLit?.map JsonNumber.fromNat
+            else jsonNumOf? stx }
+
+private meta def usageSuffix : Option String → MessageData
+  | some u => m!"; usage: {u}"
+  | none => m!""
+
+open SpecLang in
+private meta def enumWord (what : String) (vs : List String) (v : ArgView)
+    (usage? : Option String := none) : TermElabM String := do
+  let some w := v.word?
+    | throwErrorAt v.ref m!"{what} expects {orVals vs}{usageSuffix usage?}"
+  unless vs.contains w do
+    throwErrorAt v.ref m!"unknown {what} '{w}' (expected {", ".intercalate vs})"
+  return w
+
+open SpecLang in
+/-- One scalar against a field's table entry. Callers dispatch the non-scalar
+    types (selector, relation, block, enum-list) themselves: what those mean
+    differs by position. -/
+private meta def elabScalar (what : String) (f : FieldSpec) (v : ArgView)
+    (usage? : Option String := none) : TermElabM FieldVal := do
+  match f.type with
+  | .color | .iconPath | .str =>
+    let some s := v.str?
+      | throwErrorAt v.ref m!"{what} expects a string{usageSuffix usage?}"
+    return .str s
+  | .number .. =>
+    let some n := v.num?
+      | throwErrorAt v.ref m!"{what} expects a number{usageSuffix usage?}"
+    checkBounds v.ref what f n
+    return .num n
+  | .«enum» vs _ => return .«enum» (← enumWord what vs v usage?)
+  | .boolean _ =>
+    match v.word? with
+    | some "true" => return .bool true
+    | some "false" => return .bool false
+    | _ => throwErrorAt v.ref m!"{what} expects true|false{usageSuffix usage?}"
+  | _ => throwErrorAt v.ref m!"{what} does not take a scalar value"
+
 /-! ### Style blocks -/
 
 open SpecLang in
@@ -173,23 +239,8 @@ open SpecLang in
 private meta def elabBlockScalar (b : BlockSpec) (f : FieldSpec)
     (stx : Syntax) : TermElabM FieldVal := do
   match f.type with
-  | .color | .iconPath | .str =>
-    let some s := stx.isStrLit?
-      | throwErrorAt stx m!"{fieldName f.id} takes a string"
-    return .str s
-  | .number .. =>
-    let some n := jsonNumOf? stx
-      | throwErrorAt stx m!"{fieldName f.id} takes a number"
-    checkBounds stx (fieldName f.id) f n
-    return .num n
-  | .«enum» vs _ =>
-    unless stx.isIdent do
-      throwErrorAt stx m!"{fieldName f.id} expects {orVals vs}"
-    let w := stx.getId.toString
-    unless vs.contains w do
-      throwErrorAt stx m!"unknown {fieldName f.id} '{w}' \
-        (expected {", ".intercalate vs})"
-    return .«enum» w
+  | .color | .iconPath | .str | .number .. | .«enum» .. =>
+    elabScalar (fieldName f.id) f (.ofToken stx)
   | _ => throwErrorAt stx m!"({blockName b.id} …) cannot nest {fieldName f.id}"
 
 open SpecLang in
@@ -243,13 +294,13 @@ private meta def elabBlock (usage : String) (b : BlockSpec) (stx : Syntax) :
       set := set.push (f.id, ← elabBlockScalar b f args[0]![0])
     else
       throwErrorAt inner m!"unexpected argument in ({blockName b.id} …); usage: {usage}"
-  -- table order, so the wire is stable however the source ordered them
+  -- table order, so the serialized spec is stable however the source ordered them
   return b.fields.filterMap fun f => (set.find? (·.1 == f.id)).map fun (_, v) => (f.id, v)
 
 open SpecLang in
 /-- An enum field's block alternative (`group.addEdge`): the direction word
-    plus the alt's style blocks. Direction alone stays the bare enum form on
-    the wire; any block promotes it to the `{enumField, blocks…}` object. -/
+    plus the alt's style blocks. Direction alone serializes as the bare enum
+    form; any block promotes it to the `{enumField, blocks…}` object. -/
 private meta def elabAltForm (usage : String) (f : FieldSpec) (alt : AltForm)
     (vs : List String) (stx : Syntax) : TermElabM FieldVal := do
   let mut dir : Option String := none
@@ -284,6 +335,60 @@ private meta def elabAltForm (usage : String) (f : FieldSpec) (alt : AltForm)
 /-! ### Op elaboration -/
 
 open SpecLang in
+/-- `(kw …)`: a style block, or an enum field's block alternative. -/
+private meta def elabBlockArg (item : ItemSpec) (usage : String) (inner : Syntax) :
+    TermElabM (FieldId × FieldVal) := do
+  let kw := inner[1].getId.toString
+  match item.fields.find? (fun f => fieldName f.id == kw) with
+  | none =>
+    let blocks := item.fields.filterMap fun f =>
+      match f.type, f.alt with
+      | .block _, _ => some s!"({fieldName f.id} …)"
+      | .«enum» _ _, some _ => some s!"({fieldName f.id} …)"
+      | _, _ => none
+    throwErrorAt inner m!"unknown block '({kw} …)'\
+      {if blocks.isEmpty then m!"" else m!"; expected {", ".intercalate blocks}"}; \
+      usage: {usage}"
+  | some f =>
+    match f.type, f.alt with
+    | .block bid, _ => return (f.id, .block (← elabBlock usage (BlockSpec.of bid) inner))
+    | .«enum» vs _, some alt => return (f.id, ← elabAltForm usage f alt vs inner)
+    | _, _ =>
+      throwErrorAt inner m!"'{kw}' is written {kw}: <value>; usage: {usage}"
+
+open SpecLang in
+/-- `name: value` for everything a keyword can carry. -/
+private meta def elabKwValue (scope : SelScope) (usage : String)
+    (sel : Syntax → SelWidth → TermElabM Sel) (f : FieldSpec) (v : Syntax) :
+    TermElabM FieldVal := do
+  match f.type with
+  | .selector w => return .sel (← sel v w)
+  | .relation =>
+    if v.isOfKind selIdentKind then
+      return .rel (← elabFieldName scope ⟨v[0]⟩)
+    throwErrorAt v m!"{fieldName f.id}: expects a relation name"
+  | .block _ => throwErrorAt v m!"write ({fieldName f.id} …) for a style block"
+  | .enumList _ _ => throwErrorAt v m!"'{fieldName f.id}' is positional; usage: {usage}"
+  | _ => elabScalar (fieldName f.id) f (.ofSel v)
+
+open SpecLang in
+/-- A bare word past the positionals: bool sugar, else the unique optional
+    enum field that lists the word. -/
+private meta def trailingWordField? (item : ItemSpec) (w : String) :
+    Option (FieldId × FieldVal) :=
+  let sugar := boolSugar.find? fun (word, bf, _) =>
+    word == w && item.fields.any fun f => f.id == bf && f.type matches .boolean _
+  match sugar with
+  | some (_, bf, v) => some (bf, .bool v)
+  | none =>
+    let hits := item.fields.filter fun f =>
+      !item.positional.contains f.id && f.alt.isNone &&
+        match f.type with | .«enum» vs _ => vs.contains w | _ => false
+    match hits with
+    | [f] => some (f.id, .«enum» w)
+    | _ => none
+
+open SpecLang in
 meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
     TermElabM SpytialOp := do
   let (name, head) ←
@@ -304,80 +409,21 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
       if stx.isOfKind numLitKind then
         throwErrorAt stx m!"expected a selector; usage: {usage}"
       elabSelector scope (arityExpectOf w) ⟨stx⟩
-    -- A selector-category leaf's payload word, for scalar keyword values.
-    let word? (v : Syntax) : Option String :=
-      if v.isOfKind selIdentKind then some (v[0].getId.toString (escape := false))
-      else none
-    let strVal? (v : Syntax) : Option String :=
-      if v.isOfKind selStrKind then v[0].isStrLit?
-      else word? v
     let setField (fields : Array (FieldId × FieldVal)) (ref : Syntax)
         (f : FieldId) (v : FieldVal) : TermElabM (Array (FieldId × FieldVal)) := do
       if fields.any (·.1 == f) then
         throwErrorAt ref m!"duplicate {fieldName f}; usage: {usage}"
       return fields.push (f, v)
-    -- `name: value` for everything a keyword can carry
-    let elabKwValue (f : FieldSpec) (v : Syntax) : TermElabM FieldVal := do
-      match f.type with
-      | .selector w => return .sel (← sel v w)
-      | .«enum» vs _ =>
-        let some w := word? v
-          | throwErrorAt v m!"{fieldName f.id}: expects {orVals vs}"
-        unless vs.contains w do
-          throwErrorAt v m!"unknown {fieldName f.id} '{w}' (expected {", ".intercalate vs})"
-        return .«enum» w
-      | .boolean _ =>
-        match word? v with
-        | some "true" => return .bool true
-        | some "false" => return .bool false
-        | _ => throwErrorAt v m!"{fieldName f.id}: expects true|false"
-      | .str | .iconPath | .color =>
-        let some s := strVal? v
-          | throwErrorAt v m!"{fieldName f.id}: expects a string"
-        return .str s
-      | .relation =>
-        if v.isOfKind selIdentKind then
-          return .rel (← elabFieldName scope ⟨v[0]⟩)
-        throwErrorAt v m!"{fieldName f.id}: expects a relation name"
-      | .number .. =>
-        let some n := (if v.isOfKind selNumKind then v[0].isNatLit? else none)
-              |>.map JsonNumber.fromNat
-          | throwErrorAt v m!"{fieldName f.id}: expects a number"
-        checkBounds v (fieldName f.id) f n
-        return .num n
-      | .block _ => throwErrorAt v m!"write ({fieldName f.id} …) for a style block"
-      | .enumList _ _ => throwErrorAt v m!"'{fieldName f.id}' is positional; usage: {usage}"
     let mut fields : Array (FieldId × FieldVal) := #[]
     let mut hold : Option String := none
     let mut pending := item.positional
-    -- an entered enum-list swallows every later bare word
-    let mut elField : Option FieldSpec := none
-    let mut elChosen : Array String := #[]
-    let mut elRef : Syntax := head
+    -- an entered variadic enum-list: its field, the words so far, the last ref
+    let mut tail : Option (FieldSpec × Array String × Syntax) := none
     for i in [0:argStxs.size] do
-      let arg := argStxs[i]!
-      let inner := argInner arg
+      let inner := argInner argStxs[i]!
       if inner.isOfKind ``spytialBlockStx then
-        let kw := inner[1].getId.toString
-        match item.fields.find? (fun f => fieldName f.id == kw) with
-        | none =>
-          let blocks := item.fields.filterMap fun f =>
-            match f.type, f.alt with
-            | .block _, _ => some s!"({fieldName f.id} …)"
-            | .«enum» _ _, some _ => some s!"({fieldName f.id} …)"
-            | _, _ => none
-          throwErrorAt inner m!"unknown block '({kw} …)'\
-            {if blocks.isEmpty then m!"" else m!"; expected {", ".intercalate blocks}"}; \
-            usage: {usage}"
-        | some f =>
-          match f.type, f.alt with
-          | .block bid, _ =>
-            fields ← setField fields inner f.id
-              (.block (← elabBlock usage (BlockSpec.of bid) inner))
-          | .«enum» vs _, some alt =>
-            fields ← setField fields inner f.id (← elabAltForm usage f alt vs inner)
-          | _, _ =>
-            throwErrorAt inner m!"'{kw}' is written {kw}: <value>; usage: {usage}"
+        let (fid, v) ← elabBlockArg item usage inner
+        fields ← setField fields inner fid v
       else if inner.isOfKind ``spytialKwArg then
         let kw := inner[0].getId.toString
         let vstx := inner[2]
@@ -386,31 +432,20 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
             throwErrorAt inner m!"{name} does not support hold; usage: {usage}"
           if hold.isSome then
             throwErrorAt inner m!"duplicate hold"
-          let some w := word? vstx
-            | throwErrorAt vstx m!"hold: takes {orVals holdValues}"
-          unless holdValues.contains w do
-            throwErrorAt vstx m!"unknown hold value '{w}' \
-              (expected {", ".intercalate holdValues})"
-          hold := some w
+          hold := some (← enumWord holdField holdValues (.ofSel vstx))
         else
           match item.fields.find? (fun f => fieldName f.id == kw) with
           | none => throwErrorAt inner m!"unknown keyword '{kw}:'; usage: {usage}"
           | some f =>
             if item.positional.contains f.id then
               throwErrorAt inner m!"'{kw}' is a positional argument; usage: {usage}"
-            fields ← setField fields inner f.id (← elabKwValue f vstx)
-      else if let some f := elField then
-        -- the variadic tail of an entered enum-list
+            fields ← setField fields inner f.id (← elabKwValue scope usage sel f vstx)
+      else if let some (f, chosen, _) := tail then
         let .enumList vs _ := f.type | unreachable!
-        let some w := word? inner
-          | throwErrorAt inner m!"expected {fieldName f.id} ({orVals vs}); usage: {usage}"
-        unless vs.contains w do
-          throwErrorAt inner m!"unknown {fieldName f.id} '{w}' \
-            (expected {", ".intercalate vs})"
-        if elChosen.contains w then
+        let w ← enumWord (fieldName f.id) vs (.ofSel inner) usage
+        if chosen.contains w then
           throwErrorAt inner m!"duplicate {fieldName f.id} '{w}'"
-        elChosen := elChosen.push w
-        elRef := inner
+        tail := some (f, chosen.push w, inner)
       else if i == 0 && item.leadingSelector.isSome
           && (match pending.head?.bind item.field? with
               | some f => isNumeric f.type
@@ -424,76 +459,35 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
       else
         match pending with
         | fid :: rest =>
+          pending := rest
           let some f := item.field? fid | unreachable!
           match f.type with
           | .enumList vs _ =>
-            let some w := word? inner
-              | throwErrorAt inner m!"expected {fieldName fid} ({orVals vs}); usage: {usage}"
-            unless vs.contains w do
-              throwErrorAt inner m!"unknown {fieldName fid} '{w}' \
-                (expected {", ".intercalate vs})"
-            elField := some f
-            elChosen := #[w]
-            elRef := inner
-            pending := rest
+            tail := some (f, #[← enumWord (fieldName fid) vs (.ofSel inner) usage], inner)
           | .selector w =>
             fields ← setField fields inner fid (.sel (← sel inner w))
-            pending := rest
           | .relation =>
             unless inner.isOfKind selIdentKind do
               throwErrorAt inner m!"expected a relation name; usage: {usage}"
             fields ← setField fields inner fid (.rel (← elabFieldName scope ⟨inner[0]⟩))
-            pending := rest
-          | .str | .iconPath | .color =>
-            let some s := strVal? inner
-              | throwErrorAt inner m!"expected {fieldName fid} (a name or string \
-                  literal); usage: {usage}"
-            fields ← setField fields inner fid (.str s)
-            pending := rest
-          | .«enum» vs _ =>
-            let some w := word? inner
-              | throwErrorAt inner m!"expected {fieldName fid} ({orVals vs}); usage: {usage}"
-            unless vs.contains w do
-              throwErrorAt inner m!"unknown {fieldName fid} '{w}' \
-                (expected {", ".intercalate vs})"
-            fields ← setField fields inner fid (.«enum» w)
-            pending := rest
-          | .number .. =>
-            let some n := jsonNumOf? inner
-              | throwErrorAt inner m!"expected {fieldName fid} (a numeral); usage: {usage}"
-            checkBounds inner (fieldName fid) f n
-            fields ← setField fields inner fid (.num n)
-            pending := rest
+          | .str | .iconPath | .color | .«enum» .. | .number .. =>
+            fields ← setField fields inner fid
+              (← elabScalar (fieldName fid) f (.ofSel inner) usage)
           | _ =>
             throwErrorAt inner m!"unexpected argument; usage: {usage}"
         | [] =>
-          -- past the positionals: bool sugar, then a bare optional-enum value
-          let some w := word? inner
-            | do
-              let vocab := bareWordVocab item
-              throwErrorAt inner m!"unexpected extra argument\
-                {if vocab.isEmpty then m!"" else m!" (expected {orVals vocab})"}; \
-                usage: {usage}"
-          let sugar := boolSugar.find? fun (word, bf, _) =>
-            word == w && item.fields.any fun f =>
-              f.id == bf && f.type matches .boolean _
-          if let some (_, bf, v) := sugar then
-            fields ← setField fields inner bf (.bool v)
-          else
-            let hits := item.fields.filter fun f =>
-              !item.positional.contains f.id && f.alt.isNone &&
-                match f.type with | .«enum» vs _ => vs.contains w | _ => false
-            match hits with
-            | [f] => fields ← setField fields inner f.id (.«enum» w)
-            | _ =>
-              let vocab := bareWordVocab item
-              throwErrorAt inner m!"unexpected argument '{w}'\
-                {if vocab.isEmpty then m!"" else m!" (expected {orVals vocab})"}; \
-                usage: {usage}"
-    if let some f := elField then
+          let vocabMsg := match bareWordVocab item with
+            | [] => m!""
+            | vocab => m!" (expected {orVals vocab})"
+          let some w := (ArgView.ofSel inner).word?
+            | throwErrorAt inner m!"unexpected extra argument{vocabMsg}; usage: {usage}"
+          let some (fid, v) := trailingWordField? item w
+            | throwErrorAt inner m!"unexpected argument '{w}'{vocabMsg}; usage: {usage}"
+          fields ← setField fields inner fid v
+    if let some (f, chosen, ref) := tail then
       if let .enumList _ rules := f.type then
-        checkEnumList elRef (fieldName f.id) rules elChosen.toList
-      fields ← setField fields elRef f.id (.enums elChosen.toList)
+        checkEnumList ref (fieldName f.id) rules chosen.toList
+      fields ← setField fields ref f.id (.enums chosen.toList)
     if let some fid := pending.head? then
       throwErrorAt head m!"missing {fieldName fid}; usage: {usage}"
     if item.mustSetSomething then
@@ -503,7 +497,7 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
         | none => true
       unless hasEffect do
         throwErrorAt head m!"{name} sets nothing; usage: {usage}"
-    -- table order, so the wire is stable however the source ordered them
+    -- table order, so the serialized spec is stable however the source ordered them
     let ordered := item.fields.filterMap fun f =>
       (fields.find? (·.1 == f.id)).map fun (_, v) => (f.id, v)
     return { item := itemId, fields := ordered, hold }
@@ -612,8 +606,7 @@ private meta def elabUseSiteOps (e : Expr) (ops : Array (TSyntax `spytial_op)) :
   elabSpytialOps (← scopeForExpr e) ops (some (attached?.getD []))
 
 /-- An explicit `with [<ops>]` overrides the type's attached spec, unless a
-    `..` element splices it back in. The spec is rendered to its wire string
-    once, here. -/
+    `..` element splices it back in. The spec is serialized once, here. -/
 private meta def elabSpytialPayload (t : Syntax) (ops? : Option (Array (TSyntax `spytial_op)))
     (cfg : WalkConfig) : TermElabM (JsonDataInstance × Option String) :=
   -- The command boundary is where `#eval` discards what it derived, and both

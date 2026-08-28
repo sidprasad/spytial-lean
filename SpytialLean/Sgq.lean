@@ -7,21 +7,14 @@ namespace SpytialLean.Sgq
 
 open Lean Elab Command SpytialLean.ManifestJson
 
-/-! # The SGQ language, read off its manifest at elaboration time
+/-! # The SGQ language, read off its manifest
 
 simple-graph-query publishes its grammar as `docs/sgq-language.json`; the
-commands below parse the resolved package's copy while this module elaborates
-and declare the id enumerations and tables. The parser, the elaborator and
-the lowering read these and name no construct, so a construct added upstream
-arrives by rebuilding against the bumped dependency.
+commands below parse the resolved package's copy and declare the id
+enumerations and tables. `docs/language-manifests.md` is the design story. -/
 
-A fixity, kind, template item, arity rule or part role with no representation
-here stops elaboration naming the construct, rather than yielding a plausible
-table. -/
-
--- The resolved package's manifest. Missing ⇒ this module does not elaborate;
--- until a release ships it, pnpm-workspace.yaml overrides the package to a
--- local checkout.
+-- TODO(sgq#68): unpublished; pnpm-workspace.yaml overrides the package to a
+-- local checkout until a release ships the manifest.
 private meta def manifestText : String :=
   include_str ".." / "node_modules" / "simple-graph-query" / "docs" / "sgq-language.json"
 
@@ -49,12 +42,12 @@ private meta def preferredSpelling : List (String × String) :=
 /-! ## The language as data -/
 
 json_union Kind where
-  | "relation" => relation
-  | "number" => number
-  | "boolean" => boolean
-  | "string" => «string»
-  | "operand" => operand
-  | "any" => any
+  | relation
+  | number
+  | boolean
+  | «string»
+  | operand
+  | any
 
 deriving instance DecidableEq for Kind
 
@@ -68,29 +61,29 @@ public meta structure Kinds where
 
 /-- The coarse classification; `template` is where the pieces actually go. -/
 json_union Fixity where
-  | "infix" => «infix»
-  | "prefix" => «prefix»
-  | "atom" => atom
-  | "bracket" => bracket
-  | "binder" => binder
-  | "quantifier" => quantifier
-  | "comprehension" => comprehension
+  | «infix»
+  | «prefix»
+  | atom
+  | bracket
+  | binder
+  | quantifier
+  | comprehension
 
 deriving instance DecidableEq for Fixity
 
 /-- `slot` is as wide as that operand, `sum` the two added, `join` is
     `a + b - 2`, `boxJoin` folds `join` over an argument list. -/
 json_union ArityRule on "rule" where
-  | "slot" => slot (index : Nat)
-  | "fixed" => fixed (width : Nat)
-  | "sum" => «sum»
-  | "join" => «join»
-  | "boxJoin" => boxJoin
-  | "binders" => binders
+  | slot (index : Nat)
+  | fixed (width : Nat)
+  | «sum»
+  | «join»
+  | boxJoin
+  | binders
 
 /-- The static analyzer's rule; the evaluator re-checks it only for `++`. -/
 json_union Requires where
-  | "equal" => equal
+  | equal
 
 public meta structure Arity where
   yields : Option ArityRule
@@ -131,20 +124,20 @@ public meta def loosest : Nat := 0
 Roles and ids stay strings until the enumerations exist. -/
 
 json_union BinderStyle where
-  | "typed" => typed
-  | "bound" => bound
+  | typed
+  | bound
 
 json_union JItem on "item" where
-  | "operand" => operand (level : Nat)
-  | "repeat" => «repeat» (level : Nat)
-  | "list" => list (level : Nat) (role : String)
-  | "binders" => binders (style : BinderStyle) (level : Nat)
-  | "body" => body (level : Nat)
-  | "name" => name (qualified : Bool)
-  | "constant" => constant
-  | "operator" => operator
-  | "part" => part (role : String) («optional» : Bool)
-  | "optional" => «optional» (items : List JItem)
+  | operand (level : Nat)
+  | «repeat» (level : Nat)
+  | list (level : Nat) (role : String)
+  | binders (style : BinderStyle) (level : Nat)
+  | body (level : Nat)
+  | name (qualified : Bool)
+  | constant
+  | operator
+  | part (role : String) («optional» : Bool)
+  | «optional» (items : List JItem)
 
 private meta partial def JItem.roles : JItem → List String
   | .list _ r => [r]

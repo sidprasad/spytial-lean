@@ -7,28 +7,13 @@ namespace SpytialLean.SpecLang
 
 open Lean Elab Command SpytialLean.ManifestJson
 
-/-! # The op surface, read off its manifest at elaboration time
+/-! # The op surface, read off its manifest
 
-The op surface spytial-lean accepts *is* spytial-core's layout-spec language,
-so none of it is written here: which items exist, which section each lowers
-into, which fields each takes, their types, enum values, list rules, numeric
-bounds, and the shared style blocks all come from
-`docs/spytial-language.json`. The commands below parse the resolved package's
-copy while this module elaborates and declare the id enumerations and tables.
-The syntax, the elaborator and the lowering read these and name no item, so an
-item or field added upstream arrives by rebuilding against the bumped
-dependency.
+The op surface spytial-lean accepts *is* spytial-core's layout-spec language:
+the commands below parse `docs/spytial-language.json` from the resolved
+package and declare the id enumerations and tables.
+`docs/language-manifests.md` is the design story. -/
 
-Deprecated items and fields get no surface: the Lean DSL is new, so it has no
-legacy specs to keep parsing. They are declared as an account
-(`deprecatedItems`, `deprecatedFields`) so a coverage test can insist every
-manifest entry is either surfaced or declined by name.
-
-A field type, value shape, section set, arity, list rule or deprecation kind
-with no representation here stops elaboration naming the item, rather than
-yielding a plausible table. -/
-
--- The resolved package's manifest. Missing ⇒ this module does not elaborate.
 -- The widget is what depends on spytial-core, so pnpm resolves it under there.
 private meta def manifestText : String :=
   include_str ".." / "widget" / "node_modules" / "spytial-core" / "docs" /
@@ -50,8 +35,8 @@ public meta inductive SelWidth where
 /-- The manifest states one string; two fields carry a prose-only second form
     that `selWidthOverride` refines. -/
 json_union DeclaredArity where
-  | "unary" => unary
-  | "binary" => binary
+  | unary
+  | binary
   | "n-ary" => nary
 
 deriving instance DecidableEq for DeclaredArity
@@ -71,29 +56,29 @@ public meta structure EnumListRules where
   deriving Repr, Inhabited
 
 json_union ValueShape where
-  | "mapping" => mapping
-  | "scalar" => scalar
+  | mapping
+  | scalar
 
 json_union Section where
-  | "constraints" => constraints
-  | "directives" => directives
+  | constraints
+  | directives
 
 json_union JFieldType on "type" where
-  | "selector" => selector (arity : DeclaredArity)
-  | "relation" => relation
+  | selector (arity : DeclaredArity)
+  | relation
   | "string" => str
-  | "enum" => «enum» (values : List String) (default : Option String)
+  | «enum» (values : List String) (default : Option String)
   | "enum-list" => enumList (values : List String) (listRules : Option JsonObject)
-  | "number" => number (minimum : Option JsonNumber) (exclusiveMinimum : Option JsonNumber)
+  | number (minimum : Option JsonNumber) (exclusiveMinimum : Option JsonNumber)
       (maximum : Option JsonNumber) (exclusiveMaximum : Option JsonNumber)
-  | "boolean" => boolean (default : Option Bool)
-  | "block" => block (block : String)
+  | boolean (default : Option Bool)
+  | block (block : String)
   | "icon-path" => iconPath
-  | "color" => color
+  | color
 
 json_union JAltField on "type" where
-  | "enum" => «enum» (name : String)
-  | "block" => block (name : String) (block : String)
+  | «enum» (name : String)
+  | block (name : String) (block : String)
 
 public meta structure JAltForm where
   «type» : String
@@ -149,18 +134,19 @@ public meta structure JManifest where
 /-! ## House style
 
 The manifest describes core's YAML surface; how its fields lay out as Lean
-arguments is this package's own. Stated as tables keyed by manifest names, so
-an entry that stops matching upstream stops elaboration by name. -/
+arguments is this package's own. Each table is keyed by manifest ids, and
+`parseManifest` rejects an entry naming an id the manifest no longer has. -/
 
-/-- Items whose optional `selector` may fill the leading positional slot even
-    though it is not the item's first manifest field. By default an optional
-    selector leads only when the manifest lists it first (`atomStyle`); `size`
-    puts it last but the surface reads better selector-first. -/
+/-- Items where an optional selector may lead the argument list even though the
+    manifest does not list it first. Without an entry a selector leads only
+    when it is the item's first field (`atomStyle`); `size` lists it last, but
+    `size (lo) 30 20` reads better than `size 30 20 (lo)`. -/
 private meta def leadingSelectorOverride : List String := ["size"]
 
-/-- Selector widths the manifest cannot state (its `arity` is one string; both
-    of these carry a prose-only second form). The declared base is asserted so
-    an upstream change forces a re-read here.
+/-- Selector widths refined past the manifest's single `arity` string.
+    TODO(spytial-core): both of these fields state a second form in prose only;
+    the manifest should carry the full width set. The declared base is asserted
+    so an upstream change forces a re-read here.
     - group.selector: "A unary selector builds a single unkeyed group."
     - inferredEdge.selector: "May be unary when `draw` is given — the single
       atom then feeds both ends"; and the engine reads the whole tuple
@@ -171,16 +157,16 @@ private meta def selWidthOverride :
     (("inferredEdge", "selector"), .binary, .edge) ]
 
 /-- The graph-side name an item introduces for later ops to reference, with its
-    arity. The manifest types these fields as plain strings; that `group.name`
-    is a binder and an `inferredEdge` name an edge label lives only in prose
-    (`draw`: "the name of a `group` constraint"). -/
+    arity. TODO(spytial-core): the manifest types these fields as plain
+    strings; that `group.name` binds a unary group and `inferredEdge.name` an
+    edge label lives only in `draw`'s prose. -/
 private meta def introducesTable : List (String × String × Nat) :=
   [("group", "name", 1), ("inferredEdge", "name", 2)]
 
-/-- Directives whose optional fields are their entire effect: one that sets
-    none of them styles nothing, which elaboration rejects. Not derivable from
-    the manifest — `attribute` and `hideField` also have all-optional tails but
-    the item itself is the effect. -/
+/-- Directives whose optional fields are their entire effect: setting none of
+    them styles nothing, which elaboration rejects. TODO(spytial-core): the
+    manifest has no bit for this, and "all fields optional" does not imply it —
+    `attribute` is all-optional too and is its own effect. -/
 private meta def mustSetSomethingTable : List String := ["atomStyle", "edgeStyle"]
 
 /-- Bare words that set a boolean field, where a `(showLabel false)` keyword
@@ -299,6 +285,10 @@ private meta def fieldOf (itemId : String) (j : Json) : Except String (Option Ra
     .error (here "alternativeForm on a non-enum field")
   return some { name, type, required := c.required.getD false, alt }
 
+/-- One manifest item to a `RawItem`: decode, drop it if deprecated, then apply
+    the house-style tables — positional order, the leading selector, what it
+    introduces, `mustSetSomething` — checking each table entry it uses against
+    the fields the item actually has. -/
 private meta def itemOf (j : Json) : Except String (Option RawItem) := do
   let i : JItem ← fromJson? j
   if i.deprecated.isSome then return none
@@ -407,7 +397,7 @@ private meta def parseManifest : Except String RawManifest := do
         .error s!"{id}: hold.supportedBy and items[].supportsHold disagree"
 
   -- Field ids are global across items and blocks: the same name means the same
-  -- wire key everywhere.
+  -- serialized key everywhere.
   let fieldIds := ((items.flatMap (·.fields) ++ blocks.flatMap (·.fields)).flatMap
     RawField.ids).eraseDups
   for i in items do
@@ -425,7 +415,7 @@ private meta def manifest! : CommandElabM RawManifest := do
 
 Item, block and field ids as generated enumerations, so a table lookup is
 total and a misspelling is a type error. Field ids are global: the same name
-is the same wire key wherever it appears, and `fieldName` is the wire key a
+is the same serialized key wherever it appears, and `fieldName` is the key a
 field lowers to (also its keyword-argument spelling). -/
 
 private meta def enumCtor (enum : Name) (id : String) : Ident :=

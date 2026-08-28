@@ -39,8 +39,8 @@ public meta inductive FieldVal where
   deriving Repr, Inhabited
 
 /-- One Spytial operation: a manifest item with its set fields. Unset
-    optional fields are absent, not defaulted — the wire carries what the
-    source said and core supplies its own defaults. -/
+    optional fields are absent, not defaulted — the serialized spec carries
+    what the source said and core supplies its own defaults. -/
 public meta structure SpytialOp where
   item : ItemId
   fields : List (FieldId × FieldVal)
@@ -75,8 +75,8 @@ The shape has two optional top-level keys:
 Which section an item lowers into is the table's `constraint`; each op lowers
 to a single `{yamlKey: …}` object over its set fields (a `scalar` item's one
 field is the payload itself). Selectors lower through `Sel.toSGQ` here — the
-environment stores the structured spec, and the wire string exists only in
-the widget payload.
+environment stores the structured spec, and the serialized string exists
+only in the widget payload.
 -/
 
 public meta instance : ToJson Sel := ⟨fun s => Json.str s.toSGQ⟩

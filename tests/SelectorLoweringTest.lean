@@ -150,7 +150,7 @@ private meta def ints : List (String × Sel) :=
 private meta def vals : List (String × Sel) :=
   [("plain", unary .«label» a), ("str", unary .«labelString» (binary .«join» a b)),
    ("bool", unary .«labelBoolean» (binary .«union» a b)),
-   ("ctor", .ctorLit `Foo.tt "tt"), ("strLit", .str "hi"),
+   ("ctor", .ctorLit `Foo.tt), ("strLit", .str "hi"),
    ("strEsc", .str "a\"b\\c\nd\te\r"), ("boolT", .boolLit true), ("boolF", .boolLit false)]
 
 private meta def emit (label s : String) : StateM (Array (String × String)) Unit :=

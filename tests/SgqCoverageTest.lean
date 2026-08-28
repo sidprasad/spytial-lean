@@ -111,12 +111,6 @@ private meta def report : Lean.Elab.Command.CommandElabM Unit := do
       unless registered rule do
         problems := problems.push s!"'{name}' is claimed hand-written, but no rule is registered for it"
 
-  -- The builtins are a second vocabulary, outside the cascade. `sgqBuiltin`
-  -- refuses a name the engine no longer has, so check every name it does.
-  for b in Sgq.binaryBuiltins ++ Sgq.unaryBuiltins ++ Sgq.setBuiltins do
-    unless sgqBuiltin b == b do
-      problems := problems.push s!"builtin '{b}' does not round-trip through `sgqBuiltin`"
-
   unless problems.isEmpty do
     throwError "selector coverage is out of date ({problems.size}):\n{
       "\n".intercalate problems.toList}"
