@@ -142,12 +142,20 @@ lean_lib Demos where
              `PartialTerms, `BDD, `Automata, `LeanSelectors]
   needs := #[widgetJsAll]
 
+/-- `SelectorLoweringTest` reads this with `IO.FS.readFile` as it elaborates,
+    which Lean's import graph does not see. Without naming it here, editing the
+    golden leaves a stale olean and the comparison does not re-run. -/
+input_file sgqLoweringGolden where
+  path := "tests" / "SelectorLoweringTest.golden.tsv"
+  text := true
+
 /-- Headless unit tests: `lake build SpytialTests`. -/
 lean_lib SpytialTests where
   srcDir := "tests"
   roots := #[`WalkCanon, `TypeShapeTest, `CoverageTest, `TacticTest, `SelectorTest,
              `LeanSelectorTest, `SelectorLoweringTest, `SgqCoverageTest,
              `SpecSurfaceTest, `IdentityTest, `IdentityWalkTest, `RelationShapeTest]
+  needs := #[sgqLoweringGolden]
 
 require proofwidgets from
   git "https://github.com/leanprover-community/ProofWidgets4" @ "v0.0.105"
