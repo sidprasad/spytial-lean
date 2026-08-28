@@ -16,5 +16,5 @@ catalog:
   '@playwright/test': 1.62.0
 
 minimumReleaseAgeExclude:
-  - spytial-core@4.4.3
+  - spytial-core@5.4.0
   - simple-graph-query@3.1.0
