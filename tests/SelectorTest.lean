@@ -6,11 +6,6 @@ meta import SpytialLean.Command
 
 open SpytialLean Lean Elab Command
 
--- These goldens pin the SGQ lowering, not the source stamp, so they leave the
--- stamp out rather than restate it on every op. It has its own tests, under
--- `## The source stamp` in LeanSelectorTest.
-set_option spytial.source false
-
 /-! # Tests for the embedded selector DSL
 
 Golden `#guard_msgs` pin the SGQ lowering; negative tests pin one diagnostic
@@ -126,7 +121,7 @@ info: {"directives":
 -- never spliced.
 /-- info: "(a + b).lo" -/
 #guard_msgs in
-#eval (Sel.join (.raw "a + b") (.rel "lo")).toSGQ
+#eval (Sel.node .«join» (some .«join») #[.expr (.raw "a + b"), .expr (.rel "lo")]).toSGQ
 
 /-! ## Golden storage — `spytial_spec` attaches the structured spec -/
 
@@ -451,7 +446,7 @@ error: this position expects a relational expression, but the selector is a labe
 #guard_msgs in
 #spytial.spec sExample with [edgeStyle lof (lineStyle "red")]
 
-/-- error: unknown direction 'sideways' (expected above, below, left, right, directlyAbove, directlyBelow, directlyLeft, directlyRight) -/
+/-- error: unknown directions 'sideways' (expected above, below, left, right, directlyAbove, directlyBelow, directlyLeft, directlyRight) -/
 #guard_msgs in
 #spytial.spec sExample with [orientation lo sideways]
 
@@ -462,16 +457,16 @@ error: unknown Spytial op 'orientate'; known ops: align, atomStyle, attribute, c
 #spytial.spec sExample with [orientate lo below]
 
 /--
-error: atomStyle sets nothing; usage: atomStyle <selector> (borderStyle <color> [<width>])? (fillStyle <color>)? (iconStyle <path> [full|badge])? [labels|noLabels]
+error: atomStyle sets nothing; usage: atomStyle [<selector>] [(fillStyle …)] [(borderStyle …)] [(iconStyle …)] [(textStyle …)] [labels|noLabels]
 -/
 #guard_msgs in
 #spytial.spec sExample with [atomStyle SBDD]
 
-/-- error: unexpected extra argument; usage: hideAtom <selector> -/
+/-- error: unexpected argument 'String'; usage: hideAtom <selector> -/
 #guard_msgs in
 #spytial.spec sExample with [hideAtom SBDD String]
 
-/-- error: expected a rotation direction (clockwise, counterclockwise); usage: cyclic <selector> [clockwise|counterclockwise] -/
+/-- error: unexpected extra argument (expected clockwise|counterclockwise); usage: cyclic <selector> [clockwise|counterclockwise] [hold: always|never] -/
 #guard_msgs in
 #spytial.spec sExample with [cyclic {x, y : SBDD | x->y in lo} "clockwise"]
 
@@ -953,11 +948,12 @@ info: {"directives":
   atomStyle {x : SRB | min[SRB.key] <= 3} (borderStyle "red")
 ]
 
--- Counting idiom and relational box join (`a[b] ≡ b.a`).
+-- Counting idiom and relational box join (`a[b] ≡ b.a`), which is kept as
+-- written rather than desugared: the engine takes both forms.
 /--
 info: {"constraints":
  [{"hideAtom": {"selector": "{x : SBDD | #{y : SBDD | some y.lo} = 2}"}},
-  {"hideAtom": {"selector": "SBDD.lo"}}]}
+  {"hideAtom": {"selector": "lo[SBDD]"}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [
@@ -981,7 +977,7 @@ info: {"directives":
   atomStyle {x : SRB | (sum y : SRB | @num:(y.key)) > 2} (borderStyle "red")
 ]
 
-/-- error: a sum-quantifier binder domain must have arity 1, got 2 -/
+/-- error: a quantifier binder domain must have arity 1, got 2 -/
 #guard_msgs in
 #spytial.spec sRB with [atomStyle {x : SRB | (sum y : left | @num:(y.key)) > 2} (borderStyle "red")]
 
@@ -1081,15 +1077,15 @@ info: {"directives":
 
 /-! ## Integer-layer type errors — one per class -/
 
-/-- error: this position expects a relational expression, but the selector is an integer (`#`, a numeral, `@num:`, or an int builtin) -/
+/-- error: this position expects a relational expression, but the selector is an integer expression -/
 #guard_msgs in
 #spytial.spec sExample with [hideAtom {x : SBDD | some #x.lo}]
 
-/-- error: this position expects a relational expression, but the selector is an integer (`#`, a numeral, `@num:`, or an int builtin) -/
+/-- error: this position expects a relational expression, but the selector is an integer expression -/
 #guard_msgs in
 #spytial.spec sExample with [hideAtom #lo + hi]
 
-/-- error: this position expects an integer expression (`#e`, a numeral, `@num:e`, or an int builtin) -/
+/-- error: cannot compare an integer expression with a relational expression -/
 #guard_msgs in
 #spytial.spec sExample with [hideAtom {x : SBDD | #x.lo = lo}]
 
@@ -1114,7 +1110,7 @@ info: {"directives":
 #guard_msgs in
 #spytial.spec sExample with [atomStyle {x : SBDD | @:x = true} (borderStyle "red")]
 
-/-- error: cannot compare a label value with this operand; a label value compares against a constructor or a string literal — for a numeric label, project with `@num:` -/
+/-- error: cannot compare a label/literal value with an integer expression -/
 #guard_msgs in
 #spytial.spec sExample with [hideAtom {x : SBDD | @:x = 5}]
 
@@ -1233,8 +1229,9 @@ info: {"constraints":
 
 /-! ## Token-table hygiene — the DSL must not reserve words or steal prefixes
 
-These fail to *compile* if a selector rule leaks into the global token table
-(`ni` as a keyword; a `"!in"` atom stealing the prefix of `!i…` negations). -/
+Selector rules add nothing to the global token table: a word spelling is read
+off the identifier, and a symbol spelling is an atom of the category-local
+table. Everything below fails to *compile* if either stops holding. -/
 
 def hygieneNi : Nat := 5
 def hygieneNotIn (input : Bool) : Bool := !input
@@ -1242,13 +1239,94 @@ def hygieneNotInBounds (inBounds : Bool) : Bool := !inBounds
 example : Nat := let and := 5; and
 example : Nat := let ni := hygieneNi; ni
 example : Option Nat := some 3
--- Keyword-led `.both` rules compile to `nonReservedSymbol`, so their words
--- never enter the token table.
 def hygieneSum : Nat := 5
 example : Nat := let univ := 3; univ
 example : Nat := let iden := 4; iden
 example : Nat := let sum := hygieneSum; sum
 example : Nat := let none := 7; none
+
+-- The symbols the selector grammar has and Lean does not. They are atoms of the
+-- category-local table only; reaching the global one would give them to every
+-- importing module. `+` is the control: a symbol both languages have is found,
+-- so the lookup is doing something.
+open Lean Parser in
+run_cmd do
+  let tbl := getTokenTable (← getEnv)
+  let leaked := ["@:", "@str:", "@bool:", "@num:", "<:", ":>", "<=>", "=<", "!in"]
+    |>.filter (tbl.find? · |>.isSome)
+  unless leaked.isEmpty do
+    throwError "these reached the global token table: {leaked}"
+  if (tbl.find? "+").isNone then
+    throwError "the lookup found nothing for '+', so it proves nothing"
+
+/-! ## Lean's keywords are ordinary relation names
+
+Nothing of Lean's token table reaches a selector, so a field whose name is a
+Lean keyword needs no escape. The engine's own reserved words still get
+backquoted on the way out. -/
+
+public structure SKeyword where
+  «fun» : Nat
+  «where» : Nat
+
+public def sKeyword : SKeyword := ⟨1, 2⟩
+
+/--
+info: {"constraints":
+ [{"hideAtom": {"selector": "{x : SKeyword | some x.`fun` and some x.where}"}}]}
+-/
+#guard_msgs in
+#spytial.spec sKeyword with [hideAtom {x : SKeyword | some x.fun and some x.where}]
+
+/-! ## Negated comparisons
+
+The engine spells a negation as a part of the comparison rather than an
+operator of its own, so `!=`, `!in`, `!ni` and their `not` spellings are one
+rule with one slot filled. -/
+
+/--
+info: {"constraints":
+ [{"hideAtom": {"selector": "{x : SBDD | x.lo != x.hi}"}},
+  {"hideAtom": {"selector": "{x : SBDD | x.lo !in x.hi}"}},
+  {"hideAtom": {"selector": "{x : SBDD | x.lo !in x.hi}"}},
+  {"hideAtom": {"selector": "{x : SBDD | x.lo !ni x.hi}"}},
+  {"hideAtom": {"selector": "{x : SBDD | x.lo !ni x.hi}"}},
+  {"hideAtom": {"selector": "{x : SBDD | x.lo ni x.hi}"}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [
+  hideAtom {x : SBDD | x.lo != x.hi},
+  hideAtom {x : SBDD | x.lo !in x.hi},
+  hideAtom {x : SBDD | x.lo not in x.hi},
+  hideAtom {x : SBDD | x.lo !ni x.hi},
+  hideAtom {x : SBDD | x.lo not ni x.hi},
+  hideAtom {x : SBDD | x.lo ni x.hi}
+]
+
+/-- error: a negated numeric comparison has no lowering; write the opposite operator -/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom {x : SBDD | #x.lo !< #x.hi}]
+
+/-! ## The region edge
+
+`ParserCache.tokenCache` survives `adaptUncacheableContextFn`, so an op
+argument whose first token lexes differently under the two tables would be
+served the outer reading: `spytialOpArg` tries `num` first, and `@:` is `@`
+under Lean's table. The error below is about types, which is the point — the
+selector parsed. -/
+
+/-- error: a selector picks out atoms or tuples, but this is a label/literal value -/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom @:SBDD]
+
+-- Every spelling the engine lists for an arrow's multiplicity round-trips: the
+-- node records which one was written, and the encoder writes it back.
+/--
+info: {"constraints":
+ [{"orientation": {"selector": "SBDD two -> SBDD", "directions": ["below"]}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [orientation SBDD two -> SBDD below]
 
 /-! ## Grammar tripwire — `docs/selectors.md` pins the surface grammar
 
@@ -1257,74 +1335,41 @@ name here; update the EBNF alongside this golden. -/
 
 /--
 info: spytial_sel:
-SpytialLean.selAtomLit
-SpytialLean.selBox
-SpytialLean.selCard
-SpytialLean.selIdent
-SpytialLean.selJoinOp
-SpytialLean.selLean
-SpytialLean.selNegNum
-SpytialLean.selNum
-SpytialLean.selProdOp
-SpytialLean.selProjBoolOp
-SpytialLean.selProjNumOp
-SpytialLean.selProjPlainOp
-SpytialLean.selProjStrOp
-SpytialLean.selStr
-SpytialLean.selSum
-SpytialLean.«spytial_sel(_)»
-SpytialLean.«spytial_sel*_»
-SpytialLean.«spytial_sel^_»
-SpytialLean.«spytial_sel_&_»
-SpytialLean.«spytial_sel_++_»
-SpytialLean.«spytial_sel_+_»
-SpytialLean.«spytial_sel_-_»
-SpytialLean.«spytial_sel_:>_»
-SpytialLean.«spytial_sel_<:_»
-SpytialLean.«spytial_sel{_,|_}»
-SpytialLean.«spytial_sel~_»
----
-info: spytial_sel_form:
-SpytialLean.selAndOp
-SpytialLean.selIffOp
-SpytialLean.selImpOp
-SpytialLean.selIteOp
-SpytialLean.selLet
-SpytialLean.selNiOp
-SpytialLean.selNotInOp
-SpytialLean.selNotNiOp
-SpytialLean.selOrOp
-SpytialLean.selQAll
-SpytialLean.selQLone
-SpytialLean.selQNo
-SpytialLean.selQOne
-SpytialLean.selQSome
-SpytialLean.selXorOp
-SpytialLean.spytial_sel_form!_
-SpytialLean.spytial_sel_formLone_
-SpytialLean.spytial_sel_formNo_
-SpytialLean.spytial_sel_formNot_
-SpytialLean.spytial_sel_formOne_
-SpytialLean.spytial_sel_formSome_
-SpytialLean.spytial_sel_form_!In_
-SpytialLean.spytial_sel_form_In_
-SpytialLean.«spytial_sel_form(_)»
-SpytialLean.«spytial_sel_form_!=_»
-SpytialLean.«spytial_sel_form_<=_»
-SpytialLean.«spytial_sel_form_<_»
-SpytialLean.«spytial_sel_form_=<_»
-SpytialLean.«spytial_sel_form_=_»
-SpytialLean.«spytial_sel_form_>=_»
-SpytialLean.«spytial_sel_form_>_»
+SpytialLean.sgqAtomLitRule
+SpytialLean.sgqIdentRule
+SpytialLean.sgqLetRule
+SpytialLean.sgqNegNumRule
+SpytialLean.sgqNumRule
+SpytialLean.sgqRule_and
+SpytialLean.sgqRule_application
+SpytialLean.sgqRule_block
+SpytialLean.sgqRule_cardinality
+SpytialLean.sgqRule_comparison
+SpytialLean.sgqRule_comprehension
+SpytialLean.sgqRule_grouping
+SpytialLean.sgqRule_iff
+SpytialLean.sgqRule_implies
+SpytialLean.sgqRule_intersection
+SpytialLean.sgqRule_join
+SpytialLean.sgqRule_multiplicityTest
+SpytialLean.sgqRule_not
+SpytialLean.sgqRule_or
+SpytialLean.sgqRule_override
+SpytialLean.sgqRule_product
+SpytialLean.sgqRule_quantifier
+SpytialLean.sgqRule_restriction
+SpytialLean.sgqRule_unaryPrefix
+SpytialLean.sgqRule_unionDifference
+SpytialLean.sgqRule_xor
+SpytialLean.sgqStrRule
 -/
 #guard_msgs in
 open Lean Parser in
 run_cmd do
   let cats := (parserExtension.getState (← getEnv)).categories
-  for cat in [`spytial_sel, `spytial_sel_form] do
-    let some c := cats.find? cat | throwError "no category {cat}"
-    let kinds := (c.kinds.toList.map (toString ·.1)).toArray.qsort (· < ·)
-    Lean.logInfo (m!"{cat}:\n" ++ m!"{"\n".intercalate kinds.toList}")
+  let some c := cats.find? `spytial_sel | throwError "no category spytial_sel"
+  let kinds := (c.kinds.toList.map (toString ·.1)).toArray.qsort (· < ·)
+  Lean.logInfo (m!"spytial_sel:\n" ++ m!"{"\n".intercalate kinds.toList}")
 
 /-! A relation name outside SGQ's bare-identifier rule: resolved unescaped,
 lowered backtick-quoted. -/

@@ -1,63 +1,69 @@
 # The selector language
 
-Selectors replicate Forge's relational expression/formula grammar, embedded as
-Lean syntax (categories `spytial_sel` and `spytial_sel_form`, declared in
+Selectors are simple-graph-query's relational expression/formula language,
+embedded as Lean syntax (category `spytial_sel`, declared in
 `SpytialLean/SelectorElab.lean`). This file is the language reference; the op
 positions that accept selectors are listed in the README.
 
+The grammar below is not written by hand. Every rule is built from the
+construct's production in simple-graph-query's `docs/sgq-language.json`, which
+is generated from its ANTLR grammar; `SpytialLean/Sgq.lean` reads that manifest
+into Lean tables as it elaborates. A construct added upstream gets a rule, a
+kind check, an arity check and a lowering by rebuilding, with no edit to this
+package. What is written by hand is listed at the end of this section.
+
 ## Grammar
 
-Tiers bind tighter downward; the numbers are the precedence levels in the
-source. Binary operators are left-associative except `implies`. The grammar is
-untyped — the relational/integer/value split ("Typing" below) is enforced by
-the elaborator, not the parser.
+Tiers bind tighter downward. The numbers are the engine's own precedence
+levels, used verbatim: the parser holds no scale of its own, so a cascade that
+moves upstream moves here. Binary operators are left-associative except
+`implies`. There is one category, as there is one grammar upstream: a formula
+and a relational expression sit in the same cascade, and which positions accept
+which is a question about kinds, settled by the elaborator ("Typing" below)
+rather than by the parser.
 
 ```ebnf
-(* expressions — spytial_sel *)
 sel ::=
-    "sum" ident ":" sel "|" sel                  (*  5: aggregation quantifier; integer *)
-  | sel "+" sel | sel "-" sel                    (* 30: union, difference *)
-  | "#" sel                                      (* 34: cardinality; integer *)
-  | sel "++" sel                                 (* 36: override *)
-  | sel "&" sel                                  (* 40: intersection *)
-  | sel [mult] "->" [mult] sel                   (* 50: product *)
-  | sel "<:" sel | sel ":>" sel                  (* 55: domain / range restriction *)
-  | sel "." sel                                  (* 60: join *)
-  | sel "[" sel ("," sel)* "]"                   (* 60: box join, a[b] ≡ b.a *)
-  | "^" sel | "*" sel | "~" sel                  (* 70: closures, transpose *)
-  | "@:" sel | "@str:" sel | "@bool:" sel        (* 100: label projections; value *)
-  | "@num:" sel                                  (* 100: numeric projection; integer *)
-  | ident                                        (* relation, sig, binder, or ctor label *)
+    "let" letBinds "|" sel                       (*  0: desugars by substitution *)
+  | quantifier ["disj"] binders "|" sel          (*  0 *)
+  | "sum" ["disj"] binders "|" sel               (*  0: aggregation; integer *)
+  | sel ("||" | "or") sel                        (*  1 *)
+  | sel "xor" sel                                (*  2 *)
+  | sel ("<=>" | "iff") sel                      (*  3 *)
+  | sel ("=>" | "implies") sel ["else" sel]      (*  4: right-associative *)
+  | sel ("&&" | "and") sel                       (*  5 *)
+  | ("!" | "not") sel                            (*  6 *)
+  | sel [neg] cmp sel                            (*  7 *)
+  | multiplicity sel                             (*  8: multiplicity test *)
+  | sel "+" sel | sel "-" sel                    (*  9: union, difference *)
+  | "#" sel                                      (* 10: cardinality; integer *)
+  | sel "++" sel                                 (* 11: override *)
+  | sel "&" sel                                  (* 12: intersection *)
+  | sel [mult] "->" [mult] sel                   (* 13: product *)
+  | sel "<:" sel | sel ":>" sel                  (* 14: domain / range restriction *)
+  | sel "[" sel ("," sel)* "]"                   (* 15: box join / builtin call *)
+  | sel "." sel                                  (* 16: join *)
+  | "^" sel | "*" sel | "~" sel                  (* 17: closures, transpose *)
+  | "@:" sel | "@str:" sel | "@bool:" sel        (* 17: label projections; value *)
+  | "@num:" sel                                  (* 17: numeric projection; integer *)
+  | ident                                        (* 18: relation, sig, binder, or ctor label *)
   | "univ" | "iden" | "none"
-  | "{" binders "|" form "}"                     (* comprehension; arity = #binders *)
+  | "{" binders "|" sel "}"                      (* 18: comprehension; arity = #binders *)
+  | "{" sel* "}"                                 (* 18: block, a conjunction *)
   | "(" sel ")"
   | string                                       (* escape hatch / string literal *)
   | int                                          (* integer literal *)
   | "`" name                                     (* atom literal, a Lean name literal *)
   | "lean" "(" term ")"                          (* raw Lean predicate; arity 1 *)
 
-mult ::= "lone" | "one" | "some" | "set"
-
-binders ::= group ("," group)*
-group   ::= ident ("," ident)* ":" sel
-
-(* formulas — spytial_sel_form *)
-form ::=
-    quantifier ["disj"] binders "|" form         (*  5 *)
-  | "let" letBinds "|" form                      (*  5: desugars by substitution *)
-  | form ("||" | "or") form                      (* 10 *)
-  | form "xor" form                              (* 13 *)
-  | form ("<=>" | "iff") form                    (* 16 *)
-  | form ("=>" | "implies") form ["else" form]   (* 20: right-associative *)
-  | form ("&&" | "and") form                     (* 30 *)
-  | ("!" | "not") form                           (* 40 *)
-  | sel cmp sel                                  (* 50 *)
-  | quantifier sel                               (* 60: multiplicity *)
-  | "(" form ")"
-
+mult         ::= "lone" | "one" | "some" | "two" | "set"
+multiplicity ::= "no" | "some" | "lone" | "one" | "two" | "set"
+quantifier   ::= "all" | "no" | "some" | "lone" | "one" | "two"
 letBinds ::= ident "=" sel ("," ident "=" sel)*
-quantifier ::= "all" | "no" | "some" | "lone" | "one"
-cmp ::= "=" | "!=" | "in" | "!in" | "not in" | "ni" | "!ni" | "not ni"
+binders  ::= group ("," group)*
+group    ::= ident ("," ident)* ":" sel
+neg ::= "!" | "not"
+cmp ::= "=" | "in" | "ni" | "is"
       | "<" | ">" | "<=" | ">=" | "=<"           (* integer comparisons; "=<" ≡ "<=" *)
 ```
 
@@ -65,17 +71,33 @@ The precedence is Forge's: implication binds tighter than `or` and `iff`
 (`a || b => c` is `a || (b => c)`), and implication is the only
 right-associative connective. Longest-match separates the quantifier
 `some x : A | φ` from the multiplicity `some e`, whose operand extends down
-through union (`some A + B` is `some (A + B)`). Whitespace matters twice: no
-space before a box-join `[`, and none between `-` and an integer literal. A
-string is the raw, unchecked SGQ escape hatch as a whole selector, and an
-ordinary string literal as a comparison operand.
+through union (`some A + B` is `some (A + B)`). A box join binds looser than a
+join, so `a.b[c]` is `(a.b)[c]` and `a[b].c` is a parse error in both languages
+— write `(a[b]).c`. Whitespace matters twice: no space before a box-join `[`,
+and none between `-` and an integer literal. A string is the raw, unchecked SGQ
+escape hatch as a whole selector, and an ordinary string literal as a
+comparison operand.
+
+A negation is a slot of the comparison rather than an operator of its own, as
+it is upstream, so `!=`, `not =`, `!in`, `not in`, `!ni` and `not ni` are one
+rule with that slot filled. Negating an integer comparison parses and is then
+rejected: there is no lowering for it, and the opposite operator says the same
+thing. `a is b` parses and is rejected too — the manifest records that the
+engine refuses to evaluate it.
+
+A selector lexes under its own token table, which holds the engine's symbols
+and nothing else. Two things follow. Lean's keywords are ordinary names here,
+so a field called `fun` or `where` needs no escape. And the DSL's own symbols —
+`@:`, `<:`, `<=>` and the rest — never reach the global token table, so
+importing this package does not reserve them anywhere else.
 
 An identifier is a single component. The selector lexer stops at a `.`, so the
 dot is always the join operator and `a.b` and `a . b` are the same selector,
 read as SGQ reads them — spacing carries no meaning, and a unary operator binds
-tighter (`^a.b` is `(^a).b`). A name that must contain a dot, or one that
-collides with a keyword, is escaped with guillemets: `«Untyped.Term»` for a
-qualified Lean type, `«univ»` for a field named after a nullary constant.
+tighter (`^a.b` is `(^a).b`). A name that must contain a dot is escaped with
+guillemets: `«Untyped.Term»` for a qualified Lean type. So is a name that
+collides with one of the grammar's own words: `«univ»` for a field named after
+a nullary constant.
 
 Relative to Forge, the label projections (`@:`, `@str:`, `@bool:`, `@num:`)
 and the raw-string escape hatch are SGQ/Spytial extensions, and atom literals
@@ -84,13 +106,23 @@ declaration and temporal layers. Arrow multiplicities (`A one -> lone B`)
 parse for grammar parity, but the engine rejects them at render: they are
 declaration and constraint syntax, not part of an expression.
 
+**What is written by hand.** Five rules, none of which grows with the language:
+the four literal forms (identifier, string, integer, atom literal), which are
+lexical rather than constructs and which Lean's own lexer reads structurally;
+and `let`, which the engine parses and refuses to run and which this package
+implements by substitution. The named constants `univ`, `iden` and `none` have
+no rule at all: their spellings are identifiers, so an atom-keyed rule would
+never fire on an unspaced `univ.lo`, and they are read off the identifier
+instead. `tests/SgqCoverageTest.lean` keeps that account and fails when a
+construct upstream falls outside it.
+
 ## Meaning
 
 | Form | Meaning |
 |------|---------|
 | `left`, `app_0` | a field relation (arity 2: parent → child) |
 | `RBNode`, `String` | a type sig (arity 1: all atoms of that type) |
-| `a[b, …]` | box join (`a[b] ≡ b.a`) |
+| `a[b, …]` | box join (`a[b] ≡ b.a`), kept as written |
 | `{x, y : T \| φ}` | set comprehension (arity = number of binders) |
 | `@:e`, `@str:e`, `@bool:e` | label projections (string/bool value reads) |
 | `univ`, `iden` | the universe and identity relations |
@@ -102,13 +134,15 @@ inner binder would capture is a compile error.
 
 ## Typing
 
-The elaborator types every expression as relational, integer, or value; each
-position accepts specific kinds, so SGQ's silent scalar/tuple confusion
-(`some #e`) is a compile error.
+The elaborator gives every expression one of the manifest's kinds — relation,
+number, boolean, string — and every slot accepts the kind the manifest says it
+accepts, so SGQ's silent scalar/tuple confusion (`some #e`) is a compile error.
+A comparison accepts either kind on both sides and requires the two to agree,
+so `#a = b` is an error rather than a coercion.
 
 **Integer layer.** The integer forms are: `#e` (cardinality), integer
 literals, `@num:e` (numeric projection), the builtins `add subtract multiply
-divide remainder abs sign`, the aggregators `sum[e]`, `min[e]`, and `max[e]`
+divide remainder abs sign floor ceil`, the aggregators `sum[e]`, `min[e]`, and `max[e]`
 (lowered through `@num:` — the engine aggregates numeric labels, not atom
 ids), the `sum x : A | ie` aggregation quantifier, and the int comparisons.
 Integer positions accept exactly these forms; tuple positions reject them.
@@ -182,7 +216,8 @@ which shape to pick, what does not work, and what each error means.
 The elaborator computes the target type's **data vocabulary**: the reachable
 closure of type sigs, field-relation names, and nullary-constructor labels
 that the relationalizer can emit. It checks every identifier and every
-operator's arity against this vocabulary. Op positions have arity
+operator's operand width against this vocabulary; the widths are the
+manifest's `arity`, measured against the engine rather than transcribed. Op positions have arity
 expectations: `hideAtom` and `atomStyle` select atoms (arity 1),
 `orientation` and `align` select pairs. `hideAtom left` is a compile error.
 A wider selector in a pair position warns, because the engine keeps only the

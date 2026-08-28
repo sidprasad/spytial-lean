@@ -16,3 +16,9 @@ demos:
 widget-reload:
     cd widget && pnpm run build
     lake build
+
+# rewrite the SGQ lowering golden after a deliberate change; read the diff.
+# the build is load-bearing: `lake env lean` would otherwise pin a stale olean.
+rebless-sgq:
+    lake build SpytialLean
+    SPYTIAL_REBLESS=1 lake env lean tests/SelectorLoweringTest.lean

@@ -119,9 +119,21 @@ target renderHarnessJs pkg : Unit := do
     buildUnlessUpToDate harnessJs (← getTrace) (pkg.buildDir / "renderHarness.trace") do
       pkg.runPnpmCommand #["-C", renderDir.toString, "run", "build:render-harness"]
 
+/-! ## Language manifests
+
+`SpytialLean.Sgq` and `SpytialLean.SpecLang` read these with `include_str` as
+they elaborate, which Lean's import graph does not see. Naming them here is
+what re-elaborates those modules when a dependency bump moves a manifest. -/
+
+input_file sgqManifest where
+  path := "node_modules" / "simple-graph-query" / "docs" / "sgq-language.json"
+
+input_file spytialManifest where
+  path := widgetDir / "node_modules" / "spytial-core" / "docs" / "spytial-language.json"
+
 @[default_target]
 lean_lib SpytialLean where
-  needs := #[widgetJsAll]
+  needs := #[widgetJsAll, sgqManifest, spytialManifest]
 
 lean_lib Demos where
   srcDir := "demos"
@@ -134,7 +146,8 @@ lean_lib Demos where
 lean_lib SpytialTests where
   srcDir := "tests"
   roots := #[`WalkCanon, `TypeShapeTest, `CoverageTest, `TacticTest, `SelectorTest,
-             `LeanSelectorTest, `IdentityTest, `IdentityWalkTest, `RelationShapeTest]
+             `LeanSelectorTest, `SelectorLoweringTest, `SgqCoverageTest,
+             `SpecSurfaceTest, `IdentityTest, `IdentityWalkTest, `RelationShapeTest]
 
 require proofwidgets from
   git "https://github.com/leanprover-community/ProofWidgets4" @ "v0.0.105"

@@ -1,0 +1,442 @@
+base.sig	Foo
+base.rel	tr
+base.rel/	`/`
+base.relKw	`in`
+base.relSpace	`a b`
+base.relUni	`σ`
+base.relEmpty	``
+base.relSlashy	util/ordering
+base.relDbl	//
+base.var	x
+base.varUni	`σ`
+base.atom	`atom_0
+base.raw	x or y
+base.emptySet	none
+base.universe	univ
+base.identity	iden
+un.transpose.sig	~Foo
+un.transpose.rel	~tr
+un.transpose.rel/	~`/`
+un.transpose.relKw	~`in`
+un.transpose.relSpace	~`a b`
+un.transpose.relUni	~`σ`
+un.transpose.relEmpty	~``
+un.transpose.relSlashy	~util/ordering
+un.transpose.relDbl	~//
+un.transpose.var	~x
+un.transpose.varUni	~`σ`
+un.transpose.atom	~`atom_0
+un.transpose.raw	~(x or y)
+un.transpose.over.union	~(a + b)
+un.transpose.under.union.l	~a + b
+un.transpose.under.union.r	a + ~b
+un.transpose.over.difference	~(a - b)
+un.transpose.under.difference.l	~a - b
+un.transpose.under.difference.r	a - ~b
+un.transpose.over.override	~(a ++ b)
+un.transpose.under.override.l	~a ++ b
+un.transpose.under.override.r	a ++ ~b
+un.transpose.over.intersection	~(a & b)
+un.transpose.under.intersection.l	~a & b
+un.transpose.under.intersection.r	a & ~b
+un.transpose.over.product	~(a->b)
+un.transpose.under.product.l	~a->b
+un.transpose.under.product.r	a->~b
+un.transpose.over.domainRestriction	~(a <: b)
+un.transpose.under.domainRestriction.l	~a <: b
+un.transpose.under.domainRestriction.r	a <: ~b
+un.transpose.over.rangeRestriction	~(a :> b)
+un.transpose.under.rangeRestriction.l	~a :> b
+un.transpose.under.rangeRestriction.r	a :> ~b
+un.transpose.over.join	~(a.b)
+un.transpose.under.join.l	~a.b
+un.transpose.under.join.r	a.~b
+un.transpose.nest	~~a
+un.transitiveClosure.sig	^Foo
+un.transitiveClosure.rel	^tr
+un.transitiveClosure.rel/	^`/`
+un.transitiveClosure.relKw	^`in`
+un.transitiveClosure.relSpace	^`a b`
+un.transitiveClosure.relUni	^`σ`
+un.transitiveClosure.relEmpty	^``
+un.transitiveClosure.relSlashy	^util/ordering
+un.transitiveClosure.relDbl	^//
+un.transitiveClosure.var	^x
+un.transitiveClosure.varUni	^`σ`
+un.transitiveClosure.atom	^`atom_0
+un.transitiveClosure.raw	^(x or y)
+un.transitiveClosure.over.union	^(a + b)
+un.transitiveClosure.under.union.l	^a + b
+un.transitiveClosure.under.union.r	a + ^b
+un.transitiveClosure.over.difference	^(a - b)
+un.transitiveClosure.under.difference.l	^a - b
+un.transitiveClosure.under.difference.r	a - ^b
+un.transitiveClosure.over.override	^(a ++ b)
+un.transitiveClosure.under.override.l	^a ++ b
+un.transitiveClosure.under.override.r	a ++ ^b
+un.transitiveClosure.over.intersection	^(a & b)
+un.transitiveClosure.under.intersection.l	^a & b
+un.transitiveClosure.under.intersection.r	a & ^b
+un.transitiveClosure.over.product	^(a->b)
+un.transitiveClosure.under.product.l	^a->b
+un.transitiveClosure.under.product.r	a->^b
+un.transitiveClosure.over.domainRestriction	^(a <: b)
+un.transitiveClosure.under.domainRestriction.l	^a <: b
+un.transitiveClosure.under.domainRestriction.r	a <: ^b
+un.transitiveClosure.over.rangeRestriction	^(a :> b)
+un.transitiveClosure.under.rangeRestriction.l	^a :> b
+un.transitiveClosure.under.rangeRestriction.r	a :> ^b
+un.transitiveClosure.over.join	^(a.b)
+un.transitiveClosure.under.join.l	^a.b
+un.transitiveClosure.under.join.r	a.^b
+un.transitiveClosure.nest	^^a
+un.reflexiveTransitiveClosure.sig	*Foo
+un.reflexiveTransitiveClosure.rel	*tr
+un.reflexiveTransitiveClosure.rel/	*`/`
+un.reflexiveTransitiveClosure.relKw	*`in`
+un.reflexiveTransitiveClosure.relSpace	*`a b`
+un.reflexiveTransitiveClosure.relUni	*`σ`
+un.reflexiveTransitiveClosure.relEmpty	*``
+un.reflexiveTransitiveClosure.relSlashy	*util/ordering
+un.reflexiveTransitiveClosure.relDbl	*//
+un.reflexiveTransitiveClosure.var	*x
+un.reflexiveTransitiveClosure.varUni	*`σ`
+un.reflexiveTransitiveClosure.atom	*`atom_0
+un.reflexiveTransitiveClosure.raw	*(x or y)
+un.reflexiveTransitiveClosure.over.union	*(a + b)
+un.reflexiveTransitiveClosure.under.union.l	*a + b
+un.reflexiveTransitiveClosure.under.union.r	a + *b
+un.reflexiveTransitiveClosure.over.difference	*(a - b)
+un.reflexiveTransitiveClosure.under.difference.l	*a - b
+un.reflexiveTransitiveClosure.under.difference.r	a - *b
+un.reflexiveTransitiveClosure.over.override	*(a ++ b)
+un.reflexiveTransitiveClosure.under.override.l	*a ++ b
+un.reflexiveTransitiveClosure.under.override.r	a ++ *b
+un.reflexiveTransitiveClosure.over.intersection	*(a & b)
+un.reflexiveTransitiveClosure.under.intersection.l	*a & b
+un.reflexiveTransitiveClosure.under.intersection.r	a & *b
+un.reflexiveTransitiveClosure.over.product	*(a->b)
+un.reflexiveTransitiveClosure.under.product.l	*a->b
+un.reflexiveTransitiveClosure.under.product.r	a->*b
+un.reflexiveTransitiveClosure.over.domainRestriction	*(a <: b)
+un.reflexiveTransitiveClosure.under.domainRestriction.l	*a <: b
+un.reflexiveTransitiveClosure.under.domainRestriction.r	a <: *b
+un.reflexiveTransitiveClosure.over.rangeRestriction	*(a :> b)
+un.reflexiveTransitiveClosure.under.rangeRestriction.l	*a :> b
+un.reflexiveTransitiveClosure.under.rangeRestriction.r	a :> *b
+un.reflexiveTransitiveClosure.over.join	*(a.b)
+un.reflexiveTransitiveClosure.under.join.l	*a.b
+un.reflexiveTransitiveClosure.under.join.r	a.*b
+un.reflexiveTransitiveClosure.nest	**a
+bin.union	a + b
+bin.union.l.union	a + b + c
+bin.union.r.union	a + (b + c)
+bin.union.l.difference	a - b + c
+bin.union.r.difference	a + (b - c)
+bin.union.l.override	a ++ b + c
+bin.union.r.override	a + b ++ c
+bin.union.l.intersection	a & b + c
+bin.union.r.intersection	a + b & c
+bin.union.l.product	a->b + c
+bin.union.r.product	a + b->c
+bin.union.l.domainRestriction	a <: b + c
+bin.union.r.domainRestriction	a + b <: c
+bin.union.l.rangeRestriction	a :> b + c
+bin.union.r.rangeRestriction	a + b :> c
+bin.union.l.join	a.b + c
+bin.union.r.join	a + b.c
+bin.difference	a - b
+bin.difference.l.union	a + b - c
+bin.difference.r.union	a - (b + c)
+bin.difference.l.difference	a - b - c
+bin.difference.r.difference	a - (b - c)
+bin.difference.l.override	a ++ b - c
+bin.difference.r.override	a - b ++ c
+bin.difference.l.intersection	a & b - c
+bin.difference.r.intersection	a - b & c
+bin.difference.l.product	a->b - c
+bin.difference.r.product	a - b->c
+bin.difference.l.domainRestriction	a <: b - c
+bin.difference.r.domainRestriction	a - b <: c
+bin.difference.l.rangeRestriction	a :> b - c
+bin.difference.r.rangeRestriction	a - b :> c
+bin.difference.l.join	a.b - c
+bin.difference.r.join	a - b.c
+bin.override	a ++ b
+bin.override.l.union	(a + b) ++ c
+bin.override.r.union	a ++ (b + c)
+bin.override.l.difference	(a - b) ++ c
+bin.override.r.difference	a ++ (b - c)
+bin.override.l.override	a ++ b ++ c
+bin.override.r.override	a ++ (b ++ c)
+bin.override.l.intersection	a & b ++ c
+bin.override.r.intersection	a ++ b & c
+bin.override.l.product	a->b ++ c
+bin.override.r.product	a ++ b->c
+bin.override.l.domainRestriction	a <: b ++ c
+bin.override.r.domainRestriction	a ++ b <: c
+bin.override.l.rangeRestriction	a :> b ++ c
+bin.override.r.rangeRestriction	a ++ b :> c
+bin.override.l.join	a.b ++ c
+bin.override.r.join	a ++ b.c
+bin.intersection	a & b
+bin.intersection.l.union	(a + b) & c
+bin.intersection.r.union	a & (b + c)
+bin.intersection.l.difference	(a - b) & c
+bin.intersection.r.difference	a & (b - c)
+bin.intersection.l.override	(a ++ b) & c
+bin.intersection.r.override	a & (b ++ c)
+bin.intersection.l.intersection	a & b & c
+bin.intersection.r.intersection	a & (b & c)
+bin.intersection.l.product	a->b & c
+bin.intersection.r.product	a & b->c
+bin.intersection.l.domainRestriction	a <: b & c
+bin.intersection.r.domainRestriction	a & b <: c
+bin.intersection.l.rangeRestriction	a :> b & c
+bin.intersection.r.rangeRestriction	a & b :> c
+bin.intersection.l.join	a.b & c
+bin.intersection.r.join	a & b.c
+bin.product	a->b
+bin.product.l.union	(a + b)->c
+bin.product.r.union	a->(b + c)
+bin.product.l.difference	(a - b)->c
+bin.product.r.difference	a->(b - c)
+bin.product.l.override	(a ++ b)->c
+bin.product.r.override	a->(b ++ c)
+bin.product.l.intersection	(a & b)->c
+bin.product.r.intersection	a->(b & c)
+bin.product.l.product	a->b->c
+bin.product.r.product	a->(b->c)
+bin.product.l.domainRestriction	a <: b->c
+bin.product.r.domainRestriction	a->b <: c
+bin.product.l.rangeRestriction	a :> b->c
+bin.product.r.rangeRestriction	a->b :> c
+bin.product.l.join	a.b->c
+bin.product.r.join	a->b.c
+bin.domainRestriction	a <: b
+bin.domainRestriction.l.union	(a + b) <: c
+bin.domainRestriction.r.union	a <: (b + c)
+bin.domainRestriction.l.difference	(a - b) <: c
+bin.domainRestriction.r.difference	a <: (b - c)
+bin.domainRestriction.l.override	(a ++ b) <: c
+bin.domainRestriction.r.override	a <: (b ++ c)
+bin.domainRestriction.l.intersection	(a & b) <: c
+bin.domainRestriction.r.intersection	a <: (b & c)
+bin.domainRestriction.l.product	(a->b) <: c
+bin.domainRestriction.r.product	a <: (b->c)
+bin.domainRestriction.l.domainRestriction	a <: b <: c
+bin.domainRestriction.r.domainRestriction	a <: (b <: c)
+bin.domainRestriction.l.rangeRestriction	a :> b <: c
+bin.domainRestriction.r.rangeRestriction	a <: (b :> c)
+bin.domainRestriction.l.join	a.b <: c
+bin.domainRestriction.r.join	a <: b.c
+bin.rangeRestriction	a :> b
+bin.rangeRestriction.l.union	(a + b) :> c
+bin.rangeRestriction.r.union	a :> (b + c)
+bin.rangeRestriction.l.difference	(a - b) :> c
+bin.rangeRestriction.r.difference	a :> (b - c)
+bin.rangeRestriction.l.override	(a ++ b) :> c
+bin.rangeRestriction.r.override	a :> (b ++ c)
+bin.rangeRestriction.l.intersection	(a & b) :> c
+bin.rangeRestriction.r.intersection	a :> (b & c)
+bin.rangeRestriction.l.product	(a->b) :> c
+bin.rangeRestriction.r.product	a :> (b->c)
+bin.rangeRestriction.l.domainRestriction	a <: b :> c
+bin.rangeRestriction.r.domainRestriction	a :> (b <: c)
+bin.rangeRestriction.l.rangeRestriction	a :> b :> c
+bin.rangeRestriction.r.rangeRestriction	a :> (b :> c)
+bin.rangeRestriction.l.join	a.b :> c
+bin.rangeRestriction.r.join	a :> b.c
+bin.join	a.b
+bin.join.l.union	(a + b).c
+bin.join.r.union	a.(b + c)
+bin.join.l.difference	(a - b).c
+bin.join.r.difference	a.(b - c)
+bin.join.l.override	(a ++ b).c
+bin.join.r.override	a.(b ++ c)
+bin.join.l.intersection	(a & b).c
+bin.join.r.intersection	a.(b & c)
+bin.join.l.product	(a->b).c
+bin.join.r.product	a.(b->c)
+bin.join.l.domainRestriction	(a <: b).c
+bin.join.r.domainRestriction	a.(b <: c)
+bin.join.l.rangeRestriction	(a :> b).c
+bin.join.r.rangeRestriction	a.(b :> c)
+bin.join.l.join	a.b.c
+bin.join.r.join	a.(b.c)
+prodMult..	a->b
+prodMult..lone	a -> lone b
+prodMult..some	a -> some b
+prodMult..one	a -> one b
+prodMult..two	a -> two b
+prodMult..set	a -> set b
+prodMult.lone.	a lone -> b
+prodMult.lone.lone	a lone -> lone b
+prodMult.lone.some	a lone -> some b
+prodMult.lone.one	a lone -> one b
+prodMult.lone.two	a lone -> two b
+prodMult.lone.set	a lone -> set b
+prodMult.some.	a some -> b
+prodMult.some.lone	a some -> lone b
+prodMult.some.some	a some -> some b
+prodMult.some.one	a some -> one b
+prodMult.some.two	a some -> two b
+prodMult.some.set	a some -> set b
+prodMult.one.	a one -> b
+prodMult.one.lone	a one -> lone b
+prodMult.one.some	a one -> some b
+prodMult.one.one	a one -> one b
+prodMult.one.two	a one -> two b
+prodMult.one.set	a one -> set b
+prodMult.two.	a two -> b
+prodMult.two.lone	a two -> lone b
+prodMult.two.some	a two -> some b
+prodMult.two.one	a two -> one b
+prodMult.two.two	a two -> two b
+prodMult.two.set	a two -> set b
+prodMult.set.	a set -> b
+prodMult.set.lone	a set -> lone b
+prodMult.set.some	a set -> some b
+prodMult.set.one	a set -> one b
+prodMult.set.two	a set -> two b
+prodMult.set.set	a set -> set b
+prodMult.nest	(a + b) one -> b.c
+boxJoin.one	a[b]
+boxJoin.many	(a + b)[b, c]
+compr.one	{x : a | x in b}
+compr.grouped	{x, y : a, z : b | x = z}
+compr.quoted	{`in` : a | some `in`}
+int.lit	7
+int.litNeg	-3
+int.card	#a
+int.cardUnion	#(a + b)
+int.cardJoin	#a.b
+int.proj	@num:a
+int.projUnion	@num:(a + b)
+int.add	add[1, 2]
+int.sub	subtract[#a, @num:b]
+int.div	divide[1, 2]
+int.rem	remainder[1, 2]
+int.abs	abs[1]
+int.sign	sign[1]
+int.floor	floor[1]
+int.ceil	ceil[1]
+int.sum	sum[@num:a]
+int.min	min[@num:(a + b)]
+int.max	max[@num:a]
+int.sumQ	sum x : a | #x.b
+val.plain	@:a
+val.str	@str:(a.b)
+val.bool	@bool:(a + b)
+val.ctor	"tt"
+val.strLit	"\"hi\""
+val.strEsc	"\"a\"b\\c\nd\te\r\""
+val.boolT	true
+val.boolF	false
+cmp.subset	a in b
+cmp.subset.neg	a !in b
+cmp.subset.num	#a in 2
+cmp.equal	a = b
+cmp.equal.neg	a != b
+cmp.equal.num	#a = 2
+cmp.lessThan	a < b
+cmp.lessThan.neg	a !< b
+cmp.lessThan.num	#a < 2
+cmp.greaterThan	a > b
+cmp.greaterThan.neg	a !> b
+cmp.greaterThan.num	#a > 2
+cmp.atMost	a <= b
+cmp.atMost.neg	a !<= b
+cmp.atMost.num	#a <= 2
+cmp.atLeast	a >= b
+cmp.atLeast.neg	a !>= b
+cmp.atLeast.num	#a >= 2
+cmp.contains	a ni b
+cmp.contains.neg	a !ni b
+cmp.contains.num	#a ni 2
+cmp.val	@:a = "\"x\""
+cmp.valNeg	@bool:a != true
+cmp.rawL	(x or y) in b
+cmp.rawRaw	(x or y) = (p and q)
+mult.empty	no a + b
+mult.nonEmpty	some a + b
+mult.atMostOne	lone a + b
+mult.exactlyOne	one a + b
+mult.exactlyTwo	two a + b
+mult.any	set a + b
+form.not	not some a
+form.notNot	not not some a
+conn.or	some a or no b
+conn.or.l.or	some a or no b or one c
+conn.or.r.or	some a or (no b or one c)
+conn.or.l.xor	some a xor no b or one c
+conn.or.r.xor	some a or no b xor one c
+conn.or.l.iff	some a iff no b or one c
+conn.or.r.iff	some a or no b iff one c
+conn.or.l.and	some a and no b or one c
+conn.or.r.and	some a or no b and one c
+conn.or.notL	not some a or no b
+conn.or.iteL	some a implies no b else one c or one c
+conn.or.iteR	some a or some a implies no b else one c
+conn.or.quantL	(all x : a | no b) or one c
+conn.xor	some a xor no b
+conn.xor.l.or	(some a or no b) xor one c
+conn.xor.r.or	some a xor (no b or one c)
+conn.xor.l.xor	some a xor no b xor one c
+conn.xor.r.xor	some a xor (no b xor one c)
+conn.xor.l.iff	some a iff no b xor one c
+conn.xor.r.iff	some a xor no b iff one c
+conn.xor.l.and	some a and no b xor one c
+conn.xor.r.and	some a xor no b and one c
+conn.xor.notL	not some a xor no b
+conn.xor.iteL	some a implies no b else one c xor one c
+conn.xor.iteR	some a xor some a implies no b else one c
+conn.xor.quantL	(all x : a | no b) xor one c
+conn.iff	some a iff no b
+conn.iff.l.or	(some a or no b) iff one c
+conn.iff.r.or	some a iff (no b or one c)
+conn.iff.l.xor	(some a xor no b) iff one c
+conn.iff.r.xor	some a iff (no b xor one c)
+conn.iff.l.iff	some a iff no b iff one c
+conn.iff.r.iff	some a iff (no b iff one c)
+conn.iff.l.and	some a and no b iff one c
+conn.iff.r.and	some a iff no b and one c
+conn.iff.notL	not some a iff no b
+conn.iff.iteL	some a implies no b else one c iff one c
+conn.iff.iteR	some a iff some a implies no b else one c
+conn.iff.quantL	(all x : a | no b) iff one c
+conn.and	some a and no b
+conn.and.l.or	(some a or no b) and one c
+conn.and.r.or	some a and (no b or one c)
+conn.and.l.xor	(some a xor no b) and one c
+conn.and.r.xor	some a and (no b xor one c)
+conn.and.l.iff	(some a iff no b) and one c
+conn.and.r.iff	some a and (no b iff one c)
+conn.and.l.and	some a and no b and one c
+conn.and.r.and	some a and (no b and one c)
+conn.and.notL	not some a and no b
+conn.and.iteL	(some a implies no b else one c) and one c
+conn.and.iteR	some a and (some a implies no b else one c)
+conn.and.quantL	(all x : a | no b) and one c
+form.ite	some a implies no b else one c
+form.iteNest	some a implies some a implies no b else one c else one c
+quant.all	all x : a | no b
+quant.all.disj	all disj x, y : a | no b
+quant.all.mixed	all x : a, y, z : b | no b
+quant.no	no x : a | no b
+quant.no.disj	no disj x, y : a | no b
+quant.no.mixed	no x : a, y, z : b | no b
+quant.lone	lone x : a | no b
+quant.lone.disj	lone disj x, y : a | no b
+quant.lone.mixed	lone x : a, y, z : b | no b
+quant.some	some x : a | no b
+quant.some.disj	some disj x, y : a | no b
+quant.some.mixed	some x : a, y, z : b | no b
+quant.one	one x : a | no b
+quant.one.disj	one disj x, y : a | no b
+quant.one.mixed	one x : a, y, z : b | no b
+quant.two	two x : a | no b
+quant.two.disj	two disj x, y : a | no b
+quant.two.mixed	two x : a, y, z : b | no b
+quant.nested	all x : a | some y : b | x in y
+quant.underAnd	(all x : a | no b) and one c
