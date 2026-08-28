@@ -119,17 +119,23 @@ target renderHarnessJs pkg : Unit := do
     buildUnlessUpToDate harnessJs (← getTrace) (pkg.buildDir / "renderHarness.trace") do
       pkg.runPnpmCommand #["-C", renderDir.toString, "run", "build:render-harness"]
 
-/-! ## Language manifests
+/-! ## Files read at elaboration time
 
-`SpytialLean.Sgq` and `SpytialLean.SpecLang` read these with `include_str` as
-they elaborate, which Lean's import graph does not see. Naming them here is
-what re-elaborates those modules when a dependency bump moves a manifest. -/
+Lean's import graph sees only imports, so a file a module reads while it
+elaborates (`include_str`, `IO.FS.readFile`) is invisible to the build:
+editing it leaves a stale olean. Each such file is declared here and listed
+in the reading library's `needs`. -/
 
 input_file sgqManifest where
   path := "node_modules" / "simple-graph-query" / "docs" / "sgq-language.json"
 
 input_file spytialManifest where
   path := widgetDir / "node_modules" / "spytial-core" / "docs" / "spytial-language.json"
+
+/-- `tests/SelectorLoweringTest.lean`'s 442-case golden. -/
+input_file sgqLoweringGolden where
+  path := "tests" / "SelectorLoweringTest.golden.tsv"
+  text := true
 
 @[default_target]
 lean_lib SpytialLean where
@@ -141,13 +147,6 @@ lean_lib Demos where
              `CustomRelationalizer, `ProofTerms, `HoareLogic, `OperationalSemantics,
              `PartialTerms, `BDD, `Automata, `LeanSelectors]
   needs := #[widgetJsAll]
-
-/-- `SelectorLoweringTest` reads this with `IO.FS.readFile` as it elaborates,
-    which Lean's import graph does not see. Without naming it here, editing the
-    golden leaves a stale olean and the comparison does not re-run. -/
-input_file sgqLoweringGolden where
-  path := "tests" / "SelectorLoweringTest.golden.tsv"
-  text := true
 
 /-- Headless unit tests: `lake build SpytialTests`. -/
 lean_lib SpytialTests where
