@@ -188,8 +188,31 @@ syntax, not a string. Every name resolves against the target type's data
 vocabulary and every operator's arity is checked, so a typo or a renamed
 field is a compile error, not an empty selection at render time.
 
-The grammar (EBNF), the integer/value typing rules, and the checking
-semantics are in [docs/selectors.md](docs/selectors.md).
+You can also write a selector as a plain Lean function. Spytial runs it on your
+data and works out which nodes and edges it picked, so you never have to think
+about the relational encoding:
+
+```lean
+spytial_spec RBNode [
+  hideAtom      lean (RBNode.isLeaf),
+  atomStyle     lean (RBNode.unbalanced) (fillStyle "#ffe0e0"),
+  inferredEdge  kids lean (fun p c : RBNode => (p.children).contains c)
+]
+```
+
+The type of the function decides how many columns the selector has: `σ → Bool`
+picks single nodes, `σ₁ → σ₂ → Bool` picks pairs. The general form,
+`Spytial.Sel T α`, is a function of the whole value being drawn, returning the
+tuples to select — an attached spec re-runs it for each value, as compiled
+code. Selection is by value, and by default equal values draw as one node, so
+a value names exactly the node it picks.
+
+[docs/lean-selectors.md](docs/lean-selectors.md) is the guide, including what
+does not work. [demos/LeanSelectors.lean](demos/LeanSelectors.lean) is a
+worked example.
+
+The grammar (EBNF), the raw-Lean rules, the integer/value typing rules, and
+the checking semantics are in [docs/selectors.md](docs/selectors.md).
 
 ## Available operations
 

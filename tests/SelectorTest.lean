@@ -1257,6 +1257,7 @@ SpytialLean.selBox
 SpytialLean.selCard
 SpytialLean.selIdent
 SpytialLean.selJoinOp
+SpytialLean.selLean
 SpytialLean.selNegNum
 SpytialLean.selNum
 SpytialLean.selProdOp

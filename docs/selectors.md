@@ -34,6 +34,7 @@ sel ::=
   | string                                       (* escape hatch / string literal *)
   | int                                          (* integer literal *)
   | "`" name                                     (* atom literal, a Lean name literal *)
+  | "lean" "(" term ")"                          (* raw Lean predicate; arity 1 *)
 
 mult ::= "lone" | "one" | "some" | "set"
 
@@ -93,6 +94,7 @@ declaration and constraint syntax, not part of an expression.
 | `{x, y : T \| φ}` | set comprehension (arity = number of binders) |
 | `@:e`, `@str:e`, `@bool:e` | label projections (string/bool value reads) |
 | `univ`, `iden` | the universe and identity relations |
+| `lean (f)` | the tuples the Lean function `f` selects (arity from `f`'s type) |
 
 **`let x = e, … | φ`** desugars by substitution at elaboration; the engine
 never sees a `let`. A later binder shadows the `let`. A substitution that an
@@ -122,6 +124,53 @@ the `nil` constructor, and `@str:(x.v) = "abc"` the `String` atom holding
 `abc`. (A string literal carrying a character SGQ cannot spell — a control
 character — is a compile error.) `ni` and its negations lower verbatim
 (`a ni b`, `a !ni b`); the engine owns their semantics.
+
+## Raw Lean selectors
+
+`lean (f)` selects by running an ordinary Lean function over the values the
+relationalizer walked, rather than by querying the relational encoding:
+
+```lean
+hideAtom      lean (fun n : RBNode => n matches .nil)
+inferredEdge  kids lean (fun p c : RBNode => (p.children).contains c)
+```
+
+`f` must be closed and non-dependent. The contract (`SpytialLean/Sel.lean`) is
+`Spytial.Sel T α`, a structure wrapping `T → Spytial.Tuples α`: a plain
+function of the value being drawn, returning the selected tuples of values,
+read as a set. `f`'s type says which form it is:
+
+| `f` | arity | meaning |
+|-----|-------|---------|
+| `σ₁ → ⋯ → σₙ → Bool` (or `Prop`, via `Decidable`) | n | one decision per point of the product |
+| `Spytial.Sel T α` | columns of `α` | called on the datum, selecting exactly what it returns |
+
+Resolution runs against the value being drawn (an attached `spytial_spec`
+stores `f` and resolves it once per value): the walked values of each column
+are quoted into one term, and the term runs through the compiled evaluator —
+the same machinery as `#eval`, so a definition from another module must be
+`meta import`ed, and `whnf` never touches user code. The selector rewrites to
+the tuples it selected — `` `a1->`a2->`a3 + `a4->`a5->`a6 ``, which the engine
+resolves by atom id — or `none` when nothing matches. At most 4 columns; at
+most 4096 selected tuples.
+
+Selection is by *value*, and by default the walk keys atoms by value too
+(structural identity, derived on demand), so a selected value selects exactly
+one atom; under `SpytialIdentity.asWritten` it selects every occurrence.
+A `Sel`'s returned values are located by `==`, so each of its column types
+needs `BEq`; predicates return nothing and need no instance.
+A `Sel` is ordinary computable code — build it with the anonymous constructor
+(`⟨fun root => …⟩`), walk your own type inside it, test it with `#eval`. When
+the *position* matters rather than the value, that is the relational
+language's job (`left`, `right`, field names).
+
+`lean` reaches values, not the diagram, so it cannot name a group or an inferred
+edge introduced by an earlier op, and it cannot name a relation the walker
+synthesizes. Those stay in the relational language, which composes with it:
+`hideAtom lean (p) + Color` is one selector.
+
+[lean-selectors.md](lean-selectors.md) is the user-facing guide: how to use it,
+which shape to pick, what does not work, and what each error means.
 
 ## What gets checked
 

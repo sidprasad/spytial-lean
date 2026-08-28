@@ -11,6 +11,7 @@ public meta import SpytialLean.Spec
 public meta import SpytialLean.Selector
 public meta import SpytialLean.SelectorElab
 public meta import SpytialLean.Relationalizer
+public meta import SpytialLean.LeanSelector
 public meta import SpytialLean.Widget
 public meta import SpytialLean.Attr
 
@@ -449,11 +450,13 @@ private meta def elabTermInstantiated (t : Syntax) : TermElabM Expr := do
   Term.synthesizeSyntheticMVarsNoPostponing
   instantiateMVars e
 
-/-- Elaborate a term to a fully instantiated expression and relationalize it. -/
+/-- Elaborate a term to a fully instantiated expression and relationalize it,
+    keeping the provenance raw Lean selectors resolve against. -/
 private meta def elabRelationalized (t : Syntax) (cfg : WalkConfig := {}) :
-    TermElabM (Expr × JsonDataInstance) := do
+    TermElabM (Expr × JsonDataInstance × Provenance) := do
   let e ← elabTermInstantiated t
-  return (e, ← relationalize e cfg)
+  let (di, prov) ← relationalizeWithProvenance e cfg
+  return (e, di, prov)
 
 /-- Elaborate a use-site `with [...]` for `e`. Without `..` the list replaces
     `e`'s attached spec; a `..` element splices the attached spec at that
@@ -467,8 +470,8 @@ private meta def elabUseSiteOps (e : Expr) (ops : Array (TSyntax `spytial_op)) :
   elabSpytialOps (← scopeForExpr e) ops (some (attached?.getD []))
 
 /-- An explicit `with [<ops>]` overrides the type's attached spec, unless a
-    `..` element splices it back in. The spec is rendered to its wire string
-    once, here. -/
+    `..` element splices it back in. Raw Lean selectors resolve against this
+    datum, and the spec is rendered to its wire string once, here. -/
 private meta def elabSpytialPayload (t : Syntax) (ops? : Option (Array (TSyntax `spytial_op)))
     (cfg : WalkConfig) : TermElabM (JsonDataInstance × Option String) :=
   -- The command boundary is where `#eval` discards what it derived, and both
@@ -476,10 +479,11 @@ private meta def elabSpytialPayload (t : Syntax) (ops? : Option (Array (TSyntax 
   -- selector scope needs `SpytialEnum`. Wrapping only the walk would leave the
   -- spec half persisting its instances. Both results are plain data.
   withoutModifyingEnv do
-    let (e, di) ← elabRelationalized t cfg
+    let (e, di, prov) ← elabRelationalized t cfg
     let spec? ← match ops? with
       | some ops => some <$> elabUseSiteOps e ops
       | none => lookupTypeSpec e
+    let spec? ← spec?.mapM fun s => liftM (resolveLeanSelectors e di prov s)
     return (di, spec?.map SpytialSpec.render)
 
 private meta def spytialProps (di : JsonDataInstance) (cndSpec? : Option String) : Json :=
@@ -628,8 +632,16 @@ syntax (name := spytialSpecDebug) "#spytial.spec " term " with " "[" spytial_op,
 meta def elabSpytialSpecDebug : CommandElab := fun
   | `(#spytial.spec $t:term with [$ops,*]) => do
     let specStr ← liftTermElabM do
-      let spec ← elabUseSiteOps (← elabTermInstantiated t) ops.getElems
-      return spec.render
+      let e ← elabTermInstantiated t
+      let spec ← elabUseSiteOps e ops.getElems
+      -- The walk is only needed to resolve raw Lean selectors against the
+      -- datum. A spec without one renders identically without it, and skipping
+      -- it also skips asking each walked type for a `SpytialIdentity`.
+      if spec.hasLeanRel then
+        let (di, prov) ← relationalizeWithProvenance e
+        return (← resolveLeanSelectors e di prov spec).render
+      else
+        return spec.render
     logInfo m!"{specStr}"
   | stx => throwError "Unexpected syntax {stx}."
 
@@ -640,7 +652,7 @@ syntax (name := spytialDatumDebug) "#spytial.datum " term : command
 @[command_elab spytialDatumDebug]
 meta def elabSpytialDatumDebug : CommandElab := fun
   | `(#spytial.datum $t:term) => do
-    let (_, di) ← liftTermElabM <| elabRelationalized t
+    let (_, di, _) ← liftTermElabM <| elabRelationalized t
     logInfo m!"{(toJson di).pretty}"
   | stx => throwError "Unexpected syntax {stx}."
 
@@ -671,7 +683,7 @@ syntax (name := spytialProofDatumDebug) "#spytial.proof.datum " term : command
 @[command_elab spytialProofDatumDebug]
 meta def elabSpytialProofDatumDebug : CommandElab := fun
   | `(#spytial.proof.datum $t:term) => do
-    let (_, di) ← liftTermElabM <| elabRelationalized t { filterProofs := false }
+    let (_, di, _) ← liftTermElabM <| elabRelationalized t { filterProofs := false }
     logInfo m!"{(toJson di).pretty}"
   | stx => throwError "Unexpected syntax {stx}."
 

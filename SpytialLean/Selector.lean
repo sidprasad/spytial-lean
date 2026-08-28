@@ -73,6 +73,12 @@ public meta inductive Sel where
   /-- Escape hatch: an unchecked SGQ string, lowered verbatim. The body is
       arbitrary SGQ, so it binds loosest and composition parenthesizes it. -/
   | raw (sgq : String)
+  /-- A raw Lean function over the values the relationalizer walked, read as a
+      relation: its argument types are the columns it ranges over and its
+      codomain fixes the arity (`SpytialLean.classifyLeanRel`). Resolved against
+      a concrete datum by `resolveLeanSelectors` — which rewrites it to the
+      union of the tuples it selects — before anything lowers to SGQ. -/
+  | leanRel (fn : Expr)
   deriving Repr, BEq
 
 /-- Kept apart from `Sel` to reject SGQ's silent scalar/tuple confusion
@@ -236,6 +242,9 @@ public meta partial def Sel.toSGQCtx (ctx : Nat) : Sel → String
   | .iden => "iden"
   | .none_ => "none"
   | .atomLit a => s!"`{a}"
+  -- Unreachable in a rendered spec: `resolveLeanSelectors` runs first on every
+  -- path that renders. Lowering as `none` keeps this total.
+  | .leanRel .. => "none"
   | e@(.union a b) => parenIf (e.prec < ctx) s!"{a.toSGQCtx 30} + {b.toSGQCtx 31}"
   | e@(.diff a b) => parenIf (e.prec < ctx) s!"{a.toSGQCtx 30} - {b.toSGQCtx 31}"
   | e@(.override a b) => parenIf (e.prec < ctx) s!"{a.toSGQCtx 36} ++ {b.toSGQCtx 37}"
@@ -323,7 +332,8 @@ public meta partial def Sel.freeVars : Sel → Array Name
   | .prodMult a _ _ b => a.freeVars ++ b.freeVars
   | .trans a | .reflTrans a | .transpose a => a.freeVars
   | .compr binders body => bindersFreeVars binders body.freeVars
-  | .sig .. | .rel .. | .univ | .iden | .none_ | .atomLit .. | .raw .. => #[]
+  | .sig .. | .rel .. | .univ | .iden | .none_ | .atomLit .. | .raw ..
+  | .leanRel .. => #[]
 
 public meta partial def SelVal.freeVars : SelVal → Array Name
   | .label _ e => e.freeVars
