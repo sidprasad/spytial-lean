@@ -129,6 +129,7 @@ private meta def addWitnesses (afaik : Iykyk.Afaik) (recordObservationTerms : Bo
     set { state.addAtom atom with
       applicationAtoms :=
         (state.applicationAtoms.insert ⟨witness.term⟩ atomId).insert ⟨reduced⟩ atomId
+      knowledgeTerms := state.knowledgeTerms.push (witness.term, atomId)
       observationTerms := if recordObservationTerms then
         state.observationTerms.push (witness.term, atomId)
       else state.observationTerms }
@@ -168,6 +169,8 @@ private meta def walkFact (cfg : WalkConfig)
         pure atomId
     atomIds := atomIds.push atomId
     types := types.push (← sigOfType (← inferType argument))
+    -- Keep the source term even if a proved equality refined this endpoint.
+    modify fun state => state.rememberKnowledgeTerm rawArgument atomId
   -- An observation may already have emitted the graph point established by
   -- this equation. Relations contain tuples, not one copy per justification.
   unless ((← get).relations.get? relation).any (fun (_, tuples) =>
@@ -223,9 +226,10 @@ private meta def selectedValueData (root : String) (witnessIds : Array String)
     substituted, closed exactly when the context determines the value. -/
 private meta def relationalizeAfaikInspection (afaik : Iykyk.Afaik)
     (baseConfig : WalkConfig := {}) (observations : Array Expr := #[]) :
-    MetaM (JsonDataInstance × Provenance × Expr × InspectedValue) :=
+    MetaM (JsonDataInstance × Provenance × Expr × InspectedValue × Array (Expr × String)) :=
   withoutModifyingEnv do
-    let mut config ← contextWalkConfig afaik baseConfig observations
+    let mut config ← contextWalkConfig afaik
+      { baseConfig with recordKnowledgeTerms := true } observations
     let refinements := config.refinements
     let root ← if afaik.root.isFVar || afaik.root.isMVar then
       pure afaik.root
@@ -250,6 +254,7 @@ private meta def relationalizeAfaikInspection (afaik : Iykyk.Afaik)
       let rootId ← walkExpr config root
       let rootData := selectedValueData rootId witnessIds (← get).toDataInstance
       let hasStructure := !rootData.relations.isEmpty
+      modify fun state => state.rememberKnowledgeTerm afaik.root rootId
       unless anchors.any fun (expression, _) => expression.equal root do
         anchors := anchors.push (root, rootId)
       -- Compute against the already prepared context proofs, but capture the
@@ -277,13 +282,13 @@ private meta def relationalizeAfaikInspection (afaik : Iykyk.Afaik)
         (valueData.relations.find? (·.id == relation.id)).getD { relation with tuples := #[] } }
       hasStructure, facts }
     return (state.toDataInstance, state.provenance,
-      substituteKnown refinements 8 afaik.root, inspection)
+      substituteKnown refinements 8 afaik.root, inspection, state.knowledgeTerms)
 
 /-- Translate context knowledge, preserving the original data/provenance API. -/
 public meta def relationalizeAfaikWithProvenance (afaik : Iykyk.Afaik)
     (baseConfig : WalkConfig := {}) (observations : Array Expr := #[]) :
     MetaM (JsonDataInstance × Provenance × Expr) := do
-  let (data, prov, datum, _) ← relationalizeAfaikInspection afaik baseConfig observations
+  let (data, prov, datum, _, _) ← relationalizeAfaikInspection afaik baseConfig observations
   return (data, prov, datum)
 
 /-- `relationalizeAfaikWithProvenance`, data only. -/
@@ -308,7 +313,14 @@ public meta structure ContextView where
       with its known refinements substituted. -/
   datum : Expr
   inspection : InspectedValue
+  /-- Symbolic terms and aliases actually represented by atoms in `data`. -/
+  terms : Array (Expr × String)
   deriving Inhabited
+
+/-- Knowledge selectors use certified propositions, not displayed relation
+    names (which can collide or omit negative facts). -/
+public meta def ContextView.selectorKnowledge (view : ContextView) : MetaM SelectorKnowledge := do
+  return { terms := view.terms, facts := ← view.afaik.facts.mapM displayedProposition }
 
 /-- Local names and their definitions have one spelling for relevance
     matching. This does not unfold observed functions or change their proofs. -/
@@ -387,10 +399,10 @@ public meta def wdykInContext (subject : Expr) (walkConfig : WalkConfig := {})
       let afaik ← if wdykConfig.rootOnly && !(← isProp (← inferType subject)) then
         projectToRepresentation afaik walkConfig observations
       else pure afaik
-      let (data, prov, datum, inspection) ←
+      let (data, prov, datum, inspection, terms) ←
         relationalizeAfaikInspection afaik walkConfig observations
       let inspection := { inspection with term := (← ppExpr subject).pretty }
-      return ({ truncated := afaik.truncated }, some { afaik, data, prov, datum, inspection })
+      return ({ truncated := afaik.truncated }, some { afaik, data, prov, datum, inspection, terms })
 
 private meta def isWitnessTerm (afaik : Iykyk.Afaik) (expression : Expr) : Bool :=
   afaik.witnesses.any fun witness => witness.term.equal expression

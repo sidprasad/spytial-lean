@@ -99,6 +99,10 @@ Use `#spytial.spec` to print what a selector resolved to (node ids like
 
 ## The rules that bite
 
+These rules concern executable `lean (…)` selectors. In proofs,
+[`known (…)`](knowledge-selectors.md) instead selects symbolic terms using
+extracted evidence, without executing a predicate.
+
 - **Closed, non-dependent terms only.** A selector cannot capture local
   variables, and dependent argument types are rejected.
 - **`meta import` for other modules.** A selector runs at elaboration time;

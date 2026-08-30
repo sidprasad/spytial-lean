@@ -1249,6 +1249,7 @@ example : Nat := let univ := 3; univ
 example : Nat := let iden := 4; iden
 example : Nat := let sum := hygieneSum; sum
 example : Nat := let none := 7; none
+example : Nat := let known := 8; known
 
 /-! ## Grammar tripwire — `docs/selectors.md` pins the surface grammar
 
@@ -1262,6 +1263,7 @@ SpytialLean.selBox
 SpytialLean.selCard
 SpytialLean.selIdent
 SpytialLean.selJoinOp
+SpytialLean.selKnown
 SpytialLean.selLean
 SpytialLean.selNegNum
 SpytialLean.selNum

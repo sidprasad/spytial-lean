@@ -12,7 +12,11 @@ namespace SpytialLean
 
 open Lean Meta
 
-/-! # Resolving raw Lean selectors
+/-! # Resolving embedded Lean selectors
+
+`known (…)` matches a Prop-valued predicate against extracted proof-context
+facts over represented terms, including symbolic ones. See `evalKnownRel`.
+The following describes the separate, unchanged executable `lean (…)` path.
 
 `SpytialLean.Sel` states the contract: a Lean selector is a function called on
 the value being drawn, returning the selected tuples of values, read as a set.
@@ -140,6 +144,15 @@ meta def boolifyPred (fn : Expr) (doms : Array Expr) : MetaM Expr := do
       mkLambdaFVars xs (mkApp2 (mkConst ``decide) prop inst)
   go 0 #[]
 
+/-- Knowledge selectors accept predicates, not executable whole-value programs
+    or Boolean tests. No `Decidable` instance is required. -/
+meta def classifyKnownRel (fn : Expr) : MetaM LeanRelKind := do
+  let kind ← classifyLeanRel fn
+  unless kind.shape matches .pred true do
+    throwError "a `known` selector must return `Prop`; use `lean` for executable \
+      Boolean predicates or `Spytial.Sel` programs"
+  return kind
+
 /-! ## Resolution context -/
 
 /-- The number of selected tuples past which the diagram stops being one. -/
@@ -150,12 +163,21 @@ private meta def maxSelectedTuples : Nat := 4096
     even when nothing is selected. -/
 private meta def maxEnumeratedPoints : Nat := 1000000
 
+/-- The extracted knowledge available to a selector. `facts` must be types of
+    certified proofs from the extraction, in the current local context.
+    `terms` associates walked terms (including aliases) with existing atoms;
+    an unbacked custom emission has no entry. -/
+meta structure SelectorKnowledge where
+  terms : Array (Expr × String)
+  facts : Array Expr
+
 /-- What a raw Lean selector resolves against: the datum, the walked instance,
     and the subterm behind each atom. -/
 meta structure LeanSelCtx where
   datum : Expr
   di : JsonDataInstance
   prov : Provenance
+  knowledge? : Option SelectorKnowledge := none
 
 /-- One column: the walked atoms of type `σ`, with the value behind each, in
     atom order. The evaluated term reports indexes into this array, so an
@@ -279,6 +301,61 @@ meta def evalLeanRel (ctx : LeanSelCtx) (fn : Expr) : MetaM (Array (Array String
       not render legibly"
   return out
 
+/-! ## Matching extracted knowledge
+
+Each selected tuple has an extracted fact definitionally equal to the predicate
+applied to represented terms. Failure to match is unknown, not a proof of its
+negation. We neither execute predicates nor search for additional proofs.
+-/
+
+private meta def knowledgeColumn (ctx : LeanSelCtx) (knowledge : SelectorKnowledge)
+    (domain : Expr) : MetaM (Array (String × Expr)) := do
+  let mut column := #[]
+  for atom in ctx.di.atoms do
+    for (term, id) in knowledge.terms do
+      if id != atom.id then continue
+      let term ← instantiateMVars term
+      -- In particular, matching must never solve a hole in the user's goal.
+      if term.hasExprMVar then continue
+      if ← withNewMCtxDepth (isDefEq (← inferType term) domain) then
+        column := column.push (id, term)
+  return column
+
+/-- Select existing atom tuples with direct extracted evidence. Multiple terms
+    can denote one drawn atom after refinement or identity merging; evidence
+    about any such tuple of terms selects that tuple of atoms once. -/
+meta def evalKnownRel (ctx : LeanSelCtx) (fn : Expr) : MetaM (Array (Array String)) := do
+  let some knowledge := ctx.knowledge? |
+    throwError "a `known` selector needs extracted proof-context knowledge; \
+      use it with the `spytial` tactic, not `#spytial`"
+  let fn ← instantiateMVars fn
+  if fn.hasExprMVar then throwError "a `known` selector cannot contain unresolved holes"
+  let kind ← classifyKnownRel fn
+  let columns ← kind.domains.mapM (knowledgeColumn ctx knowledge)
+  let facts ← knowledge.facts.mapM instantiateMVars
+  let facts := facts.filter fun fact => !fact.hasExprMVar
+  let comparisons := columns.foldl (fun n column => n * column.size) 1 * facts.size
+  if comparisons > maxEnumeratedPoints then
+    throwError "this `known` selector requires {comparisons} fact comparisons, over the \
+      limit of {maxEnumeratedPoints}; use a narrower predicate or inspection"
+  if facts.isEmpty then return #[]
+  let rec visit (remaining : List (Array (String × Expr))) (ids : Array String)
+      (terms : Array Expr) (selected : Array (Array String)) : MetaM (Array (Array String)) := do
+    match remaining with
+    | column :: rest =>
+      column.foldlM (fun selected (id, term) =>
+        visit rest (ids.push id) (terms.push term) selected) selected
+    | [] =>
+      if selected.contains ids then return selected
+      let proposition := (mkAppN fn terms).headBeta
+      for fact in facts do
+        if ← withNewMCtxDepth (isDefEq proposition fact) then
+          if selected.size >= maxSelectedTuples then
+            throwError "a `known` selector selects more than {maxSelectedTuples} tuples"
+          return selected.push ids
+      return selected
+  visit columns.toList #[] #[] #[]
+
 /-- Tuples as a selector: `` `a1->`a2 + `a3->`a4 ``, or `none` when empty. The
     products bind tighter than the union, so neither side needs parentheses. -/
 private meta def tupleUnion (tuples : Array (Array String)) : Sel :=
@@ -292,7 +369,7 @@ private meta def tupleUnion (tuples : Array (Array String)) : Sel :=
 
 /-! ## Resolution
 
-A congruence over the four selector layers, replacing every `leanRel` leaf with
+A congruence over the four selector layers, replacing every embedded Lean leaf with
 the tuples it selects and leaving everything else alone. It mirrors
 `Sel.freeVars`, which walks the same shape. -/
 
@@ -300,6 +377,7 @@ mutual
 
 meta partial def Sel.resolveLean (ctx : LeanSelCtx) : Sel → MetaM Sel
   | .leanRel fn => return tupleUnion (← evalLeanRel ctx fn)
+  | .knownRel fn => return tupleUnion (← evalKnownRel ctx fn)
   | .union a b => return .union (← a.resolveLean ctx) (← b.resolveLean ctx)
   | .diff a b => return .diff (← a.resolveLean ctx) (← b.resolveLean ctx)
   | .inter a b => return .inter (← a.resolveLean ctx) (← b.resolveLean ctx)
@@ -359,16 +437,16 @@ meta partial def SelForm.resolveLean (ctx : LeanSelCtx) : SelForm → MetaM SelF
 
 end
 
-/-! ## Detecting raw Lean selectors
+/-! ## Detecting embedded Lean selectors
 
 Resolution needs the walked datum, and walking it is not free — it also asks
 each type for a `SpytialIdentity`, which reports when it cannot derive one. A
-spec with no raw Lean selector needs none of that, so callers check first. -/
+spec with no embedded Lean selector needs none of that, so callers check first. -/
 
 mutual
 
 meta partial def Sel.hasLeanRel : Sel → Bool
-  | .leanRel _ => true
+  | .leanRel _ | .knownRel _ => true
   | .union a b | .diff a b | .inter a b | .prod a b | .join a b
   | .override a b | .restrictDom a b | .restrictRan a b => a.hasLeanRel || b.hasLeanRel
   | .prodMult a _ _ b => a.hasLeanRel || b.hasLeanRel
@@ -402,7 +480,7 @@ meta partial def SelForm.hasLeanRel : SelForm → Bool
 
 end
 
-/-- Whether any op in `spec` carries a raw Lean selector. -/
+/-- Whether any op in `spec` carries an executable or knowledge-backed Lean selector. -/
 meta def SpytialSpec.hasLeanRel (spec : SpytialSpec) : Bool :=
   spec.any fun stamped => match stamped.op with
     | .orientation s _ | .align s _ | .cyclic s _ | .group s _ _ | .hideAtom s
@@ -424,13 +502,14 @@ private meta def resolveOp (ctx : LeanSelCtx) : SpytialOp → MetaM SpytialOp
   | op@(.edgeStyle ..) | op@(.hideField ..) | op@(.attribute ..) | op@(.flag ..) =>
     return op
 
-/-- Rewrite every raw Lean selector in `spec` into the tuples it selects on
+/-- Rewrite every embedded Lean selector in `spec` into the tuples it selects on
     this datum. Runs before any lowering to SGQ; identity on specs with none.
     The stamp is the user's own text, so resolution leaves it alone: a conflict
     report cites what they wrote, not the atom ids it resolved to. -/
 meta def resolveLeanSelectors (datum : Expr) (di : JsonDataInstance)
-    (prov : Provenance) (spec : SpytialSpec) : MetaM SpytialSpec := do
-  let ctx : LeanSelCtx := { datum, di, prov }
+    (prov : Provenance) (spec : SpytialSpec)
+    (knowledge? : Option SelectorKnowledge := none) : MetaM SpytialSpec := do
+  let ctx : LeanSelCtx := { datum, di, prov, knowledge? }
   spec.mapM fun stamped => return { stamped with op := ← resolveOp ctx stamped.op }
 
 end

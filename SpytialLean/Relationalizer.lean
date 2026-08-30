@@ -105,6 +105,10 @@ public meta structure WalkState where
       observations may be applied to those terms even though raw selectors must
       not resolve against them. The first term for a merged atom is retained. -/
   observationTerms : Array (Expr × String) := #[]
+  /-- Terms actually walked to each atom, including symbolic terms and aliases.
+      Knowledge selectors may use evidence about any of these terms. Custom
+      emissions with no walked term deliberately have no entry. -/
+  knowledgeTerms : Array (Expr × String) := #[]
   /-- `r w w` per closed subterm on the `.eqv` route — see `identityVerdict`. -/
   eqvRefl : ExprStructMap Bool := {}
   /-- Per-walk cache: whnf'd type → its `Repr` instance for leaf labels;
@@ -202,6 +206,8 @@ public meta structure WalkConfig where
   /-- Context mode shares exact open constructor terms (including local let
       aliases). Ordinary walks and `Raw` occurrence semantics are unchanged. -/
   shareSymbolicValues : Bool := false
+  /-- Retain symbolic term-to-atom associations for knowledge selectors. -/
+  recordKnowledgeTerms : Bool := false
   /-- Largest domain product a function tabulates into; over it, the function
       stays a leaf. -/
   maxTableTuples : Nat := 512
@@ -1198,6 +1204,20 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
         let label ← leafLabel e tyKey
         modify fun s => s.addAtom { id := atomId, type := typeName, label := label }
 
+/-- Record an expression at its actual drawn atom, retaining aliases without
+    duplicating the same term-to-atom association. -/
+public meta def WalkState.rememberKnowledgeTerm (state : WalkState) (term : Expr)
+    (atomId : String) : WalkState :=
+  if state.knowledgeTerms.any fun (e, id) => id == atomId && e.equal term then state
+  else { state with knowledgeTerms := state.knowledgeTerms.push (term, atomId) }
+
+private meta def withKnowledgeTerm (cfg : WalkConfig) (term : Expr)
+    (walk : StateT WalkState MetaM String) : StateT WalkState MetaM String := do
+  let atomId ← walk
+  if cfg.recordKnowledgeTerms then
+    modify fun state => state.rememberKnowledgeTerm term atomId
+  return atomId
+
 /-- Walk a Lean expression and produce atoms + relations.
     Returns the atom ID assigned to this expression.
 
@@ -1210,7 +1230,7 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
     instance is consulted at all;
     `Raw`/`Viewed` shift the mode for their subtree. -/
 public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
-    (ctx : WalkCtx := {}) : StateT WalkState MetaM String := do
+    (ctx : WalkCtx := {}) : StateT WalkState MetaM String := withKnowledgeTerm cfg eOrig do
   -- Save original name before WHNF unfolds it
   let origName := eOrig.getAppFn.constName?
   -- Raw/Viewed shift the ambient mode; recognized on the pre-whnf type because
