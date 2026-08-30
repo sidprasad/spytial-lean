@@ -234,18 +234,7 @@ theorem IsBST_rotateRight (x : Nat) (ll : Tree) (lx : Nat) (lr r : Tree)
     -- lx < z < x. `fyi` instantiates the existing bounds h3b and h1 for the inspection;
     -- the proof still has to apply h1 below. None of the subtrees needs to be concrete.
     -- Keep keys as vertices here: unlike the usual tree layout, the ordering is the point.
-    spytial (Tree.node ll lx lr) fyi [h1, h3b] with [
-      inferredEdge member contains.{b : Bool | @:b = true} (lineStyle "#64748b" dotted),
-      hideField contains,
-      hideField IsBST,
-      hideAtom Bool,
-      orientation left left below,
-      orientation right right below,
-      orientation key above,
-      orientation lt right,
-      align lt horizontal,
-      edgeStyle lt (lineStyle "#2563eb")
-    ]
+    spytial (Tree.node ll lx lr) fyi [h1, h3b]
     exact h1 z hzLeft
 
 theorem IsBST_rotateLeft (x : Nat) (l rl : Tree) (rx : Nat) (rr : Tree)
