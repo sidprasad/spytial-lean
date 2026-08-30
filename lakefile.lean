@@ -137,7 +137,8 @@ lean_lib Demos where
 lean_lib SpytialTests where
   srcDir := "tests"
   roots := #[`WalkCanon, `TypeShapeTest, `CoverageTest, `TacticTest, `SelectorTest,
-             `LeanSelectorTest, `IdentityTest, `IdentityWalkTest, `RelationShapeTest]
+             `LeanSelectorTest, `IdentityTest, `IdentityWalkTest, `RelationShapeTest,
+             `InContextTest]
 
 require proofwidgets from
   git "https://github.com/leanprover-community/ProofWidgets4" @ "v0.0.105"

@@ -17,8 +17,11 @@ by `SpytialIdentity`, the atom table keyed on `(type, identity)` under
 confirmed structural equality, never bare `Expr.hash`. No instance ⇒ the
 walker derives one; `asWritten` declines. The `Raw`/`Viewed` wrappers shift the
 ambient mode for their subtree, recognized on the *pre-whnf* type head because
-`Meta.whnf` melts the semireducible wrappers. `referenceRelationalize` is a literal two-pass
-implementation (fresh atoms, then merge); the fused `walkExpr` is
+`Meta.whnf` melts the semireducible wrappers. Observations are also recognized
+pre-whnf: their source-level computation slice becomes function-graph
+relations instead of implementation-level constructor structure.
+`referenceRelationalize` is a literal two-pass implementation (fresh atoms,
+then merge); the fused `walkExpr` is
 differentially tested against it. The two agree on the partition; when an
 identity is coarser than structural, the drawn representative may differ —
 the fused walker draws the first-walked occurrence. -/
@@ -59,6 +62,18 @@ public meta structure WalkState where
   mvarAtoms : Std.HashMap MVarId String := {}
   /-- Hypothesis atoms, one per free variable, ditto. -/
   fvarAtoms : Std.HashMap FVarId String := {}
+  /-- Exact named applications already emitted as function-graph points. This
+      makes the result of `f x` in one graph tuple the same atom as the input
+      `f x` in a later tuple. It is semantic sharing of one written term, not
+      value identity. -/
+  applicationAtoms : ExprStructMap String := {}
+  /-- Counter for short display names of determined but otherwise unnamed
+      application results (`•₁`, `•₂`, ...). -/
+  nextApplicationLabel : Nat := 0
+  /-- Refinements currently being expanded — the cycle guard for mutual
+      equations (`h₁ : x = y`, `h₂ : y = x`): a variable re-entered during its
+      own refinement renders as the opaque leaf instead. -/
+  refining : Std.HashSet FVarId := {}
   /-- Memo-reconcile for custom relationalizers: a repeated occurrence resolves
       to the id the relationalizer actually returned, never the discarded
       pre-allocated one. Confirmed equality, not bare hash. -/
@@ -93,6 +108,30 @@ public meta def WalkState.freshId (s : WalkState) : String × WalkState :=
   let id := s!"atom_{s.nextId}"
   (id, { s with nextId := s.nextId + 1 })
 
+private meta def subscriptDigit : Char → String
+  | '0' => "₀"
+  | '1' => "₁"
+  | '2' => "₂"
+  | '3' => "₃"
+  | '4' => "₄"
+  | '5' => "₅"
+  | '6' => "₆"
+  | '7' => "₇"
+  | '8' => "₈"
+  | '9' => "₉"
+  | c => c.toString
+
+/-- A visibly generated display name, distinct from both a program identifier
+    and the `?u` notation used for an unknown existential witness. -/
+private meta def applicationLabel (index : Nat) : String :=
+  "•" ++ String.join ((toString (index + 1)).toList.map subscriptDigit)
+
+/-- Allocate the next generated `•ₙ` display name. Every generated label in a
+    walk draws from this one counter, so two distinct atoms never share one. -/
+public meta def WalkState.freshApplicationLabel (s : WalkState) : String × WalkState :=
+  (applicationLabel s.nextApplicationLabel,
+    { s with nextApplicationLabel := s.nextApplicationLabel + 1 })
+
 /-- Register an atom in the state. -/
 public meta def WalkState.addAtom (s : WalkState) (atom : JsonAtom) : WalkState :=
   { s with atoms := s.atoms.push atom }
@@ -109,7 +148,7 @@ public meta def WalkState.addRelation (s : WalkState) (relName : String)
   if s.relations.contains relName then s
   else { s with relations := s.relations.insert relName (types, #[]) }
 
-/-- Convert accumulated state to a JsonDataInstance. -/
+/-- Convert accumulated state to ordinary extracted data. -/
 public meta def WalkState.toDataInstance (s : WalkState) : JsonDataInstance :=
   let relations := s.relations.toArray.map fun (name, types, tuples) =>
     { id := name, name := name, types := types, tuples := tuples : JsonRelation }
@@ -119,9 +158,24 @@ public meta def WalkState.toDataInstance (s : WalkState) : JsonDataInstance :=
 public meta structure WalkConfig where
   /-- When true, skip Prop-typed fields (data mode). When false, show them (proof mode). -/
   filterProofs : Bool := true
+  /-- Show a named application `f x` as the graph point `f[x, f x]`.
+      Context knowledge enables this so repeated symbolic applications form a
+      connected relational value. Ordinary value relationalization leaves it
+      disabled. -/
+  functionGraphs : Bool := false
+  /-- Requested applications from an `observing` clause. Their function heads
+      parameterize expression walking: a named application that contains one
+      of these observed heads is represented by its source-level function
+      graph before WHNF can replace it with implementation-level constructors. -/
+  observations : Array Expr := #[]
   /-- Largest domain product a function tabulates into; over it, the function
       stays a leaf. -/
   maxTableTuples : Nat := 512
+  /-- Equational refinements: a hypothesis variable in this map draws the term
+      it is known equal to (`h : x = t` in a proof state) instead of an opaque
+      leaf. Consulted at the `fvar` hole and memoized in `fvarAtoms`, so every
+      occurrence shares the refined structure. -/
+  refinements : Std.HashMap FVarId Expr := {}
 
 /-- The ambient walk mode. Identity is per-type and declared; the mode is
     per-subtree — it decides only whether declarations are consulted at all. -/
@@ -209,7 +263,7 @@ per existing group. Open subterms have no value, hence no identity: fresh
 atoms, node-local. -/
 
 /-- Open subterms have no value, hence no identity — they stay as written. -/
-private meta def isClosedValue (e : Expr) : Bool :=
+public meta def isClosedValue (e : Expr) : Bool :=
   !e.hasFVar && !e.hasMVar && !e.hasLevelParam && !e.hasSorry
 
 /-- Shift the ambient mode for `Raw`/`Viewed` wrappers spelled in `ty`.
@@ -477,12 +531,14 @@ private meta def identityVerdict (tyKey e : Expr) : StateT WalkState MetaM IdVer
     -- `eqvSeen` and the group scan both assume the decider is reflexive. A
     -- derived instance over an `asWritten` field is not: the type as a whole
     -- still has merging arms, so it cannot present `.asWritten`, but `w`
-    -- itself must not merge — with an identical spelling least of all.
+    -- itself must not merge — with an identical spelling least of all. Only an
+    -- evaluation that answers `false` establishes that; an evaluation failure
+    -- keeps the exact-spelling merge, which needs no evaluation.
     let refl ← do
       match (← get).eqvRefl[(⟨w⟩ : ExprStructEq)]? with
       | some b => pure b
       | none =>
-        let b := (← evalBool? (mkApp2 r w w)) == some true
+        let b := (← evalBool? (mkApp2 r w w)) != some false
         modify fun s => { s with eqvRefl := s.eqvRefl.insert ⟨w⟩ b }
         pure b
     unless refl do return .fresh
@@ -523,8 +579,10 @@ private meta def registerIdentity (v : IdVerdict) (e : Expr) (atomId : String) :
     hole still occupies a `Tree` slot, so `Tree` specs apply). One atom per
     metavariable/hypothesis, under every mode. Must short-circuit *before*
     custom-relationalizer dispatch — a value decomposer must never be handed a
-    bare hole of its target type. -/
-private meta def holeAtom? (e ty : Expr) : StateT WalkState MetaM (Option String) := do
+    bare hole of its target type. A variable with an entry in
+    `cfg.refinements` is not opaque: it draws the shape IYKYK established. -/
+private meta def holeAtom? (cfg : WalkConfig) (recurse : Expr → StateT WalkState MetaM String)
+    (e ty : Expr) : StateT WalkState MetaM (Option String) := do
   match e with
   | .mvar mvarId =>
     if let some id := (← get).mvarAtoms[mvarId]? then return some id
@@ -537,6 +595,16 @@ private meta def holeAtom? (e ty : Expr) : StateT WalkState MetaM (Option String
     return some atomId
   | .fvar fvarId =>
     if let some id := (← get).fvarAtoms[fvarId]? then return some id
+    -- An equational refinement draws the term the variable is known equal to;
+    -- the memo below makes every occurrence share the refined structure. A
+    -- cyclic chain re-entering the variable falls through to the opaque leaf.
+    if let some rhs := cfg.refinements[fvarId]? then
+      if !(← get).refining.contains fvarId then
+        modify fun s => { s with refining := s.refining.insert fvarId }
+        let id ← recurse rhs
+        modify fun s => { s with refining := s.refining.erase fvarId,
+                                 fvarAtoms := s.fvarAtoms.insert fvarId id }
+        return some id
     let typeName ← sigOfType ty
     let userName ← fvarId.getUserName
     let s ← get
@@ -615,6 +683,82 @@ private meta def decideProp? (p : Expr) : MetaM (Option Bool) := do
     | .const ``Decidable.isFalse _ => return some false
     | _ => evalBool? (← mkAppOptM ``Decidable.decide #[some p, some inst])
   catch _ => return none
+
+/-- The arguments of an application that carry data. Proofs, types, and
+    typeclass instances are elaboration machinery rather than graph columns. -/
+public meta def dataArgsOf (e : Expr) : MetaM (Array Expr) := do
+  let mut out : Array Expr := #[]
+  for a in e.getAppArgs do
+    if ← isProofArg a then continue
+    if (← Meta.isClass? (← inferType a)).isSome then continue
+    out := out.push a
+  return out
+
+/-- Read a named application as a point in the function's graph. Constructors
+    are values, not functions being observed. -/
+public meta def graphSide? (side : Expr) : MetaM (Option (String × Array Expr)) := do
+  let name? ← match side.getAppFn with
+    | .const ``HAdd.hAdd _ => pure (some "add")
+    | .const n _ =>
+      match (← getEnv).find? n with
+      | some (.ctorInfo _) => pure none
+      | _ => pure (some (shortName n))
+    | .fvar id => pure (some (hypLabel (← id.getUserName)))
+    | _ => pure none
+  let some name := name? | return none
+  let args ← dataArgsOf side
+  if args.isEmpty then return none
+  return some (name, args)
+
+/-- Whether `application` has the same function head as one of the explicitly
+    requested observations. Function identity, rather than the applied root
+    argument, makes `observing [height]` govern every `height _` appearing in
+    context expressions. -/
+private meta def hasObservedHead (cfg : WalkConfig) (application : Expr) : Bool :=
+  cfg.observations.any fun observation =>
+    observation.getAppFn.equal application.getAppFn
+
+/-- Whether a source expression depends on an explicitly observed
+    application. This is the computation slice whose named applications must
+    be reified before reduction: `height r + 1` depends on `height`, so both
+    `height` and the enclosing addition become function-graph relations. -/
+public meta partial def dependsOnObservation (cfg : WalkConfig) (expression : Expr) :
+    MetaM Bool := do
+  if cfg.observations.isEmpty then return false
+  if hasObservedHead cfg expression && (← graphSide? expression).isSome then return true
+  for argument in ← dataArgsOf expression do
+    if ← dependsOnObservation cfg argument then return true
+  return false
+
+/-- A named source application in the computation slice selected by
+    `observing`. Such an application is a relational boundary before WHNF. -/
+public meta def observedGraphSide? (cfg : WalkConfig) (expression : Expr) :
+    MetaM (Option (String × Array Expr)) := do
+  let some side ← graphSide? expression | return none
+  unless ← dependsOnObservation cfg expression do return none
+  return some side
+
+/-- Emit a named application `f xs` as the graph point `f[xs, f xs]`.
+    Repeated applications reuse the same output atom. -/
+private meta def emitFunctionGraph? (cfg : WalkConfig)
+    (recurse : Expr → StateT WalkState MetaM String) (e : Expr) (typeName atomId : String) :
+    StateT WalkState MetaM Bool := do
+  unless cfg.functionGraphs do return false
+  let some (relName, args) ← graphSide? e | return false
+  let label ← modifyGet WalkState.freshApplicationLabel
+  modify fun state =>
+    let state := state.addAtom { id := atomId, type := typeName, label }
+    { state with applicationAtoms := state.applicationAtoms.insert ⟨e⟩ atomId }
+  let mut ids : Array String := #[]
+  let mut types : Array String := #[]
+  for arg in args do
+    ids := ids.push (← recurse arg)
+    types := types.push (← sigOfType (← inferType arg))
+  ids := ids.push atomId
+  types := types.push typeName
+  let tuple : JsonTuple := { atoms := ids, types }
+  modify fun state => state.addTuple relName types tuple
+  return true
 
 /-- Emit `relName` as the flat table over the enumerable domain product;
     report whether it fired. A data codomain gives `(owner, d₁, …, dₖ,
@@ -717,8 +861,15 @@ private meta def leafLabel (e tyKey : Expr) : StateT WalkState MetaM String := d
     walker and the two-pass reference. `recurse` closes over the child walk
     context (ambient mode, unfold-guard ancestors). -/
 private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkState MetaM String)
-    (e ty tyKey : Expr) (origName : Option Name) (atomId : String) :
+    (e ty tyKey : Expr) (origName : Option Name) (atomId : String)
+    (forceFunctionGraph : Bool := false) :
     StateT WalkState MetaM Unit := do
+  if forceFunctionGraph then
+    let typeName ← sigOfType ty
+    unless ← emitFunctionGraph? { cfg with functionGraphs := true } recurse e typeName atomId do
+      let label ← leafLabel e tyKey
+      modify fun s => s.addAtom { id := atomId, type := typeName, label := label }
+    return
   match e with
   -- Nat literal
   | .lit (.natVal n) =>
@@ -762,8 +913,8 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
             unless ← tabulate? cfg recurse fieldName typeName atomId arg do
               let childId ← recurse arg
               let types := #[typeName, ← columnSig typeName arg]
-              modify fun s => s.addTuple fieldName types
-                { atoms := #[atomId, childId], types := types }
+              let tuple := { atoms := #[atomId, childId], types := types }
+              modify fun state => state.addTuple fieldName types tuple
       -- stuck match (iota can't fire on a hole/hypothesis discriminant):
       -- ternary scrutinee edges; motive and alternatives are plumbing
       else if let some minfo := getMatcherInfoCore? env fnName then
@@ -801,13 +952,15 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
               modify fun s => s.addTuple fn types
                 { atoms := #[atomId, childId], types := types }
       else do
-        -- Generic function application or unknown — leaf atom
+        unless ← emitFunctionGraph? cfg recurse e typeName atomId do
+          -- Generic function application or unknown — leaf atom
+          let label ← leafLabel e tyKey
+          modify fun s => s.addAtom { id := atomId, type := typeName, label := label }
+    | _ => do
+      unless ← emitFunctionGraph? cfg recurse e typeName atomId do
+        -- Not a named application — leaf atom
         let label ← leafLabel e tyKey
         modify fun s => s.addAtom { id := atomId, type := typeName, label := label }
-    | _ => do
-      -- Not a const application — leaf atom
-      let label ← leafLabel e tyKey
-      modify fun s => s.addAtom { id := atomId, type := typeName, label := label }
 
 /-- Walk a Lean expression and produce atoms + relations.
     Returns the atom ID assigned to this expression.
@@ -830,8 +983,11 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
   -- (a hole, a hypothesis) falls through to the as-written rendering of
   -- what's there.
   let mode ← shiftForWrappers ctx.mode (← Meta.inferType eOrig)
-  -- WHNF reduce to expose constructors
-  let e ← Meta.whnf eOrig
+  -- An observation is an input to relationalization, not a post-pass. Preserve
+  -- the source spelling of named computations that depend on an observed
+  -- application; only other expressions WHNF to expose data constructors.
+  let sourceFunctionGraph := (← observedGraphSide? cfg eOrig).isSome
+  let e ← if sourceFunctionGraph then pure eOrig else Meta.whnf eOrig
   -- Unfold guard: ancestors only (push-on-entry; pop-on-exit holds by
   -- construction, the array lives in the per-call ctx), confirmed structural
   -- equality — a self-similar unfolding terminates as an explicit cycle edge.
@@ -839,16 +995,27 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
     return ancestorId
   let ty ← Meta.inferType e
   -- Open-value holes: one atom per metavariable/hypothesis, under every mode.
-  if let some id ← holeAtom? e ty then
+  if let some id ← holeAtom? cfg (fun c => walkExpr cfg c { mode, ancestors := ctx.ancestors })
+      e ty then
     return id
   -- Custom relationalizer wins over any identity instance.
   let tyKey ← Meta.whnf ty
-  if let some id ← customDispatch? eOrig e tyKey
-      (fun guardId c => walkExpr cfg c { mode, ancestors := ctx.ancestors.push (e, guardId) }) then
-    return id
+  let isFunctionGraph := sourceFunctionGraph ||
+    (cfg.functionGraphs && (← graphSide? e).isSome)
+  unless isFunctionGraph do
+    if let some id ← customDispatch? eOrig e tyKey
+        (fun guardId c =>
+          walkExpr cfg c { mode, ancestors := ctx.ancestors.push (e, guardId) }) then
+      return id
+  -- Context mode also seeds this table with witness terms that are not named
+  -- function applications, so its lookup remains broader than the identity
+  -- rule for genuine graph points.
+  if cfg.functionGraphs || sourceFunctionGraph then
+    if let some id := (← get).applicationAtoms[(⟨e⟩ : ExprStructEq)]? then
+      return id
   -- The identity decision (declared mode, closed subterms only).
   let verdict ←
-    if mode == .declared && isClosedValue e then identityVerdict tyKey e
+    if !isFunctionGraph && mode == .declared && isClosedValue e then identityVerdict tyKey e
     else pure .fresh
   if let .reuse id := verdict then
     return id
@@ -860,25 +1027,93 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
   -- this atom.
   registerIdentity verdict e atomId
   emitNode cfg (fun c => walkExpr cfg c { mode, ancestors := ctx.ancestors.push (e, atomId) })
-    e ty tyKey origName atomId
+    e ty tyKey origName atomId sourceFunctionGraph
   return atomId
 
-/-- Walk an expression and produce a complete JsonDataInstance, keeping the
+private meta def tupleStartsWith (tuple : JsonTuple) (initial : Array String) : Bool := Id.run do
+  if tuple.atoms.size != initial.size + 1 then return false
+  for index in [:initial.size] do
+    if tuple.atoms[index]! != initial[index]! then return false
+  return true
+
+/-- Add one requested function application to an existing walk. `source`
+    supplies the function name, while `result` and `arguments` may include
+    refinements known by a caller. -/
+public meta def addObservation (cfg : WalkConfig) (source result : Expr)
+    (arguments : Array Expr) (anchors : Array (Expr × String)) :
+    StateT WalkState MetaM Unit := do
+  let some (relation, _) ← graphSide? source | return
+  let mut atomIds := #[]
+  let mut types := #[]
+  for argument in arguments do
+    let atomId ← match anchors.find? (fun (seen, _) => seen.equal argument) with
+      | some (_, atomId) => pure atomId
+      | none => walkExpr cfg argument
+    atomIds := atomIds.push atomId
+    types := types.push (← sigOfType (← inferType argument))
+  let resultType := ← sigOfType (← inferType result)
+  types := types.push resultType
+  let reducedResult ← whnf result
+  let state ← get
+  let mut knownResult? := state.applicationAtoms[(⟨result⟩ : ExprStructEq)]?
+  if knownResult?.isNone then
+    if let some (declaredTypes, tuples) := state.relations.get? relation then
+      if declaredTypes == types then
+        for tuple in tuples do
+          if tupleStartsWith tuple atomIds then
+            knownResult? := tuple.atoms.back?
+            break
+  let resultId ← match knownResult? with
+    | some resultId => pure resultId
+    | none =>
+      if reducedResult.hasFVar || reducedResult.hasMVar then do
+        let state ← get
+        let (label, state) := state.freshApplicationLabel
+        let (atomId, state) := state.freshId
+        set (state.addAtom { id := atomId, type := resultType, label })
+        pure atomId
+      else
+        walkExpr cfg reducedResult
+  modify fun state =>
+    let applications := state.applicationAtoms
+      |>.insert (⟨source⟩ : ExprStructEq) resultId
+      |>.insert (⟨result⟩ : ExprStructEq) resultId
+      |>.insert (⟨reducedResult⟩ : ExprStructEq) resultId
+    { state with applicationAtoms := applications }
+  atomIds := atomIds.push resultId
+  let state ← get
+  if let some (declaredTypes, tuples) := state.relations.get? relation then
+    if declaredTypes != types then
+      logWarning m!"spytial: '{relation}' names relations of arity \
+        {declaredTypes.size} and {types.size}; the observation is not drawn"
+      return
+    if tuples.any (fun tuple => tuple.atoms == atomIds) then return
+  modify fun state => state.addTuple relation types { atoms := atomIds, types }
+
+/-- Walk an expression and produce a complete data instance, keeping the
     subterm each atom was walked from (see `Provenance`).
 
     `withoutModifyingEnv` because the walk derives instances: persisting them
     would let two modules that draw the same third-party type mint the same
     instance name, and importing both would fail. The result is plain data, so
     nothing outlives the rollback. -/
-public meta def relationalizeWithProvenance (e : Expr) (cfg : WalkConfig := {}) :
-    MetaM (JsonDataInstance × Provenance) :=
+public meta def relationalizeWithProvenance (e : Expr) (cfg : WalkConfig := {})
+    (observations : Array Expr := #[]) : MetaM (JsonDataInstance × Provenance) :=
   withoutModifyingEnv do
-    let (_, state) ← walkExpr cfg e |>.run {}
+    let (_, state) ← StateT.run (s := {}) do
+      let observationAwareConfig := { cfg with observations }
+      let rootId ← walkExpr observationAwareConfig e
+      let anchors := #[(e, rootId)]
+      let observationConfig := { observationAwareConfig with functionGraphs := true }
+      for observation in observations do
+        if let some (_, arguments) ← graphSide? observation then
+          addObservation observationConfig observation observation arguments anchors
     return (state.toDataInstance, state.provenance)
 
-/-- Walk an expression and produce a complete JsonDataInstance. -/
-public meta def relationalize (e : Expr) (cfg : WalkConfig := {}) : MetaM JsonDataInstance := do
-  return (← relationalizeWithProvenance e cfg).1
+/-- Walk an expression and produce a complete data instance. -/
+public meta def relationalize (e : Expr) (cfg : WalkConfig := {})
+    (observations : Array Expr := #[]) : MetaM JsonDataInstance := do
+  return (← relationalizeWithProvenance e cfg observations).1
 
 /-! ## Two-pass reference implementation
 
@@ -899,6 +1134,8 @@ private meta structure RefRecord where
   tyKey : Expr
   /-- The ambient mode at this node. -/
   mode : WalkMode
+  /-- Function-graph points never participate in value-identity merging. -/
+  functionGraph : Bool
 
 /-- The literal two-pass renderer: returns the root atom id and the data
     instance. Differential oracle target for `walkExpr`. -/
@@ -910,22 +1147,30 @@ public meta partial def referenceRelationalize (e : Expr) (cfg : WalkConfig := {
   let rec refWalk (eOrig : Expr) (ctx : WalkCtx) : StateT WalkState MetaM String := do
     let origName := eOrig.getAppFn.constName?
     let mode ← shiftForWrappers ctx.mode (← Meta.inferType eOrig)
-    let e ← Meta.whnf eOrig
+    let sourceFunctionGraph := (← observedGraphSide? cfg eOrig).isSome
+    let e ← if sourceFunctionGraph then pure eOrig else Meta.whnf eOrig
     if let some (_, ancestorId) := ctx.ancestors.find? (fun (a, _) => a.equal e) then
       return ancestorId
     let ty ← Meta.inferType e
-    if let some id ← holeAtom? e ty then
+    if let some id ← holeAtom? cfg (fun c => refWalk c { mode, ancestors := ctx.ancestors })
+        e ty then
       return id
     let tyKey ← Meta.whnf ty
-    if let some id ← customDispatch? eOrig e tyKey
-        (fun guardId c => refWalk c { mode, ancestors := ctx.ancestors.push (e, guardId) }) then
-      return id
+    let isFunctionGraph := sourceFunctionGraph ||
+      (cfg.functionGraphs && (← graphSide? e).isSome)
+    unless isFunctionGraph do
+      if let some id ← customDispatch? eOrig e tyKey
+          (fun guardId c => refWalk c { mode, ancestors := ctx.ancestors.push (e, guardId) }) then
+        return id
+    if cfg.functionGraphs || sourceFunctionGraph then
+      if let some id := (← get).applicationAtoms[(⟨e⟩ : ExprStructEq)]? then
+        return id
     let s ← get
     let (atomId, s) := s.freshId
     set s
-    records.modify (·.push { atomId, expr := e, tyKey, mode })
+    records.modify (·.push { atomId, expr := e, tyKey, mode, functionGraph := isFunctionGraph })
     emitNode cfg (fun c => refWalk c { mode, ancestors := ctx.ancestors.push (e, atomId) })
-      e ty tyKey origName atomId
+      e ty tyKey origName atomId sourceFunctionGraph
     return atomId
   let (rootId, s) ← (refWalk e {}).run {}
   -- Pass 2: group occurrences by (type, identity), first occurrence the
@@ -935,7 +1180,7 @@ public meta partial def referenceRelationalize (e : Expr) (cfg : WalkConfig := {
   let (union, _) ← StateT.run (s := s) do
     let mut union : Std.HashMap String String := {}
     for rec in recs do
-      if rec.mode == .declared && isClosedValue rec.expr then
+      if !rec.functionGraph && rec.mode == .declared && isClosedValue rec.expr then
         match ← identityVerdict rec.tyKey rec.expr with
         | .reuse id => union := union.insert rec.atomId id
         | .fresh => pure ()
@@ -954,10 +1199,12 @@ public meta partial def referenceRelationalize (e : Expr) (cfg : WalkConfig := {
       | none => some t
     -- drop relations the merge emptied, not ones born empty
     if ts.isEmpty && !r.tuples.isEmpty then none else some { r with tuples := ts }
-  -- Collect atoms orphaned by the merge: keep what is reachable from the root
-  -- (source → endpoints per tuple). Note a deliberately-disconnected atom a
-  -- custom relationalizer might emit would be dropped here; the oracle does
-  -- not cover that corner.
+  -- Collect atoms orphaned by the merge: keep the relational component of the
+  -- root. Constructor tuples place their owner first, while function graphs
+  -- place their result last, so reachability is over tuples as undirected
+  -- hyperedges rather than assuming column zero is always the rootward end.
+  -- A deliberately-disconnected atom a custom relationalizer might emit is
+  -- still dropped here; the oracle does not cover that corner.
   let reach ← do
     let mut reach : Std.HashSet String := ({} : Std.HashSet String).insert root'
     let mut changed := true
@@ -965,12 +1212,11 @@ public meta partial def referenceRelationalize (e : Expr) (cfg : WalkConfig := {
       changed := false
       for r in rels1 do
         for t in r.tuples do
-          if let some src := t.atoms[0]? then
-            if reach.contains src then
-              for a in t.atoms do
-                unless reach.contains a do
-                  reach := reach.insert a
-                  changed := true
+          if t.atoms.any reach.contains then
+            for a in t.atoms do
+              unless reach.contains a do
+                reach := reach.insert a
+                changed := true
     pure reach
   let atoms' := di.atoms.filter fun a => mapId a.id == a.id && reach.contains a.id
   let rels' := rels1.filterMap fun r =>

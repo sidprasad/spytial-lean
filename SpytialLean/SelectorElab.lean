@@ -99,6 +99,22 @@ meta def SelScope.ofType (root : Name) (seeds : Array Name := #[]) : MetaM SelSc
 meta def SelScope.introduce (scope : SelScope) (name : String) (arity : Nat) : SelScope :=
   { scope with introduced := scope.introduced.insert name arity }
 
+/-- Union of two scopes, for a value view whose positive facts span several
+    types. Lenient if either side is; a relation name claimed at two
+    different arities keeps the name with its width unchecked. -/
+meta def SelScope.merge (a b : SelScope) : SelScope := Id.run do
+  let mut rels := a.rels
+  for (n, owner, arity?) in b.rels do
+    rels := match rels.get? n with
+      | some (o, a?) => if a? == arity? then rels else rels.insert n (o, none)
+      | none => rels.insert n (owner, arity?)
+  return { root := a.root
+           types := b.types.fold (init := a.types) fun m k v => m.insert k v
+           rels
+           ctorLabels := b.ctorLabels.fold (init := a.ctorLabels) fun m k v => m.insert k v
+           introduced := b.introduced.fold (init := a.introduced) fun m k v => m.insert k v
+           lenient := a.lenient || b.lenient }
+
 /-! ## Diagnostics -/
 
 private meta def editDistance (a b : String) : Nat := Id.run do

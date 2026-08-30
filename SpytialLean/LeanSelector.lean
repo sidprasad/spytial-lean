@@ -35,10 +35,11 @@ Failures are loud. A function from a module that is not `meta import`ed and a
 missing `BEq` or `Decidable` instance are reported as errors — never as an
 empty selection.
 
-Two boundaries carry over from the walk itself: atoms with no value behind
-them (holes, hypotheses, custom-relationalizer emissions) are never selected,
-and a column holds one representative value per atom (under structural
-identity, *the* value it stands for). -/
+Two boundaries carry over from the walk itself: atoms with no closed value
+behind them (holes, hypotheses, custom-relationalizer emissions — and, in a
+knowledge walk, subterms the context leaves symbolic) are never selected, and
+a column holds one representative value per atom (under structural identity,
+*the* value it stands for). -/
 
 public section
 
@@ -160,7 +161,9 @@ meta structure LeanSelCtx where
     atom order. The evaluated term reports indexes into this array, so an
     index *is* an atom. The walker's sig is a short name; the definitional
     type check keeps a same-named type's atoms out of the array, which would
-    otherwise make the evaluated term ill-typed. -/
+    otherwise make the evaluated term ill-typed. An open subterm (one the
+    context leaves symbolic) has no value to run on and stays out too — the
+    compiled evaluator could not quote it. -/
 meta def LeanSelCtx.columnFor (ctx : LeanSelCtx) (σ : Expr) :
     MetaM (Array String × Array Expr) := do
   let sig ← sigOfType σ
@@ -169,9 +172,10 @@ meta def LeanSelCtx.columnFor (ctx : LeanSelCtx) (σ : Expr) :
   for a in ctx.di.atoms do
     if a.type == sig then
       if let some e := ctx.prov[a.id]? then
-        if ← withNewMCtxDepth (isDefEq (← inferType e) σ) then
-          ids := ids.push a.id
-          es := es.push e
+        if isClosedValue e then
+          if ← withNewMCtxDepth (isDefEq (← inferType e) σ) then
+            ids := ids.push a.id
+            es := es.push e
   return (ids, es)
 
 /-! ## The one evaluation -/
@@ -229,6 +233,10 @@ meta def evalLeanRel (ctx : LeanSelCtx) (fn : Expr) : MetaM (Array (Array String
         | _ => ``Spytial.Sel.selIdx4
       mkAppM helper (us.push p)
     | .sel T =>
+      unless isClosedValue ctx.datum do
+        throwError "a `Spytial.Sel` runs on the whole value being drawn, but \
+          the context does not determine that value; a predicate selects \
+          among the individually known values instead"
       let datumTy ← inferType ctx.datum
       let datum ← do
         if ← withNewMCtxDepth (isDefEq datumTy T) then pure ctx.datum

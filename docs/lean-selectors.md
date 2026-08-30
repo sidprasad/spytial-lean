@@ -106,7 +106,16 @@ Use `#spytial.spec` to print what a selector resolved to (node ids like
   nothing.
 - **Only values are selectable.** Group names, invented relations
   (`scrutinee`), custom-relationalizer nodes, and open terms (holes,
-  hypotheses) never match; use the relational language for those.
+  hypotheses) never match; use the relational language for those. In the
+  `spytial` tactic this means a selector runs on the values the context
+  establishes — a subterm the context leaves symbolic never matches, and a
+  `Spytial.Sel` is refused unless the context determines the whole value.
+  This also applies to a `Spytial.Sel` inherited from an attached
+  `spytial_spec`: because the selector is part of that specification, Spytial
+  reports an error rather than silently omitting it. This is a limitation of
+  whole-value selectors in tactic mode. They execute ordinary Lean code on a
+  concrete value; they cannot currently interpret that code using the partial
+  knowledge extracted from the proof context.
 - **At most 4 columns, at most 4096 selected tuples.** Wider or bigger cannot
   render legibly.
 

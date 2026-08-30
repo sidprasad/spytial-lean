@@ -11,9 +11,11 @@ public meta import SpytialLean.Spec
 public meta import SpytialLean.Selector
 public meta import SpytialLean.SelectorElab
 public meta import SpytialLean.Relationalizer
+public meta import SpytialLean.InContext
 public meta import SpytialLean.LeanSelector
 public meta import SpytialLean.Widget
 public meta import SpytialLean.Attr
+public meta import Iykyk.Tactic
 
 namespace SpytialLean
 
@@ -464,38 +466,95 @@ private meta def elabTermInstantiated (t : Syntax) : TermElabM Expr := do
   Term.synthesizeSyntheticMVarsNoPostponing
   instantiateMVars e
 
+/-- Elaborate named unary data functions into requested applications. Their
+    function heads later parameterize relationalization of the root and any
+    proof-context expressions. -/
+private meta def resolveObservationTerms (subject : Expr) (observerSyntaxes : Array Syntax) :
+    TermElabM (Array Expr) :=
+  observerSyntaxes.mapM fun observerSyntax => do
+    let observer ← elabTermInstantiated observerSyntax
+    let observation ← try
+      mkAppM' observer #[subject]
+    catch _ =>
+      throwErrorAt observerSyntax m!"'observing' expects a unary function applicable to \
+        the selected value, but '{observerSyntax}' has type {← inferType observer}"
+    if ← isProp observation then
+      throwErrorAt observerSyntax "'observing' expects a data-returning function, not a predicate"
+    let resultType ← whnf (← inferType observation)
+    if resultType.isForall then
+      throwErrorAt observerSyntax "'observing' expects a unary function"
+    if resultType.isSort then
+      throwErrorAt observerSyntax "'observing' expects a function returning a data value"
+    unless (← graphSide? observation).isSome do
+      throwErrorAt observerSyntax "'observing' expects a named function"
+    return observation
+
+private meta def resolveObservations (subject : Expr) (stx : Syntax) :
+    TermElabM (Array Expr) :=
+  if stx.getNumArgs == 0 then pure #[]
+  else resolveObservationTerms subject stx[2].getSepArgs
+
 /-- Elaborate a term to a fully instantiated expression and relationalize it,
     keeping the provenance raw Lean selectors resolve against. -/
-private meta def elabRelationalized (t : Syntax) (cfg : WalkConfig := {}) :
-    TermElabM (Expr × JsonDataInstance × Provenance) := do
+private meta def elabRelationalized (t : Syntax) (cfg : WalkConfig := {})
+    (observerSyntaxes : Array Syntax := #[]) :
+    TermElabM (Expr × Array Expr × JsonDataInstance × Provenance) := do
   let e ← elabTermInstantiated t
-  let (di, prov) ← relationalizeWithProvenance e cfg
-  return (e, di, prov)
+  let observations ← resolveObservationTerms e observerSyntaxes
+  let (di, prov) ← relationalizeWithProvenance e cfg observations
+  return (e, observations, di, prov)
 
 /-- Elaborate a use-site `with [...]` for `e`. Without `..` the list replaces
     `e`'s attached spec; a `..` element splices the attached spec at that
-    position, its introduced names in scope for the ops after it. -/
-private meta def elabUseSiteOps (e : Expr) (ops : Array (TSyntax `spytial_op)) :
-    TermElabM SpytialSpec := do
+    position, its introduced names in scope for the ops after it. `scope?`
+    overrides the scope for callers that know more than `e`'s type does. -/
+private meta def elabUseSiteOps (e : Expr) (ops : Array (TSyntax `spytial_op))
+    (scope? : Option SelScope := none) : TermElabM SpytialSpec := do
   let attached? ← lookupTypeSpec e
   if attached?.isNone then
     if let some splice := ops.find? (·.raw.isOfKind ``spytialSpliceStx) then
       logWarningAt splice m!"`..` splices the attached spec, but {← inferType e} has none"
-  elabSpytialOps (← scopeForExpr e) ops (some (attached?.getD []))
+  elabSpytialOps (← scope?.getDM (scopeForExpr e)) ops (some (attached?.getD []))
+
+/-- Extend a value's ordinary selector scope with explicitly requested
+    function graphs. -/
+private meta def scopeForObservations (base : SelScope) (observations : Array Expr) :
+    MetaM SelScope := do
+  let mut scope := base
+  let mut relations := #[]
+  let mut heads := #[]
+  for observation in observations do
+    if let some (name, arguments) ← graphSide? observation then
+      relations := relations.push (name, arguments.size + 1)
+      for argument in arguments.push observation do
+        heads := heads.push (← typeHead? (← inferType argument))
+  for head in heads.filterMap id do
+    scope := scope.merge (← SelScope.ofType head)
+  for (name, arity) in relations do
+    scope := { scope with rels :=
+      match scope.rels.get? name with
+      | some (owner, some previous) =>
+          if previous == arity then scope.rels else scope.rels.insert name (owner, none)
+      | some (_, none) => scope.rels
+      | none => scope.rels.insert name (scope.root, some arity) }
+  return { scope with lenient := scope.lenient || heads.contains none }
 
 /-- An explicit `with [<ops>]` overrides the type's attached spec, unless a
     `..` element splices it back in. Raw Lean selectors resolve against this
     datum, and the spec is rendered to its wire string once, here. -/
 private meta def elabSpytialPayload (t : Syntax) (ops? : Option (Array (TSyntax `spytial_op)))
-    (cfg : WalkConfig) : TermElabM (JsonDataInstance × Option String) :=
+    (cfg : WalkConfig) (observerSyntaxes : Array Syntax := #[]) :
+    TermElabM (JsonDataInstance × Option String) :=
   -- The command boundary is where `#eval` discards what it derived, and both
   -- halves below derive: the walk needs `SpytialIdentity`, and building the
   -- selector scope needs `SpytialEnum`. Wrapping only the walk would leave the
   -- spec half persisting its instances. Both results are plain data.
   withoutModifyingEnv do
-    let (e, di, prov) ← elabRelationalized t cfg
+    let (e, observations, di, prov) ← elabRelationalized t cfg observerSyntaxes
     let spec? ← match ops? with
-      | some ops => some <$> elabUseSiteOps e ops
+      | some ops => do
+        let scope ← scopeForObservations (← scopeForExpr e) observations
+        some <$> elabUseSiteOps e ops (some scope)
       | none => lookupTypeSpec e
     let spec? ← spec?.mapM fun s => liftM (resolveLeanSelectors e di prov s)
     return (di, spec?.map SpytialSpec.render)
@@ -511,18 +570,27 @@ private meta def spytialProps (di : JsonDataInstance) (cndSpec? : Option String)
 /-- The payload `#spytial` hands the infoview. Public so out-of-tree frontends
     render what the infoview does rather than reassembling it. -/
 public meta def spytialPayloadProps (t : Syntax)
-    (ops? : Option (Array (TSyntax `spytial_op)) := none) (cfg : WalkConfig := {}) :
+    (ops? : Option (Array (TSyntax `spytial_op)) := none) (cfg : WalkConfig := {})
+    (observerSyntaxes : Array Syntax := #[]) :
     TermElabM Json := do
-  let (di, cndSpec?) ← elabSpytialPayload t ops? cfg
+  let (di, cndSpec?) ← elabSpytialPayload t ops? cfg observerSyntaxes
   return spytialProps di cndSpec?
 
 private meta def optionalOps (stx : Syntax) : Option (Array (TSyntax `spytial_op)) :=
   if stx.getNumArgs == 0 then none
   else some (stx[2].getSepArgs.map (⟨·⟩))
 
+private meta def optionalTerms (stx : Syntax) : Array Syntax :=
+  if stx.getNumArgs == 0 then #[] else stx[2].getSepArgs
+
 /-! ## #spytial command -/
 
 /-- `#spytial <term>` displays a spatial relational diagram in the Lean infoview.
+
+    `observing [f₁, ...]` parameterizes the relationalizer with the named
+    functions and adds each `fᵢ term` to the relational datum. Command mode has
+    no proof context; tactic mode uses the same observation input while also
+    translating context facts.
 
     Use `#spytial <term> with [<ops>]` to specify layout operations inline:
     ```
@@ -538,17 +606,14 @@ private meta def optionalOps (stx : Syntax) : Option (Array (TSyntax `spytial_op
     ```
     #spytial myTree with [.., hideAtom Nat]
     ``` -/
-syntax (name := spytialCmd) "#spytial " term (" with " "[" spytial_op,*,? "]")? : command
+syntax (name := spytialCmd) "#spytial " term (" observing " "[" term,* "]")?
+  (" with " "[" spytial_op,*,? "]")? : command
 
 @[command_elab spytialCmd]
-meta def elabSpytialCmd : CommandElab := fun
-  | stx@`(#spytial $t:term) => do
-    let props ← liftTermElabM <| spytialPayloadProps t
-    liftCoreM <| savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
-  | stx@`(#spytial $t:term with [$ops,*]) => do
-    let props ← liftTermElabM <| spytialPayloadProps t (some ops.getElems)
-    liftCoreM <| savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
-  | stx => throwError "Unexpected syntax {stx}."
+meta def elabSpytialCmd : CommandElab := fun stx => do
+  let props ← liftTermElabM <|
+    spytialPayloadProps stx[1] (optionalOps stx[3]) {} (optionalTerms stx[2])
+  liftCoreM <| savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
 
 /-! ## spytial_spec command -/
 
@@ -659,16 +724,16 @@ meta def elabSpytialSpecDebug : CommandElab := fun
     logInfo m!"{specStr}"
   | stx => throwError "Unexpected syntax {stx}."
 
-/-- `#spytial.datum <term>` prints the generated JSON data instance.
-    Shows what atoms and relations the relationalizer produces. -/
-syntax (name := spytialDatumDebug) "#spytial.datum " term : command
+/-- `#spytial.datum <term>` prints the generated data instance as JSON.
+    It shows the atoms and relations produced before any visualization and
+    accepts the same observations as `#spytial`. -/
+syntax (name := spytialDatumDebug) "#spytial.datum " term
+  (" observing " "[" term,* "]")? : command
 
 @[command_elab spytialDatumDebug]
-meta def elabSpytialDatumDebug : CommandElab := fun
-  | `(#spytial.datum $t:term) => do
-    let (_, di, _) ← liftTermElabM <| elabRelationalized t
-    logInfo m!"{(toJson di).pretty}"
-  | stx => throwError "Unexpected syntax {stx}."
+meta def elabSpytialDatumDebug : CommandElab := fun stx => do
+  let (_, _, di, _) ← liftTermElabM <| elabRelationalized stx[1] {} (optionalTerms stx[2])
+  logInfo m!"{(toJson di).pretty}"
 
 /-! ## Proof visualization -/
 
@@ -691,44 +756,122 @@ meta def elabSpytialProofCmd : CommandElab := fun
     liftCoreM <| savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
   | stx => throwError "Unexpected syntax {stx}."
 
-/-- `#spytial.proof.datum <term>` prints the JSON data instance in proof mode. -/
+/-- `#spytial.proof.datum <term>` prints the proof-mode data instance as JSON. -/
 syntax (name := spytialProofDatumDebug) "#spytial.proof.datum " term : command
 
 @[command_elab spytialProofDatumDebug]
 meta def elabSpytialProofDatumDebug : CommandElab := fun
   | `(#spytial.proof.datum $t:term) => do
-    let (_, di, _) ← liftTermElabM <| elabRelationalized t { filterProofs := false }
+    let (_, _, di, _) ← liftTermElabM <| elabRelationalized t { filterProofs := false }
     logInfo m!"{(toJson di).pretty}"
   | stx => throwError "Unexpected syntax {stx}."
 
-/-! ## spytial tactic -/
+/-! ## IYKYK-backed tactic mode -/
+
+private meta def resolveFyi (stx : Syntax) : TermElabM (Array Expr) := do
+  if stx.getNumArgs == 0 then return #[]
+  stx[2].getSepArgs.mapM fun rule => do
+    let e ← elabTermInstantiated rule
+    unless ← isProp (← inferType e) do
+      throwErrorAt rule m!"'fyi' expects a hypothesis: a proof of a Prop-typed \
+        statement, but this term has type {← inferType e}"
+    return e
+
+/-- Spytial's `wdyk` configuration. Simp is always enabled: it
+    normalizes each fact before decomposition, so a constructor clash reduces
+    to `False` (an inconsistent context) and a same-constructor equation
+    splits into the field equalities that refine atoms. -/
+private meta def contextConfig (hypotheses : Array Expr) : Iykyk.Config :=
+  { hypotheses, mechanisms := #[.simp] }
+
+/-- Extract knowledge with IYKYK and turn it into a Spytial widget payload. -/
+private meta def spytialInContextProps? (subject : Expr)
+    (ops? : Option (Array (TSyntax `spytial_op)) := none)
+    (walkConfig : WalkConfig := {}) (hypotheses : Array Expr := #[])
+    (observations : Array Expr := #[]) :
+    TermElabM (Option Json × ContextViewStatus) := do
+  let (status, view?) ←
+    wdykInContext subject walkConfig (contextConfig hypotheses) observations
+  let some view := view? | return (none, status)
+  let spec? ← match ops? with
+    | some ops => do
+      let scope ← scopeForAfaik view.afaik (← scopeForExpr subject) observations
+      some <$> elabUseSiteOps subject ops (some scope)
+    | none => lookupTypeSpec subject
+  -- Raw Lean selectors resolve against the knowledge walk exactly as against
+  -- a command-mode walk: the columns hold the closed values the context
+  -- establishes, and symbolic subterms never match.
+  let spec? ← spec?.mapM fun s => liftM (resolveLeanSelectors view.datum view.data view.prov s)
+  return (some (spytialProps view.data (spec?.map SpytialSpec.render)), status)
+
+/-- Programmatic entry point for Spytial's IYKYK consumer. -/
+public meta def spytialInContextProps (subject : Expr)
+    (ops? : Option (Array (TSyntax `spytial_op)) := none)
+    (walkConfig : WalkConfig := {}) (hypotheses : Array Expr := #[])
+    (observations : Array Expr := #[]) :
+    TermElabM (Json × ContextViewStatus) := do
+  let (props?, status) ←
+    spytialInContextProps? subject ops? walkConfig hypotheses observations
+  let some props := props? | throwError "spytial: IYKYK found an inconsistent context"
+  return (props, status)
 
 open Tactic in
-/-- `spytial <term>` displays a spatial relational diagram in the Lean infoview
-    during tactic mode. Hypothesis names and local bindings are in scope.
+private meta def spytialInContextTac (term : Syntax)
+    (observingSyntax fyiSyntax : Syntax)
+    (ops? : Option (Array (TSyntax `spytial_op))) (invocation : Syntax) : TacticM Unit := do
+  let (props?, status) ← withMainContext do
+    let subject ← elabTermInstantiated term
+    spytialInContextProps? subject ops? {} (← resolveFyi fyiSyntax)
+      (← resolveObservations subject observingSyntax)
+  if status.inconsistent then
+    logWarning "spytial: IYKYK found an inconsistent context; no diagram rendered"
+    return
+  if status.truncated then
+    logWarning "spytial: IYKYK reached an extraction limit; the diagram may be incomplete"
+  let some props := props? | return
+  savePanelWidgetInfo SpytialWidget.javascriptHash (return props) invocation
 
-    Use `spytial <term> with [<ops>]` to specify layout operations, just like the
-    `#spytial` command.
-
-    ```
-    example (t : RBTree Nat) : True := by
-      spytial t
-      trivial
-    ```
--/
-syntax (name := spytialTactic) "spytial " term (" with " "[" spytial_op,*,? "]")? : tactic
+open Tactic in
+/-- `spytial term` asks IYKYK what the current context establishes about
+    `term`, translates that knowledge into relational data, and displays it.
+    `observing [f₁, ...]` parameterizes that translation and also displays each
+    `fᵢ term`; `fyi [h₁, ...]`
+    supplies proved hypotheses or forward rules to IYKYK;
+    `with [...]` supplies Spytial layout operations. -/
+syntax (name := spytialTactic) "spytial " term (" observing " "[" term,* "]")?
+  (" fyi " "[" term,* "]")?
+  (" with " "[" spytial_op,*,? "]")? : tactic
 
 open Tactic in
 @[tactic spytialTactic]
-meta def elabSpytialTactic : Tactic := fun stx => do
-  match stx with
-  | `(tactic| spytial $t:term) => do
-    let props ← spytialPayloadProps t
-    savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
-  | `(tactic| spytial $t:term with [$ops,*]) => do
-    let props ← spytialPayloadProps t (some ops.getElems)
-    savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
-  | _ => throwError "Unexpected syntax {stx}."
+meta def elabSpytialTactic : Tactic := fun stx =>
+  spytialInContextTac stx[1] stx[2] stx[3] (optionalOps stx[4]) stx
+
+meta def spytialDatumKw : Lean.Parser.Parser :=
+  Lean.Parser.nonReservedSymbol "spytial.datum" (includeIdent := true)
+
+open Tactic in
+/-- `spytial.datum term` prints Spytial's relational observation of the IYKYK
+    result. It accepts the same observations and optional hypotheses as
+    `spytial`. -/
+syntax (name := spytialDatumTactic) spytialDatumKw term
+  (" observing " "[" term,* "]")?
+  (" fyi " "[" term,* "]")? : tactic
+
+open Tactic in
+@[tactic spytialDatumTactic]
+meta def elabSpytialDatumTactic : Tactic := fun stx => withMainContext do
+  let subject ← elabTermInstantiated stx[1]
+  let observations ← resolveObservations subject stx[2]
+  let (status, view?) ← wdykInContext subject {}
+    (contextConfig (← resolveFyi stx[3])) observations
+  if status.inconsistent then
+    logWarning "spytial: IYKYK found an inconsistent context; no datum produced"
+  else if let some view := view? then
+    logInfo m!"{(toJson view.data).pretty}"
+    if status.truncated then
+      logWarning "spytial: IYKYK reached an extraction limit; the datum may be incomplete"
+
 
 /-! ## Proof tactic -/
 
@@ -752,7 +895,8 @@ open Tactic in
 meta def elabSpytialProofTactic : Tactic := fun stx => do
   -- A quotation pattern would lex `spytial.proof` as one dotted ident and never
   -- match; extract positionally.
-  let props ← spytialPayloadProps stx[1] (optionalOps stx[2]) { filterProofs := false }
+  let props ← withMainContext do
+    spytialPayloadProps stx[1] (optionalOps stx[2]) { filterProofs := false }
   savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
 
 end
