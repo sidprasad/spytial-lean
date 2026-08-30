@@ -42,6 +42,10 @@ lake build
 
 Open a file in `demos/` and place your cursor on a `#spytial` line. The infoview panel will show the diagram.
 
+For proof-local inspection, [demos/AVL.lean](demos/AVL.lean) draws the bounds that let a subtree
+change sides during rotation. [demos/UnionFind.lean](demos/UnionFind.lean) draws the paths being
+joined in the compression-correctness proof. These inspections explain the next proof step.
+
 ### Nix dev shell
 
 A [flake](flake.nix) provides a dev shell (elan + Node + pnpm + just) — run `nix develop`. To opt into [direnv](https://direnv.net/): `ln -s nix/envrc .envrc && direnv allow`.
@@ -373,17 +377,22 @@ both command and tactic mode:
 spytial tree observing [height]
 ```
 
-Each requested application adds a function-graph tuple. If it computes, its
-result appears as an ordinary value; if the selected value is partial, the
-result remains a shared unknown. The observation also governs the treatment of
-context expressions: an observed application and the enclosing named
-computations that depend on it are represented before WHNF. For example, with
-`observing [height]`, a fact `height r + 1 < height l` produces `height`, `add`,
-and `lt` relations rather than exposing `Nat.succ` and its constructor field.
+Each observer adds its function graph over every represented value of its input
+type. Thus `observing [height]` gives every visible tree node a `height` tuple,
+not only the selected root. If an application computes, its result appears as
+an ordinary value; if its argument is partial, the result remains a shared
+unknown. The represented domain is fixed before observation results are added,
+so observations cannot recursively expand it.
+
+Observation also governs the treatment of context expressions: an observed
+application and the enclosing named computations that depend on it are
+represented before WHNF. For example, with `observing [height]`, a fact
+`height r + 1 < height l` produces `height`, `add`, and `lt` relations rather
+than exposing `Nat.succ` and its constructor field.
 
 `#spytial` uses the same observation-aware relationalizer with no proof
-context, so it usually just adds each requested graph point to the selected
-datum. Tactic mode additionally relationalizes the facts supplied by IYKYK
-under the observation set.
+context, so it observes all values represented by the selected datum. Tactic
+mode additionally relationalizes the facts supplied by IYKYK under the
+observation set, then observes the resulting active domain.
 Observation changes the relational datum passed to Spytial. The existing
 `with [...]` clause continues to control only its presentation.

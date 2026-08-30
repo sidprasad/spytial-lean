@@ -111,7 +111,7 @@ private meta def displayedProposition (fact : Iykyk.KnownFact) : MetaM Expr :=
     same short-labelled atom rather than displaying `Classical.choose`, and the
     labels come from the walk's one `•ₙ` counter so no other generated atom can
     repeat them. -/
-private meta def addWitnesses (afaik : Iykyk.Afaik) :
+private meta def addWitnesses (afaik : Iykyk.Afaik) (recordObservationTerms : Bool) :
     StateT WalkState MetaM (Array (Expr × String)) := do
   let mut anchors := #[]
   for witness in afaik.witnesses do
@@ -126,8 +126,12 @@ private meta def addWitnesses (afaik : Iykyk.Afaik) :
       type := ← sigOfType witness.type
       label
     }
-    set { state.addAtom atom with applicationAtoms :=
-      (state.applicationAtoms.insert ⟨witness.term⟩ atomId).insert ⟨reduced⟩ atomId }
+    set { state.addAtom atom with
+      applicationAtoms :=
+        (state.applicationAtoms.insert ⟨witness.term⟩ atomId).insert ⟨reduced⟩ atomId
+      observationTerms := if recordObservationTerms then
+        state.observationTerms.push (witness.term, atomId)
+      else state.observationTerms }
     anchors := anchors.push (witness.term, atomId)
   return anchors
 
@@ -167,20 +171,10 @@ private meta def walkFact (cfg : WalkConfig) (refinements : Std.HashMap FVarId E
   modify fun state => state.addTuple relation types { atoms := atomIds, types }
   return anchors
 
-/-- Apply context refinements to a requested observation before adding it to
-    the shared relationalizer walk. -/
-private meta def addContextObservation (cfg : WalkConfig)
-    (refinements : Std.HashMap FVarId Expr)
-    (observation : Expr) (anchors : Array (Expr × String)) : StateT WalkState MetaM Unit := do
-  let some (_, rawArguments) ← graphSide? observation | return
-  let arguments ← rawArguments.mapM fun argument =>
-    liftM <| contextArgument refinements argument
-  let result := substituteKnown refinements 8 observation
-  addObservation cfg observation result arguments anchors
-
 /-- Translate proof-backed knowledge into Spytial's relational data. The
     proofs remain owned by IYKYK. Requested observations parameterize the
-    expression walk and add function graph points for their root applications.
+    expression walk and add their function graphs over every represented value
+    of the observer's domain type.
     Alongside the data: the subterm
     behind each atom (see `Provenance`) and the datum a raw Lean selector's
     `Spytial.Sel` form receives — the root with its known refinements
@@ -205,7 +199,7 @@ public meta def relationalizeAfaikWithProvenance (afaik : Iykyk.Afaik)
     let (_, state) ← StateT.run (s := {}) do
       -- Witnesses first: a witness can occur inside the refined root, and the
       -- walk reuses its atom only when it is already registered.
-      let mut anchors ← addWitnesses afaik
+      let mut anchors ← addWitnesses afaik (!observations.isEmpty)
       let rootId ← walkExpr config root
       unless anchors.any fun (expression, _) => expression.equal root do
         anchors := anchors.push (root, rootId)
@@ -213,8 +207,7 @@ public meta def relationalizeAfaikWithProvenance (afaik : Iykyk.Afaik)
         if let some (variableId, value) ← refinementOf? (← displayedProposition fact) then
           if refinements[variableId]?.any (·.equal value) then continue
         anchors ← walkFact config refinements fact anchors
-      for observation in observations do
-        addContextObservation config refinements observation anchors
+      addActiveDomainObservations config observations
     return (state.toDataInstance, state.provenance,
       substituteKnown refinements 8 afaik.root)
 

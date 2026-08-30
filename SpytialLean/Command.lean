@@ -588,9 +588,9 @@ private meta def optionalTerms (stx : Syntax) : Array Syntax :=
 /-- `#spytial <term>` displays a spatial relational diagram in the Lean infoview.
 
     `observing [f₁, ...]` parameterizes the relationalizer with the named
-    functions and adds each `fᵢ term` to the relational datum. Command mode has
-    no proof context; tactic mode uses the same observation input while also
-    translating context facts.
+    functions and adds each function's graph over every compatible value in
+    the represented datum. Command mode has no proof context; tactic mode uses
+    the same observation input while also translating context facts.
 
     Use `#spytial <term> with [<ops>]` to specify layout operations inline:
     ```
@@ -834,8 +834,8 @@ private meta def spytialInContextTac (term : Syntax)
 open Tactic in
 /-- `spytial term` asks IYKYK what the current context establishes about
     `term`, translates that knowledge into relational data, and displays it.
-    `observing [f₁, ...]` parameterizes that translation and also displays each
-    `fᵢ term`; `fyi [h₁, ...]`
+    `observing [f₁, ...]` parameterizes that translation and displays each
+    function over every compatible represented value; `fyi [h₁, ...]`
     supplies proved hypotheses or forward rules to IYKYK;
     `with [...]` supplies Spytial layout operations. -/
 syntax (name := spytialTactic) "spytial " term (" observing " "[" term,* "]")?

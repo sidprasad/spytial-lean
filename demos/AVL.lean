@@ -5,9 +5,10 @@ open SpytialLean
 /-!
 # Inspecting an AVL proof
 
-This is an ordinary AVL development. The `spytial` calls occur where the local
-proof context adds useful information about a partial value. Place the cursor
-on a call to inspect that point in the proof.
+This is an ordinary AVL development. The inspections answer two questions that would invite
+a drawing while explaining the proof: why the middle subtree can change sides during a rotation
+(`IsBST_rotateRight`), and why the left-right case needs an inner rotation (`IsBST_balance`).
+Place the cursor on a `spytial` call at those points in the proof.
 -/
 
 /-
@@ -22,11 +23,11 @@ spytial_spec Tree [
   attribute key,
   orientation left - Tree->{t : Tree | @:t = leaf} left below,
   orientation right - Tree->{t : Tree | @:t = leaf} right below,
-  -- Keys already appear as node labels. Other natural numbers, including
-  -- observed heights, should remain visible.
+  align {x, y : Tree | @:x != leaf and @:y != leaf and (x.~(left + right) = y.~(left+right))} horizontal,
   hideAtom key[Tree],
   hideAtom {t : Tree | @:t = leaf}
 ]
+
 
 def contains (x : Nat) : Tree → Bool
   | .leaf => false
@@ -215,8 +216,6 @@ theorem IsBST_rotateRight (x : Nat) (ll : Tree) (lx : Nat) (lr r : Tree)
   obtain ⟨h1, h2, h3, h4⟩ := h
   obtain ⟨h3a, h3b, h3c, h3d⟩ := h3
   have hlxx : lx < x := h1 lx (by simp [contains])
-  -- `lx < x` was implicit in `IsBST`; it is now available as ordinary data.
-  spytial x
   show IsBST (.node ll lx (.node lr x r))
   refine ⟨h3a, ?_, h3c, ?_, h2, h3d, h4⟩
   · intro z hz
@@ -229,7 +228,25 @@ theorem IsBST_rotateRight (x : Nat) (ll : Tree) (lx : Nat) (lr r : Tree)
     · have := h2 z hz
       omega
   · intro z hz
-    exact h1 z (by simp [contains, hz])
+    have hzLeft : contains z (.node ll lx lr) = true := by simp [contains, hz]
+    -- Why may lr move from lx's right to x's left? Inspect the old left subtree with an
+    -- arbitrary member z of lr. The dotted edges show membership; the blue bounds give
+    -- lx < z < x. `fyi` instantiates the existing bounds h3b and h1 for the inspection;
+    -- the proof still has to apply h1 below. None of the subtrees needs to be concrete.
+    -- Keep keys as vertices here: unlike the usual tree layout, the ordering is the point.
+    spytial (Tree.node ll lx lr) fyi [h1, h3b] with [
+      inferredEdge member contains.{b : Bool | @:b = true} (lineStyle "#64748b" dotted),
+      hideField contains,
+      hideField IsBST,
+      hideAtom Bool,
+      orientation left left below,
+      orientation right right below,
+      orientation key above,
+      orientation lt right,
+      align lt horizontal,
+      edgeStyle lt (lineStyle "#2563eb")
+    ]
+    exact h1 z hzLeft
 
 theorem IsBST_rotateLeft (x : Nat) (l rl : Tree) (rx : Nat) (rr : Tree)
     (h : IsBST (.node l x (.node rl rx rr))) :
@@ -271,22 +288,20 @@ theorem IsBST_balance (t : Tree) (h : IsBST t) : IsBST (balance t) := by
     -- has to look at it.
     simp only [balance]
     split
-    · -- The branch constrains both subtrees although neither subtree is concrete.
-      spytial l observing [height] with [attribute height]
-      cases l with
+    · cases l with
       | leaf => dsimp only; exact ⟨h1, h2, h3, h4⟩
       | node ll lx lr =>
         obtain ⟨h3a, h3b, h3c, h3d⟩ := h3
         dsimp only
-        cases lr with
-        | leaf =>
-          split
-          · exfalso; simp only [height] at *; omega
-          · exact IsBST_rotateRight x ll lx .leaf r
-              ⟨h1, h2, ⟨h3a, h3b, h3c, h3d⟩, h4⟩
-        | node rl' rx' rr' =>
-          split
-          · have hMid :
+        split
+        · -- Why rotate the child before the parent? The left subtree is too tall, but lr is
+          -- taller than ll. Inspect at the LR decision while both still have symbolic names,
+          -- before exposing lr's shape and constructing the intermediate BST.
+          spytial lr observing [height] with [.., hideField IsBST]
+          cases lr with
+          | leaf => exfalso; simp only [height] at *; omega
+          | node rl' rx' rr' =>
+            have hMid :
                 IsBST (.node (rotateLeft (.node ll lx (.node rl' rx' rr'))) x r) := by
               refine ⟨?_, h2, IsBST_rotateLeft lx ll rl' rx' rr'
                 ⟨h3a, h3b, h3c, h3d⟩, h4⟩
@@ -294,8 +309,8 @@ theorem IsBST_balance (t : Tree) (h : IsBST t) : IsBST (balance t) := by
               rw [contains_rotateLeft] at hz
               exact h1 z hz
             exact IsBST_rotateRight x (.node ll lx rl') rx' rr' r hMid
-          · exact IsBST_rotateRight x ll lx (.node rl' rx' rr') r
-              ⟨h1, h2, ⟨h3a, h3b, h3c, h3d⟩, h4⟩
+        · exact IsBST_rotateRight x ll lx lr r
+            ⟨h1, h2, ⟨h3a, h3b, h3c, h3d⟩, h4⟩
     · split
       · cases r with
         | leaf => dsimp only; exact ⟨h1, h2, h3, h4⟩
@@ -361,9 +376,7 @@ theorem IsBST_avlInsert (x : Nat) (t : Tree) (h : IsBST t) : IsBST (avlInsert x 
     obtain ⟨hl, hr, hbl, hbr⟩ := h
     unfold avlInsert
     split
-    · -- The branch has located the new key relative to the current node.
-      spytial x
-      apply IsBST_balance
+    · apply IsBST_balance
       refine ⟨?_, hr, ihl hbl, hbr⟩
       intro z hz
       rw [contains_avlInsert] at hz

@@ -134,11 +134,36 @@ private meta def node (left right : Expr) : Expr :=
   withLocalDeclD `known (← mkAppM ``Eq #[mkApp measure x, mkRawNatLit 3]) fun _ => do
     let view ← viewOf "consumer.knownObservation" x {} #[mkApp measure x]
     assertCanon "consumer.knownObservation" view.data
-      "Nat|x\nNat|3\nmeasure[Nat,Nat]:0,1"
+      "Nat|x\nNat|3\nNat|•₁\nmeasure[Nat,Nat]:0,1;1,2"
 
 private def Tree.height : Tree → Nat
   | .leaf _ => 0
   | .node left right => 1 + max (height left) (height right)
+
+/- An observer is lifted over the represented domain. Selecting a parent
+   therefore observes the parent and both symbolic child trees. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `left tree fun left => do
+  withLocalDeclD `right tree fun right => do
+    let root := node left right
+    let observation := mkApp (mkConst ``Tree.height) root
+    assertCanon "consumer.activeDomainObservation"
+      (← relationalize root {} #[observation])
+      "Tree|node\nTree|left\nTree|right\nNat|•₁\nNat|•₂\nNat|•₃\n\
+       height[Tree,Nat]:0,3;1,4;2,5\nleft[Tree,Tree]:0,1\nright[Tree,Tree]:0,2"
+
+/- Values introduced by proof-backed context facts join the same active
+   domain, so observing the selected endpoint also observes its neighbor. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `edge (← mkArrow tree (← mkArrow tree (mkSort Level.zero))) fun edge => do
+  withLocalDeclD `left tree fun left => do
+  withLocalDeclD `right tree fun right => do
+  withLocalDeclD `connected (mkApp2 edge left right) fun _ => do
+    let leftHeight := mkApp (mkConst ``Tree.height) left
+    let view ← viewOf "consumer.contextActiveDomainObservation" left {} #[leftHeight]
+    assertCanon "consumer.contextActiveDomainObservation" view.data
+      "Tree|left\nTree|right\nNat|•₁\nNat|•₂\n\
+       edge[Tree,Tree]:0,1\nheight[Tree,Nat]:0,2;1,3"
 
 /- Observations parameterize fact relationalization. The source computation
     containing `height` remains `height`/`add`/`lt`; WHNF must not expose

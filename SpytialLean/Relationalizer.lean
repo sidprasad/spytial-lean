@@ -97,6 +97,11 @@ public meta structure WalkState where
   eqvSeen : ExprStructMap String := {}
   /-- What each atom was walked from, for raw Lean selectors. -/
   provenance : Provenance := {}
+  /-- One usable Lean term for each represented atom. Unlike selector
+      provenance, this includes symbolic holes and custom-relationalizer roots:
+      observations may be applied to those terms even though raw selectors must
+      not resolve against them. The first term for a merged atom is retained. -/
+  observationTerms : Array (Expr × String) := #[]
   /-- `r w w` per closed subterm on the `.eqv` route — see `identityVerdict`. -/
   eqvRefl : ExprStructMap Bool := {}
   /-- Per-walk cache: whnf'd type → its `Repr` instance for leaf labels;
@@ -135,6 +140,17 @@ public meta def WalkState.freshApplicationLabel (s : WalkState) : String × Walk
 /-- Register an atom in the state. -/
 public meta def WalkState.addAtom (s : WalkState) (atom : JsonAtom) : WalkState :=
   { s with atoms := s.atoms.push atom }
+
+/-- Remember a term that an active-domain observation can apply to. Identity
+    merging can send several terms to one atom; its first representative is
+    enough, and matches the representative whose structure was drawn. -/
+private meta def rememberObservationTerm (enabled : Bool) (term : Expr) (atomId : String) :
+    StateT WalkState MetaM Unit :=
+  if enabled then
+    modify fun state =>
+      if state.observationTerms.any fun (_, seenId) => seenId == atomId then state
+      else { state with observationTerms := state.observationTerms.push (term, atomId) }
+  else pure ()
 
 /-- Add a tuple to a relation, creating the relation if needed. -/
 public meta def WalkState.addTuple (s : WalkState) (relName : String) (types : Array String)
@@ -997,6 +1013,7 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
   -- Open-value holes: one atom per metavariable/hypothesis, under every mode.
   if let some id ← holeAtom? cfg (fun c => walkExpr cfg c { mode, ancestors := ctx.ancestors })
       e ty then
+    rememberObservationTerm (!cfg.observations.isEmpty) e id
     return id
   -- Custom relationalizer wins over any identity instance.
   let tyKey ← Meta.whnf ty
@@ -1006,22 +1023,28 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
     if let some id ← customDispatch? eOrig e tyKey
         (fun guardId c =>
           walkExpr cfg c { mode, ancestors := ctx.ancestors.push (e, guardId) }) then
+      rememberObservationTerm (!cfg.observations.isEmpty) e id
       return id
   -- Context mode also seeds this table with witness terms that are not named
   -- function applications, so its lookup remains broader than the identity
   -- rule for genuine graph points.
   if cfg.functionGraphs || sourceFunctionGraph then
     if let some id := (← get).applicationAtoms[(⟨e⟩ : ExprStructEq)]? then
+      rememberObservationTerm (!cfg.observations.isEmpty) e id
       return id
   -- The identity decision (declared mode, closed subterms only).
   let verdict ←
     if !isFunctionGraph && mode == .declared && isClosedValue e then identityVerdict tyKey e
     else pure .fresh
   if let .reuse id := verdict then
+    rememberObservationTerm (!cfg.observations.isEmpty) e id
     return id
   let s ← get
   let (atomId, s) := s.freshId
-  set { s with provenance := s.provenance.insert atomId e }
+  set { s with
+    provenance := s.provenance.insert atomId e
+    observationTerms := if cfg.observations.isEmpty then s.observationTerms
+      else s.observationTerms.push (e, atomId) }
   -- Register before walking children, so a re-occurrence inside the subtree
   -- (sharing, or a quotient collapsing a child into its parent) resolves to
   -- this atom.
@@ -1090,6 +1113,33 @@ public meta def addObservation (cfg : WalkConfig) (source result : Expr)
     if tuples.any (fun tuple => tuple.atoms == atomIds) then return
   modify fun state => state.addTuple relation types { atoms := atomIds, types }
 
+/-- Replace the sole data argument in an elaborated unary observation while
+    preserving its already elaborated implicit arguments. -/
+private meta def observationAt (observation argument value : Expr) : Expr :=
+  mkAppN observation.getAppFn <| observation.getAppArgs.map fun applicationArgument =>
+    if applicationArgument.equal argument then value else applicationArgument
+
+/-- Extend the current datum with each requested function's graph over the
+    represented values of its domain type. The domain is snapshotted before
+    adding any result atoms, so an observation whose codomain is also its
+    domain cannot recursively expand the datum. -/
+public meta def addActiveDomainObservations (cfg : WalkConfig)
+    (observations : Array Expr) : StateT WalkState MetaM Unit := do
+  let activeDomain := (← get).observationTerms
+  for observation in observations do
+    let some (_, arguments) ← graphSide? observation | continue
+    unless arguments.size == 1 do continue
+    let argument := arguments[0]!
+    let domainType ← inferType argument
+    for (value, atomId) in activeDomain do
+      let compatible ← liftM <| try
+        withoutModifyingState <| withNewMCtxDepth <|
+          isDefEq (← inferType value) domainType
+      catch _ => pure false
+      unless compatible do continue
+      let application := observationAt observation argument value
+      addObservation cfg application application #[value] #[(value, atomId)]
+
 /-- Walk an expression and produce a complete data instance, keeping the
     subterm each atom was walked from (see `Provenance`).
 
@@ -1102,12 +1152,9 @@ public meta def relationalizeWithProvenance (e : Expr) (cfg : WalkConfig := {})
   withoutModifyingEnv do
     let (_, state) ← StateT.run (s := {}) do
       let observationAwareConfig := { cfg with observations }
-      let rootId ← walkExpr observationAwareConfig e
-      let anchors := #[(e, rootId)]
+      let _ ← walkExpr observationAwareConfig e
       let observationConfig := { observationAwareConfig with functionGraphs := true }
-      for observation in observations do
-        if let some (_, arguments) ← graphSide? observation then
-          addObservation observationConfig observation observation arguments anchors
+      addActiveDomainObservations observationConfig observations
     return (state.toDataInstance, state.provenance)
 
 /-- Walk an expression and produce a complete data instance. -/

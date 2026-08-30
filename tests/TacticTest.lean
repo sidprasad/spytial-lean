@@ -118,7 +118,7 @@ example (xs : List Nat) (h : ∃ y, xs = [y, y]) : True := by
   spytial xs
   trivial
 
--- observations apply named data functions to the selected value
+-- observations apply named data functions over the represented active domain
 set_option linter.unusedVariables false in
 /--
 info: {"relations":
