@@ -18,8 +18,7 @@ widget-reload:
     lake build
 
 # rewrite the SGQ lowering golden after a deliberate change; read the diff.
-# `lake env lean` re-elaborates the test unconditionally (`lake build` would
-# consider it up to date) but runs against existing oleans, so build first.
+# build first: `lake env lean` runs against existing oleans.
 rebless-sgq:
     lake build SpytialLean
     SPYTIAL_REBLESS=1 lake env lean tests/SelectorLoweringTest.lean

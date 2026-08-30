@@ -834,10 +834,9 @@ private meta partial def elabBuiltinCall? (scope : SelScope) (env : LEnv) (stx :
                   kind := .number }
   return none
 
-/-- Elaborates `stx` and checks it against the kind its slot accepts. A slot
-    declared `any` takes either side of a comparison, so the two operands are
-    reconciled against each other instead (`elabAt` is called with `none` and
-    `elabNode` compares what came back). -/
+/-- Elaborates `stx` and checks it against the kind its slot accepts. An `any`
+    slot passes `none`: `elabNode` reconciles the operands against each other
+    instead. -/
 private meta partial def elabAt (scope : SelScope) (env : LEnv) (stx : Syntax)
     (want : Option Sgq.Kind) : TermElabM EExpr := do
   let e ← elabExpr scope env stx
@@ -937,9 +936,8 @@ end
 
 /-! ## Entry points -/
 
-/-- `pair` positions project first/last at runtime, so a wider selector warns
-    rather than errors. An `edge` position reads the whole tuple, so any width
-    from 2 up passes. `nary` positions read whole tuples of any width. -/
+/-- What a position accepts. A wider selector in a `pair` position warns rather
+    than errors: the engine projects first and last at runtime. -/
 meta inductive ArityExpect where
   | unary
   | pair

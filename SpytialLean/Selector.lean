@@ -11,7 +11,9 @@ open Lean
 /-! # Selector — SGQ expressions as data
 
 A selector is one of simple-graph-query's expressions. This module reifies
-them and lowers them back to the concrete syntax spytial-core evaluates.
+them and lowers them back to concrete syntax. "The engine", here and in the
+modules below, is simple-graph-query: spytial-core depends on it and evaluates
+selectors with it at render.
 
 Nothing here names a construct. A node carries the manifest's construct id, the
 operator written, and the pieces its production has, in the order the

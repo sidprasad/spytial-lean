@@ -3,7 +3,9 @@
 Selectors are simple-graph-query's relational expression/formula language,
 embedded as Lean syntax (category `spytial_sel`, declared in
 `SpytialLean/SelectorElab.lean`). This file is the language reference; the op
-positions that accept selectors are listed in the README.
+positions that accept selectors are listed in the README. "The engine" below is
+simple-graph-query: spytial-core depends on it and evaluates selectors with it
+at render.
 
 The grammar below is not written by hand. Every rule is built from the
 construct's production in simple-graph-query's `docs/sgq-language.json`, which
