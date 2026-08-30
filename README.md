@@ -266,7 +266,7 @@ Directions: `above`, `below`, `left`, `right`, `directlyAbove`,
 
 ## How it works
 
-1. **Relationalizer** (`SpytialLean/Relationalizer.lean`) — Walks the Lean `Expr` tree after WHNF reduction. Constructors become atoms (nodes), data arguments become relations (edges). Type and proof arguments are skipped.
+1. **Relationalizer** (`SpytialLean/Relationalizer.lean`) — Walks the Lean `Expr` tree. It normally uses WHNF to expose data constructors, which become atoms (nodes) whose data arguments become relations (edges). Requested observations instead preserve their source-level computation slice as function-graph relations before WHNF. Type and proof arguments are skipped.
 
 2. **Selector DSL** (`SpytialLean/Selector.lean`, `SelectorElab.lean`) — Selectors elaborate to a reified AST, checked against the vocabulary derived from `TypeShape`. The checker and the relationalizer share the naming logic, so the checker predicts what the walker emits. Specs are stored structurally; the SGQ strings are produced only in the widget payload.
 
@@ -354,6 +354,36 @@ An explicit `with [...]` still fully overrides the inherited spec, and `..`
 splices it back in — for an extending type it carries the composed parent
 chain.
 
-## TODO
+## Proof contexts
 
-- Better integration with Lean's tactic mode (`spytial` tactic, panel widgets)
+In tactic mode, `spytial term` asks
+[IYKYK](https://github.com/sidprasad/iykyk) what the current context establishes
+about `term`, translates that `Afaik` knowledge into relational data, and displays it
+in the infoview. `spytial.datum term` prints the same data, and
+`spytial term fyi [hypothesis]` supplies an explicit proved hypothesis or
+forward rule to IYKYK. Spytial uses IYKYK's `wdyk` API directly and enables
+`simp` normalization so constructor clashes and same-constructor equations
+are reflected in the diagram. Broader proof search is deliberately deferred.
+
+The `observing` clause supplies named unary functions to the relationalizer in
+both command and tactic mode:
+
+```lean
+#spytial tree observing [height]
+spytial tree observing [height]
+```
+
+Each requested application adds a function-graph tuple. If it computes, its
+result appears as an ordinary value; if the selected value is partial, the
+result remains a shared unknown. The observation also governs the treatment of
+context expressions: an observed application and the enclosing named
+computations that depend on it are represented before WHNF. For example, with
+`observing [height]`, a fact `height r + 1 < height l` produces `height`, `add`,
+and `lt` relations rather than exposing `Nat.succ` and its constructor field.
+
+`#spytial` uses the same observation-aware relationalizer with no proof
+context, so it usually just adds each requested graph point to the selected
+datum. Tactic mode additionally relationalizes the facts supplied by IYKYK
+under the observation set.
+Observation changes the relational datum passed to Spytial. The existing
+`with [...]` clause continues to control only its presentation.
