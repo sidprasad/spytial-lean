@@ -272,6 +272,10 @@ syntax:100 (name := selAtomLit) name : spytial_sel
     `lean` still reads as `selIdent`. -/
 syntax:100 (name := selLean) &"lean " "(" term ")" : spytial_sel
 
+/-- A predicate supported by extracted facts about represented terms. The
+    soft keyword leaves a relation named `known` usable as an identifier. -/
+syntax:100 (name := selKnown) &"known " "(" term ")" : spytial_sel
+
 -- `univ`/`iden`/`none` have no rules of their own: an atom-keyed rule never
 -- fires on an unspaced `univ.lo`, so `resolveExprIdent` reads them off the ident.
 
@@ -485,6 +489,14 @@ private meta def elabLeanRel (scope : SelScope) (stx : TSyntax `term) :
             '{scope.root}', so this selector cannot match anything"
   return .rel (.leanRel fn) (some kind.arity)
 
+private meta def elabKnownRel (stx : TSyntax `term) : TermElabM EExpr := do
+  let fn ← instantiateMVars (← Term.withSynthesize <| Term.elabTerm stx none)
+  if fn.hasSorry then return .rel .none_ none
+  if fn.hasExprMVar then
+    throwErrorAt stx "a `known` selector cannot contain unresolved holes"
+  let kind ← withRef stx <| classifyKnownRel fn
+  return .rel (.knownRel fn) (some kind.arity)
+
 mutual
 
 private meta partial def elabExpr (scope : SelScope) (env : LEnv) :
@@ -548,6 +560,7 @@ private meta partial def elabExpr (scope : SelScope) (env : LEnv) :
       let (sb, ab) ← elabRel scope env stx[2]
       return .rel (.join sa sb) (← joinArity stx aa ab)
     | ``selLean => elabLeanRel scope ⟨stx[2]⟩
+    | ``selKnown => elabKnownRel ⟨stx[2]⟩
     | _ => elabBoxJoin? scope env stx
 
 private meta partial def elabBoxJoin? (scope : SelScope) (env : LEnv) (stx : Syntax) :

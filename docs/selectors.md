@@ -34,7 +34,8 @@ sel ::=
   | string                                       (* escape hatch / string literal *)
   | int                                          (* integer literal *)
   | "`" name                                     (* atom literal, a Lean name literal *)
-  | "lean" "(" term ")"                          (* raw Lean predicate; arity 1 *)
+  | "lean" "(" term ")"                          (* executable selector; arity 1–4 *)
+  | "known" "(" term ")"                         (* knowledge predicate; arity 1–4 *)
 
 mult ::= "lone" | "one" | "some" | "set"
 
@@ -176,6 +177,19 @@ Core cites that in place of its own rendering of the rule.
 
 [lean-selectors.md](lean-selectors.md) is the user-facing guide: how to use it,
 which shape to pick, what does not work, and what each error means.
+
+## Knowledge-backed selectors
+
+`known (p)` is a separate, tactic-only form. It selects tuples of represented
+terms when applying the Prop-valued predicate `p` matches an extracted fact
+by definitional equality. Terms may be symbolic; no compiled evaluation or
+`Decidable` instance is involved. An inline predicate may capture local
+parameters. Attached specs defer matching until the proof-local inspection.
+
+Missing evidence is unknown, not false; `known (fun x => ¬ P x)` needs its own
+fact. Set difference from `known (P)` is not logical negation of `P`.
+The full contract and deliberate limits are in
+[knowledge-selectors.md](knowledge-selectors.md).
 
 ## What gets checked
 

@@ -79,6 +79,9 @@ public meta inductive Sel where
       a concrete datum by `resolveLeanSelectors` — which rewrites it to the
       union of the tuples it selects — before anything lowers to SGQ. -/
   | leanRel (fn : Expr)
+  /-- A Prop-valued predicate matched against extracted proof-context facts.
+      Unlike `leanRel`, its arguments may be symbolic represented terms. -/
+  | knownRel (fn : Expr)
   deriving Repr, BEq
 
 /-- Kept apart from `Sel` to reject SGQ's silent scalar/tuple confusion
@@ -244,7 +247,7 @@ public meta partial def Sel.toSGQCtx (ctx : Nat) : Sel → String
   | .atomLit a => s!"`{a}"
   -- Unreachable in a rendered spec: `resolveLeanSelectors` runs first on every
   -- path that renders. Lowering as `none` keeps this total.
-  | .leanRel .. => "none"
+  | .leanRel .. | .knownRel .. => "none"
   | e@(.union a b) => parenIf (e.prec < ctx) s!"{a.toSGQCtx 30} + {b.toSGQCtx 31}"
   | e@(.diff a b) => parenIf (e.prec < ctx) s!"{a.toSGQCtx 30} - {b.toSGQCtx 31}"
   | e@(.override a b) => parenIf (e.prec < ctx) s!"{a.toSGQCtx 36} ++ {b.toSGQCtx 37}"
@@ -333,7 +336,7 @@ public meta partial def Sel.freeVars : Sel → Array Name
   | .trans a | .reflTrans a | .transpose a => a.freeVars
   | .compr binders body => bindersFreeVars binders body.freeVars
   | .sig .. | .rel .. | .univ | .iden | .none_ | .atomLit .. | .raw ..
-  | .leanRel .. => #[]
+  | .leanRel .. | .knownRel .. => #[]
 
 public meta partial def SelVal.freeVars : SelVal → Array Name
   | .label _ e => e.freeVars

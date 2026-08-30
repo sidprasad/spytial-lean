@@ -129,6 +129,7 @@ private meta def addWitnesses (afaik : Iykyk.Afaik) (recordObservationTerms : Bo
     set { state.addAtom atom with
       applicationAtoms :=
         (state.applicationAtoms.insert ⟨witness.term⟩ atomId).insert ⟨reduced⟩ atomId
+      knowledgeTerms := state.knowledgeTerms.push (witness.term, atomId)
       observationTerms := if recordObservationTerms then
         state.observationTerms.push (witness.term, atomId)
       else state.observationTerms }
@@ -168,6 +169,9 @@ private meta def walkFact (cfg : WalkConfig) (refinements : Std.HashMap FVarId E
         pure atomId
     atomIds := atomIds.push atomId
     types := types.push (← sigOfType (← inferType argument))
+    -- `contextArgument` may have used a proved equality to refine this endpoint.
+    -- Keep its original term as well, so predicates can match the source fact.
+    modify fun state => state.rememberKnowledgeTerm rawArgument atomId
   modify fun state => state.addTuple relation types { atoms := atomIds, types }
   return anchors
 
@@ -179,9 +183,9 @@ private meta def walkFact (cfg : WalkConfig) (refinements : Std.HashMap FVarId E
     behind each atom (see `Provenance`) and the datum a raw Lean selector's
     `Spytial.Sel` form receives — the root with its known refinements
     substituted, closed exactly when the context determines the value. -/
-public meta def relationalizeAfaikWithProvenance (afaik : Iykyk.Afaik)
+private meta def relationalizeAfaikCore (afaik : Iykyk.Afaik)
     (baseConfig : WalkConfig := {}) (observations : Array Expr := #[]) :
-    MetaM (JsonDataInstance × Provenance × Expr) :=
+    MetaM (JsonDataInstance × Provenance × Expr × Array (Expr × String)) :=
   withoutModifyingEnv do
     let mut refinements := baseConfig.refinements
     for (variableId, value) in ← definitionalRefinements do
@@ -191,7 +195,11 @@ public meta def relationalizeAfaikWithProvenance (afaik : Iykyk.Afaik)
       if let some (variableId, value) ← refinementOf? (← displayedProposition fact) then
         unless refinements.contains variableId do
           refinements := refinements.insert variableId value
-    let config := { baseConfig with refinements, functionGraphs := true, observations }
+    let config := { baseConfig with
+      refinements := refinements
+      functionGraphs := true
+      observations := observations
+      recordKnowledgeTerms := true }
     let root ← if afaik.root.isFVar || afaik.root.isMVar then
       pure afaik.root
     else
@@ -201,6 +209,7 @@ public meta def relationalizeAfaikWithProvenance (afaik : Iykyk.Afaik)
       -- walk reuses its atom only when it is already registered.
       let mut anchors ← addWitnesses afaik (!observations.isEmpty)
       let rootId ← walkExpr config root
+      modify fun state => state.rememberKnowledgeTerm afaik.root rootId
       unless anchors.any fun (expression, _) => expression.equal root do
         anchors := anchors.push (root, rootId)
       for fact in afaik.facts do
@@ -209,7 +218,14 @@ public meta def relationalizeAfaikWithProvenance (afaik : Iykyk.Afaik)
         anchors ← walkFact config refinements fact anchors
       addActiveDomainObservations config observations
     return (state.toDataInstance, state.provenance,
-      substituteKnown refinements 8 afaik.root)
+      substituteKnown refinements 8 afaik.root, state.knowledgeTerms)
+
+/-- Relational data, closed-value provenance, and the refined root. -/
+public meta def relationalizeAfaikWithProvenance (afaik : Iykyk.Afaik)
+    (baseConfig : WalkConfig := {}) (observations : Array Expr := #[]) :
+    MetaM (JsonDataInstance × Provenance × Expr) := do
+  let (data, prov, datum, _) ← relationalizeAfaikCore afaik baseConfig observations
+  return (data, prov, datum)
 
 /-- `relationalizeAfaikWithProvenance`, data only. -/
 public meta def relationalizeAfaik (afaik : Iykyk.Afaik)
@@ -232,7 +248,14 @@ public meta structure ContextView where
   /-- The value a raw Lean selector's `Spytial.Sel` form receives: the root
       with its known refinements substituted. -/
   datum : Expr
+  /-- Symbolic terms and aliases actually represented by atoms in `data`. -/
+  terms : Array (Expr × String)
   deriving Inhabited
+
+/-- Knowledge selectors use certified propositions, not displayed relation
+    names (which can collide or omit negative facts). -/
+public meta def ContextView.selectorKnowledge (view : ContextView) : MetaM SelectorKnowledge := do
+  return { terms := view.terms, facts := ← view.afaik.facts.mapM displayedProposition }
 
 /-- Ask IYKYK what is known, then translate a successful result for Spytial. -/
 public meta def wdykInContext (subject : Expr) (walkConfig : WalkConfig := {})
@@ -241,9 +264,9 @@ public meta def wdykInContext (subject : Expr) (walkConfig : WalkConfig := {})
   match ← Iykyk.wdyk subject wdykConfig with
   | .inconsistent _ => return ({ inconsistent := true }, none)
   | .afaik afaik =>
-      let (data, prov, datum) ←
-        relationalizeAfaikWithProvenance afaik walkConfig observations
-      return ({ truncated := afaik.truncated }, some { afaik, data, prov, datum })
+      let (data, prov, datum, terms) ←
+        relationalizeAfaikCore afaik walkConfig observations
+      return ({ truncated := afaik.truncated }, some { afaik, data, prov, datum, terms })
 
 private meta def isWitnessTerm (afaik : Iykyk.Afaik) (expression : Expr) : Bool :=
   afaik.witnesses.any fun witness => witness.term.equal expression

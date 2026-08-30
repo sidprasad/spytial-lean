@@ -396,3 +396,16 @@ mode additionally relationalizes the facts supplied by IYKYK under the
 observation set, then observes the resulting active domain.
 Observation changes the relational datum passed to Spytial. The existing
 `with [...]` clause continues to control only its presentation.
+
+To select symbolic nodes using extracted evidence, use `known (…)`:
+
+```lean
+spytial tree with [
+  atomStyle known (fun n : Tree => height n = 3) (fillStyle "#dbeafe")
+]
+```
+
+A fact `h : height tree = 3` can select `tree` without determining its children.
+Missing evidence means unknown, not false. This draft form works in tactic mode,
+including attached specifications; executable `lean (…)` selectors are unchanged.
+See [knowledge selectors](docs/knowledge-selectors.md) for the matching contract and limits.

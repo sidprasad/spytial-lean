@@ -798,10 +798,11 @@ private meta def spytialInContextProps? (subject : Expr)
       let scope ← scopeForAfaik view.afaik (← scopeForExpr subject) observations
       some <$> elabUseSiteOps subject ops (some scope)
     | none => lookupTypeSpec subject
-  -- Raw Lean selectors resolve against the knowledge walk exactly as against
-  -- a command-mode walk: the columns hold the closed values the context
-  -- establishes, and symbolic subterms never match.
-  let spec? ← spec?.mapM fun s => liftM (resolveLeanSelectors view.datum view.data view.prov s)
+  -- `lean` keeps its closed-value contract; only explicit `known` leaves
+  -- inspect the symbolic term mapping and certified facts.
+  let knowledge ← view.selectorKnowledge
+  let spec? ← spec?.mapM fun s =>
+    liftM (resolveLeanSelectors view.datum view.data view.prov s (some knowledge))
   return (some (spytialProps view.data (spec?.map SpytialSpec.render)), status)
 
 /-- Programmatic entry point for Spytial's IYKYK consumer. -/
