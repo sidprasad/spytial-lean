@@ -6,6 +6,9 @@ package spytialLean where
   buildArchive? := "SpytialLean.tar.gz"
   releaseRepo := "https://github.com/sidprasad/spytial-lean"
 
+require iykyk from
+  git "https://github.com/sidprasad/iykyk" @ "v0.1.2"
+
 /-! ## JS build targets
 
 pnpm runs from the workspace root and `-C` picks the member; `--filter` exits 0
