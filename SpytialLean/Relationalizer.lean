@@ -67,6 +67,9 @@ public meta structure WalkState where
       `f x` in a later tuple. It is semantic sharing of one written term, not
       value identity. -/
   applicationAtoms : ExprStructMap String := {}
+  /-- Context-only references to open constructor terms. This is separate
+      from closed-value identity and never merges different symbolic terms. -/
+  symbolicAtoms : ExprStructMap String := {}
   /-- Counter for short display names of determined but otherwise unnamed
       application results (`•₁`, `•₂`, ...). -/
   nextApplicationLabel : Nat := 0
@@ -184,6 +187,12 @@ public meta structure WalkConfig where
       of these observed heads is represented by its source-level function
       graph before WHNF can replace it with implementation-level constructors. -/
   observations : Array Expr := #[]
+  /-- Retain represented terms even without observations, for contextual
+      relevance selection. Does not add any atoms or relations. -/
+  recordTerms : Bool := false
+  /-- Context mode shares exact open constructor terms (including local let
+      aliases). Ordinary walks and `Raw` occurrence semantics are unchanged. -/
+  shareSymbolicValues : Bool := false
   /-- Largest domain product a function tabulates into; over it, the function
       stays a leaf. -/
   maxTableTuples : Nat := 512
@@ -492,6 +501,31 @@ private meta inductive IdVerdict where
   | grouped (tyKey : Expr)
   /-- No identity participation: fresh atom. -/
   | fresh
+
+/-- Normalize local aliases and natural-literal encodings for contextual
+    references, without unfolding observation functions. IYKYK's simplifier
+    can turn a raw literal into `OfNat.ofNat`; reduction checks the actual
+    instance rather than assuming that every `OfNat Nat n` denotes `n`. -/
+public meta def normalizeReferenceTerm (e : Expr) : MetaM Expr := do
+  transform (← zetaReduce e) (pre := fun term => do
+    if let .mdata _ body := term then return .visit body
+    if term.isAppOfArity ``OfNat.ofNat 3 && term.getAppArgs[0]!.isConstOf ``Nat then
+      return .done (← whnf term)
+    return .continue)
+
+/-- Exact open terms necessarily have equal classifier keys. Decider-based
+    identities may be non-reflexive (for example, over an `asWritten` field),
+    so they cannot use this shortcut without evaluating the open term. -/
+private meta def symbolicValueKey? (cfg : WalkConfig) (mode : WalkMode) (e tyKey : Expr) :
+    StateT WalkState MetaM (Option Expr) := do
+  unless cfg.shareSymbolicValues && mode == .declared && (e.hasFVar || e.hasMVar) do return none
+  -- Do not synthesize identities by solving unknown type parameters.
+  if tyKey.hasFVar || tyKey.hasMVar then return none
+  let .const name _ := e.getAppFn | return none
+  let some (.ctorInfo _) := (← getEnv).find? name | return none
+  match ← resolveRoute tyKey with
+  | .structural | .classifier _ => return some (← normalizeReferenceTerm e)
+  | .noInstance | .eqvRel _ => return none
 
 /-- Decide how a closed, `declared`-mode subterm participates in identity.
     Pure lookup/eval + memoization; allocation and registration are the
@@ -1013,7 +1047,7 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
   -- Open-value holes: one atom per metavariable/hypothesis, under every mode.
   if let some id ← holeAtom? cfg (fun c => walkExpr cfg c { mode, ancestors := ctx.ancestors })
       e ty then
-    rememberObservationTerm (!cfg.observations.isEmpty) e id
+    rememberObservationTerm (cfg.recordTerms || !cfg.observations.isEmpty) e id
     return id
   -- Custom relationalizer wins over any identity instance.
   let tyKey ← Meta.whnf ty
@@ -1023,28 +1057,36 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
     if let some id ← customDispatch? eOrig e tyKey
         (fun guardId c =>
           walkExpr cfg c { mode, ancestors := ctx.ancestors.push (e, guardId) }) then
-      rememberObservationTerm (!cfg.observations.isEmpty) e id
+      rememberObservationTerm (cfg.recordTerms || !cfg.observations.isEmpty) e id
       return id
   -- Context mode also seeds this table with witness terms that are not named
   -- function applications, so its lookup remains broader than the identity
   -- rule for genuine graph points.
   if cfg.functionGraphs || sourceFunctionGraph then
     if let some id := (← get).applicationAtoms[(⟨e⟩ : ExprStructEq)]? then
-      rememberObservationTerm (!cfg.observations.isEmpty) e id
+      rememberObservationTerm (cfg.recordTerms || !cfg.observations.isEmpty) e id
+      return id
+  let symbolicKey? ← symbolicValueKey? cfg mode e tyKey
+  if let some key := symbolicKey? then
+    if let some id := (← get).symbolicAtoms[(⟨key⟩ : ExprStructEq)]? then
+      rememberObservationTerm (cfg.recordTerms || !cfg.observations.isEmpty) e id
       return id
   -- The identity decision (declared mode, closed subterms only).
   let verdict ←
     if !isFunctionGraph && mode == .declared && isClosedValue e then identityVerdict tyKey e
     else pure .fresh
   if let .reuse id := verdict then
-    rememberObservationTerm (!cfg.observations.isEmpty) e id
+    rememberObservationTerm (cfg.recordTerms || !cfg.observations.isEmpty) e id
     return id
   let s ← get
   let (atomId, s) := s.freshId
   set { s with
     provenance := s.provenance.insert atomId e
-    observationTerms := if cfg.observations.isEmpty then s.observationTerms
-      else s.observationTerms.push (e, atomId) }
+    observationTerms := if cfg.recordTerms || !cfg.observations.isEmpty then
+      s.observationTerms.push (e, atomId) else s.observationTerms
+    symbolicAtoms := match symbolicKey? with
+      | some key => s.symbolicAtoms.insert ⟨key⟩ atomId
+      | none => s.symbolicAtoms }
   -- Register before walking children, so a re-occurrence inside the subtree
   -- (sharing, or a quotient collapsing a child into its parent) resolves to
   -- this atom.
@@ -1212,9 +1254,14 @@ public meta partial def referenceRelationalize (e : Expr) (cfg : WalkConfig := {
     if cfg.functionGraphs || sourceFunctionGraph then
       if let some id := (← get).applicationAtoms[(⟨e⟩ : ExprStructEq)]? then
         return id
+    let symbolicKey? ← symbolicValueKey? cfg mode e tyKey
+    if let some key := symbolicKey? then
+      if let some id := (← get).symbolicAtoms[(⟨key⟩ : ExprStructEq)]? then return id
     let s ← get
     let (atomId, s) := s.freshId
-    set s
+    set { s with symbolicAtoms := match symbolicKey? with
+      | some key => s.symbolicAtoms.insert ⟨key⟩ atomId
+      | none => s.symbolicAtoms }
     records.modify (·.push { atomId, expr := e, tyKey, mode, functionGraph := isFunctionGraph })
     emitNode cfg (fun c => refWalk c { mode, ancestors := ctx.ancestors.push (e, atomId) })
       e ty tyKey origName atomId sourceFunctionGraph

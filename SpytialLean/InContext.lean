@@ -71,16 +71,17 @@ private meta def definitionalRefinements : MetaM (Array (FVarId × Expr)) := do
     endpoint, allowing projections such as `t.left` to reach the atom already
     used for the corresponding constructor field. -/
 private meta partial def reduceKnown (refinements : Std.HashMap FVarId Expr)
-    (fuel : Nat) (expression : Expr) : MetaM Expr := do
+    (fuel : Nat) (expression : Expr) (observations : Array Expr := #[]) : MetaM Expr := do
   let replaced := expression.replace fun subexpression =>
     match subexpression with
     | .fvar id => refinements[id]?
     | _ => none
   if replaced.equal expression then return expression
   if fuel == 0 then return replaced
-  let reduced ← whnf replaced
+  let reduced ← if (← observedGraphSide? { observations } replaced).isSome then
+    pure replaced else whnf replaced
   if reduced.isFVar || reduced.isMVar then return reduced
-  reduceKnown refinements (fuel - 1) reduced
+  reduceKnown refinements (fuel - 1) reduced observations
 
 /-- Substitute known local values without reducing the surrounding program.
     Observations use this to decide whether an application is fully concrete
@@ -94,10 +95,10 @@ private meta partial def substituteKnown (refinements : Std.HashMap FVarId Expr)
   if replaced.equal expression || fuel == 0 then replaced
   else substituteKnown refinements (fuel - 1) replaced
 
-private meta def contextArgument (refinements : Std.HashMap FVarId Expr) (argument : Expr) :
+private meta def contextArgument (cfg : WalkConfig) (argument : Expr) :
     MetaM Expr :=
   if argument.isFVar || argument.isMVar then pure argument
-  else reduceKnown refinements 8 argument
+  else reduceKnown cfg.refinements 8 argument cfg.observations
 
 /-- Recover the proposition in the vocabulary in which its proof was built.
     IYKYK normalizes propositions for matching; a consumer should still call
@@ -137,7 +138,7 @@ private meta def addWitnesses (afaik : Iykyk.Afaik) (recordObservationTerms : Bo
 
 /-- Emit one known proposition while reusing atoms already allocated for the
     root, shared witnesses, and repeated relation endpoints. -/
-private meta def walkFact (cfg : WalkConfig) (refinements : Std.HashMap FVarId Expr)
+private meta def walkFact (cfg : WalkConfig)
     (fact : Iykyk.KnownFact) (initialAnchors : Array (Expr × String)) :
     StateT WalkState MetaM (Array (Expr × String)) := do
   let some (relation, rawArguments) ← propTupleShape? (← displayedProposition fact)
@@ -154,7 +155,7 @@ private meta def walkFact (cfg : WalkConfig) (refinements : Std.HashMap FVarId E
   let mut atomIds := #[]
   let mut types := #[]
   for rawArgument in rawArguments do
-    let argument ← contextArgument refinements rawArgument
+    let argument ← contextArgument cfg rawArgument
     let mut atomId? := none
     for (seen, atomId) in anchors do
       if seen.equal argument then
@@ -171,6 +172,22 @@ private meta def walkFact (cfg : WalkConfig) (refinements : Std.HashMap FVarId E
   modify fun state => state.addTuple relation types { atoms := atomIds, types }
   return anchors
 
+private meta def contextWalkConfig (afaik : Iykyk.Afaik) (baseConfig : WalkConfig)
+    (observations : Array Expr) : MetaM WalkConfig := do
+  let mut refinements := baseConfig.refinements
+  for (variableId, value) in ← definitionalRefinements do
+    unless refinements.contains variableId do
+      refinements := refinements.insert variableId value
+  for fact in afaik.facts do
+    if let some (variableId, value) ← refinementOf? (← displayedProposition fact) then
+      unless refinements.contains variableId do
+        refinements := refinements.insert variableId value
+  return { baseConfig with
+    refinements := refinements
+    functionGraphs := true
+    observations := observations
+    shareSymbolicValues := true }
+
 /-- Translate proof-backed knowledge into Spytial's relational data. The
     proofs remain owned by IYKYK. Requested observations parameterize the
     expression walk and add their function graphs over every represented value
@@ -183,19 +200,12 @@ public meta def relationalizeAfaikWithProvenance (afaik : Iykyk.Afaik)
     (baseConfig : WalkConfig := {}) (observations : Array Expr := #[]) :
     MetaM (JsonDataInstance × Provenance × Expr) :=
   withoutModifyingEnv do
-    let mut refinements := baseConfig.refinements
-    for (variableId, value) in ← definitionalRefinements do
-      unless refinements.contains variableId do
-        refinements := refinements.insert variableId value
-    for fact in afaik.facts do
-      if let some (variableId, value) ← refinementOf? (← displayedProposition fact) then
-        unless refinements.contains variableId do
-          refinements := refinements.insert variableId value
-    let config := { baseConfig with refinements, functionGraphs := true, observations }
+    let config ← contextWalkConfig afaik baseConfig observations
+    let refinements := config.refinements
     let root ← if afaik.root.isFVar || afaik.root.isMVar then
       pure afaik.root
     else
-      reduceKnown refinements 8 afaik.root
+      reduceKnown refinements 8 afaik.root observations
     let (_, state) ← StateT.run (s := {}) do
       -- Witnesses first: a witness can occur inside the refined root, and the
       -- walk reuses its atom only when it is already registered.
@@ -206,7 +216,7 @@ public meta def relationalizeAfaikWithProvenance (afaik : Iykyk.Afaik)
       for fact in afaik.facts do
         if let some (variableId, value) ← refinementOf? (← displayedProposition fact) then
           if refinements[variableId]?.any (·.equal value) then continue
-        anchors ← walkFact config refinements fact anchors
+        anchors ← walkFact config fact anchors
       addActiveDomainObservations config observations
     return (state.toDataInstance, state.provenance,
       substituteKnown refinements 8 afaik.root)
@@ -234,13 +244,83 @@ public meta structure ContextView where
   datum : Expr
   deriving Inhabited
 
+/-- Local names and their definitions have one spelling for relevance
+    matching. This does not unfold observed functions or change their proofs. -/
+private meta def contextTerm (cfg : WalkConfig) (e : Expr) : MetaM Expr :=
+  normalizeReferenceTerm (substituteKnown cfg.refinements 8 e)
+
+/-- Symbolic data occurrences in a fact, excluding types, proof terms,
+    instances, and function heads. Closed scalars such as `0` and `1` are not
+    bridges between otherwise unrelated facts, unless explicitly selected. -/
+private meta partial def contextualTerms (cfg : WalkConfig) (root e : Expr) :
+    MetaM (Std.HashSet ExprStructEq) := do
+  let rec visit (e : Expr) : StateT (Std.HashSet ExprStructEq) MetaM Unit := do
+    unless e.hasLooseBVars do
+      let ty ← inferType e
+      if ty.isSort then
+        unless ← isProp e do return
+      else
+        if ← isProofArg e then return
+        if (← isClass? ty).isSome then return
+        if e.hasFVar || e.hasMVar || e.equal root then
+          let key : ExprStructEq := ⟨e⟩
+          if (← get).contains key then return
+          modify (·.insert key)
+    match e with
+    | .forallE _ domain body _ => visit domain; visit body
+    | .mdata _ body => visit body
+    | .proj _ _ body => visit body
+    | _ => for argument in e.getAppArgs do visit argument
+  let (_, terms) ← (visit (← contextTerm cfg e)).run {}
+  return terms
+
+/-- Keep the certified component connected to the values actually represented
+    by the selected root. IYKYK still owns extraction and contradiction checks;
+    this consumer only selects a subset of its checked facts and witnesses. -/
+private meta def projectToRepresentation (afaik : Iykyk.Afaik) (baseConfig : WalkConfig)
+    (observations : Array Expr) : MetaM Iykyk.Afaik := withoutModifyingEnv do
+  let cfg ← contextWalkConfig afaik { baseConfig with recordTerms := true } observations
+  let root ← contextTerm cfg afaik.root
+  let (_, state) ← StateT.run (s := {}) do
+    -- Preallocate witness identities, but only occurrences visited from the
+    -- root enter observationTerms. Unrelated witnesses are not seed anchors.
+    let _ ← addWitnesses afaik false
+    let _ ← walkExpr cfg (← contextArgument cfg root)
+    pure ()
+  let mut anchors : Std.HashSet ExprStructEq := {}
+  anchors := anchors.insert ⟨root⟩
+  for (term, _) in state.observationTerms do
+    let term ← contextTerm cfg term
+    if term.hasFVar || term.hasMVar then anchors := anchors.insert ⟨term⟩
+  let candidates ← afaik.facts.mapM fun fact => do
+    contextualTerms cfg root (← displayedProposition fact)
+  let mut selected : Std.HashSet Nat := {}
+  let mut changed := true
+  while changed do
+    changed := false
+    for index in [:afaik.facts.size] do
+      if selected.contains index then continue
+      let terms := candidates[index]!
+      if terms.toArray.any anchors.contains then
+        selected := selected.insert index
+        changed := true
+        for term in terms do anchors := anchors.insert term
+  let kept := afaik.facts.zipIdx |>.filter (fun (_, i) => selected.contains i) |>.map (·.1)
+  return afaik.project
+    (fun fact => kept.any (·.proposition.equal fact.proposition))
+    (fun witness => (root.find? (·.equal witness.term)).isSome ||
+      kept.any fun fact => (fact.proposition.find? (·.equal witness.term)).isSome)
+
 /-- Ask IYKYK what is known, then translate a successful result for Spytial. -/
 public meta def wdykInContext (subject : Expr) (walkConfig : WalkConfig := {})
     (wdykConfig : Iykyk.Config := {}) (observations : Array Expr := #[]) :
     MetaM (ContextViewStatus × Option ContextView) := do
-  match ← Iykyk.wdyk subject wdykConfig with
+  match ← Iykyk.wdyk subject { wdykConfig with rootOnly := false } with
   | .inconsistent _ => return ({ inconsistent := true }, none)
   | .afaik afaik =>
+      let afaik ← if wdykConfig.rootOnly && !(← isProp (← inferType subject)) then
+        projectToRepresentation afaik walkConfig observations
+      else pure afaik
       let (data, prov, datum) ←
         relationalizeAfaikWithProvenance afaik walkConfig observations
       return ({ truncated := afaik.truncated }, some { afaik, data, prov, datum })
