@@ -889,7 +889,8 @@ info: {"constraints":
 ]
 
 -- `.(` and `.{` are Lean tokens, so a token-level `.` would lose both to
--- maximal munch; `selJoinOp` reads the dot as a raw character instead.
+-- maximal munch; the selector's own token table holds neither, so the join
+-- operator lexes as a bare `.`.
 /--
 info: {"constraints":
  [{"hideAtom": {"selector": "{x : SBDD | some x.(lo + hi)}"}},
@@ -1182,15 +1183,17 @@ public def sWeird : SWeird := .leaf
 #guard_msgs in
 #spytial.spec sWeird with [hideAtom {x : SWeird | some some and one one}]
 
-/-! ## Vocabulary shadowing — fields literally named `sum` / `univ`
+/-! ## Vocabulary shadowing — fields literally named `sum` / `univ` / `add`
 
 Bare `sum` fails the quantifier rule and falls to the ident, so a field named
 `sum` needs nothing. `univ`/`iden`/`none` are read off the ident's source
 text, so a field named `univ` takes the escape (`«univ»`); spacing is not an
-escape — the dot is the join operator either way. -/
+escape — the dot is the join operator either way. A box join's callee is read
+the same way, so a field named after one of the engine's builtins is reachable
+as `«add»[x]` and `add[x]` is the call. -/
 
 public inductive SVocab where
-  | mk (sum univ : SVocab)
+  | mk (sum univ add : SVocab)
   | leaf
 
 public def sVocab : SVocab := .leaf
@@ -1198,14 +1201,20 @@ public def sVocab : SVocab := .leaf
 /-- info: {"constraints":
  [{"hideAtom": {"selector": "{x : SVocab | some x.`sum`}"}},
   {"hideAtom": {"selector": "{x : SVocab | some x.`univ`}"}},
+  {"hideAtom": {"selector": "{x : SVocab | some add[x]}"}},
   {"hideAtom": {"selector": "SVocab.`sum`"}}]}
 -/
 #guard_msgs in
 #spytial.spec sVocab with [
   hideAtom {x : SVocab | some x.sum},
   hideAtom {x : SVocab | some x.«univ»},
+  hideAtom {x : SVocab | some «add»[x]},
   hideAtom SVocab . sum
 ]
+
+/-- error: 'add' takes 2 integer argument(s), got 1 -/
+#guard_msgs in
+#spytial.spec sVocab with [hideAtom {x : SVocab | some add[x]}]
 
 /-! ## Identifiers outside SGQ's bare lexer rule
 

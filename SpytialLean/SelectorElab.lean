@@ -892,7 +892,10 @@ private meta partial def elabBuiltinCall? (scope : SelScope) (env : LEnv) (stx :
   unless stx[ci].isOfKind selIdentKind do return none
   let callee := stx[ci][0]
   if (env.lookup callee.getId).isSome then return none
-  let name := callee.getId.toString
+  -- Source text, not the name, decides, as it does in `resolveIdent`: `«add»`
+  -- is a field spelled differently that parses to the same `Name`.
+  let .ident _ raw _ _ := callee | return none
+  let name := raw.toString
   let args := stx[li].getSepArgs
   if let some n := builtinArity? name then
     unless args.size == n do
