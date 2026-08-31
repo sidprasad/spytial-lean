@@ -82,9 +82,10 @@ what was declined, by name.
 ## Build integration
 
 Both manifests are read while `Sgq.lean` and `SpecLang.lean` elaborate
-(`include_str`), which Lean's import graph does not see; the lakefile names
-them as `input_file`s the library needs, so a dependency bump re-elaborates
-the modules.
+(`include_str`), which Lean's import graph does not see; the lakefile traces
+them as targets the library needs — sequenced after the pnpm install that
+creates them, so a fresh checkout builds first try — and a dependency bump
+re-elaborates the modules.
 
 Both packages are overridden to a local checkout in `pnpm-workspace.yaml`,
 because both manifests are ahead of their releases. The SGQ manifest ships

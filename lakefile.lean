@@ -123,14 +123,21 @@ target renderHarnessJs pkg : Unit := do
 
 Lean's import graph sees only imports, so a file a module reads while it
 elaborates (`include_str`, `IO.FS.readFile`) is invisible to the build:
-editing it leaves a stale olean. Each such file is declared here and listed
-in the reading library's `needs`. -/
+editing it leaves a stale olean. Each such file is traced here and listed in
+the reading library's `needs`. Both live under node_modules, which exists
+only after `widgetJsAll`'s pnpm install — a plain `input_file` races it and
+fails a fresh checkout's first build. Sequencing after `widgetJsAll` is
+free: the library already waits on it for the JS embed. -/
 
-input_file sgqManifest where
-  path := "node_modules" / "simple-graph-query" / "docs" / "sgq-language.json"
+target sgqManifest pkg : Unit := do
+  (← widgetJsAll.fetch).mapM fun _ => do
+    addTrace (← computeTrace (pkg.dir / "node_modules" / "simple-graph-query" /
+      "docs" / "sgq-language.json"))
 
-input_file spytialManifest where
-  path := widgetDir / "node_modules" / "spytial-core" / "docs" / "spytial-language.json"
+target spytialManifest pkg : Unit := do
+  (← widgetJsAll.fetch).mapM fun _ => do
+    addTrace (← computeTrace (pkg.widgetDir / "node_modules" / "spytial-core" /
+      "docs" / "spytial-language.json"))
 
 /-- `SpytialTests/SelectorLoweringTest.lean`'s golden. -/
 input_file sgqLoweringGolden where
