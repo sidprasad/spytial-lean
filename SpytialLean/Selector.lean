@@ -54,6 +54,18 @@ end
 public meta instance : Inhabited Sel := ⟨.num 0⟩
 public meta instance : Inhabited Arg := ⟨.atom none⟩
 
+public meta def Arg.mapExprsM [Monad m] (f : Sel → m Sel) : Arg → m Arg
+  | .expr e => return .expr (← f e)
+  | .exprs es => return .exprs (← es.mapM f)
+  | .binders bs => return .binders (← bs.mapM fun (x, d) => return (x, ← f d))
+  | a@(.name _) | a@(.atom _) => return a
+
+public meta def Arg.subExprs : Arg → Array Sel
+  | .expr e => #[e]
+  | .exprs es => es
+  | .binders bs => bs.map (·.2)
+  | .name _ | .atom _ => #[]
+
 /-- Fills only operand and optional positions; a production with a name, a list,
     binders or a body gets a node with no lowering rather than a guessed one. -/
 public meta def Sel.op (o : Sgq.OpId) (operands : Array Sel) : Sel :=
@@ -142,7 +154,7 @@ private meta def glues (l r : String) : Bool :=
   else if Sgq.bareRest l.back && Sgq.bareRest r.front then true
   else Sgq.lexemes.any fun t =>
     1 < t.length && (List.range (min (t.length - 1) l.length)).any fun k =>
-      t.startsWith (l.drop (l.length - (k + 1))) && r.startsWith (t.drop (k + 1))
+      t.startsWith (l.takeEnd (k + 1)) && r.startsWith (t.drop (k + 1))
 
 private meta def assemble (chunks : Array (String × Air)) : String := Id.run do
   let mut out := ""
@@ -270,12 +282,8 @@ private meta partial def renderItems (cd : Sgq.Construct) (op : Option Sgq.OpId)
 private meta partial def renderBinders (cd : Sgq.Construct) (typed : Bool) (level : Nat)
     (bs : Array (Name × Sel)) : Except String (Array (String × Air)) := do
   let sep := (cd.part .«separator», roleAir .«separator»)
-  let groups := if !typed then bs.map (fun b => (#[b.1], b.2)) else
-    bs.foldl (init := #[]) fun (gs : Array (Array Name × Sel)) (x, dom) =>
-      match gs.back? with
-      | some (xs, dom') =>
-        if dom' == dom then gs.set! (gs.size - 1) (xs.push x, dom') else gs.push (#[x], dom)
-      | none => gs.push (#[x], dom)
+  let groups := (bs.toList.splitBy fun a b => typed && a.2 == b.2).map fun g =>
+    (g.map (·.1), g.head!.2)
   let mut out : Array (String × Air) := #[]
   for ((xs, dom), n) in groups.zipIdx do
     if n != 0 then out := out.push (sep.1.text, sep.2)

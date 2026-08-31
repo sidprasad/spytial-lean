@@ -1,6 +1,7 @@
 module
 
 public import Lean
+public meta import Lean.Data.EditDistance
 public meta import SpytialLean.Selector
 public meta import SpytialLean.TypeShape
 public meta import SpytialLean.Relationalizer
@@ -96,21 +97,8 @@ meta def SelScope.introduce (scope : SelScope) (name : String) (i : Introduced) 
 
 /-! ## Diagnostics -/
 
-private meta def editDistance (a b : String) : Nat := Id.run do
-  let s := a.toList.toArray
-  let t := b.toList.toArray
-  let mut prev := Array.range (t.size + 1)
-  for i in [1:s.size + 1] do
-    let mut curr := Array.replicate (t.size + 1) 0 |>.set! 0 i
-    for j in [1:t.size + 1] do
-      let cost := if s[i-1]! == t[j-1]! then 0 else 1
-      curr := curr.set! j (min (min (prev[j]! + 1) (curr[j-1]! + 1)) (prev[j-1]! + cost))
-    prev := curr
-  return prev[t.size]!
-
 private meta def sortDedup (xs : Array String) : Array String :=
-  xs.qsort (· < ·) |>.foldl (init := #[]) fun acc s =>
-    if acc.back? == some s then acc else acc.push s
+  xs.qsort (· < ·) |>.eraseReps
 
 private meta def SelScope.vocabulary (scope : SelScope) : Array String := Id.run do
   let mut out : Array String := #[]
@@ -121,7 +109,8 @@ private meta def SelScope.vocabulary (scope : SelScope) : Array String := Id.run
 
 private meta def suggest (scope : SelScope) (unknown : String) : String :=
   let vocab := scope.vocabulary
-  let near := vocab.filter (fun v => editDistance unknown v ≤ 2)
+  -- Cutoff 2 bounds the cost, not the result: a returned distance may exceed it.
+  let near := vocab.filter fun v => (EditDistance.levenshtein unknown v 2).any (· ≤ 2)
   if !near.isEmpty then
     s!" (did you mean {", ".intercalate (near.toList.map (fun v => s!"'{v}'"))}?)"
   else if vocab.size ≤ 24 then
@@ -189,20 +178,18 @@ private meta def selTokens : TokenTable :=
 private meta def clearTokenCache (c : ParserContext) (s : ParserState) : ParserState :=
   { s with cache.tokenCache := { startPos := c.inputString.rawEndPos + ' ' } }
 
-meta def withSelTokens (p : Parser) : Parser where
+private meta def withTokens (tokens : ParserContextCore → TokenTable) (p : Parser) :
+    Parser where
   info := p.info
   fn := fun c s =>
     clearTokenCache c <|
-      adaptUncacheableContextFn (fun c => { c with tokens := selTokens })
+      adaptUncacheableContextFn (fun c => { c with tokens := tokens c })
         (fun c s => p.fn c (clearTokenCache c s)) c s
 
+meta def withSelTokens (p : Parser) : Parser := withTokens (fun _ => selTokens) p
+
 /-- Under `selTokens` a Lean term's own tokens do not lex at all. -/
-meta def withHostTokens (p : Parser) : Parser where
-  info := p.info
-  fn := fun c s =>
-    clearTokenCache c <|
-      adaptUncacheableContextFn (fun c => { c with tokens := getTokenTable c.env })
-        (fun c s => p.fn c (clearTokenCache c s)) c s
+meta def withHostTokens (p : Parser) : Parser := withTokens (fun c => getTokenTable c.env) p
 
 @[combinator_formatter withHostTokens] meta def withHostTokens.formatter
     (p : PrettyPrinter.Formatter) : PrettyPrinter.Formatter := p
@@ -657,13 +644,14 @@ private meta partial def elabNode (scope : SelScope) (env : LEnv) (stx : Syntax)
   if cd.kinds.yields.isNone then
     if let some e ← elabBuiltinCall? scope env stx c then return e
   let op? := opWritten? cd stx
-  let kinds := match op? with | some o => (Sgq.Op.of o).kinds | none => cd.kinds
-  let arity := match op? with | some o => (Sgq.Op.of o).arity | none => cd.arity
-  let what : String := match op? with
-    | some o => (Sgq.Op.of o).text
+  let od? := op?.map Sgq.Op.of
+  let kinds := (od?.map (·.kinds)).getD cd.kinds
+  let arity := (od?.map (·.arity)).getD cd.arity
+  let what : String := match od? with
+    | some od => od.text
     | none => s!"a {Sgq.constructName c}"
-  if let some o := op? then
-    unless (Sgq.Op.of o).evaluates do
+  if let some od := od? then
+    unless od.evaluates do
       throwErrorAt stx m!"the engine parses '{what}' and refuses to evaluate it"
   let mut args : Array Arg := #[]
   let mut slots : Array (Option Nat) := #[]

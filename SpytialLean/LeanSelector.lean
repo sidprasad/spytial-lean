@@ -191,14 +191,9 @@ meta def evalLeanRel (ctx : LeanSelCtx) (fn : Expr) : MetaM (Array (Array String
   let tuples ← evalIdxTuples term
   -- Indexes are minted in walk order, so sorting them sorts the rendered
   -- selector into walk order; the dedup reads the list as a set.
-  let lexLt (a b : List Nat) : Bool := Id.run do
-    for (x, y) in a.zip b do
-      if x < y then return true
-      if x > y then return false
-    return a.length < b.length
   let mut out : Array (Array String) := #[]
   let mut prev? : Option (List Nat) := none
-  for t in tuples.toArray.qsort lexLt do
+  for t in tuples.toArray.qsort (·.lex ·) do
     if prev? == some t then continue
     prev? := some t
     let ids := (t.toArray.zip cols).filterMap fun (i, (colIds, _)) => colIds[i]?
@@ -227,15 +222,9 @@ private meta def tupleUnion (tuples : Array (Array String)) : Sel := Id.run do
         | some o => Sel.op .«union» #[o, t]
   return out.getD .empty
 
-/-- Mirrors `Sel.freeVars`, which walks the same shape. -/
 meta partial def Sel.resolveLean (ctx : LeanSelCtx) : Sel → MetaM Sel
   | .leanRel fn => return tupleUnion (← evalLeanRel ctx fn)
-  | .node c op args => return .node c op (← args.mapM fun
-      | .expr e => return .expr (← e.resolveLean ctx)
-      | .exprs es => return .exprs (← es.mapM (·.resolveLean ctx))
-      | .binders bs =>
-        return .binders (← bs.mapM fun (x, d) => return (x, ← d.resolveLean ctx))
-      | a@(.name _) | a@(.atom _) => return a)
+  | .node c op args => return .node c op (← args.mapM (·.mapExprsM (·.resolveLean ctx)))
   | e@(.sig ..) | e@(.rel ..) | e@(.builtin ..) | e@(.var ..) | e@(.num ..)
   | e@(.str ..) | e@(.ctorLit ..) | e@(.boolLit ..) => return e
 
@@ -252,11 +241,7 @@ with no raw Lean selector should not pay for that. -/
 
 meta partial def Sel.hasLeanRel : Sel → Bool
   | .leanRel _ => true
-  | .node _ _ args => args.any fun
-    | .expr e => e.hasLeanRel
-    | .exprs es => es.any Sel.hasLeanRel
-    | .binders bs => bs.any fun (_, d) => d.hasLeanRel
-    | .name _ | .atom _ => false
+  | .node _ _ args => args.any fun a => a.subExprs.any Sel.hasLeanRel
   | .sig .. | .rel .. | .builtin .. | .var .. | .num .. | .str .. | .ctorLit ..
   | .boolLit .. => false
 

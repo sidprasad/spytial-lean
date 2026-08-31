@@ -249,34 +249,37 @@ private meta def parseManifest : Except String RawManifest := do
       {", ".intercalate (escapes.toList.map (·.quote))}; Selector.lean assumes a \
       backslash only removes itself"
 
-  let mut cons : List RawConstruct := []
-  let mut ops : List RawOp := []
-  let mut lexemes : List String := []
-  for c in constructs do
-    let mut parts : List (String × Part) := []
-    for (role, raw) in c.parts.toArray do
+  let cons : List RawConstruct ← constructs.toList.mapM fun c => do
+    let parts : List (String × Part) ← c.parts.toArray.toList.mapM fun (role, raw) => do
       let spellings : List String ← (fromJson? raw).mapError fun e =>
         s!"{c.id}.parts.{role}: {e}"
-      lexemes := lexemes ++ spellings
-      parts := parts ++ [(role, {
-        text := ← pick s!"{c.id}.{role}" spellings,
-        spellings := spellings,
-        alternatives := alternativeRoles.contains s!"{c.id}.{role}" })]
+      return (role, {
+        text := ← pick s!"{c.id}.{role}" spellings, spellings,
+        alternatives := alternativeRoles.contains s!"{c.id}.{role}" })
     for role in c.template.flatMap JItem.roles do
       unless parts.any (·.1 == role) do
         .error s!"{c.id}: the template is written with the part {role.quote}, \
           which it has no spelling for"
-    for o in c.operators do
-      lexemes := lexemes ++ o.spellings
-      ops := ops ++ [{
-        id := o.id, construct := c.id,
-        text := ← pick o.id o.spellings, spellings := o.spellings,
-        evaluates := o.evaluates, kinds := o.kinds, arity := o.arity }]
-    cons := cons ++ [{
-      id := c.id, prec := c.precedence, fixity := c.fixity,
-      evaluates := c.evaluates, kinds := c.kinds, arity := c.arity,
-      template := c.template, parts,
-      operators := c.operators.map (·.id) }]
+    return { id := c.id, prec := c.precedence, fixity := c.fixity,
+             evaluates := c.evaluates, kinds := c.kinds, arity := c.arity,
+             template := c.template, parts,
+             operators := c.operators.map (·.id) }
+  let ops := (← constructs.toList.mapM fun c => c.operators.mapM fun o => do
+    return ({ id := o.id, construct := c.id,
+              text := ← pick o.id o.spellings, spellings := o.spellings,
+              evaluates := o.evaluates, kinds := o.kinds,
+              arity := o.arity } : RawOp)).flatten
+  let lexemes := cons.flatMap (fun c => c.parts.flatMap (·.2.spellings))
+    ++ ops.flatMap (·.spellings)
+
+  let partKeys := cons.flatMap fun c => c.parts.map fun (role, _) => s!"{c.id}.{role}"
+  for (key, _) in preferredSpelling do
+    unless ops.any (·.id == key) || partKeys.contains key do
+      .error s!"preferredSpelling names {key.quote}, which is neither a live \
+        operator nor a construct part"
+  for key in alternativeRoles do
+    unless partKeys.contains key do
+      .error s!"alternativeRoles names {key.quote}, which is not a construct part"
 
   for (cid, role) in namedParts do
     let some c := cons.find? (·.id == cid)
@@ -295,30 +298,24 @@ private meta def parseManifest : Except String RawManifest := do
     lexemes := lexemes.eraseDups,
     stringEscapes := ← escapePairs m.string.escapeDecodes }
 
-private meta def manifest! : CommandElabM RawManifest := do
-  match parseManifest with
-  | .ok m => return m
-  | .error e => throwError "sgq manifest: {e}"
+private meta def manifest! : CommandElabM RawManifest :=
+  ManifestJson.manifest! "sgq manifest" parseManifest
 
-private meta def enumCtor (enum : Name) (id : String) : Ident :=
-  mkIdent (`SpytialLean.Sgq ++ enum ++ Name.mkSimple id)
-
-private meta def declareEnum (enum : Name) (all : Name) (ids : List String) :
-    CommandElabM Unit := do
-  let ctors ← ids.mapM fun s =>
-    `(Lean.Parser.Command.ctor| | $(mkIdent (Name.mkSimple s)):ident)
-  elabCommand (← `(public meta inductive $(mkIdent enum):ident where
-      $(ctors.toArray)*
-      deriving Repr, DecidableEq, Inhabited, Hashable))
-  let refs := (ids.map (enumCtor enum)).toArray
-  elabCommand (← `(public meta def $(mkIdent all):ident :
-      List $(mkIdent enum):ident := [$refs,*]))
+private meta def enumCtor : Name → String → Ident :=
+  ManifestJson.enumCtor `SpytialLean.Sgq
 
 elab "derive_sgq_ids" : command => do
   let m ← manifest!
-  declareEnum `ConstructId `allConstructs (m.constructs.map (·.id))
-  declareEnum `OpId `allOps (m.ops.map (·.id))
-  declareEnum `Role `allRoles m.roles
+  let constructIds := m.constructs.map (·.id)
+  let opIds := m.ops.map (·.id)
+  declareEnum `ConstructId constructIds
+  declareEnum `OpId opIds
+  declareEnum `Role m.roles
+  declareAll `allConstructs `ConstructId constructIds
+  declareAll `allOps `OpId opIds
+  declareAll `allRoles `Role m.roles
+  declareNames `constructName `ConstructId constructIds
+  declareNames `opName `OpId opIds
 
 derive_sgq_ids
 
@@ -344,7 +341,6 @@ public meta inductive Item where
 
 public meta structure Op where
   id : OpId
-  name : String
   construct : ConstructId
   text : String
   spellings : List String
@@ -355,7 +351,6 @@ public meta structure Op where
 
 public meta structure Construct where
   id : ConstructId
-  name : String
   prec : Nat
   fixity : Fixity
   evaluates : Bool
@@ -405,17 +400,11 @@ private meta instance : Quote Fixity := ⟨fun
 private meta instance : Quote Part := ⟨fun p =>
   Syntax.mkCApp ``Part.mk #[quote p.text, quote p.spellings, quote p.alternatives]⟩
 
-private meta instance : Quote Char := ⟨fun c =>
-  Syntax.mkCApp ``Char.ofNat #[quote c.toNat]⟩
-
 private meta instance : Quote Range := ⟨fun r =>
   Syntax.mkCApp ``Range.mk #[quote r.from, quote r.to]⟩
 
 private meta instance : Quote CharClass := ⟨fun cc =>
   Syntax.mkCApp ``CharClass.mk #[quote cc.ranges, quote cc.chars]⟩
-
--- `quote (List Term)` splices pre-built terms verbatim
-private meta instance : Quote Term := ⟨id⟩
 
 private meta partial def quoteItem : JItem → Term
   | .operand l => Syntax.mkCApp ``Item.operand #[quote l]
@@ -431,13 +420,13 @@ private meta partial def quoteItem : JItem → Term
     Syntax.mkCApp ``Item.«optional» #[quote (is.map quoteItem)]
 
 private meta def quoteOp (o : RawOp) : Term :=
-  Syntax.mkCApp ``Op.mk #[enumCtor `OpId o.id, quote o.id, enumCtor `ConstructId o.construct,
+  Syntax.mkCApp ``Op.mk #[enumCtor `OpId o.id, enumCtor `ConstructId o.construct,
     quote o.text, quote o.spellings, quote o.evaluates, quote o.kinds, quote o.arity]
 
 private meta def quoteConstruct (c : RawConstruct) : Term :=
   let parts := c.parts.map fun (role, part) =>
     Syntax.mkCApp ``Prod.mk #[enumCtor `Role role, quote part]
-  Syntax.mkCApp ``Construct.mk #[enumCtor `ConstructId c.id, quote c.id, quote c.prec,
+  Syntax.mkCApp ``Construct.mk #[enumCtor `ConstructId c.id, quote c.prec,
     quote c.fixity, quote c.evaluates, quote c.kinds, quote c.arity,
     quote (c.template.map quoteItem), quote parts,
     quote (c.operators.map fun o => (enumCtor `OpId o : Term))]
@@ -469,22 +458,20 @@ elab "derive_sgq_tables" : command => do
 
 derive_sgq_tables
 
-public meta def Op.of (o : OpId) : Op :=
-  (ops.find? (·.id == o)).getD default
+private meta def opTable : Std.HashMap OpId Op :=
+  ops.foldl (init := {}) fun m o => m.insert o.id o
 
-public meta def Construct.of (c : ConstructId) : Construct :=
-  (constructs.find? (·.id == c)).getD default
+private meta def constructTable : Std.HashMap ConstructId Construct :=
+  constructs.foldl (init := {}) fun m c => m.insert c.id c
 
-public meta def constructName (c : ConstructId) : String := (Construct.of c).name
+public meta def Op.of (o : OpId) : Op := opTable.getD o default
 
-public meta def opName (o : OpId) : String := (Op.of o).name
+public meta def Construct.of (c : ConstructId) : Construct := constructTable.getD c default
 
 /-- Total for the roles this package reads: the derive command checks that every
     part a template or `namedParts` names has a spelling. -/
 public meta def Construct.part (c : Construct) (r : Role) : Part :=
   (c.parts.lookup r).getD { text := "", spellings := [], alternatives := false }
-
-public meta def Op.prec (o : Op) : Nat := (Construct.of o.construct).prec
 
 /-- Spellings are unique within a construct, so at most one operator matches. -/
 public meta def Construct.operatorSpelled (c : Construct) (s : String) : Option OpId :=

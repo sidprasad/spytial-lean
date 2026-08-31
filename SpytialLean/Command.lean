@@ -53,9 +53,23 @@ syntax (name := spytialSpliceStx) ".." : spytial_op
 /-- `..name` splices the list bound by `spytial_ops name`, whose root must match. -/
 syntax (name := spytialSpliceNamedStx) ".." noWs ident : spytial_op
 
+run_cmd do
+  unless (SpecLang.itemOfKey? "attribute").isSome do
+    throwError "spytialAttrOp spells the item id \"attribute\", which is not a live item"
+  let tokens := Lean.Parser.getTokenTable (← getEnv)
+  for i in SpecLang.allItems do
+    let key := SpecLang.itemName i
+    if key != "attribute" && (tokens.find? key).isSome then
+      throwError "the op '{key}' lexes as a Lean token, so the ident-headed \
+        rule cannot parse it; give it its own rule the way spytialAttrOp has one"
+
 /-! ### Argument interpretation -/
 
 private meta def argInner (arg : TSyntax `spytialOpArg) : Syntax := arg.raw[0]
+
+/-- `spytialBlockStx`'s arguments, each stripped of its `spytial_block_arg` wrapper. -/
+private meta def blockArgs (stx : Syntax) : Array Syntax :=
+  (#[stx[2]] ++ stx[3].getArgs).map (·[0])
 
 private meta def orVals (vs : List String) : String := "|".intercalate vs
 
@@ -207,7 +221,6 @@ private meta def elabBlockScalar (b : BlockSpec) (f : FieldSpec)
   | _ => throwErrorAt stx m!"({blockName b.id} …) cannot nest {fieldName f.id}"
 
 open SpecLang in
-/-- Node shape: `["(", ident, firstArg, args*, ")"]` (see `spytialBlockStx`). -/
 private meta def elabBlock (usage : String) (b : BlockSpec) (stx : Syntax) :
     TermElabM (List (FieldId × FieldVal)) := do
   let mut set : Array (FieldId × FieldVal) := #[]
@@ -215,8 +228,7 @@ private meta def elabBlock (usage : String) (b : BlockSpec) (stx : Syntax) :
       TermElabM Unit := do
     if set.any (·.1 == f) then
       throwErrorAt ref m!"duplicate {fieldName f} in ({blockName b.id} …)"
-  for arg in #[stx[2]] ++ stx[3].getArgs do
-    let inner := arg[0]
+  for inner in blockArgs stx do
     if let some s := inner.isStrLit? then
       let some f := b.fields.find? (isStringy ·.type)
         | throwErrorAt inner m!"({blockName b.id} …) takes no string; usage: {usage}"
@@ -247,10 +259,10 @@ private meta def elabBlock (usage : String) (b : BlockSpec) (stx : Syntax) :
         | throwErrorAt inner m!"({blockName b.id} …) has no field '{kw}'; \
             fields: {", ".intercalate (b.fields.map (fieldName ·.id))}"
       dup inner f.id set
-      let args := #[inner[2]] ++ inner[3].getArgs
+      let args := blockArgs inner
       unless args.size == 1 do
         throwErrorAt inner m!"({kw} …) takes one value"
-      set := set.push (f.id, ← elabBlockScalar b f args[0]![0])
+      set := set.push (f.id, ← elabBlockScalar b f args[0]!)
     else
       throwErrorAt inner m!"unexpected argument in ({blockName b.id} …); usage: {usage}"
   return b.fields.filterMap fun f => (set.find? (·.1 == f.id)).map fun (_, v) => (f.id, v)
@@ -260,8 +272,7 @@ private meta def elabAltForm (usage : String) (f : FieldSpec) (alt : AltForm)
     (vs : List String) (stx : Syntax) : TermElabM FieldVal := do
   let mut dir : Option String := none
   let mut blockVals : Array (FieldId × FieldVal) := #[]
-  for arg in #[stx[2]] ++ stx[3].getArgs do
-    let inner := arg[0]
+  for inner in blockArgs stx do
     if inner.isIdent then
       let w := inner.getId.toString
       unless vs.contains w do

@@ -49,6 +49,39 @@ meta def onlyMembers (known : List String) (o : JsonObject) : Except String Unit
   | some (k, _) => .error s!"no representation for {k.quote}"
   | none => .ok ()
 
+/-! ## Declaring the derived surface -/
+
+meta def manifest! (what : String) (parsed : Except String α) : CommandElabM α :=
+  match parsed with
+  | .ok m => return m
+  | .error e => throwError "{what}: {e}"
+
+meta def enumCtor (ns enum : Name) (id : String) : Ident :=
+  mkIdent (ns ++ enum ++ Name.mkSimple id)
+
+meta def declareEnum (enum : Name) (ids : List String) : CommandElabM Unit := do
+  let ctors ← ids.mapM fun s =>
+    `(Lean.Parser.Command.ctor| | $(mkIdent (Name.mkSimple s)):ident)
+  elabCommand (← `(public meta inductive $(mkIdent enum):ident where
+      $(ctors.toArray)*
+      deriving Repr, DecidableEq, Inhabited, Hashable))
+
+meta def declareAll (all enum : Name) (ids : List String) : CommandElabM Unit := do
+  let ns ← getCurrNamespace
+  let refs := (ids.map (enumCtor ns enum)).toArray
+  elabCommand (← `(public meta def $(mkIdent all):ident :
+      List $(mkIdent enum):ident := [$refs,*]))
+
+meta def declareNames (fn enum : Name) (ids : List String) : CommandElabM Unit := do
+  let ns ← getCurrNamespace
+  let alts : Array (TSyntax ``Lean.Parser.Term.matchAlt) ← ids.toArray.mapM fun s =>
+    `(Lean.Parser.Term.matchAltExpr| | $(enumCtor ns enum s):term => $(quote s):term)
+  elabCommand (← `(public meta def $(mkIdent fn):ident (id : $(mkIdent enum):ident) :
+      String := match id with $alts:matchAlt*))
+
+meta def declareDef (name : Name) (ty val : Term) : CommandElabM Unit := do
+  elabCommand (← `(public meta def $(mkIdent name):ident : $ty := $val))
+
 /-! ## Declaring a tagged union
 
     json_union ArityRule on "rule" where

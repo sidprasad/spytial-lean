@@ -310,9 +310,12 @@ private meta def altForm (a : JAltForm) : Except String RawAltForm := do
   | [] => .error "alternativeForm has no enum field"
   | _ => .error "two enum fields in alternativeForm"
 
-private meta def fieldOf (kinds : IntroducedKinds) (itemId : String) (j : Json) :
-    Except String (Option RawField) := do
-  let c : JField ← fromJson? j
+private meta def decodeFields (js : List Json) : Except String (List (JField × Json)) :=
+  js.mapM fun j => do return (← fromJson? j, j)
+
+/-- `c` is `j`'s `JField` reading; `JFieldType` takes the rest of the object. -/
+private meta def fieldOf (kinds : IntroducedKinds) (itemId : String)
+    (c : JField) (j : Json) : Except String (Option RawField) := do
   -- A deprecated field keeps parsing upstream; the new surface never writes it.
   if c.deprecated.isSome then return none
   let name := c.name
@@ -352,28 +355,44 @@ private meta def fieldOf (kinds : IntroducedKinds) (itemId : String) (j : Json) 
     return { field := name, arity, referencedBy := i.referencedBy }
   return some { name, type, required := c.required.getD false, alt, introduces }
 
-private meta def itemOf (kinds : IntroducedKinds) (j : Json) :
-    Except String (Option RawItem) := do
+/-- `fieldPaths` and the deprecation pairs cover deprecated surface; `item` leaves it out. -/
+private meta structure ParsedItem where
+  fieldPaths : List String
+  deprecatedItem : Option (String × String)
+  deprecatedFields : List (String × String)
+  item : Option RawItem
+
+private meta def itemOf (kinds : IntroducedKinds) (displayedBy : List String)
+    (j : Json) : Except String ParsedItem := do
   let i : JItem ← fromJson? j
-  if i.deprecated.isSome then return none
   let id := i.id
   let here (e : String) : String := s!"{id}: {e}"
+  let jfields ← decodeFields (i.fields.getD [])
+  let fieldPaths := jfields.map fun (f, _) => s!"{id}.{f.name}"
+  if let some d := i.deprecated then
+    return { fieldPaths, deprecatedItem := some (id, d.replacedBy),
+             deprecatedFields := [], item := none }
+  let deprecatedFields := jfields.filterMap fun (f, _) =>
+    f.deprecated.map fun d => (s!"{id}.{f.name}", d.replacedBy)
   let some yamlKey := i.yamlKey | .error (here "no yamlKey")
   let constraint ← match i.sections with
     | some [.constraints] => pure true
     | some [.directives] => pure false
     | s => .error (here s!"no representation for sections {repr s}")
   let some shape := i.valueShape | .error (here "no valueShape")
-  let fields ← (i.fields.getD []).filterMapM (fieldOf kinds id)
+  let fields ← jfields.filterMapM fun (c, fj) => fieldOf kinds id c fj
   -- A scalar item serializes as its one field's value (`Spec.lean`), leaving
-  -- nowhere for a second field or a `hold`.
+  -- nowhere for a second field, a `hold`, or the source stamp riding beside.
   let scalar := shape matches .scalar
   let supportsHold := i.supportsHold.getD false
+  let displaysSource := displayedBy.contains id
   if scalar then
     unless fields.length == 1 do
       .error (here s!"no representation for a scalar item with {fields.length} fields")
     if supportsHold then
       .error (here "no representation for a scalar item that supports hold")
+    if displaysSource then
+      .error (here "no representation for a scalar item that displays its source stamp")
   for f in fields do
     if f.required && f.type.isBlock then
       .error s!"{id}.{f.name}: a required block has no positional surface"
@@ -409,13 +428,14 @@ private meta def itemOf (kinds : IntroducedKinds) (j : Json) :
   for f in effectFields do
     unless fields.any (·.name == f) do
       .error (here s!"inertWhenBare names the effect field {f.quote}, which it does not have")
-  return some { id, yamlKey, constraint, scalar, supportsHold,
-                fields, positional, leadingSelector, introduces, effectFields,
-                displaysSource := false }
+  return { fieldPaths, deprecatedItem := none, deprecatedFields,
+           item := some { id, yamlKey, constraint, scalar, supportsHold,
+                          fields, positional, leadingSelector, introduces,
+                          effectFields, displaysSource } }
 
 private meta def blockOf (kinds : IntroducedKinds) (b : JBlock) :
     Except String RawBlock := do
-  let fields ← b.fields.filterMapM (fieldOf kinds b.name)
+  let fields ← (← decodeFields b.fields).filterMapM fun (c, j) => fieldOf kinds b.name c j
   for f in fields do
     if f.required then
       .error s!"{b.name}.{f.name}: no representation for a required block field"
@@ -442,31 +462,23 @@ private meta def parseManifest : Except String RawManifest := do
   unless m.document.sections matches [.constraints, .directives] do
     .error "document.sections moved; the lowering's section names are stale"
 
-  let items ← rawItems.toList.filterMapM (itemOf kinds)
+  let parsed ← rawItems.toList.mapM (itemOf kinds m.source.displayedBy)
+  let items := parsed.filterMap (·.item)
   let blocks ← m.blocks.mapM (blockOf kinds)
-  let sourceFields ← m.source.fields.filterMapM (fieldOf kinds m.source.field)
+  let sourceFields ← (← decodeFields m.source.fields).filterMapM fun (c, j) =>
+    fieldOf kinds m.source.field c j
 
   -- `Spec.lean`'s `OpSource` is these two fields, by name.
   unless sourceFields.map (·.name) == ["text", "location"] do
     .error s!"source.fields is {sourceFields.map (·.name)}; OpSource models \
       a text and a location"
 
-  let mut deprecatedItems : List (String × String) := []
-  let mut deprecatedFields : List (String × String) := []
-  let mut fieldPaths : List String := []
-  for j in rawItems do
-    let i : JItem ← fromJson? j
-    let fields ← (i.fields.getD []).mapM fun fj => (fromJson? fj : Except String JField)
-    fieldPaths := fieldPaths ++ fields.map fun f => s!"{i.id}.{f.name}"
-    match i.deprecated with
-    | some d => deprecatedItems := deprecatedItems ++ [(i.id, d.replacedBy)]
-    | none =>
-      for f in fields do
-        if let some d := f.deprecated then
-          deprecatedFields := deprecatedFields ++ [(s!"{i.id}.{f.name}", d.replacedBy)]
+  let deprecatedItems := parsed.filterMap (·.deprecatedItem)
+  let deprecatedFields := parsed.flatMap (·.deprecatedFields)
 
   -- A reference site is a position in the manifest's own surface, deprecated
   -- ones included: where the engine resolves the name, not where we write it.
+  let fieldPaths := parsed.flatMap (·.fieldPaths)
   for i in items do
     if let some intro := i.introduces then
       for path in intro.referencedBy do
@@ -508,14 +520,6 @@ private meta def parseManifest : Except String RawManifest := do
     .error "no item declares inertWhenBare; the member left the manifest or \
       the pin moved past it"
 
-  -- The stamp rides beside the fields, which a scalar payload does not have.
-  for i in items do
-    if i.scalar && m.source.displayedBy.contains i.id then
-      .error s!"{i.id}: no representation for a scalar item that displays its source stamp"
-
-  let items := items.map fun i =>
-    { i with displaysSource := m.source.displayedBy.contains i.id }
-
   -- Field ids are global across items, blocks and the source stamp: the same
   -- name means the same serialized key everywhere.
   let fieldIds := ((items.flatMap (·.fields) ++ blocks.flatMap (·.fields)
@@ -526,36 +530,16 @@ private meta def parseManifest : Except String RawManifest := do
 
   return { lexical := m, items, blocks, fieldIds, deprecatedItems, deprecatedFields }
 
-private meta def manifest! : CommandElabM RawManifest := do
-  match parseManifest with
-  | .ok m => return m
-  | .error e => throwError "spytial manifest: {e}"
+private meta def manifest! : CommandElabM RawManifest :=
+  ManifestJson.manifest! "spytial manifest" parseManifest
 
 /-! ## The id enumerations
 
 Generated enumerations, so a table lookup is total and a misspelling is a type
 error. `fieldName` is the key a field lowers to, and its keyword spelling. -/
 
-private meta def enumCtor (enum : Name) (id : String) : Ident :=
-  mkIdent (`SpytialLean.SpecLang ++ enum ++ Name.mkSimple id)
-
-private meta def declareEnum (enum : Name) (ids : List String) : CommandElabM Unit := do
-  let ctors ← ids.mapM fun s =>
-    `(Lean.Parser.Command.ctor| | $(mkIdent (Name.mkSimple s)):ident)
-  elabCommand (← `(public meta inductive $(mkIdent enum):ident where
-      $(ctors.toArray)*
-      deriving Repr, DecidableEq, Inhabited, Hashable))
-
-private meta def declareAll (all enum : Name) (ids : List String) : CommandElabM Unit := do
-  let refs := (ids.map (enumCtor enum)).toArray
-  elabCommand (← `(public meta def $(mkIdent all):ident :
-      List $(mkIdent enum):ident := [$refs,*]))
-
-private meta def declareNames (fn enum : Name) (ids : List String) : CommandElabM Unit := do
-  let alts : Array (TSyntax ``Lean.Parser.Term.matchAlt) ← ids.toArray.mapM fun s =>
-    `(Lean.Parser.Term.matchAltExpr| | $(enumCtor enum s):term => $(quote s):term)
-  elabCommand (← `(public meta def $(mkIdent fn):ident (id : $(mkIdent enum):ident) :
-      String := match id with $alts:matchAlt*))
+private meta def enumCtor : Name → String → Ident :=
+  ManifestJson.enumCtor `SpytialLean.SpecLang
 
 elab "derive_spec_ids" : command => do
   let m ← manifest!
@@ -668,9 +652,6 @@ private meta instance : Quote Bound := ⟨fun b =>
 private meta instance : Quote EnumListRules := ⟨fun r =>
   Syntax.mkCApp ``EnumListRules.mk #[quote r.atMostOneOf, quote r.narrows]⟩
 
--- `quote (List Term)` splices pre-built terms verbatim
-private meta instance : Quote Term := ⟨id⟩
-
 private meta def quoteSelForm (f : RawSelForm) : Term :=
   Syntax.mkCApp ``SelForm.mk #[quote f.min, quote f.max,
     quote (f.requires.map fun r => (enumCtor `FieldId r : Term)),
@@ -714,9 +695,6 @@ private meta def quoteItem (i : RawItem) : Term :=
 private meta def quoteBlock (b : RawBlock) : Term :=
   Syntax.mkCApp ``BlockSpec.mk #[enumCtor `BlockId b.name, quote (b.fields.map quoteField)]
 
-private meta def declareDef (name : Name) (ty val : Term) : CommandElabM Unit := do
-  elabCommand (← `(public meta def $(mkIdent name):ident : $ty := $val))
-
 elab "derive_spec_tables" : command => do
   let m ← manifest!
   declareDef `items (← `(Array ItemSpec)) (← `(#[$((m.items.map quoteItem).toArray),*]))
@@ -736,31 +714,20 @@ derive_spec_tables
 
 /-! ## Reading the tables -/
 
-public meta def ItemSpec.of (i : ItemId) : ItemSpec :=
-  (items.find? (·.id == i)).getD default
+private meta def itemTable : Std.HashMap ItemId ItemSpec :=
+  items.foldl (init := {}) fun m i => m.insert i.id i
 
-public meta def BlockSpec.of (b : BlockId) : BlockSpec :=
-  (blocks.find? (·.id == b)).getD default
+private meta def blockTable : Std.HashMap BlockId BlockSpec :=
+  blocks.foldl (init := {}) fun m b => m.insert b.id b
+
+public meta def ItemSpec.of (i : ItemId) : ItemSpec := itemTable.getD i default
+
+public meta def BlockSpec.of (b : BlockId) : BlockSpec := blockTable.getD b default
 
 public meta def ItemSpec.field? (i : ItemSpec) (f : FieldId) : Option FieldSpec :=
   i.fields.find? (·.id == f)
 
-public meta def BlockSpec.field? (b : BlockSpec) (f : FieldId) : Option FieldSpec :=
-  b.fields.find? (·.id == f)
-
 public meta def itemOfKey? (s : String) : Option ItemId :=
   allItems.find? fun i => itemName i == s
-
-public meta def blockOfKey? (s : String) : Option BlockId :=
-  allBlocks.find? fun b => blockName b == s
-
-public meta def fieldOfKey? (s : String) : Option FieldId := Id.run do
-  for i in allItems do
-    for f in (ItemSpec.of i).fields do
-      if fieldName f.id == s then return some f.id
-  for b in allBlocks do
-    for f in (BlockSpec.of b).fields do
-      if fieldName f.id == s then return some f.id
-  return none
 
 end SpytialLean.SpecLang
