@@ -33,9 +33,23 @@ announced itself.
 House style is this package's own and lives beside the tables it refines:
 which spelling to emit where the engine accepts several
 (`preferredSpelling`), whitespace (`Selector.lean`), and how manifest fields
-lay out as Lean arguments (`SpecLang.lean`'s house-style tables). Every table
-entry is keyed by manifest ids and checked against the live manifest, so an
-entry that stops matching upstream fails the build by name.
+lay out as Lean arguments (`SpecLang.lean`'s house-style tables, now the
+leading-selector override and the bare-word bool sugar). Every table entry is
+keyed by manifest ids and checked against the live manifest, so an entry that
+stops matching upstream fails the build by name.
+
+Three more facts were house tables here and are core's own members now.
+`introduces` gives the string field that names a group or an inferred edge,
+how many columns that thing has, and the `item.field` positions where the
+engine resolves such a name — which is what lets a reference from any other
+field position warn instead of passing silently. `inertWhenBare` marks the
+items whose whole effect is their optional presentation fields; which fields
+those are is the member's own prose rule (optional, and not of type `selector`
+or `relation`), applied in `itemOf`. `middleColumns` says what an accepted
+form does with the columns between a tuple's first and last, which separates a
+wide selector that is throwing information away from one that is not; a form
+admitting a third column and declaring nothing is a derivation error naming
+the field.
 
 Deprecated items and fields get no surface: the Lean DSL is new and has no
 legacy specs to keep parsing. `deprecatedItems` and `deprecatedFields` record

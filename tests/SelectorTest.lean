@@ -367,6 +367,8 @@ The walker emits one ternary `scrutinee` whatever the discriminant count, so
 strict scopes accept it — in selector and field positions. -/
 
 /--
+warning: arity-3 selector: this position uses only the first and last columns of each tuple
+---
 info: {"directives":
  [{"edgeStyle":
    {"lineStyle": {"pattern": "dashed", "color": "gray"},
@@ -506,8 +508,9 @@ error: join of arity 1 and arity 1 has no columns left
 
 Groups and inferred edges join the drawn graph, not the data instance the
 engine evaluates selectors against — a constraint or directive selector
-naming one selects nothing at render. Field-name positions (`edgeStyle hop`
-above) stay silent: they act on drawn edges, where the names do exist. -/
+naming one selects nothing at render. A field-name position warns unless the
+manifest lists it in that name's `referencedBy`: `edgeStyle hop` above
+resolves the edge, and the positions below do not. -/
 
 /--
 warning: spec-introduced 'hop' exists only in the drawn graph — the engine evaluates selectors against the data instance, so this reference selects nothing at render
@@ -530,6 +533,25 @@ info: {"constraints":
 -/
 #guard_msgs in
 #spytial.spec sExample with [group SBDD cluster, hideAtom cluster]
+
+/--
+warning: spec-introduced 'hop' is not resolved at hideField.field — the engine matches that field before groups and inferred edges join the drawn graph, so this reference matches nothing at render
+---
+info: {"directives":
+ [{"inferredEdge": {"selector": "lo.hi", "name": "hop"}},
+  {"hideField": {"field": "hop"}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [inferredEdge hop lo.hi, hideField hop]
+
+/--
+warning: spec-introduced 'cluster' is not resolved at attribute.field — the engine matches that field before groups and inferred edges join the drawn graph, so this reference matches nothing at render
+---
+info: {"directives": [{"attribute": {"field": "cluster"}}],
+ "constraints": [{"group": {"selector": "SBDD", "name": "cluster"}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [group SBDD cluster, attribute cluster]
 
 /--
 info: {"constraints":
@@ -659,11 +681,17 @@ info: {"constraints":
 #guard_msgs in
 #spytial.spec sDA with [hideAtom SDA.tr]
 
-/-- info: {"constraints": [{"orientation": {"selector": "tr", "directions": ["below"]}}]} -/
+/--
+warning: arity-4 selector: this position uses only the first and last columns of each tuple
+---
+info: {"constraints": [{"orientation": {"selector": "tr", "directions": ["below"]}}]}
+-/
 #guard_msgs in
 #spytial.spec sDA with [orientation tr below]
 
 /--
+warning: arity-3 selector: this position uses only the first and last columns of each tuple
+---
 info: {"constraints":
  [{"orientation": {"selector": "step", "directions": ["below"]}}]}
 -/
@@ -694,6 +722,8 @@ info: {"directives":
 #spytial.spec sDA with [group SQ g, inferredEdge e SQ draw: "_ -> g"]
 
 /--
+warning: arity-3 selector: this position uses only the first and last columns of each tuple
+---
 info: {"constraints":
  [{"orientation": {"selector": "scrutinee", "directions": ["below"]}}]}
 -/
@@ -1205,6 +1235,8 @@ public def sUnicode : SUnicode := .leaf
 /-! ## Products chain left; quantifiers keep their parens under a connective -/
 
 /--
+warning: arity-3 selector: this position uses only the first and last columns of each tuple
+---
 info: {"constraints":
  [{"orientation": {"selector": "SBDD->SBDD->SBDD", "directions": ["below"]}}]}
 -/

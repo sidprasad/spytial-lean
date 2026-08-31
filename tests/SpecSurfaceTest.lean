@@ -129,6 +129,12 @@ info: {"directives":
 #guard_msgs in
 #spytial.spec sG with [tag SG "n" #lo]
 
+-- A tag's value shows its middle columns as key segments, so a wide one is not
+-- throwing anything away and must not warn.
+/-- info: {"directives": [{"tag": {"value": "lo->hi", "toTag": "SG", "name": "kids"}}]} -/
+#guard_msgs in
+#spytial.spec sG with [tag SG "kids" (lo->hi)]
+
 /-! ## size: width and height required, selector optional -/
 
 /-- info: {"constraints": [{"size": {"width": 150, "height": 80}}]} -/

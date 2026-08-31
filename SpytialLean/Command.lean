@@ -355,14 +355,15 @@ private meta def elabBlockArg (item : ItemSpec) (usage : String) (inner : Syntax
 
 open SpecLang in
 /-- `name: value` for everything a keyword can carry. -/
-private meta def elabKwValue (scope : SelScope) (usage : String)
-    (sel : Syntax → List SelForm → TermElabM Sel) (f : FieldSpec) (v : Syntax) :
+private meta def elabKwValue (usage : String)
+    (sel : Syntax → List SelForm → TermElabM Sel)
+    (rel : Syntax → FieldSpec → TermElabM String) (f : FieldSpec) (v : Syntax) :
     TermElabM FieldVal := do
   match f.type with
   | .selector forms => return .sel (← sel v forms)
   | .relation =>
     if v.isOfKind selIdentKind then
-      return .rel (← elabFieldName scope ⟨v[0]⟩)
+      return .rel (← rel v[0] f)
     throwErrorAt v m!"{fieldName f.id}: expects a relation name"
   | .block _ => throwErrorAt v m!"write ({fieldName f.id} …) for a style block"
   | .enumList _ _ => throwErrorAt v m!"'{fieldName f.id}' is positional; usage: {usage}"
@@ -391,7 +392,7 @@ open SpecLang in
 private meta def arityForms (written : List String) (forms : List SelForm) :
     List ArityForm :=
   forms.map fun f =>
-    { min := f.min, max := f.max,
+    { min := f.min, max := f.max, middlesIgnored := f.middlesIgnored,
       blockedBy := f.requires.bind fun r =>
         if written.contains (fieldName r) then none else some (fieldName r) }
 
@@ -424,6 +425,10 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
       if stx.isOfKind numLitKind then
         throwErrorAt stx m!"expected a selector; usage: {usage}"
       elabSelector scope (arityForms written forms) ⟨stx⟩
+    -- Which position a name sits in decides whether the engine resolves a
+    -- spec-introduced one there, so the field's own path goes with it.
+    let rel (stx : Syntax) (f : FieldSpec) : TermElabM String :=
+      elabFieldName scope s!"{itemName item.id}.{fieldName f.id}" ⟨stx⟩
     let setField (fields : Array (FieldId × FieldVal)) (ref : Syntax)
         (f : FieldId) (v : FieldVal) : TermElabM (Array (FieldId × FieldVal)) := do
       if fields.any (·.1 == f) then
@@ -454,7 +459,7 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
           | some f =>
             if item.positional.contains f.id then
               throwErrorAt inner m!"'{kw}' is a positional argument; usage: {usage}"
-            fields ← setField fields inner f.id (← elabKwValue scope usage sel f vstx)
+            fields ← setField fields inner f.id (← elabKwValue usage sel rel f vstx)
       else if let some (f, chosen, _) := tail then
         let .enumList vs _ := f.type | unreachable!
         let w ← enumWord (fieldName f.id) vs (.ofSel inner) usage
@@ -484,7 +489,7 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
           | .relation =>
             unless inner.isOfKind selIdentKind do
               throwErrorAt inner m!"expected a relation name; usage: {usage}"
-            fields ← setField fields inner fid (.rel (← elabFieldName scope ⟨inner[0]⟩))
+            fields ← setField fields inner fid (.rel (← rel inner[0] f))
           | .str | .iconPath | .color | .«enum» .. | .number .. =>
             fields ← setField fields inner fid
               (← elabScalar (fieldName fid) f (.ofSel inner) usage)
@@ -505,13 +510,8 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
       fields ← setField fields ref f.id (.enums chosen.toList)
     if let some fid := pending.head? then
       throwErrorAt head m!"missing {fieldName fid}; usage: {usage}"
-    if item.mustSetSomething then
-      let hasEffect := fields.any fun (fid, _) =>
-        match item.field? fid with
-        | some f => !(f.type matches .selector _) && !(f.type matches .relation)
-        | none => true
-      unless hasEffect do
-        throwErrorAt head m!"{name} sets nothing; usage: {usage}"
+    unless item.effectFields.isEmpty || fields.any (item.effectFields.contains ·.1) do
+      throwErrorAt head m!"{name} sets nothing; usage: {usage}"
     -- table order, so the serialized spec is stable however the source ordered them
     let ordered := item.fields.filterMap fun f =>
       (fields.find? (·.1 == f.id)).map fun (_, v) => (f.id, v)
@@ -540,7 +540,7 @@ meta def elabSpytialOps (scope : SelScope) (ops : Array (TSyntax `spytial_op))
     (attached? : Option SpytialSpec := none) : TermElabM SpytialSpec := do
   let introduce (scope : SelScope) (op : SpytialOp) : SelScope :=
     match op.introduces? with
-    | some (n, arity) => scope.introduce n arity
+    | some (n, i) => scope.introduce n { arity := i.arity, referencedBy := i.referencedBy }
     | none => scope
   let mut scope := scope
   let mut spec : Array SpytialOp := #[]

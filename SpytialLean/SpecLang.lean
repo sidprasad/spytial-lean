@@ -54,12 +54,19 @@ json_union Section where
   | constraints
   | directives
 
+/-- What the engine does with the columns between a tuple's first and last.
+    Declared exactly where a form admits a third column. -/
+json_union MiddleColumns where
+  | ignored
+  | displayed
+
 /-- One shape a selector position accepts. `meaning` is prose the manifest
     states for a reader and is not decoded. -/
 public meta structure JAccept where
   arity : DeclaredArity
   minColumns : Nat
   maxColumns : Option Nat
+  middleColumns : Option MiddleColumns
   /-- A sibling field that has to be set for this form to apply at all. -/
   requires : Option String
   deriving Repr, Inhabited, FromJson
@@ -90,11 +97,28 @@ public meta structure JDeprecated where
   replacedBy : String
   deriving Inhabited, FromJson
 
+/-- What a graph-side name denotes. Redundant with the arity beside it — a
+    group is a set of atoms, an inferred edge a pair — which is what makes the
+    two worth cross-checking. -/
+json_union IntroducedKind where
+  | group
+  | edge
+
+/-- A graph-side name a string field declares, and where the engine resolves
+    it: `referencedBy` are the `item.field` paths whose values are looked up
+    against names of this kind. A reference from anywhere else is not. -/
+public meta structure JIntroduces where
+  kind : IntroducedKind
+  arity : Nat
+  referencedBy : List String
+  deriving Inhabited, FromJson
+
 /-- Read off the same object as `JFieldType`, which takes the rest. -/
 public meta structure JField where
   name : String
   required : Option Bool
   alternativeForm : Option JAltForm
+  introduces : Option JIntroduces
   deprecated : Option JDeprecated
   deriving Inhabited, FromJson
 
@@ -104,6 +128,8 @@ public meta structure JItem where
   sections : Option (List Section)
   valueShape : Option ValueShape
   supportsHold : Option Bool
+  /-- Set where the item's whole effect is its optional presentation fields. -/
+  inertWhenBare : Option Bool
   fields : Option (List Json)
   deprecated : Option JDeprecated
   deriving Inhabited, FromJson
@@ -156,19 +182,6 @@ arguments is this package's own. Each table is keyed by manifest ids, and
     `size (lo) 30 20` reads better than `size 30 20 (lo)`. -/
 private meta def leadingSelectorOverride : List String := ["size"]
 
-/-- The graph-side name an item introduces for later ops to reference, with its
-    arity. TODO(spytial-core): the manifest types these fields as plain
-    strings; that `group.name` binds a unary group and `inferredEdge.name` an
-    edge label lives only in `draw`'s prose. -/
-private meta def introducesTable : List (String × String × Nat) :=
-  [("group", "name", 1), ("inferredEdge", "name", 2)]
-
-/-- Directives whose optional fields are their entire effect: setting none of
-    them styles nothing, which elaboration rejects. TODO(spytial-core): the
-    manifest has no bit for this, and "all fields optional" does not imply it —
-    `attribute` is all-optional too and is its own effect. -/
-private meta def mustSetSomethingTable : List String := ["atomStyle", "edgeStyle"]
-
 /-- Bare words that set a boolean field, where a `(showLabel false)` keyword
     would be noise. -/
 private meta def boolSugarTable : List (String × String × Bool) :=
@@ -180,6 +193,8 @@ private meta structure RawSelForm where
   min : Nat
   max : Option Nat
   requires : Option String
+  /-- The form admits a third column and the engine discards it. -/
+  middlesIgnored : Bool
 
 private meta inductive RawFieldType where
   | selector (forms : List RawSelForm)
@@ -201,11 +216,17 @@ private meta structure RawAltForm where
   /-- Field name × block name. -/
   blocks : List (String × String)
 
+private meta structure RawIntroduces where
+  field : String
+  arity : Nat
+  referencedBy : List String
+
 private meta structure RawField where
   name : String
   type : RawFieldType
   required : Bool
   alt : Option RawAltForm
+  introduces : Option RawIntroduces
 
 private meta structure RawItem where
   id : String
@@ -216,8 +237,8 @@ private meta structure RawItem where
   fields : List RawField
   positional : List String
   leadingSelector : Option String
-  introduces : Option (String × Nat)
-  mustSetSomething : Bool
+  introduces : Option RawIntroduces
+  effectFields : List String
   displaysSource : Bool
 
 private meta structure RawBlock where
@@ -257,7 +278,18 @@ private meta def selForm (a : JAccept) : Except String RawSelForm := do
   unless agrees do
     .error s!"an accepted form's arity word and its column bounds \
       ({a.minColumns}, {repr a.maxColumns}) disagree"
-  return { min := a.minColumns, max := a.maxColumns, requires := a.requires }
+  -- Stated exactly where a tuple can have a middle column, so the elaborator
+  -- can say when one is about to be thrown away.
+  match a.maxColumns.any (· ≤ 2), a.middleColumns with
+  | false, none =>
+    .error s!"an accepted form admitting more than two columns \
+      ({a.minColumns}, {repr a.maxColumns}) does not say what becomes of the \
+      middle ones"
+  | true, some _ =>
+    .error "an accepted form capped at two columns has no middle columns to declare"
+  | _, _ => pure ()
+  return { min := a.minColumns, max := a.maxColumns, requires := a.requires,
+           middlesIgnored := a.middleColumns matches some .ignored }
 
 private meta def altForm (a : JAltForm) : Except String RawAltForm := do
   unless a.type == "block" do .error "alternativeForm is not a block"
@@ -300,12 +332,21 @@ private meta def fieldOf (itemId : String) (j : Json) : Except String (Option Ra
     | .color => pure .color
   if alt.isSome && !(type matches RawFieldType.«enum» ..) then
     .error (here "alternativeForm on a non-enum field")
-  return some { name, type, required := c.required.getD false, alt }
+  let introduces ← c.introduces.mapM fun i => do
+    unless type matches RawFieldType.str do
+      .error (here "a field introducing a graph-side name must be a string")
+    let (what, columns) := match i.kind with
+      | .group => ("a group", 1)
+      | .edge => ("an inferred edge", 2)
+    unless i.arity == columns do
+      .error (here s!"introduces declares {what}, which has arity {columns}, \
+        not {i.arity}")
+    return { field := name, arity := i.arity, referencedBy := i.referencedBy }
+  return some { name, type, required := c.required.getD false, alt, introduces }
 
-/-- One manifest item to a `RawItem`: decode, drop it if deprecated, then apply
-    the house-style tables — positional order, the leading selector, what it
-    introduces, `mustSetSomething` — checking each table entry it uses against
-    the fields the item actually has. -/
+/-- One manifest item to a `RawItem`: decode, drop it if deprecated, then lay
+    its fields out as Lean arguments — positional order, the leading selector —
+    and read the members that say what it introduces and what makes it inert. -/
 private meta def itemOf (j : Json) : Except String (Option RawItem) := do
   let i : JItem ← fromJson? j
   if i.deprecated.isSome then return none
@@ -343,19 +384,24 @@ private meta def itemOf (j : Json) : Except String (Option RawItem) := do
       pure <| match fields with
         | f :: _ => if !f.required && f.type matches .selector _ then some f.name else none
         | [] => none
-  let introduces ← match introducesTable.lookup id with
-    | some (fname, ar) =>
-      match fields.find? (·.name == fname) with
-      | some f =>
-        unless f.type matches RawFieldType.str do
-          .error s!"{id}.{fname}: introduces expects a string field"
-        pure (some (fname, ar))
-      | none => .error (here s!"introduces names the field {fname.quote}, which it does not have")
-    | none => pure none
+  let introduces ← match fields.filterMap (·.introduces) with
+    | [] => pure none
+    | [i] => pure (some i)
+    | is => .error (here s!"two fields introduce a name \
+        ({", ".intercalate (is.map (·.field))}); an op introduces at most one")
+  -- `inertWhenBare` says the item's whole effect is its optional presentation
+  -- fields; which those are is the manifest's prose rule, applied here.
+  let inert := i.inertWhenBare.getD false
+  let effectFields :=
+    if inert then
+      (fields.filter fun f =>
+        !f.required && !(f.type matches .selector _) && !(f.type matches .relation)).map (·.name)
+    else []
+  if inert && effectFields.isEmpty then
+    .error (here "inertWhenBare, but no optional field carries an effect")
   return some { id, yamlKey, constraint, scalar := shape matches .scalar,
                 supportsHold := i.supportsHold.getD false,
-                fields, positional, leadingSelector, introduces,
-                mustSetSomething := mustSetSomethingTable.contains id,
+                fields, positional, leadingSelector, introduces, effectFields,
                 displaysSource := false }
 
 private meta def blockOf (b : JBlock) : Except String RawBlock := do
@@ -365,6 +411,8 @@ private meta def blockOf (b : JBlock) : Except String RawBlock := do
       .error s!"{b.name}.{f.name}: no representation for a required block field"
     if f.type.isBlock || f.alt.isSome then
       .error s!"{b.name}.{f.name}: blocks do not nest"
+    if f.introduces.isSome then
+      .error s!"{b.name}.{f.name}: a block leaf introduces no graph-side name"
   return { name := b.name, fields }
 
 /-- Every id a field contributes: its own, plus the enum and block fields its
@@ -394,18 +442,30 @@ private meta def parseManifest : Except String RawManifest := do
 
   let mut deprecatedItems : List (String × String) := []
   let mut deprecatedFields : List (String × String) := []
+  let mut fieldPaths : List String := []
   for j in rawItems do
     let i : JItem ← fromJson? j
+    let fields ← (i.fields.getD []).mapM fun fj => (fromJson? fj : Except String JField)
+    fieldPaths := fieldPaths ++ fields.map fun f => s!"{i.id}.{f.name}"
     match i.deprecated with
     | some d => deprecatedItems := deprecatedItems ++ [(i.id, d.replacedBy)]
     | none =>
-      for fj in i.fields.getD [] do
-        let f : JField ← fromJson? fj
+      for f in fields do
         if let some d := f.deprecated then
           deprecatedFields := deprecatedFields ++ [(s!"{i.id}.{f.name}", d.replacedBy)]
 
+  -- A reference site is a position in the manifest's own surface, deprecated
+  -- ones included: it says where the engine resolves the name, not where this
+  -- package writes it.
+  for i in items do
+    if let some intro := i.introduces then
+      for path in intro.referencedBy do
+        unless fieldPaths.contains path do
+          .error s!"{i.id}.{intro.field}: introduces.referencedBy names \
+            {path.quote}, which is not a field"
+
   -- Verify the house-style tables still name live manifest entries.
-  for id in mustSetSomethingTable ++ leadingSelectorOverride do
+  for id in leadingSelectorOverride do
     unless items.any (·.id == id) do
       .error s!"house style: a table names {id.quote}, which is not a live item"
   for id in m.hold.supportedBy do
@@ -509,6 +569,21 @@ public meta structure SelForm where
   min : Nat
   max : Option Nat
   requires : Option FieldId
+  /-- The engine keeps only the first and last column of a tuple this wide
+      (`middleColumns`); `inferredEdge` and `tag` are the positions that
+      instead show them. -/
+  middlesIgnored : Bool
+  deriving Repr, Inhabited
+
+/-- A graph-side name an op introduces: the string field that spells it, how
+    many columns the thing it names has, and the `item.field` positions where
+    the engine resolves such a name. A reference from anywhere else is never
+    looked up — selectors evaluate against the data instance, and the field
+    positions that are not listed match before the name exists. -/
+public meta structure Introduces where
+  field : FieldId
+  arity : Nat
+  referencedBy : List String
   deriving Repr, Inhabited
 
 /-- What a field holds. Drives parsing, checking, and lowering alike. -/
@@ -549,12 +624,13 @@ public meta structure ItemSpec where
   positional : List FieldId
   /-- An optional selector that may fill the leading positional slot. -/
   leadingSelector : Option FieldId
-  /-- The graph-side name this op introduces (with arity), for later ops
-      in the same spec to reference. -/
-  introduces : Option (FieldId × Nat)
-  /-- Reject an instance that sets none of its optional fields: they are
-      its entire effect. -/
-  mustSetSomething : Bool
+  /-- The graph-side name this op introduces, for later ops in the same spec
+      to reference. -/
+  introduces : Option Introduces
+  /-- The fields that are this item's entire effect (`inertWhenBare`): an
+      instance setting none of them parses and does nothing, which elaboration
+      rejects. Empty for an item that is not inert when bare. -/
+  effectFields : List FieldId
   /-- Core reads this op's `source` stamp back out, so carrying one buys a
       conflict report that quotes the author. Elsewhere it parses and is
       ignored, and the stamp is left off. -/
@@ -596,7 +672,12 @@ private meta instance : Quote Term := ⟨id⟩
 
 private meta def quoteSelForm (f : RawSelForm) : Term :=
   Syntax.mkCApp ``SelForm.mk #[quote f.min, quote f.max,
-    quote (f.requires.map fun r => (enumCtor `FieldId r : Term))]
+    quote (f.requires.map fun r => (enumCtor `FieldId r : Term)),
+    quote f.middlesIgnored]
+
+private meta def quoteIntroduces (i : RawIntroduces) : Term :=
+  Syntax.mkCApp ``Introduces.mk #[enumCtor `FieldId i.field, quote i.arity,
+    quote i.referencedBy]
 
 private meta def quoteFieldType : RawFieldType → Term
   | .selector fs => Syntax.mkCApp ``FieldType.selector #[quote (fs.map quoteSelForm)]
@@ -625,9 +706,9 @@ private meta def quoteItem (i : RawItem) : Term :=
     quote (i.fields.map quoteField),
     quote (i.positional.map fun f => (enumCtor `FieldId f : Term)),
     quote (i.leadingSelector.map fun f => (enumCtor `FieldId f : Term)),
-    quote (i.introduces.map fun (f, n) =>
-      (Syntax.mkCApp ``Prod.mk #[enumCtor `FieldId f, quote n] : Term)),
-    quote i.mustSetSomething, quote i.displaysSource]
+    quote (i.introduces.map quoteIntroduces),
+    quote (i.effectFields.map fun f => (enumCtor `FieldId f : Term)),
+    quote i.displaysSource]
 
 private meta def quoteBlock (b : RawBlock) : Term :=
   Syntax.mkCApp ``BlockSpec.mk #[enumCtor `BlockId b.name, quote (b.fields.map quoteField)]

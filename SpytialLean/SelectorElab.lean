@@ -36,6 +36,15 @@ and pass through.
 
 /-! ## Scope -/
 
+/-- A name an earlier op put into the drawn graph: how many columns it has, and
+    the `item.field` positions where the engine resolves it (the manifest's
+    `introduces.referencedBy`). A reference from anywhere else parses and is
+    never looked up. -/
+meta structure Introduced where
+  arity : Nat
+  referencedBy : List String
+  deriving Inhabited
+
 /-- Everything the relationalizer can emit for values of the target type, per
     `TypeShape`. -/
 meta structure SelScope where
@@ -47,9 +56,9 @@ meta structure SelScope where
   rels : Std.HashMap String (Name × Option Nat) := {}
   /-- Constructor label → constructor, for `@:x = tt` literals. -/
   ctorLabels : Std.HashMap String Name := {}
-  /-- Names introduced by earlier ops in the same spec (group names arity 1,
-      inferred edges arity 2). -/
-  introduced : Std.HashMap String Nat := {}
+  /-- Names introduced by earlier ops in the same spec: group names and
+      inferred edges. -/
+  introduced : Std.HashMap String Introduced := {}
   /-- Open-world marker (see module docstring): unknown names become warnings. -/
   lenient : Bool := false
   deriving Inhabited
@@ -98,8 +107,9 @@ meta def SelScope.ofType (root : Name) (seeds : Array Name := #[]) : MetaM SelSc
             | none, none => scope := { scope with lenient := true }
   return scope
 
-meta def SelScope.introduce (scope : SelScope) (name : String) (arity : Nat) : SelScope :=
-  { scope with introduced := scope.introduced.insert name arity }
+meta def SelScope.introduce (scope : SelScope) (name : String) (i : Introduced) :
+    SelScope :=
+  { scope with introduced := scope.introduced.insert name i }
 
 /-! ## Diagnostics -/
 
@@ -153,12 +163,23 @@ private meta def unknownName {α} (scope : SelScope) (ref : Syntax) (what : Stri
   else
     throwErrorAt ref msg
 
-/-- Selector positions only: field-name positions (`edgeStyle`, `hideField`)
-    act graph-side, where spec-introduced names do exist. -/
+/-- Selector positions only: the engine evaluates a selector against the data
+    instance, which the drawn graph's own names never enter. Field-name
+    positions are the manifest's business — see `warnUnresolvedName`. -/
 private meta def warnGraphSideName (ref : Syntax) (name : String) : TermElabM Unit :=
   logWarningAt ref s!"spec-introduced '{name}' exists only in the drawn graph — \
     the engine evaluates selectors against the data instance, so this reference \
     selects nothing at render"
+
+/-- A field-name position the manifest does not list among the introducing
+    field's `referencedBy`: `edgeStyle` resolves an introduced name, while
+    `hideField` and `attribute` match against the data instance's relations,
+    before groups and inferred edges join the graph. -/
+private meta def warnUnresolvedName (ref : Syntax) (position name : String) :
+    TermElabM Unit :=
+  logWarningAt ref s!"spec-introduced '{name}' is not resolved at {position} — \
+    the engine matches that field before groups and inferred edges join the \
+    drawn graph, so this reference matches nothing at render"
 
 /-! ## Syntax -/
 
@@ -971,9 +992,9 @@ private meta partial def resolveIdent (scope : SelScope) (env : LEnv)
   if let some (owner, arity?) := scope.rels.get? s then
     addRelInfo stx owner s
     return { sel := .rel s, kind := .relation, arity := arity? }
-  if let some arity := scope.introduced.get? s then
+  if let some i := scope.introduced.get? s then
     warnGraphSideName stx s
-    return { sel := .rel s, kind := .relation, arity := some arity }
+    return { sel := .rel s, kind := .relation, arity := some i.arity }
   if let some e ← resolveTypeRef? then return e
   unknownName scope stx s!"name '{s}'" { sel := Sel.rel s, kind := .relation }
 where
@@ -1004,6 +1025,8 @@ meta structure ArityForm where
   min : Nat
   max : Option Nat
   blockedBy : Option String := none
+  /-- The engine keeps only the first and last column of a tuple this wide. -/
+  middlesIgnored : Bool := false
   deriving Repr, Inhabited
 
 meta def ArityForm.holds (f : ArityForm) (a : Nat) : Bool :=
@@ -1033,17 +1056,30 @@ meta def elabSelector (scope : SelScope) (accepts : List ArityForm)
       {kindName e.kind}"
   if let some a := e.arity then
     let (available, blocked) := accepts.partition (·.blockedBy.isNone)
-    unless available.any (·.holds a) do
+    let matching := available.filter (·.holds a)
+    if matching.isEmpty then
       let unlock := (blocked.filter (·.holds a)).filterMap (·.blockedBy)
       throwErrorAt stx m!"this position accepts a selector of arity \
         {widthPhrase available}, but this one has arity {a}\
         {if unlock.isEmpty then m!"" else
           m!"; arity {a} needs {" or ".intercalate (unlock.map (s!"'{·}'"))}"}"
+    -- Only where every form that takes this width discards the middles: a
+    -- position that shows them (`inferredEdge`, `tag`) is not losing anything.
+    else if 2 < a && matching.all (·.middlesIgnored) then
+      logWarningAt stx m!"arity-{a} selector: this position uses only the first \
+        and last columns of each tuple"
   return e.sel
 
-meta def elabFieldName (scope : SelScope) (stx : TSyntax `ident) : TermElabM String := do
+/-- A relation name, in the `<item>.<field>` position named by `position`. A
+    spec-introduced name is resolved only where the manifest says it is. -/
+meta def elabFieldName (scope : SelScope) (position : String) (stx : TSyntax `ident) :
+    TermElabM String := do
   let s := stx.getId.toString (escape := false)
-  if scope.rels.contains s || scope.introduced.contains s then
+  if scope.rels.contains s then
+    return s
+  if let some i := scope.introduced.get? s then
+    unless i.referencedBy.contains position do
+      warnUnresolvedName stx position s
     return s
   unknownName scope stx s!"relation '{s}'" s
 

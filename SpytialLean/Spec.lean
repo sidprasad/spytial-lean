@@ -80,12 +80,12 @@ public meta abbrev SpytialSpec := List SpytialOp
 public meta def SpytialOp.field? (op : SpytialOp) (f : FieldId) : Option FieldVal :=
   op.fields.lookup f
 
-/-- The graph-side name an op introduces, with its arity. Which field is the
-    handle is the table's `introduces` — manifest prose the generator pins. -/
-public meta def SpytialOp.introduces? (op : SpytialOp) : Option (String × Nat) := do
-  let (f, arity) ← (ItemSpec.of op.item).introduces
-  match op.field? f with
-  | some (.str s) => some (s, arity)
+/-- The graph-side name an op introduces, with the manifest's account of it:
+    which field spells it, how wide it is, and where it can be referenced. -/
+public meta def SpytialOp.introduces? (op : SpytialOp) : Option (String × Introduces) := do
+  let i ← (ItemSpec.of op.item).introduces
+  match op.field? i.field with
+  | some (.str s) => some (s, i)
   | _ => none
 
 /-! ## Spec serialization
