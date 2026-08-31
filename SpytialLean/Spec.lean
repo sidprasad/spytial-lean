@@ -38,8 +38,8 @@ public meta inductive FieldVal where
   | block (fields : List (FieldId × FieldVal))
   deriving Repr, Inhabited
 
-/-- Where an op was written. Spytial is a *generator* of specs, so the wire
-    form carries the Lean the user actually wrote: core cites this in conflict
+/-- Where an op was written. Spytial is a *generator* of specs, so the
+    serialized op carries the Lean the user actually wrote: core cites this in conflict
     reports and warnings in place of its own rendering of the rule, which for a
     resolved Lean selector would otherwise be a list of atom ids. -/
 public meta structure OpSource where
