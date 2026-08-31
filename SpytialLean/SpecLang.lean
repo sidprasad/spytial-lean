@@ -97,19 +97,18 @@ public meta structure JDeprecated where
   replacedBy : String
   deriving Inhabited, FromJson
 
-/-- What a graph-side name denotes. Redundant with the arity beside it — a
-    group is a set of atoms, an inferred edge a pair — which is what makes the
-    two worth cross-checking. -/
-json_union IntroducedKind where
-  | group
-  | edge
+/-- One `introducedKinds` entry: how many columns a name of that kind has. The
+    manifest's `description` is prose for a reader and is not decoded. -/
+public meta structure JIntroducedKind where
+  arity : Nat
+  deriving Inhabited, FromJson
 
 /-- A graph-side name a string field declares, and where the engine resolves
     it: `referencedBy` are the `item.field` paths whose values are looked up
-    against names of this kind. A reference from anywhere else is not. -/
+    against names of this kind. A reference from anywhere else is not. `kind`
+    is a key of `introducedKinds`, which is where its arity comes from. -/
 public meta structure JIntroduces where
-  kind : IntroducedKind
-  arity : Nat
+  kind : String
   referencedBy : List String
   deriving Inhabited, FromJson
 
@@ -170,6 +169,8 @@ public meta structure JDocument where
 public meta structure JManifest where
   spytialCoreVersion : String
   languageVersion : String
+  /-- Keys are data, so this stays an object rather than becoming a record. -/
+  introducedKinds : JsonObject
   document : JDocument
   hold : JHold
   source : JSource
@@ -259,6 +260,16 @@ private meta structure RawManifest where
   deprecatedItems : List (String × String)
   deprecatedFields : List (String × String)
 
+/-- The kinds a name can be introduced as, and the arity each carries. Data
+    rather than a rule restated here, so a kind added upstream needs no edit. -/
+private meta abbrev IntroducedKinds := List (String × Nat)
+
+private meta def introducedKinds (o : JsonObject) : Except String IntroducedKinds :=
+  o.toArray.toList.mapM fun (kind, j) => do
+    let k : JIntroducedKind ← (fromJson? j).mapError fun e =>
+      s!"introducedKinds.{kind}: {e}"
+    return (kind, k.arity)
+
 private meta def listRules (o : JsonObject) : Except String EnumListRules := do
   onlyMembers ["atMostOneOf", "narrowsListTo"] o
   let atMostOneOf : List (List String) := (← o.get? "atMostOneOf").getD []
@@ -306,7 +317,8 @@ private meta def altForm (a : JAltForm) : Except String RawAltForm := do
   | [] => .error "alternativeForm has no enum field"
   | _ => .error "two enum fields in alternativeForm"
 
-private meta def fieldOf (itemId : String) (j : Json) : Except String (Option RawField) := do
+private meta def fieldOf (kinds : IntroducedKinds) (itemId : String) (j : Json) :
+    Except String (Option RawField) := do
   let c : JField ← fromJson? j
   -- A deprecated field keeps parsing upstream; the new surface never writes it.
   if c.deprecated.isSome then return none
@@ -341,19 +353,17 @@ private meta def fieldOf (itemId : String) (j : Json) : Except String (Option Ra
   let introduces ← c.introduces.mapM fun i => do
     unless type matches RawFieldType.str do
       .error (here "a field introducing a graph-side name must be a string")
-    let (what, columns) := match i.kind with
-      | .group => ("a group", 1)
-      | .edge => ("an inferred edge", 2)
-    unless i.arity == columns do
-      .error (here s!"introduces declares {what}, which has arity {columns}, \
-        not {i.arity}")
-    return { field := name, arity := i.arity, referencedBy := i.referencedBy }
+    let some arity := kinds.lookup i.kind
+      | .error (here s!"introduces names the kind {i.kind.quote}, which \
+          introducedKinds does not declare")
+    return { field := name, arity, referencedBy := i.referencedBy }
   return some { name, type, required := c.required.getD false, alt, introduces }
 
 /-- One manifest item to a `RawItem`: decode, drop it if deprecated, then lay
     its fields out as Lean arguments — positional order, the leading selector —
     and read the members that say what it introduces and what makes it inert. -/
-private meta def itemOf (j : Json) : Except String (Option RawItem) := do
+private meta def itemOf (kinds : IntroducedKinds) (j : Json) :
+    Except String (Option RawItem) := do
   let i : JItem ← fromJson? j
   if i.deprecated.isSome then return none
   let id := i.id
@@ -364,7 +374,7 @@ private meta def itemOf (j : Json) : Except String (Option RawItem) := do
     | some [.directives] => pure false
     | s => .error (here s!"no representation for sections {repr s}")
   let some shape := i.valueShape | .error (here "no valueShape")
-  let fields ← (i.fields.getD []).filterMapM (fieldOf id)
+  let fields ← (i.fields.getD []).filterMapM (fieldOf kinds id)
   -- Surface order: required non-block fields positionally, in manifest order.
   for f in fields do
     if f.required && f.type.isBlock then
@@ -406,8 +416,9 @@ private meta def itemOf (j : Json) : Except String (Option RawItem) := do
                 fields, positional, leadingSelector, introduces, effectFields,
                 displaysSource := false }
 
-private meta def blockOf (b : JBlock) : Except String RawBlock := do
-  let fields ← b.fields.filterMapM (fieldOf b.name)
+private meta def blockOf (kinds : IntroducedKinds) (b : JBlock) :
+    Except String RawBlock := do
+  let fields ← b.fields.filterMapM (fieldOf kinds b.name)
   for f in fields do
     if f.required then
       .error s!"{b.name}.{f.name}: no representation for a required block field"
@@ -428,14 +439,15 @@ private meta def parseManifest : Except String RawManifest := do
   let json ← Json.parse manifestText
   let m : JManifest ← fromJson? json
   let rawItems ← member (Array Json) json "items"
+  let kinds ← introducedKinds m.introducedKinds
 
   -- The document section names are load-bearing for the lowering.
   unless m.document.sections matches [.constraints, .directives] do
     .error "document.sections moved; the lowering's section names are stale"
 
-  let items ← rawItems.toList.filterMapM itemOf
-  let blocks ← m.blocks.mapM blockOf
-  let sourceFields ← m.source.fields.filterMapM (fieldOf m.source.field)
+  let items ← rawItems.toList.filterMapM (itemOf kinds)
+  let blocks ← m.blocks.mapM (blockOf kinds)
+  let sourceFields ← m.source.fields.filterMapM (fieldOf kinds m.source.field)
 
   -- `Spec.lean`'s `OpSource` is these two fields, by name.
   unless sourceFields.map (·.name) == ["text", "location"] do
