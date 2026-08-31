@@ -10,7 +10,6 @@ base.relDbl	//
 base.var	x
 base.varUni	`σ`
 base.atom	`atom_0
-base.raw	x or y
 base.emptySet	none
 base.universe	univ
 base.identity	iden
@@ -26,7 +25,6 @@ un.transpose.relDbl	~//
 un.transpose.var	~x
 un.transpose.varUni	~`σ`
 un.transpose.atom	~`atom_0
-un.transpose.raw	~(x or y)
 un.transpose.over.union	~(a + b)
 un.transpose.under.union.l	~a + b
 un.transpose.under.union.r	a + ~b
@@ -64,7 +62,6 @@ un.transitiveClosure.relDbl	^//
 un.transitiveClosure.var	^x
 un.transitiveClosure.varUni	^`σ`
 un.transitiveClosure.atom	^`atom_0
-un.transitiveClosure.raw	^(x or y)
 un.transitiveClosure.over.union	^(a + b)
 un.transitiveClosure.under.union.l	^a + b
 un.transitiveClosure.under.union.r	a + ^b
@@ -102,7 +99,6 @@ un.reflexiveTransitiveClosure.relDbl	*//
 un.reflexiveTransitiveClosure.var	*x
 un.reflexiveTransitiveClosure.varUni	*`σ`
 un.reflexiveTransitiveClosure.atom	*`atom_0
-un.reflexiveTransitiveClosure.raw	*(x or y)
 un.reflexiveTransitiveClosure.over.union	*(a + b)
 un.reflexiveTransitiveClosure.under.union.l	*a + b
 un.reflexiveTransitiveClosure.under.union.r	a + *b
@@ -356,8 +352,6 @@ cmp.contains.neg	a !ni b
 cmp.contains.num	#a ni 2
 cmp.val	@:a = "\"x\""
 cmp.valNeg	@bool:a != true
-cmp.rawL	(x or y) in b
-cmp.rawRaw	(x or y) = (p and q)
 mult.empty	no a + b
 mult.nonEmpty	some a + b
 mult.atMostOne	lone a + b

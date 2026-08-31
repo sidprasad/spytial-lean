@@ -304,7 +304,7 @@ meta partial def Sel.resolveLean (ctx : LeanSelCtx) : Sel → MetaM Sel
         return .binders (← bs.mapM fun (x, d) => return (x, ← d.resolveLean ctx))
       | a@(.name _) | a@(.atom _) => return a)
   | e@(.sig ..) | e@(.rel ..) | e@(.builtin ..) | e@(.var ..) | e@(.num ..)
-  | e@(.str ..) | e@(.ctorLit ..) | e@(.boolLit ..) | e@(.raw ..) => return e
+  | e@(.str ..) | e@(.ctorLit ..) | e@(.boolLit ..) => return e
 
 private meta partial def FieldVal.resolveLean (ctx : LeanSelCtx) :
     FieldVal → MetaM FieldVal
@@ -327,7 +327,7 @@ meta partial def Sel.hasLeanRel : Sel → Bool
     | .binders bs => bs.any fun (_, d) => d.hasLeanRel
     | .name _ | .atom _ => false
   | .sig .. | .rel .. | .builtin .. | .var .. | .num .. | .str .. | .ctorLit ..
-  | .boolLit .. | .raw .. => false
+  | .boolLit .. => false
 
 meta partial def FieldVal.hasLeanRel : FieldVal → Bool
   | .sel s => s.hasLeanRel

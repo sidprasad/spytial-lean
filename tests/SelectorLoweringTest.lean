@@ -22,9 +22,8 @@ shows up as new golden lines.
 
 Each case was checked against simple-graph-query's own parser when the table was
 written: see `tests/README-lowering.md` for the differential rig. Four cases are
-`/`-named relations that lowering emits unquoted (which does not parse), two are
-raw fragments left unbracketed (which parse as a different formula), and four
-are the empty relation name, which SGQ cannot spell at all — see
+`/`-named relations that lowering emits unquoted (which does not parse), and
+four are the empty relation name, which SGQ cannot spell at all — see
 `quoteIfNeeded`'s FIXME.
 
 After a deliberate change, `just rebless-sgq` rewrites the golden. -/
@@ -107,8 +106,7 @@ private meta def bases : List (String × Sel) :=
   [("sig", .sig `Foo "Foo"), ("rel", .rel "tr"), ("rel/", .rel "/"),
    ("relKw", .rel "in"), ("relSpace", .rel "a b"), ("relUni", .rel "σ"),
    ("relEmpty", .rel ""), ("relSlashy", .rel "util/ordering"), ("relDbl", .rel "//"),
-   ("var", .var `x), ("varUni", .var `σ), ("atom", Sel.atomLit "atom_0"),
-   ("raw", .raw "x or y")]
+   ("var", .var `x), ("varUni", .var `σ), ("atom", Sel.atomLit "atom_0")]
 
 private meta def fA : Sel := unary .«nonEmpty» a
 private meta def fB : Sel := unary .«empty» b
@@ -177,8 +175,6 @@ private meta def corpus : Array (String × String) :=
       emit s!"cmp.{name o}.num" (cmp o false (unary .«cardinality» a) (.num 2)).toSGQ
     emit "cmp.val" (cmp .«equal» false (unary .«label» a) (.str "x")).toSGQ
     emit "cmp.valNeg" (cmp .«equal» true (unary .«labelBoolean» a) (.boolLit true)).toSGQ
-    emit "cmp.rawL" (cmp .«subset» false (.raw "x or y") b).toSGQ
-    emit "cmp.rawRaw" (cmp .«equal» false (.raw "x or y") (.raw "p and q")).toSGQ
     for m in multTests do emit s!"mult.{name m}" (unary m (binary .«union» a b)).toSGQ
     emit "form.not" (unary .«not» fA).toSGQ
     emit "form.notNot" (unary .«not» (unary .«not» fA)).toSGQ

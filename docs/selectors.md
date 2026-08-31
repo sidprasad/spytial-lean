@@ -53,7 +53,7 @@ sel ::=
   | "{" binders "|" sel "}"                      (* 18: comprehension; arity = #binders *)
   | "{" sel* "}"                                 (* 18: block, a conjunction *)
   | "(" sel ")"
-  | string                                       (* escape hatch / string literal *)
+  | string                                       (* string literal *)
   | int                                          (* integer literal *)
   | "`" name                                     (* atom literal, a Lean name literal *)
   | "lean" "(" term ")"                          (* a Lean function; arity from its type *)
@@ -76,9 +76,8 @@ right-associative connective. Longest-match separates the quantifier
 through union (`some A + B` is `some (A + B)`). A box join binds looser than a
 join, so `a.b[c]` is `(a.b)[c]` and `a[b].c` is a parse error in both languages
 — write `(a[b]).c`. Whitespace matters twice: no space before a box-join `[`,
-and none between `-` and an integer literal. A string is the raw, unchecked SGQ
-escape hatch as a whole selector, and an ordinary string literal as a
-comparison operand.
+and none between `-` and an integer literal. A string is a literal value, so it
+sits in a comparison operand and nowhere a selector is expected.
 
 A negation is a slot of the comparison rather than an operator of its own, as
 it is upstream, so `!=`, `not =`, `!in`, `not in`, `!ni` and `not ni` are one
@@ -101,12 +100,12 @@ guillemets: `«Untyped.Term»` for a qualified Lean type. So is a name that
 collides with one of the grammar's own words: `«univ»` for a field named after
 a nullary constant.
 
-Relative to Forge, the label projections (`@:`, `@str:`, `@bool:`, `@num:`)
-and the raw-string escape hatch are SGQ/Spytial extensions, and atom literals
-are spelled as Lean name literals (`` `a0 ``). The fragment omits Forge's
-declaration and temporal layers. Arrow multiplicities (`A one -> lone B`)
-parse for grammar parity, but the engine rejects them at render: they are
-declaration and constraint syntax, not part of an expression.
+Relative to Forge, the label projections (`@:`, `@str:`, `@bool:`, `@num:`) are
+SGQ/Spytial extensions, and atom literals are spelled as Lean name literals
+(`` `a0 ``). The fragment omits Forge's declaration and temporal layers. Arrow
+multiplicities (`A one -> lone B`) parse for grammar parity, but the engine
+rejects them at render: they are declaration and constraint syntax, not part of
+an expression.
 
 **What is written by hand.** Five rules, none of which grows with the language:
 the four literal forms (identifier, string, integer, atom literal), which are

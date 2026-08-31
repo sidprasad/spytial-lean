@@ -78,12 +78,9 @@ info: {"directives":
    {"showLabel": true,
     "selector": "{x : SBDD | @:x = \"tt\"}",
     "iconStyle": {"placement": "badge", "path": "tt.png"}}},
-  {"tag": {"value": "bdd", "toTag": "SBDD", "name": "kind"}},
+  {"tag": {"value": "v", "toTag": "SBDD", "name": "kind"}},
   {"flag": "hideDisconnected"},
-  {"hideField": {"field": "hi"}},
-  {"atomStyle":
-   {"selector": "raw & unchecked \"quoted\"",
-    "borderStyle": {"color": "green"}}}],
+  {"hideField": {"field": "hi"}}],
  "constraints":
  [{"orientation":
    {"selector": "{x, y : SBDD | x->y in lo + hi}", "directions": ["below"]}},
@@ -116,17 +113,16 @@ info: {"directives":
   cyclic {x, y : SBDD | x->y in lo} counterclockwise,
   inferredEdge shortcut lo.hi (lineStyle "#123456" dotted),
   atomStyle {x : SBDD | @:x = tt} (iconStyle "tt.png" badge) labels,
-  tag SBDD "kind" "bdd",
+  tag SBDD "kind" v,
   flag hideDisconnected,
-  hideField hi,
-  atomStyle "raw & unchecked \"quoted\"" (borderStyle "green")
+  hideField hi
 ]
 
--- `Sel` is public API: a composed raw fragment binds loosest — parenthesized,
--- never spliced.
-/-- info: "(a + b).lo" -/
+/-! ## A string is a value, not a selector -/
+
+/-- error: a selector picks out atoms or tuples, but this is a label/literal value -/
 #guard_msgs in
-#eval (Sel.node .«join» (some .«join») #[.expr (.raw "a + b"), .expr (.rel "lo")]).toSGQ
+#spytial.spec sExample with [atomStyle "lo & unchecked \"quoted\"" (borderStyle "green")]
 
 /-! ## Golden storage — `spytial_spec` attaches the structured spec -/
 

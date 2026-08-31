@@ -23,8 +23,8 @@ edit here.
 
 What is *not* the engine's, and so is written here: the vocabulary leaves
 (`sig`/`rel`/`var` are resolved Lean names, not bare identifiers), the
-constructor-label literal a spytial spec compares against, the `raw` escape
-hatch, and the whitespace house style.
+constructor-label literal a spytial spec compares against, and the whitespace
+house style.
 
 Specs store this AST in the environment, so nodes carry no `Syntax` and must
 pickle into `.olean`s. `SpytialLean.SelectorElab` resolves and checks; `toSGQ`
@@ -67,9 +67,6 @@ public meta inductive Sel where
   /-- A nullary-constructor literal (`@:x = tt`). -/
   | ctorLit (ctor : Name)
   | boolLit (b : Bool)
-  /-- Escape hatch: an unchecked SGQ string, lowered verbatim. The body is
-      arbitrary SGQ, so it binds loosest and composition parenthesizes it. -/
-  | raw (sgq : String)
   /-- A raw Lean function over the values the relationalizer walked, read as a
       relation: its argument types are the columns it ranges over and its
       codomain fixes the arity (`SpytialLean.classifyLeanRel`). Resolved
@@ -80,7 +77,7 @@ public meta inductive Sel where
 
 end
 
-public meta instance : Inhabited Sel := ⟨.raw ""⟩
+public meta instance : Inhabited Sel := ⟨.num 0⟩
 public meta instance : Inhabited Arg := ⟨.atom none⟩
 
 /-! ## Building nodes
@@ -253,8 +250,6 @@ public meta partial def Sel.toSGQCtx (ctx : Nat) : Sel → String
   -- short name, so that spelling is the comparison literal.
   | .ctorLit c => sgqStringLit (shortName c)
   | .boolLit b => toString b
-  -- Raw SGQ is arbitrary, so it binds looser than anything the cascade names.
-  | .raw s => parenIf (Sgq.loosest < ctx) s
   -- Unreachable in a rendered spec: `resolveLeanSelectors` runs first on every
   -- path that renders. Lowering as the empty relation keeps this total.
   | .leanRel _ => Sel.empty.toSGQCtx ctx
@@ -360,7 +355,7 @@ binder would capture. -/
 public meta partial def Sel.freeVars : Sel → Array Name
   | .var x => #[x]
   | .sig .. | .rel .. | .builtin .. | .num .. | .str .. | .ctorLit .. | .boolLit ..
-  | .raw .. | .leanRel .. => #[]
+  | .leanRel .. => #[]
   | .node _ _ args => Id.run do
     let mut bound : Array Name := #[]
     let mut out : Array Name := #[]

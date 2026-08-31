@@ -23,10 +23,9 @@ construct.
 
 Written here because no manifest can carry it: the scope itself (it depends on
 the target type) and its hover information, the constructor-label literal a
-spytial spec compares against, the `raw` escape hatch, `let` (which the engine
-parses and refuses, and which we desugar), `lean (…)` (which is not the
-engine's language at all), and the leaves Lean's own lexer claims before any
-token table sees them.
+spytial spec compares against, `let` (which the engine parses and refuses, and
+which we desugar), `lean (…)` (which is not the engine's language at all), and
+the leaves Lean's own lexer claims before any token table sees them.
 
 A scope is strict when the vocabulary is closed: a monomorphic type built from
 monomorphic fields. A type parameter, a function field that does not tabulate,
@@ -522,8 +521,9 @@ private meta def atomPrec : Nat := (Sgq.Construct.of .«name»).prec
 /-! ## Elaboration -/
 
 /-- The typed result of elaborating a `spytial_sel`. Compile-time only; never
-    stored. `arity` is `none` when statically unknown (`raw`, or a lenient
-    pass-through), which disables downstream width checks. -/
+    stored. `arity` is `none` when statically unknown (a lenient pass-through,
+    or a relation whose width the walker does not fix), which disables
+    downstream width checks. -/
 meta structure EExpr where
   sel : Sel
   kind : Sgq.Kind
@@ -1025,12 +1025,8 @@ private meta def widthPhrase (forms : List ArityForm) : String :=
     | (lo, some hi) => if lo == hi then toString lo else s!"{lo} to {hi}"
     | (lo, none) => s!"{lo} or wider"
 
-/-- A whole-selector string literal is the raw escape hatch. -/
 meta def elabSelector (scope : SelScope) (accepts : List ArityForm)
     (stx : TSyntax `spytial_sel) : TermElabM Sel := do
-  if stx.raw.isOfKind selStrKind then
-    if let some s := stx.raw[0].isStrLit? then
-      return .raw s
   let e ← elabExpr scope [] stx
   unless e.kind == .relation do
     throwErrorAt stx m!"a selector picks out atoms or tuples, but this is \
