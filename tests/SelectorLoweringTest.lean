@@ -21,10 +21,9 @@ bare. An operator added upstream enters the corpus without an edit here, and
 shows up as new golden lines.
 
 Each case was checked against simple-graph-query's own parser when the table was
-written: see `tests/README-lowering.md` for the differential rig. Four cases are
-`/`-named relations that lowering emits unquoted (which does not parse), and
-four are the empty relation name, which SGQ cannot spell at all — see
-`quoteIfNeeded`'s FIXME.
+written. Four cases are `/`-named relations that lowering emits unquoted (which
+does not parse), and four are the empty relation name, which SGQ cannot spell at
+all — see `quoteIfNeeded`'s FIXME.
 
 After a deliberate change, `just rebless-sgq` rewrites the golden. -/
 
@@ -173,6 +172,7 @@ private meta def corpus : Array (String × String) :=
       emit s!"cmp.{name o}" (cmp o false a b).toSGQ
       emit s!"cmp.{name o}.neg" (cmp o true a b).toSGQ
       emit s!"cmp.{name o}.num" (cmp o false (unary .«cardinality» a) (.num 2)).toSGQ
+      emit s!"cmp.{name o}.num.neg" (cmp o true (unary .«cardinality» a) (.num 2)).toSGQ
     emit "cmp.val" (cmp .«equal» false (unary .«label» a) (.str "x")).toSGQ
     emit "cmp.valNeg" (cmp .«equal» true (unary .«labelBoolean» a) (.boolLit true)).toSGQ
     for m in multTests do emit s!"mult.{name m}" (unary m (binary .«union» a b)).toSGQ

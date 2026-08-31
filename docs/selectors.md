@@ -81,10 +81,9 @@ sits in a comparison operand and nowhere a selector is expected.
 
 A negation is a slot of the comparison rather than an operator of its own, as
 it is upstream, so `!=`, `not =`, `!in`, `not in`, `!ni` and `not ni` are one
-rule with that slot filled. Negating an integer comparison parses and is then
-rejected: there is no lowering for it, and the opposite operator says the same
-thing. `a is b` parses and is rejected too — the manifest records that the
-engine refuses to evaluate it.
+rule with that slot filled, and so are the integer comparisons `!<` through
+`!>=`. `a is b` parses and is rejected — the manifest records that the engine
+refuses to evaluate it.
 
 A selector lexes under its own token table, which holds the engine's symbols
 and nothing else. Two things follow. Lean's keywords are ordinary names here,

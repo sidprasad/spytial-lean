@@ -807,7 +807,6 @@ private meta partial def elabNode (scope : SelScope) (env : LEnv) (stx : Syntax)
   let mut extra : Array (Option Nat) := #[]
   let mut binders : Nat := 0
   let mut env := env
-  let mut negated := false
   for (item, i) in cd.template.toArray.zipIdx do
     match item with
     | .operand _ =>
@@ -832,10 +831,9 @@ private meta partial def elabNode (scope : SelScope) (env : LEnv) (stx : Syntax)
       binders := binders + bs.size
       env := env'
     | .name _ => args := args.push (.name stx[i].getId.toString)
-    | .part role opt =>
+    | .part _ opt =>
       if opt then
         let s := stx[i].getAtomVal
-        if role == .«negation» && !s.isEmpty then negated := true
         args := args.push (.atom (if s.isEmpty then none else some s))
     | Sgq.Item.«optional» inner =>
       let present := stx[i].getNumArgs != 0
@@ -848,11 +846,6 @@ private meta partial def elabNode (scope : SelScope) (env : LEnv) (stx : Syntax)
             slots := slots.push e.arity
             opKinds := opKinds.push e.kind
     | .operator | .constant => pure ()
-  -- A negated comparison lowers by prefixing the operator, which only has a
-  -- meaning where the engine spells the negation that way.
-  if negated && kinds.operands.any (· == some .number) then
-    throwErrorAt stx m!"a negated numeric comparison has no lowering; write the \
-      opposite operator"
   -- Slots that accept either side have to agree with each other: the engine
   -- compares like with like, so `#a = b` is a mistake rather than a coercion.
   if kinds.operands.any (· == Option.some .any) then

@@ -1320,8 +1320,8 @@ info: {"constraints":
 /-! ## Negated comparisons
 
 The engine spells a negation as a part of the comparison rather than an
-operator of its own, so `!=`, `!in`, `!ni` and their `not` spellings are one
-rule with one slot filled. -/
+operator of its own, so `!=`, `!in`, `!ni`, the integer comparisons, and their
+`not` spellings are one rule with one slot filled. -/
 
 /--
 info: {"constraints":
@@ -1342,7 +1342,7 @@ info: {"constraints":
   hideAtom {x : SBDD | x.lo ni x.hi}
 ]
 
-/-- error: a negated numeric comparison has no lowering; write the opposite operator -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "{x : SBDD | #x.lo !< #x.hi}"}}]} -/
 #guard_msgs in
 #spytial.spec sExample with [hideAtom {x : SBDD | #x.lo !< #x.hi}]
 
