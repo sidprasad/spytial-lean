@@ -19,6 +19,31 @@ private meta def manifestText : String :=
   include_str ".." / "widget" / "node_modules" / "spytial-core" / "docs" /
     "spytial-language.json"
 
+/-! ## The manifest format
+
+`manifestVersion` (semver) versions the manifest's own member shape — which
+members exist and what they mean — and a consumer that reads a member requires
+the minor that introduced it. This reader needs `introducedKinds`, which 1.1
+added. -/
+
+private meta def neededMajor : Nat := 1
+private meta def neededMinor : Nat := 1
+
+private meta def majorMinor (v : String) : Option (Nat × Nat) := do
+  let [major, minor, _] := v.splitOn "." | none
+  return (← major.toNat?, ← minor.toNat?)
+
+private meta def checkFormat (version? : Option String) : Except String Unit := do
+  let needed := s!"{neededMajor}.{neededMinor}"
+  let some version := version?
+    | .error s!"no manifestVersion, so this manifest predates format \
+        versioning; this reader needs {needed} or later"
+  let some (major, minor) := majorMinor version
+    | .error s!"manifestVersion is {version.quote}, which is not a semver"
+  unless major == neededMajor && neededMinor ≤ minor do
+    .error s!"manifestVersion is {version}; this reader needs {needed} or \
+      later, within major {neededMajor}"
+
 /-! ## The language as data
 
 Ids stay strings until the enumerations exist. -/
@@ -437,6 +462,9 @@ private meta def RawField.ids (f : RawField) : List String :=
 
 private meta def parseManifest : Except String RawManifest := do
   let json ← Json.parse manifestText
+  -- Ahead of the record, so a manifest too old to carry a member says that
+  -- rather than failing by the member's name.
+  checkFormat (← member (Option String) json "manifestVersion")
   let m : JManifest ← fromJson? json
   let rawItems ← member (Array Json) json "items"
   let kinds ← introducedKinds m.introducedKinds
