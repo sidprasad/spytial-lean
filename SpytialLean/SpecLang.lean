@@ -401,6 +401,15 @@ private meta def itemOf (kinds : IntroducedKinds) (j : Json) :
     | s => .error (here s!"no representation for sections {repr s}")
   let some shape := i.valueShape | .error (here "no valueShape")
   let fields ← (i.fields.getD []).filterMapM (fieldOf kinds id)
+  -- A scalar item serializes as its one field's value (`Spec.lean`), which
+  -- leaves nowhere to put a second field or a `hold`.
+  let scalar := shape matches .scalar
+  let supportsHold := i.supportsHold.getD false
+  if scalar then
+    unless fields.length == 1 do
+      .error (here s!"no representation for a scalar item with {fields.length} fields")
+    if supportsHold then
+      .error (here "no representation for a scalar item that supports hold")
   -- Surface order: required non-block fields positionally, in manifest order.
   for f in fields do
     if f.required && f.type.isBlock then
@@ -437,8 +446,7 @@ private meta def itemOf (kinds : IntroducedKinds) (j : Json) :
   for f in effectFields do
     unless fields.any (·.name == f) do
       .error (here s!"inertWhenBare names the effect field {f.quote}, which it does not have")
-  return some { id, yamlKey, constraint, scalar := shape matches .scalar,
-                supportsHold := i.supportsHold.getD false,
+  return some { id, yamlKey, constraint, scalar, supportsHold,
                 fields, positional, leadingSelector, introduces, effectFields,
                 displaysSource := false }
 
@@ -541,6 +549,11 @@ private meta def parseManifest : Except String RawManifest := do
   unless items.any fun i => !i.effectFields.isEmpty do
     .error "no item declares inertWhenBare; the member left the manifest or \
       the pin moved past it"
+
+  -- The stamp rides beside the fields, which a scalar payload does not have.
+  for i in items do
+    if i.scalar && m.source.displayedBy.contains i.id then
+      .error s!"{i.id}: no representation for a scalar item that displays its source stamp"
 
   let items := items.map fun i =>
     { i with displaysSource := m.source.displayedBy.contains i.id }
