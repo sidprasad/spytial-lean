@@ -49,29 +49,23 @@ public meta def fieldRelName (ctorShort : String) (binderNames : Array Name) (i 
   else
     s!"{ctorShort}_{i}"
 
-/-- The label the relationalizer assigns to a hole (an unassigned metavariable):
-    `?` when anonymous, `?name` for a user-named hole. Macro-scoped names count as
-    anonymous — they are synthetic, not something the user wrote. -/
+/-- Macro-scoped names count as anonymous: they are synthetic, not something the
+    user wrote. -/
 public meta def holeLabel (userName : Name) : String :=
   if userName.isAnonymous || userName.hasMacroScopes then "?"
   else s!"?{userName}"
 
-/-- The label the relationalizer assigns to a hypothesis (`fvar`) leaf: its user name
-    with macro scopes erased (so inaccessible names render without the dagger),
-    falling back to `?` for genuinely anonymous binders. -/
+/-- Macro scopes are erased so that inaccessible names render without the
+    dagger. -/
 public meta def hypLabel (userName : Name) : String :=
   let n := userName.eraseMacroScopes
   if n.isAnonymous then "?" else toString n
 
-/-- Whether the walker erases a value of this type — proofs (`Prop`) and types
-    (`Sort`) — and so drops fields of it. -/
+/-- The walker erases values of these types, and so drops fields of them. -/
 public meta def isProofLikeType (ty : Expr) : MetaM Bool := do
   return (← Meta.isProp ty) || ty.isSort
 
-/-! ## Function tabulation
-
-Shared with the static checkers, so a predicted relation cannot drift from an
-emitted one. -/
+/-! ## Function tabulation -/
 
 /-- `ppExpr` may qualify a constructor; a diagram label wants the short name. -/
 private meta def elemLabel (e : Expr) : MetaM String := do
@@ -80,7 +74,6 @@ private meta def elemLabel (e : Expr) : MetaM String := do
     if (← getEnv).find? n matches some (.ctorInfo _) then return shortName n else ppLabel e
   | _ => ppLabel e
 
-/-- Every element of `ty` with its label; `none` where `enumElems?` declines. -/
 public meta def tryEnumerateDomain (ty : Expr) : MetaM (Option (Array (String × Expr))) := do
   let some elems ← enumElems? ty | return none
   elems.mapM fun e => return ((← elemLabel e), e)
@@ -94,18 +87,18 @@ public meta structure TabulationBinder where
   domain : Expr
   elems : Array (String × Expr)
 
-/-- How a function type tabulates: one column per binder, then the codomain. -/
+/-- One column per binder, then the codomain. -/
 public meta structure TabulationPlan where
   binders : Array TabulationBinder
   codomain : Expr
   kind : CodomainKind
 
-/-- Points in the domain product — the tuple count of the emitted table. -/
+/-- The tuple count of the emitted table. -/
 public meta def TabulationPlan.size (p : TabulationPlan) : Nat :=
   p.binders.foldl (fun n b => n * b.elems.size) 1
 
-/-- The columns after the owner: the binders, then a data codomain's result
-    (a proposition's extension has none). -/
+/-- The columns after the owner. A proposition's extension has no result
+    column. -/
 public meta def TabulationPlan.tailTypes (p : TabulationPlan) : Array Expr :=
   let domains := p.binders.map (·.domain)
   match p.kind with
@@ -135,11 +128,9 @@ private meta partial def peelBinders (ty : Expr) (acc : Array TabulationBinder) 
       | _ => .data
     return some { binders := acc, codomain := cod, kind }
 
-/-- The table a function type tabulates into, or `none` when it does not. -/
 public meta def tabulationPlan? (ty : Expr) : MetaM (Option TabulationPlan) :=
   peelBinders ty #[]
 
-/-- What a tabulating field's type emits, as a static checker needs it. -/
 public meta structure FieldTable where
   arity : Nat
   columnHeads : Array Name
@@ -152,17 +143,14 @@ public meta def FieldTable.of? (ty : Expr) : MetaM (Option FieldTable) := do
 public meta structure FieldShape where
   relName : String
   typeSig : Option String
-  /-- Head constant of the field type, when it has one; `none` for a type
-      parameter or function type (unpredictable vocabulary). -/
+  /-- `none` for a type parameter or function type: unpredictable vocabulary. -/
   typeHead : Option Name := none
-  /-- The walker drops this field: it is `Prop`- or `Sort`-typed. -/
   isProofLike : Bool
-  /-- Set when the field's type tabulates: its columns, not its type head, are
-      the vocabulary its values contribute. -/
+  /-- When set, its columns rather than the type head are the vocabulary the
+      field's values contribute. -/
   table : Option FieldTable := none
-  /-- The emitted relation's arity, when the declaration fixes it. A function
-      type over the inductive's own parameters fixes nothing: only the
-      instantiation decides leaf or table. -/
+  /-- `none` where the declaration fixes no arity: a function type over the
+      inductive's own parameters leaves leaf-or-table to the instantiation. -/
   arity? : Option Nat := some 2
   deriving Repr, Inhabited
 

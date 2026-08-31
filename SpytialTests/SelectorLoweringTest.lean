@@ -7,31 +7,15 @@ open SpytialLean Lean
 
 /-! # SGQ lowering goldens
 
-`Selector.lean` renders through the `Sgq` tables, derived at elaboration from
-simple-graph-query's manifest, so a changed operand level upstream silently
-changes every spec this package writes. The spec goldens in `SelectorTest.lean`
-cover the shapes the surface DSL spells, which leaves the precedence matrix and
-the awkward names unpinned.
+`SelectorTest.lean` leaves the precedence matrix and the awkward names unpinned.
+This corpus takes its operator lists from the manifest, so an operator added
+upstream enters it without an edit here.
 
-The corpus is systematic, and its operator lists come from the manifest rather
-than from a copy of it: every relational binary against every other nested both
-ways, every unary over and under every binary, every connective pair, every
-comparison negated and not, the multiplicity grid, the names SGQ cannot spell
-bare. An operator added upstream enters the corpus without an edit here, and
-shows up as new golden lines.
+Four cases are `/`-named relations that lowering emits unquoted (which does not
+parse) and four are the empty relation name, which SGQ cannot spell at all — see
+`quoteIfNeeded`'s FIXME.
 
-Each case was checked against simple-graph-query's own parser when the table was
-written. Four cases are `/`-named relations that lowering emits unquoted (which
-does not parse), and four are the empty relation name, which SGQ cannot spell at
-all — see `quoteIfNeeded`'s FIXME.
-
-After a deliberate change, `just rebless-sgq` rewrites the golden. -/
-
-/-! ## Building nodes
-
-`Sel.op` fills an operator's template. The shapes below fill positions no
-operand reaches — a negation slot, a multiplicity, binders — and are spelled
-once here rather than at every case. -/
+`just rebless-sgq` rewrites the golden after a deliberate change. -/
 
 private meta def nullary (o : Sgq.OpId) : Sel := Sel.op o #[]
 private meta def unary (o : Sgq.OpId) (x : Sel) : Sel := Sel.op o #[x]
@@ -55,25 +39,20 @@ private meta def implies (c t : Sel) (e : Option Sel) : Sel :=
     (#[Arg.expr c, .expr t, .atom (e.map fun _ => "else")] ++
       (e.toArray.map Arg.expr))
 
-/-! ## Which operators the corpus ranges over
-
-Read off the manifest by shape, so a new operator is covered rather than
-missed. -/
+/-! ## Which operators the corpus ranges over -/
 
 private meta def opsWhere (p : Sgq.Op → Bool) : List Sgq.OpId :=
   Sgq.allOps.filter fun o => let od := Sgq.Op.of o; od.evaluates && p od
 
 private meta def fixityOf (o : Sgq.Op) : Sgq.Fixity := (Sgq.Construct.of o.construct).fixity
-/-- `n` operand slots, each accepting `k`. The count matters: `\`a0` is a
-    prefix over no operand at all, so it is not one of the unaries. -/
+/-- The count matters: `\`a0` is a prefix over no operand at all, so it is not
+    one of the unaries. -/
 private meta def takes (o : Sgq.Op) (n : Nat) (k : Sgq.Kind) : Bool :=
   o.kinds.operands.length == n && o.kinds.operands.all (· == some k)
 
-/-- The relational binaries: `+`, `.`, `->`, `<:`, … -/
 private meta def relBinaries : List Sgq.OpId :=
   opsWhere fun o => fixityOf o == .«infix» && takes o 2 .relation
-/-- The relational unary prefixes: `~`, `^`, `*`. The label projections are
-    prefixes too, but they yield a value rather than a relation. -/
+/-- The label projections are prefixes too, but they yield a value. -/
 private meta def relUnaries : List Sgq.OpId :=
   opsWhere fun o =>
     fixityOf o == .«prefix» && takes o 1 .relation && o.kinds.yields == some .relation
@@ -134,8 +113,7 @@ private meta def vals : List (String × Sel) :=
    ("ctor", .ctorLit `Foo.tt), ("strLit", .str "hi"),
    ("strEsc", .str "a\"b\\c\nd\te\r"), ("boolT", .boolLit true), ("boolF", .boolLit false)]
 
-/-- A case with no lowering pins the reason rather than stopping the corpus.
-    No case in the corpus is one today. -/
+/-- A case with no lowering pins the reason rather than stopping the corpus. -/
 private meta def emit (label : String) (lowered : Except String String) :
     StateM (Array (String × String)) Unit :=
   modify (·.push (label, match lowered with
@@ -205,8 +183,7 @@ private meta def corpus : Array (String × String) :=
     emit "quant.underAnd" (binary .«and» (quant .«all» false #[(`x, a)] fB) fC).toSGQ
   ) #[] |>.2
 
-/-- The pinned lowering, one `label<TAB>sgq` per line. Re-bless with
-    `just rebless-sgq` after a deliberate change, then read the diff. -/
+/-- One `label<TAB>sgq` per line. -/
 private meta def goldenPath : System.FilePath :=
   "SpytialTests" / "SelectorLoweringTest.golden.tsv"
 

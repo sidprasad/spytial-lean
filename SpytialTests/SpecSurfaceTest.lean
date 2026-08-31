@@ -5,28 +5,20 @@ meta import SpytialLean.Command
 
 open SpytialLean Lean Elab Command
 
--- These goldens pin the op surface, not the source stamp, so they leave the
--- stamp out rather than restate it on every op. It has its own tests, under
--- `## The source stamp` in LeanSelectorTest.
+-- off so the goldens need not restate the stamp on every op; `## The source
+-- stamp` in LeanSelectorTest covers it
 set_option spytial.source false
 
 /-! # Tests for the manifest-driven op surface
 
-`SelectorTest.lean` pins the pre-rewrite battery byte-for-byte; this file
-covers what only the tables carry — hold, textStyle at every site, directive
-scoping (`selector:`/`filter:`), `draw`, `hidden`, opacity, nested block
-keywords, and the manifest's own validity rules (list rules, numeric bounds,
-enum membership). Each negative test is a detector's positive control. -/
-
-/-! ## Fixture -/
+`SelectorTest.lean` pins the op battery; this file covers what only the tables
+carry. -/
 
 public inductive SG where
   | leaf
   | node (tag : String) (lo hi : SG)
 
 public def sG : SG := .node "r" .leaf .leaf
-
-/-! ## Hold -/
 
 /--
 info: {"constraints":
@@ -36,8 +28,7 @@ info: {"constraints":
 #guard_msgs in
 #spytial.spec sG with [orientation lo below hold: never]
 
--- `always` is inert upstream but written is emitted: the serialized spec
--- carries what the source said.
+-- `always` is inert upstream: the serialized spec carries what the source said
 /-- info: {"constraints": [{"cyclic": {"selector": "lo", "hold": "always"}}]} -/
 #guard_msgs in
 #spytial.spec sG with [cyclic lo hold: always]
@@ -50,7 +41,7 @@ info: {"constraints":
 #guard_msgs in
 #spytial.spec sG with [orientation lo below hold: sometimes]
 
-/-! ## textStyle, at sites the old surface lacked -/
+/-! ## textStyle at every site -/
 
 /--
 info: {"directives":
@@ -97,8 +88,6 @@ info: {"directives":
 #guard_msgs in
 #spytial.spec sG with [hideField lo filter: lo]
 
-/-! ## inferredEdge draw -/
-
 /--
 info: {"directives":
  [{"inferredEdge":
@@ -129,8 +118,8 @@ info: {"directives":
 #guard_msgs in
 #spytial.spec sG with [tag SG "n" #lo]
 
--- A tag's value shows its middle columns as key segments, so a wide one is not
--- throwing anything away and must not warn.
+-- a tag's value shows its middle columns as key segments, so a wide one throws
+-- nothing away and must not warn
 /-- info: {"directives": [{"tag": {"value": "lo->hi", "toTag": "SG", "name": "kids"}}]} -/
 #guard_msgs in
 #spytial.spec sG with [tag SG "kids" (lo->hi)]

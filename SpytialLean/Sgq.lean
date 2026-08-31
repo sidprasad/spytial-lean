@@ -9,34 +9,21 @@ open Lean Elab Command SpytialLean.ManifestJson
 
 /-! # The SGQ language, read off its manifest
 
-simple-graph-query publishes its grammar as `docs/sgq-language.json`; the
-commands below parse the resolved package's copy and declare the id
-enumerations and tables. `docs/language-manifests.md` is the design story. -/
+simple-graph-query publishes its grammar as `docs/sgq-language.json`; this module
+parses the resolved package's copy into id enumerations and tables. -/
 
 -- TODO(sgq#68): unpublished; pnpm-workspace.yaml overrides the package to a
 -- local checkout until a release ships the manifest.
 private meta def manifestText : String :=
   include_str ".." / "node_modules" / "simple-graph-query" / "docs" / "sgq-language.json"
 
-/-! ## Which spelling spytial-lean writes
-
-A token can have aliases (`or` is also `||`). The manifest lists them in
-grammar order and takes no view; which one to *emit* is this package's
-choice. -/
-
-/-- Roles whose several spellings are alternatives to choose between at each
-    use (an arrow's multiplicity), not aliases for one thing. -/
 private meta def alternativeRoles : List String := ["product.multiplicity"]
 
-/-- Overrides for what to *emit* where the engine accepts several spellings.
-    Without an entry the first in grammar order wins, so a new alias upstream
-    is a no-op unless it is inserted ahead of the one we already write — and
-    then the lowering goldens catch it. -/
+/-- Keyed by op id or `construct.role`; the default is grammar order's first. -/
 private meta def preferredSpelling : List (String × String) :=
   [ ("or", "or"), ("and", "and"), ("not", "not"), ("iff", "iff"),
     ("implies", "implies"), ("atMost", "<="),
-    -- `!in` / `!ni` / `!=` read better than the `not` prefix, and are what the
-    -- selector reference documents.
+    -- what the selector reference documents
     ("comparison.negation", "!") ]
 
 /-! ## The language as data -/
@@ -81,7 +68,6 @@ json_union ArityRule on "rule" where
   | boxJoin
   | binders
 
-/-- The static analyzer's rule; the evaluator re-checks it only for `++`. -/
 json_union Requires where
   | equal
 
@@ -105,18 +91,14 @@ public meta def CharClass.contains (cc : CharClass) (c : Char) : Bool :=
   cc.ranges.any (fun r => r.from ≤ c && c ≤ r.to) || cc.chars.contains c
 
 public meta structure Part where
-  /-- The spelling this package writes. One of `spellings`; its choice. -/
+  /-- One of `spellings`; this package's choice. -/
   text : String
-  /-- Every spelling the engine accepts, in grammar order. -/
   spellings : List String
-  /-- Whether the spellings are alternatives to choose between at each use
-      (an arrow's multiplicity) rather than aliases for one thing (`!` and
-      `not`). An encoder writes `text` for an alias and what the source
-      wrote for an alternative. -/
+  /-- Alternatives at each use, not aliases: an encoder writes `text` for an
+      alias and the source's own spelling for an alternative. -/
   alternatives : Bool
   deriving Repr, Inhabited
 
-/-- The level of the loosest expression: what a delimiter accepts inside it. -/
 public meta def loosest : Nat := 0
 
 /-! ## The manifest as records
@@ -139,9 +121,7 @@ json_union JItem on "item" where
   | part (role : String) («optional» : Bool)
   | «optional» (items : List JItem)
 
-/-- The parts an item is written with. A binder group and a body carry no role
-    of their own, so the two readers of a template (`SelectorElab`'s rules and
-    `Selector`'s lowering) reach for theirs by name. -/
+/-- A binder group and a body carry no role of their own. -/
 private meta partial def JItem.roles : JItem → List String
   | .list _ r => [r]
   | .part r _ => [r]
@@ -188,6 +168,7 @@ public meta structure JBare where
 public meta structure JIdentifier where
   bare : JBare
   quoted : JQuoted
+  /-- Spellings a bare identifier cannot carry: they lex as some other token. -/
   reserved : List String
   deriving Inhabited, FromJson
 
@@ -252,10 +233,9 @@ private meta def escapePairs (o : JsonObject) : Except String (List (Char × Cha
       s!"string.escapeDecodes: {e}"
     return (decoded, spelling)
 
-/-- Parts reached by construct and role rather than off a template item, which
-    is the one way a template walk cannot see them. Lean's lexer claims a
-    numeric literal before any token table does, so `constant` has no generated
-    rule and `SelectorElab.sgqNegNumRule` writes the sign itself. -/
+/-- Lean's lexer claims a numeric literal before any token table does, so
+    `constant` has no generated rule and `SelectorElab.sgqNegNumRule` writes the
+    sign itself. -/
 private meta def namedParts : List (String × String) := [("constant", "negation")]
 
 private meta def parseManifest : Except String RawManifest := do
@@ -282,8 +262,6 @@ private meta def parseManifest : Except String RawManifest := do
         text := ← pick s!"{c.id}.{role}" spellings,
         spellings := spellings,
         alternatives := alternativeRoles.contains s!"{c.id}.{role}" })]
-    -- a part written with no spelling behind it would look up nothing at every
-    -- use; catch it here instead
     for role in c.template.flatMap JItem.roles do
       unless parts.any (·.1 == role) do
         .error s!"{c.id}: the template is written with the part {role.quote}, \
@@ -300,7 +278,6 @@ private meta def parseManifest : Except String RawManifest := do
       template := c.template, parts,
       operators := c.operators.map (·.id) }]
 
-  -- Verify this package's own table still names live manifest entries.
   for (cid, role) in namedParts do
     let some c := cons.find? (·.id == cid)
       | .error s!"namedParts names {cid.quote}, which is not a live construct"
@@ -322,11 +299,6 @@ private meta def manifest! : CommandElabM RawManifest := do
   match parseManifest with
   | .ok m => return m
   | .error e => throwError "sgq manifest: {e}"
-
-/-! ## The id enumerations
-
-Construct, operator and part-role ids as generated enumerations, so a table
-lookup is total and a misspelling is a type error. -/
 
 private meta def enumCtor (enum : Name) (id : String) : Ident :=
   mkIdent (`SpytialLean.Sgq ++ enum ++ Name.mkSimple id)
@@ -352,60 +324,40 @@ derive_sgq_ids
 
 /-! ## The enum-carrying vocabulary -/
 
-/-- One position in a production, in source order.
-
-    `level` is the cascade level that position descends to. A subexpression
-    needs parentheses exactly when its own precedence is below the level of
-    the slot it fills — which is not always the neighbouring level, so these
-    are read rather than assumed. -/
+/-- One position in a production, in source order. `level` is the cascade level
+    that position descends to, which is not always the neighbouring one. -/
 public meta inductive Item where
-  /-- A subexpression. -/
   | operand (level : Nat)
-  /-- Zero or more subexpressions, whitespace-separated. -/
   | «repeat» (level : Nat)
-  /-- A separated argument list. -/
   | list (level : Nat) (role : Role)
-  /-- Binder groups: `x, y : dom` when `typed`, `x = e` when not. -/
+  /-- `x, y : dom` when `typed`, `x = e` when not. -/
   | binders (typed : Bool) (level : Nat)
-  /-- The bar and the body of a binder or a comprehension. -/
   | body (level : Nat)
-  /-- A bare name. -/
   | name (qualified : Bool)
-  /-- The `const` alternation: a named constant, or a numeric or string
-      literal, whose spelling the lexical sections carry. -/
+  /-- The `const` alternation; the numeric and string literals it also spells
+      are `Sel` leaves of their own. -/
   | constant
-  /-- Which operator was written. -/
   | operator
   | part (role : Role) (optional : Bool)
-  /-- A group taken as a whole or not at all (`implies … else …`). -/
   | «optional» (items : List Item)
   deriving Inhabited
 
 public meta structure Op where
   id : OpId
-  /-- The manifest's own spelling of the id, for diagnostics. -/
   name : String
   construct : ConstructId
-  /-- The spelling this package writes. One of `spellings`; its choice. -/
   text : String
   spellings : List String
-  /-- Whether the engine runs this operator: `is` parses and is refused
-      while every other comparison evaluates. -/
   evaluates : Bool
   kinds : Kinds
   arity : Arity
   deriving Repr, Inhabited
 
-/-- The cascade levels a construct's operands descend to live in its
-    `template`, which is what the parser and the encoder read; they are not
-    repeated here. -/
 public meta structure Construct where
   id : ConstructId
-  /-- The manifest's own spelling of the id: node kinds and diagnostics. -/
   name : String
   prec : Nat
   fixity : Fixity
-  /-- Whether the engine runs the construct or parses it and refuses. -/
   evaluates : Bool
   kinds : Kinds
   arity : Arity
@@ -517,46 +469,35 @@ elab "derive_sgq_tables" : command => do
 
 derive_sgq_tables
 
-/-! ## Reading the tables -/
-
 public meta def Op.of (o : OpId) : Op :=
   (ops.find? (·.id == o)).getD default
 
 public meta def Construct.of (c : ConstructId) : Construct :=
   (constructs.find? (·.id == c)).getD default
 
-/-- The manifest's own spelling of the id, for node kinds and diagnostics. -/
 public meta def constructName (c : ConstructId) : String := (Construct.of c).name
 
 public meta def opName (o : OpId) : String := (Op.of o).name
 
-/-- A role the construct spells. Total for the roles this package reads: the
-    derive command checks that a construct spells every part its template is
-    written with, and every part `namedParts` reaches by hand. -/
+/-- Total for the roles this package reads: the derive command checks that every
+    part a template or `namedParts` names has a spelling. -/
 public meta def Construct.part (c : Construct) (r : Role) : Part :=
   (c.parts.lookup r).getD { text := "", spellings := [], alternatives := false }
 
 public meta def Op.prec (o : Op) : Nat := (Construct.of o.construct).prec
 
-/-- The operator of `c` written as `s`, if any. Spellings are unique within a
-    construct, so this is a function of the atom the parser captured. -/
+/-- Spellings are unique within a construct, so at most one operator matches. -/
 public meta def Construct.operatorSpelled (c : Construct) (s : String) : Option OpId :=
   c.operators.find? fun o => (Op.of o).spellings.contains s
 
-/-- Every spelling of any of `c`'s operators, in grammar order. -/
 public meta def Construct.spellings (c : Construct) : List String :=
   c.operators.flatMap fun o => (Op.of o).spellings
 
-/-! ## Names and literals -/
-
-/-- Spellings a bare identifier cannot carry: they lex as some other token.
-    (`reserved`, declared above, is the list itself.) -/
 public meta def bareHead (c : Char) : Bool := bareHeadClass.contains c
 
 public meta def bareRest (c : Char) : Bool := bareRestClass.contains c
 
-/-- Readable spellings for characters that would otherwise ride raw. The
-    engine resolves these; anything else after the escape denotes itself. -/
+/-- The engine resolves these; anything else after the escape denotes itself. -/
 public meta def stringEscapeSpelling (c : Char) : Option Char :=
   stringEscapes.lookup c
 

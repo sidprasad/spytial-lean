@@ -10,27 +10,22 @@ open Lean Elab Command SpytialLean.ManifestJson
 /-! # The op surface, read off its manifest
 
 The op surface spytial-lean accepts *is* spytial-core's layout-spec language:
-the commands below parse `docs/spytial-language.json` from the resolved
-package and declare the id enumerations and tables.
-`docs/language-manifests.md` is the design story. -/
+the commands below parse `docs/spytial-language.json` from the resolved package
+and declare the id enumerations and tables. `docs/language-manifests.md` is the
+design story. -/
 
 -- The widget is what depends on spytial-core, so pnpm resolves it under there.
 private meta def manifestText : String :=
   include_str ".." / "widget" / "node_modules" / "spytial-core" / "docs" /
     "spytial-language.json"
 
-/-! ## The manifest format
-
-`manifestVersion` (semver) versions the manifest's own member shape — which
-members exist and what they mean — and a consumer that reads a member requires
-the minor that introduced it. This reader needs `introducedKinds`, which 1.1
-added. -/
+/-! ## The manifest format -/
 
 private meta def neededMajor : Nat := 1
+/-- A consumer needs the minor that introduced each member it reads; 1.1 added
+    `introducedKinds`. -/
 private meta def neededMinor : Nat := 1
 
-/-- The leading `MAJOR.MINOR`. Those two are the whole requirement, so whatever
-    follows the minor — a patch, a prerelease, build metadata — is not read. -/
 private meta def majorMinor (v : String) : Option (Nat × Nat) := do
   let major :: minor :: _ := v.splitOn "." | none
   return (← major.toNat?, ← minor.toNat?)
@@ -47,12 +42,8 @@ private meta def checkFormat (version? : Option String) : Except String Unit := 
     .error s!"manifestVersion is {version}; this reader needs {needed} or \
       later, within major {neededMajor}"
 
-/-! ## The language as data
+/-! ## The language as data, with ids still strings -/
 
-Ids stay strings until the enumerations exist. -/
-
-/-- The arity word an accepted form declares. Redundant with the form's own
-    column bounds, which is what makes it worth cross-checking. -/
 json_union DeclaredArity where
   | unary
   | binary
@@ -60,15 +51,13 @@ json_union DeclaredArity where
 
 deriving instance DecidableEq for DeclaredArity
 
-/-- A numeric bound, from the manifest's (exclusive)minimum/maximum. -/
 public meta structure Bound where
   value : JsonNumber
   exclusive : Bool
   deriving Repr, Inhabited
 
-/-- Validity rules for an enum-list: `atMostOneOf` forbids two values from
-    the same set; choosing a key of `narrows` restricts the whole list to
-    the named values. -/
+/-- `atMostOneOf` forbids two values from the same set; choosing a key of
+    `narrows` restricts the whole list to the named values. -/
 public meta structure EnumListRules where
   atMostOneOf : List (List String)
   narrows : List (String × List String)
@@ -82,20 +71,16 @@ json_union Section where
   | constraints
   | directives
 
-/-- What the engine does with the columns between a tuple's first and last.
-    Declared exactly where a form admits a third column. -/
+/-- What the engine does with the columns between a tuple's first and last. -/
 json_union MiddleColumns where
   | ignored
   | displayed
 
-/-- One shape a selector position accepts. `meaning` is prose the manifest
-    states for a reader and is not decoded. -/
 public meta structure JAccept where
   arity : DeclaredArity
   minColumns : Nat
   maxColumns : Option Nat
   middleColumns : Option MiddleColumns
-  /-- A sibling field that has to be set for this form to apply at all. -/
   requires : Option String
   deriving Repr, Inhabited, FromJson
 
@@ -125,16 +110,12 @@ public meta structure JDeprecated where
   replacedBy : String
   deriving Inhabited, FromJson
 
-/-- One `introducedKinds` entry: how many columns a name of that kind has. The
-    manifest's `description` is prose for a reader and is not decoded. -/
+/-- `arity` is how many columns a name of that kind has. -/
 public meta structure JIntroducedKind where
   arity : Nat
   deriving Inhabited, FromJson
 
-/-- A graph-side name a string field declares, and where the engine resolves
-    it: `referencedBy` are the `item.field` paths whose values are looked up
-    against names of this kind. A reference from anywhere else is not. `kind`
-    is a key of `introducedKinds`, which is where its arity comes from. -/
+/-- `kind` is a key of `introducedKinds`, which is where its arity comes from. -/
 public meta structure JIntroduces where
   kind : String
   referencedBy : List String
@@ -149,8 +130,6 @@ public meta structure JField where
   deprecated : Option JDeprecated
   deriving Inhabited, FromJson
 
-/-- The fields that are an item's entire effect, named rather than left to a
-    rule the reader would have to reapply. -/
 public meta structure JInertWhenBare where
   effectFields : List String
   deriving Inhabited, FromJson
@@ -161,7 +140,6 @@ public meta structure JItem where
   sections : Option (List Section)
   valueShape : Option ValueShape
   supportsHold : Option Bool
-  /-- Set where the item's whole effect is the fields it names. -/
   inertWhenBare : Option JInertWhenBare
   fields : Option (List Json)
   deprecated : Option JDeprecated
@@ -179,10 +157,8 @@ public meta structure JHold where
   supportedBy : List String
   deriving Inhabited, FromJson
 
-/-- The provenance block a generator stamps an op with. `supportedBy` is where
-    core parses it, `displayedBy` where it reads it back out — the ops whose
-    conflict reports quote the author's own text instead of core's rendering
-    of the rule. -/
+/-- `supportedBy` is where core parses the provenance stamp, `displayedBy`
+    where it reads it back out. -/
 public meta structure JSource where
   field : String
   fields : List Json
@@ -206,18 +182,13 @@ public meta structure JManifest where
 /-! ## Choices the manifest leaves open
 
 The manifest describes core's YAML surface; how its fields lay out as Lean
-arguments is this package's own choice. Each table is keyed by manifest ids,
-and `parseManifest` rejects an entry naming an id the manifest no longer
-has. -/
+arguments is this package's own choice. -/
 
 /-- Items where an optional selector may lead the argument list even though the
-    manifest does not list it first. Without an entry a selector leads only
-    when it is the item's first field (`atomStyle`); `size` lists it last, but
-    `size (lo) 30 20` reads better than `size 30 20 (lo)`. -/
+    manifest does not list it first: `size (lo) 30 20` reads better than
+    `size 30 20 (lo)`. -/
 private meta def leadingSelectorOverride : List String := ["size"]
 
-/-- Bare words that set a boolean field, where a `(showLabel false)` keyword
-    would be noise. -/
 private meta def boolSugarTable : List (String × String × Bool) :=
   [("labels", "showLabel", true), ("noLabels", "showLabel", false)]
 
@@ -227,7 +198,6 @@ private meta structure RawSelForm where
   min : Nat
   max : Option Nat
   requires : Option String
-  /-- The form admits a third column and the engine discards it. -/
   middlesIgnored : Bool
 
 private meta inductive RawFieldType where
@@ -287,8 +257,7 @@ private meta structure RawManifest where
   deprecatedItems : List (String × String)
   deprecatedFields : List (String × String)
 
-/-- The kinds a name can be introduced as, and the arity each carries. Data
-    rather than a rule restated here, so a kind added upstream needs no edit. -/
+/-- Data, not a rule restated here: a kind added upstream needs no edit. -/
 private meta abbrev IntroducedKinds := List (String × Nat)
 
 private meta def introducedKinds (o : JsonObject) : Except String IntroducedKinds :=
@@ -311,9 +280,8 @@ private meta def bound (incl excl : Option JsonNumber) : Except String (Option B
   | none, some n => .ok (some ⟨n, true⟩)
   | none, none => .ok none
 
-/-- An accepted form's column bounds, checked against the arity word beside
-    them: the bounds are what the elaborator uses, so a disagreement means one
-    of the two moved upstream and this reading is stale. -/
+/-- The column bounds are what the elaborator uses, so a disagreement with the
+    arity word means one of the two moved upstream and this reading is stale. -/
 private meta def selForm (a : JAccept) : Except String RawSelForm := do
   let agrees := match a.arity with
     | .unary => a.minColumns == 1 && a.maxColumns == some 1
@@ -322,8 +290,6 @@ private meta def selForm (a : JAccept) : Except String RawSelForm := do
   unless agrees do
     .error s!"an accepted form's arity word and its column bounds \
       ({a.minColumns}, {repr a.maxColumns}) disagree"
-  -- Stated exactly where a tuple can have a middle column, so the elaborator
-  -- can say when one is about to be thrown away.
   match a.maxColumns.any (· ≤ 2), a.middleColumns with
   | false, none =>
     .error s!"an accepted form admitting more than two columns \
@@ -386,9 +352,6 @@ private meta def fieldOf (kinds : IntroducedKinds) (itemId : String) (j : Json) 
     return { field := name, arity, referencedBy := i.referencedBy }
   return some { name, type, required := c.required.getD false, alt, introduces }
 
-/-- One manifest item to a `RawItem`: decode, drop it if deprecated, then lay
-    its fields out as Lean arguments — positional order, the leading selector —
-    and read the members that say what it introduces and what makes it inert. -/
 private meta def itemOf (kinds : IntroducedKinds) (j : Json) :
     Except String (Option RawItem) := do
   let i : JItem ← fromJson? j
@@ -402,8 +365,8 @@ private meta def itemOf (kinds : IntroducedKinds) (j : Json) :
     | s => .error (here s!"no representation for sections {repr s}")
   let some shape := i.valueShape | .error (here "no valueShape")
   let fields ← (i.fields.getD []).filterMapM (fieldOf kinds id)
-  -- A scalar item serializes as its one field's value (`Spec.lean`), which
-  -- leaves nowhere to put a second field or a `hold`.
+  -- A scalar item serializes as its one field's value (`Spec.lean`), leaving
+  -- nowhere for a second field or a `hold`.
   let scalar := shape matches .scalar
   let supportsHold := i.supportsHold.getD false
   if scalar then
@@ -411,7 +374,6 @@ private meta def itemOf (kinds : IntroducedKinds) (j : Json) :
       .error (here s!"no representation for a scalar item with {fields.length} fields")
     if supportsHold then
       .error (here "no representation for a scalar item that supports hold")
-  -- Surface order: required non-block fields positionally, in manifest order.
   for f in fields do
     if f.required && f.type.isBlock then
       .error s!"{id}.{f.name}: a required block has no positional surface"
@@ -463,8 +425,6 @@ private meta def blockOf (kinds : IntroducedKinds) (b : JBlock) :
       .error s!"{b.name}.{f.name}: a block leaf introduces no graph-side name"
   return { name := b.name, fields }
 
-/-- Every id a field contributes: its own, plus the enum and block fields its
-    alternative form spells. -/
 private meta def RawField.ids (f : RawField) : List String :=
   f.name :: match f.alt with
     | some a => a.enumField :: a.blocks.map (·.1)
@@ -472,14 +432,13 @@ private meta def RawField.ids (f : RawField) : List String :=
 
 private meta def parseManifest : Except String RawManifest := do
   let json ← Json.parse manifestText
-  -- Ahead of the record, so a manifest too old to carry a member says that
+  -- Ahead of the record, so a manifest too old to carry a member says so
   -- rather than failing by the member's name.
   checkFormat (← member (Option String) json "manifestVersion")
   let m : JManifest ← fromJson? json
   let rawItems ← member (Array Json) json "items"
   let kinds ← introducedKinds m.introducedKinds
 
-  -- The document section names are load-bearing for the lowering.
   unless m.document.sections matches [.constraints, .directives] do
     .error "document.sections moved; the lowering's section names are stale"
 
@@ -507,8 +466,7 @@ private meta def parseManifest : Except String RawManifest := do
           deprecatedFields := deprecatedFields ++ [(s!"{i.id}.{f.name}", d.replacedBy)]
 
   -- A reference site is a position in the manifest's own surface, deprecated
-  -- ones included: it says where the engine resolves the name, not where this
-  -- package writes it.
+  -- ones included: where the engine resolves the name, not where we write it.
   for i in items do
     if let some intro := i.introduces then
       for path in intro.referencedBy do
@@ -516,7 +474,6 @@ private meta def parseManifest : Except String RawManifest := do
           .error s!"{i.id}.{intro.field}: introduces.referencedBy names \
             {path.quote}, which is not a field"
 
-  -- Verify this package's own tables still name live manifest entries.
   for id in leadingSelectorOverride do
     unless items.any (·.id == id) do
       .error s!"leadingSelectorOverride names {id.quote}, which is not a live item"
@@ -536,9 +493,9 @@ private meta def parseManifest : Except String RawManifest := do
       .error s!"boolSugar {word.quote} names the field {fname.quote}, \
         which no live item has"
 
-  -- Hold support is stated twice, per item and as one list, so each side
-  -- checks the other. `supportedBy` may also name a deprecated item, which the
-  -- liveness check above allows and this loop does not see.
+  -- Hold support is stated twice, per item and as one list, so each side checks
+  -- the other. `supportedBy` may also name a deprecated item, which this loop
+  -- does not see.
   for i in items do
     let listed := m.hold.supportedBy.contains i.id
     unless i.supportsHold == listed do
@@ -576,10 +533,8 @@ private meta def manifest! : CommandElabM RawManifest := do
 
 /-! ## The id enumerations
 
-Item, block and field ids as generated enumerations, so a table lookup is
-total and a misspelling is a type error. Field ids are global: the same name
-is the same serialized key wherever it appears, and `fieldName` is the key a
-field lowers to (also its keyword-argument spelling). -/
+Generated enumerations, so a table lookup is total and a misspelling is a type
+error. `fieldName` is the key a field lowers to, and its keyword spelling. -/
 
 private meta def enumCtor (enum : Name) (id : String) : Ident :=
   mkIdent (`SpytialLean.SpecLang ++ enum ++ Name.mkSimple id)
@@ -596,7 +551,6 @@ private meta def declareAll (all enum : Name) (ids : List String) : CommandElabM
   elabCommand (← `(public meta def $(mkIdent all):ident :
       List $(mkIdent enum):ident := [$refs,*]))
 
-/-- The manifest's own spelling of each id, as a total function. -/
 private meta def declareNames (fn enum : Name) (ids : List String) : CommandElabM Unit := do
   let alts : Array (TSyntax ``Lean.Parser.Term.matchAlt) ← ids.toArray.mapM fun s =>
     `(Lean.Parser.Term.matchAltExpr| | $(enumCtor enum s):term => $(quote s):term)
@@ -627,32 +581,26 @@ public meta structure AltForm where
   blocks : List (FieldId × BlockId)
   deriving Repr, Inhabited
 
-/-- One shape a selector position accepts: the tuple widths it takes, and a
-    sibling field that has to be set alongside for the form to apply at all
-    (`inferredEdge`'s unary form needs `draw`). `max` absent is no upper
-    bound. -/
+/-- One shape a selector position accepts. `requires` is a sibling field that
+    has to be set alongside for the form to apply at all (`inferredEdge`'s unary
+    form needs `draw`); `max` absent is no upper bound. -/
 public meta structure SelForm where
   min : Nat
   max : Option Nat
   requires : Option FieldId
-  /-- The engine keeps only the first and last column of a tuple this wide
-      (`middleColumns`); `inferredEdge` and `tag` are the positions that
-      instead show them. -/
+  /-- The engine keeps only the first and last column of a tuple this wide;
+      `inferredEdge` and `tag` are the positions that instead show them. -/
   middlesIgnored : Bool
   deriving Repr, Inhabited
 
-/-- A graph-side name an op introduces: the string field that spells it, how
-    many columns the thing it names has, and the `item.field` positions where
-    the engine resolves such a name. A reference from anywhere else is never
-    looked up — selectors evaluate against the data instance, and the field
-    positions that are not listed match before the name exists. -/
+/-- `referencedBy` are the `item.field` positions where the engine resolves such
+    a name; a reference from anywhere else is never looked up. -/
 public meta structure Introduces where
   field : FieldId
   arity : Nat
   referencedBy : List String
   deriving Repr, Inhabited
 
-/-- What a field holds. Drives parsing, checking, and lowering alike. -/
 public meta inductive FieldType where
   | selector (forms : List SelForm)
   /-- A relation name from the walker's vocabulary. -/
@@ -665,7 +613,6 @@ public meta inductive FieldType where
   | block (id : BlockId)
   /-- A bundled icon name, icon-pack reference, URL, or path. -/
   | iconPath
-  /-- Any CSS color. -/
   | color
   deriving Repr, Inhabited
 
@@ -685,21 +632,16 @@ public meta structure ItemSpec where
   scalar : Bool
   supportsHold : Bool
   fields : List FieldSpec
-  /-- Required fields, in surface order: these are the positional
-      arguments. A trailing enum-list is variadic. -/
+  /-- Required fields in surface order; a trailing enum-list is variadic. -/
   positional : List FieldId
   /-- An optional selector that may fill the leading positional slot. -/
   leadingSelector : Option FieldId
-  /-- The graph-side name this op introduces, for later ops in the same spec
-      to reference. -/
   introduces : Option Introduces
-  /-- The fields that are this item's entire effect (`inertWhenBare`): an
-      instance setting none of them parses and does nothing, which elaboration
-      rejects. Empty for an item that is not inert when bare. -/
+  /-- The fields that are this item's entire effect: an instance setting none of
+      them parses and does nothing, which elaboration rejects. -/
   effectFields : List FieldId
   /-- Core reads this op's `source` stamp back out, so carrying one buys a
-      conflict report that quotes the author. Elsewhere it parses and is
-      ignored, and the stamp is left off. -/
+      conflict report that quotes the author. Elsewhere the stamp is left off. -/
   displaysSource : Bool
   deriving Repr, Inhabited
 
@@ -710,15 +652,8 @@ public meta structure BlockSpec where
 
 /-! ## The tables
 
-One command declares them all. `items` and `blocks` are the language itself.
 `holdField`/`holdValues`/`holdDefault` are `hold: never`, which negates a
-constraint — item-level rather than a field, so which items take it is
-`ItemSpec.supportsHold`, cross-checked above against the manifest's own
-`hold.supportedBy`. `sourceField` is the key the provenance stamp rides under,
-likewise item-level as `ItemSpec.displaysSource`. `boolSugar` is the bare words
-above, resolved to field ids. `deprecatedItems` and `deprecatedFields` are the
-account of the surface we decline, so a coverage test can insist nothing is
-dropped silently. -/
+constraint; `sourceField` is the key the provenance stamp rides under. -/
 
 private meta instance : Quote Int := ⟨fun
   | .ofNat n => Syntax.mkCApp ``Int.ofNat #[quote n]
@@ -813,11 +748,9 @@ public meta def ItemSpec.field? (i : ItemSpec) (f : FieldId) : Option FieldSpec 
 public meta def BlockSpec.field? (b : BlockSpec) (f : FieldId) : Option FieldSpec :=
   b.fields.find? (·.id == f)
 
-/-- The item a surface keyword names. -/
 public meta def itemOfKey? (s : String) : Option ItemId :=
   allItems.find? fun i => itemName i == s
 
-/-- The block a keyword argument names, within an item's field list. -/
 public meta def blockOfKey? (s : String) : Option BlockId :=
   allBlocks.find? fun b => blockName b == s
 

@@ -24,10 +24,8 @@ public def parity : Bool → Nat
   | true => 1
   | false => 0
 
-/-! ## Stuck matches emit one ternary `scrutinee`
-
-`(match, position, discriminant)`: the position is a walked atom, not part of
-the relation's name. -/
+/-! ## Stuck matches emit one ternary `scrutinee`, `(match, position,
+discriminant)`: the position is a walked atom, not part of the relation name. -/
 
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `t (mkConst ``MTree) fun t => do
@@ -58,9 +56,7 @@ the relation's name. -/
     unless got == #[#["Nat", "Nat", "MTree"], #["Nat", "Nat", "Bool"]] do
       throwError "scrutinee.binary.tuple-types: got {toString (repr got)}"
 
-/-! ## Every column carries its own type
-
-The child's type, not a second copy of the owner's. -/
+/-! ## Every column carries its own type, not a copy of the owner's -/
 
 #eval show MetaM Unit from do
   let cell := mkApp2 (mkConst ``Cell.mk) (mkRawNatLit 3) (mkStrLit "x")
@@ -75,10 +71,9 @@ The child's type, not a second copy of the owner's. -/
   assertCanon "types.projection" (← relationalize (mkConst ``mystery))
     "Cell|Cell\nNat|mystery.1\nString|mystery.2\ntag[Cell,String]:0,2\nvalue[Cell,Nat]:0,1"
 
-/-! ## Enumerable function fields are flat n-ary tables
-
-One `(owner, d₁, …, dₖ, result)` relation per field, over the whole domain
-product, lexicographic with the first binder outermost. -/
+/-! ## Enumerable function fields are flat n-ary tables: one
+`(owner, d₁, …, dₖ, result)` relation per field over the whole domain product,
+lexicographic with the first binder outermost. -/
 
 public structure BoolF where
   f : Bool → Nat
@@ -138,10 +133,8 @@ public def mixedVal : Mixed := { m := fun b s => if b then s.length else 0 }
   assertCanon "table.product" (← relationalize (mkConst ``daVal))
     "DA|mk\nQ|q0\nQ|q1\nQ|q2\nBool|false\nBool|true\ntr[DA,Q,Bool,Q]:0,1,4,1;0,1,5,2;0,2,4,3;0,2,5,1;0,3,4,2;0,3,5,3"
 
-/-! ## What stays a labeled λ leaf
-
-A non-enumerable domain — in any binder position — and a domain product over
-`maxTableTuples` keep the λ atom and the binary owner→field edge. -/
+/-! ## What stays a labeled λ leaf: a non-enumerable domain in any binder
+position, and a domain product over `maxTableTuples`. -/
 
 #eval show MetaM Unit from do
   assertCanon "table.nonenum" (← relationalize (mkConst ``procVal))
@@ -155,9 +148,7 @@ A non-enumerable domain — in any binder position — and a domain product over
   assertCanon "table.cap" (← relationalize (mkConst ``daVal) { maxTableTuples := 3 })
     "DA|mk\nQ → Bool → Q|λ q\ntr[DA,Q → Bool → Q]:0,1"
 
-/-! ## Root-level functions tabulate under `maps`
-
-No field owns them, so the λ atom is column 0. -/
+/-! ## Root-level functions tabulate under `maps`, the λ atom in column 0 -/
 
 private meta def boolLam : MetaM Expr :=
   withLocalDeclD `b (mkConst ``Bool) fun b => do
@@ -167,10 +158,8 @@ private meta def boolLam : MetaM Expr :=
   assertCanon "table.root" (← relationalize (← boolLam))
     "Bool → Nat|λ b\nBool|false\nBool|true\nNat|0\nNat|1\nmaps[Bool → Nat,Bool,Nat]:0,1,3;0,2,4"
 
-/-! ## Decidable `Prop` codomains are relation tuples
-
-No result column; a tuple exactly where the proposition decides true. One
-undecided point bails the whole table. -/
+/-! ## Decidable `Prop` codomains are relation tuples: no result column, a tuple
+exactly where the proposition decides true. One undecided point bails it all. -/
 
 public structure PropRel where
   rel : Q → Q → Prop
@@ -184,7 +173,6 @@ public structure Sparse where
 
 public def sparseVal : Sparse := { rel := fun a b => a = Q.q0 ∧ b = Q.q1 }
 
-/-- Decidably never: registered with no tuples. -/
 public structure Never where
   rel : Q → Q → Prop
 
@@ -192,7 +180,6 @@ public def neverVal : Never := { rel := fun _ _ => False }
 
 opaque myProp : Q → Prop
 
-/-- Nothing decides `myProp`: the field keeps its λ leaf. -/
 public structure Undec where
   p : Q → Prop
 
@@ -216,10 +203,8 @@ public def undecVal : Undec := { p := fun q => myProp q }
 
 /-! ### A set is the same table
 
-`Set α` is `α → Prop` (defined here; Mathlib is not on this path). An
-`Insert`/`Singleton` literal whnfs to a lambda, but `Decidable` does not
-synthesize through the residual membership, so it stays a leaf; sets written
-as a decidable predicate tabulate. -/
+`Decidable` does not synthesize through an `Insert`/`Singleton` literal's
+residual membership, so a set written as a literal stays a leaf. -/
 
 @[expose] public def Set (α : Type) : Type := α → Prop
 
@@ -288,12 +273,9 @@ public def propRelIVal : PropRelI :=
   assertCanon "prop.identity" (← relationalize (mkConst ``propRelIVal))
     "PropRelI|mk\nQI|q0\nQI|q2\nQI|q1\nrel[PropRelI,QI,QI]:0,1,1;0,1,2;0,3,3;0,2,2"
 
-/-! ## The two-pass reference walks the same tables -/
-
-/-! ## A DA reaches its table through its parent subobject
-
-`tr`'s owner column is the subobject atom, not the automaton. The `Fin`
-instance is derived mid-file so `table.fin` above stays unmerged. -/
+/-! ## A DA reaches its table through its parent subobject: `tr`'s owner column
+is the subobject atom. The `Fin` instance is derived here, not above, so
+`table.fin` stays unmerged. -/
 
 deriving instance SpytialIdentity for Fin
 
@@ -334,9 +316,8 @@ public def subDAFin : SubDA (Fin 3) Bool where
   assertMatchesReference "diff.prop.identity" (mkConst ``propRelIVal)
   assertMatchesReference "diff.table.subobject" (mkConst ``subDAFin)
 
-/-! ## A `Prop` behind a definition still tabulates
-
-`Decidable (Linked a b)` matches nothing until `Linked` unfolds. -/
+/-! ## A `Prop` behind a definition still tabulates — `Decidable (Linked a b)`
+matches nothing until `Linked` unfolds. -/
 
 public def Linked (a b : Bool) : Prop := a = b
 
@@ -349,10 +330,8 @@ public def boxed : Boxed := { rel := fun a b => Linked a b }
   assertCanon "prop.behind.def" (← relationalize (mkConst ``boxed))
     "Boxed|mk\nBool|false\nBool|true\nrel[Boxed,Bool,Bool]:0,1,1;0,2,2"
 
-/-! ## A field name outside Lean's identifier alphabet
-
-The guillemets are source syntax for writing the name, not part of it, so the
-emitted relation is `∈`. -/
+/-! ## A field name outside Lean's identifier alphabet: the guillemets are
+source syntax, not part of the name, so the relation is `∈`. -/
 
 public structure SMem where
   «∈» : Nat

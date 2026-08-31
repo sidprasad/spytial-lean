@@ -32,7 +32,6 @@ def daFin : DA (Fin 3) Bool where
 
 #spytial daFin
 
-/-- The same automaton over named states. -/
 inductive St where | s0 | s1 | s2
   deriving DecidableEq, SpytialIdentity
 
@@ -48,7 +47,7 @@ def daSt : DA St Bool where
 
 #spytial daSt
 
-/-- Nondeterministic: `Tr` tabulates a tuple wherever it decides true. -/
+/-- `Tr` tabulates a tuple wherever it decides true. -/
 structure NA (State Symbol : Type) where
   Tr : State → Symbol → State → Prop
   start : State → Prop

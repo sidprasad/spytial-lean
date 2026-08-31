@@ -23,8 +23,7 @@ def BDD.reduce : BDD → BDD
     let hi := hi.reduce
     if lo == hi then lo else .node v lo hi
 
-/-- `f(x₁,x₂,x₃) = x₁ ∧ x₃` — the middle variable is irrelevant, so reduction
-    has something to do. -/
+/-- The middle variable is irrelevant, so reduction has something to do. -/
 def fTree : BDD := expand (fun bs => bs.getD 0 false && bs.getD 2 false) 3 []
 
 def fReduced : BDD := fTree.reduce
@@ -38,13 +37,11 @@ spytial_spec BDD [
   hideAtom Nat
 ]
 
--- 1. As written: the expansion's full tree, every occurrence its own atom.
+-- `Raw.mk` opts out of the identity lens: every occurrence stays its own atom.
 #spytial (Raw.mk fTree)
 
--- 2. Declared sharing: equal sub-BDDs merge. Same value, different lens.
 #spytial fTree
 
--- 3. The ROBDD: `reduce` removed the redundant tests, the lens kept the sharing.
 #spytial fReduced
 
 open Lean Meta in
