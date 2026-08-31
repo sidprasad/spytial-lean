@@ -526,14 +526,17 @@ private meta def parseManifest : Except String RawManifest := do
       .error s!"house style: boolSugar {word.quote} names the field {fname.quote}, \
         which no live item has"
 
-  -- Hold support is per-item in the manifest but our table wants it resolved.
+  -- Hold support is stated twice, per item and as one list, so each side
+  -- checks the other. `supportedBy` may also name a deprecated item, which the
+  -- liveness check above allows and this loop does not see.
+  for i in items do
+    let listed := m.hold.supportedBy.contains i.id
+    unless i.supportsHold == listed do
+      .error s!"{i.id}: items[].supportsHold is {i.supportsHold} but \
+        hold.supportedBy {if listed then "lists" else "does not list"} it"
+
   let items := items.map fun i =>
-    { i with supportsHold := i.supportsHold && m.hold.supportedBy.contains i.id,
-             displaysSource := m.source.displayedBy.contains i.id }
-  for id in m.hold.supportedBy do
-    if let some i := items.find? (·.id == id) then
-      unless i.supportsHold do
-        .error s!"{id}: hold.supportedBy and items[].supportsHold disagree"
+    { i with displaysSource := m.source.displayedBy.contains i.id }
 
   -- Field ids are global across items, blocks and the source stamp: the same
   -- name means the same serialized key everywhere.
