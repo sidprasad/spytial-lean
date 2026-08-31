@@ -7,10 +7,11 @@ open SpytialLean
 Parent pointers are functions: sharing a parent means sharing a vertex, not copying a subtree.
 A root points to itself. The concrete views below hide those self-edges and mark roots in green.
 
-The proof-local inspection is in `Reaches.undo_link`, where a path uses the new shortcut. The
-picture explains the next proof step: replace that edge with an old path and append the suffix
-provided by the induction hypothesis. Dashed path edges stand for any number of parent steps;
-they do not invent concrete intermediate vertices. The snapshots are just concrete context.
+The proof-local inspections follow the algorithm: after a recursive lookup, what connects the
+current vertex to the returned root? After both union lookups, which vertices will be linked?
+Solid parent edges are individual pointer steps. Dashed reachability edges stand for any number
+of steps; the proof has not exposed their intermediate vertices. The snapshots provide concrete
+examples, but the proof inspections use only the symbolic values and facts in their local context.
 
 This is a small, unranked implementation. Lookup has a fuel bound and returns `none` on exhaustion
 (including on a cycle), rather than pretending it found a root. Compression redirects just the
@@ -120,8 +121,21 @@ theorem find?_sound (parent : α → α) (fuel : Nat) (x root : α)
       exact ⟨.refl x, hx⟩
     · have rest : find? parent fuel (parent x) = some root := by
         simpa [find?, hx] using found
-      obtain ⟨path, isRoot⟩ := ih (parent x) rest
-      exact ⟨.step rfl path, isRoot⟩
+      generalize edge : parent x = next at rest
+      obtain ⟨path, isRoot⟩ := ih next rest
+      -- The recursive call establishes next ⇝ root, not x ⇝ root.
+      -- Inspect the one pointer still to prepend: x → next. The root's self-loop is isRoot.
+      -- Omit the fuel, Option wrappers, and lookup equations; keep pointers and proved paths.
+      spytial x with [
+        inferredEdge remaining univ.Reaches (lineStyle "#2563eb" dashed),
+        hideField Reaches,
+        hideField «find?»,
+        hideAtom Nat + Option + Reaches.univ.univ,
+        orientation parent - iden above,
+        orientation univ.Reaches - iden above,
+        atomStyle {v : univ | v->v in parent} (fillStyle "#dcfce7")
+      ]
+      exact ⟨.step edge path, isRoot⟩
 
 /-! ## Union: redirect a root, not the queried vertex
 
@@ -161,8 +175,20 @@ theorem union_roots (parent : α → α) (fuel : Nat) (x y rx ry : α)
     union? parent fuel x y = some (link parent rx ry) ∧
       Reaches (link parent rx ry) x ry ∧ Reaches (link parent rx ry) y ry ∧
       link parent rx ry ry = ry := by
-  obtain ⟨pathX, _⟩ := find?_sound parent fuel x rx hx
+  obtain ⟨pathX, rootX⟩ := find?_sound parent fuel x rx hx
   obtain ⟨pathY, rootY⟩ := find?_sound parent fuel y ry hy
+  -- The queries started at x and y, but the update below is rx → ry, not x → y.
+  -- Inspect both paths and the self-parent facts that identify the roots before linking them.
+  -- These are arbitrary vertices: the context does not assert that rx and ry are distinct.
+  spytial x with [
+    inferredEdge reaches univ.Reaches (lineStyle "#2563eb" dashed),
+    hideField Reaches,
+    hideField «find?»,
+    hideAtom Nat + Option + Reaches.univ.univ,
+    orientation univ.Reaches - iden above,
+    align ((parent & iden).univ -> (parent & iden).univ) horizontal,
+    atomStyle {v : univ | v->v in parent} (fillStyle "#dcfce7")
+  ]
   exact ⟨by simp [union?, hx, hy], pathX.link_target ry,
     pathY.link_root rx, link_isRoot parent rx ry rootY⟩
 
@@ -183,20 +209,7 @@ theorem Reaches.undo_link {parent : α → α} {target root x y : α}
     · subst x
       have he : root = next := by simpa [link] using edge
       cases he
-      -- The path took the shortcut target → root. Why does it still exist in the old forest?
-      -- Draw the orange single step next to the blue old paths: target ⇝ root (shortcut)
-      -- and root ⇝ y (ih). Replacing the orange edge and concatenating gives the goal.
-      -- Reaches has columns (parent map, start, end); select the old map from link's first
-      -- column. The last two columns of link are the single step. The maps themselves are hidden.
-      spytial target with [
-        inferredEdge oldPath link.univ.univ.univ.univ.Reaches (lineStyle "#2563eb" dashed),
-        inferredEdge shortcut univ.(univ.(univ.link)) (lineStyle "#d97706"),
-        hideField Reaches,
-        hideField link,
-        hideAtom Reaches.univ.univ,
-        orientation univ.Reaches - iden below,
-        align univ.Reaches vertical
-      ]
+      -- Expand the shortcut into its old path, then append the induction hypothesis's suffix.
       exact shortcut.trans ih
     · exact .step (by simpa [link, hx] using edge) ih
 

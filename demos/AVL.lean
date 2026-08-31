@@ -4,11 +4,6 @@ open SpytialLean
 
 /-!
 # Inspecting an AVL proof
-
-This is an ordinary AVL development. The inspections answer two questions that would invite
-a drawing while explaining the proof: why the middle subtree can change sides during a rotation
-(`IsBST_rotateRight`), and why the left-right case needs an inner rotation (`IsBST_balance`).
-Place the cursor on a `spytial` call at those points in the proof.
 -/
 
 /-
@@ -20,13 +15,15 @@ inductive Tree where
   | node (left : Tree) (key : Nat) (right : Tree)
 
 spytial_spec Tree [
-  attribute key,
   orientation left - Tree->{t : Tree | @:t = leaf} left below,
   orientation right - Tree->{t : Tree | @:t = leaf} right below,
   align {x, y : Tree | @:x != leaf and @:y != leaf and (x.~(left + right) = y.~(left+right))} horizontal,
-  hideAtom key[Tree],
-  hideAtom {t : Tree | @:t = leaf}
+  attribute key,
+  hideAtom {x : Tree | @:x = leaf}
 ]
+
+-- And an example tree here.
+#spytial (Tree.node (Tree.node Tree.leaf 1 Tree.leaf) 2 (Tree.node Tree.leaf 3 Tree.leaf))
 
 
 def contains (x : Nat) : Tree → Bool
@@ -116,38 +113,86 @@ def AVLTree.toBST (t : AVLTree) : BSTree := ⟨t.1, t.2.1⟩
 -- Rotations. Local, constant-size tree surgery; no invariant assumed.
 -- ---------------------------------------------------------------------
 
-def rotateRight : Tree → Tree
-  | .node (.node ll lx lr) x r => .node ll lx (.node lr x r)
-  | t => t
+def rotateRight (t : Tree) : Tree := by
+  spytial t                            -- At entry
+  exact match t with
+    | before@(.node (.node ll lx lr) x r) => by
+        spytial before                 -- Before rotation
+        let after := Tree.node ll lx (.node lr x r)
+        spytial after                  -- After rotation
+        exact after
+    | other => other
 
-def rotateLeft : Tree → Tree
-  | .node l x (.node rl rx rr) => .node (.node l x rl) rx rr
-  | t => t
+def rotateLeft (t : Tree) : Tree := by
+  spytial t                            -- At entry
+  exact match t with
+    | before@(.node l x (.node rl rx rr)) => by
+        spytial before                 -- Before rotation
+        let after := Tree.node (.node l x rl) rx rr
+        spytial after                  -- After rotation
+        exact after
+    | other => other
 
 /-- Re-balance a node whose children are each already balanced but may
     differ from each other in height by up to 2 (the amount a single
     insertion can produce). Standard four-case (LL/LR/RL/RR) dispatch. -/
-def balance (t : Tree) : Tree :=
-  match t with
+def balance (t : Tree) : Tree := by
+  spytial t observing [height]         -- At entry, before any shape is known
+  exact match t with
   | .leaf => .leaf
-  | .node l x r =>
-    if height l > height r + 1 then
+  | before@(.node l x r) =>
+    if hLeft : height l > height r + 1 then
       match l with
-      | .node ll _ lr =>
-        if height lr > height ll then
-          rotateRight (.node (rotateLeft l) x r)  -- LR case
-        else
-          rotateRight t                            -- LL case
-      | .leaf => t
-    else if height r > height l + 1 then
+      | .node ll lx lr =>
+        if hInner : height lr > height ll then by
+          -- LR: expose the inner subtree so both rotations can compute symbolically.
+          cases lr with
+          | leaf => simp [height] at hInner
+          | node a y b =>
+            let left := Tree.node ll lx (.node a y b)
+            let before := Tree.node left x r
+            spytial before observing [height]  -- The left-right bend
+            let middle := Tree.node (rotateLeft left) x r
+            spytial middle observing [height]  -- After rotating the child left
+            let after := rotateRight middle
+            spytial after observing [height]   -- After rotating the parent right
+            exact after
+        else by
+          -- LL: rotate the parent right; lr moves across to x's left.
+          let before := Tree.node (.node ll lx lr) x r
+          spytial before observing [height]
+          let after := rotateRight before
+          spytial after observing [height]
+          exact after
+      | .leaf => before
+    else if hRight : height r > height l + 1 then
       match r with
-      | .node rl _ rr =>
-        if height rl > height rr then
-          rotateLeft (.node l x (rotateRight r))   -- RL case
-        else
-          rotateLeft t                              -- RR case
-      | .leaf => t
-    else t
+      | .node rl rx rr =>
+        if hInner : height rl > height rr then by
+          -- RL: the mirror image, with a right rotation of the child first.
+          cases rl with
+          | leaf => simp [height] at hInner
+          | node a y b =>
+            let right := Tree.node (.node a y b) rx rr
+            let before := Tree.node l x right
+            spytial before observing [height]  -- The right-left bend
+            let middle := Tree.node l x (rotateRight right)
+            spytial middle observing [height]  -- After rotating the child right
+            let after := rotateLeft middle
+            spytial after observing [height]   -- After rotating the parent left
+            exact after
+        else by
+          -- RR: one left rotation, moving rl across to x's right.
+          let before := Tree.node l x (.node rl rx rr)
+          spytial before observing [height]
+          let after := rotateLeft before
+          spytial after observing [height]
+          exact after
+      | .leaf => before
+    else by
+      -- Neither side exceeds the height threshold: the tree is returned unchanged.
+      spytial before observing [height]
+      exact before
 
 def avlInsert (x : Nat) : Tree → Tree
   | .leaf => .node .leaf x .leaf
@@ -184,23 +229,38 @@ theorem contains_rotateLeft (z : Nat) (t : Tree) :
 
 theorem contains_balance (z : Nat) (t : Tree) :
     contains z (balance t) = contains z t := by
-  unfold balance
-  split
-  · rfl
-  · split
-    · split
-      · split
-        · rw [contains_rotateRight]
-          simp [contains, contains_rotateLeft]
+  cases t with
+  | leaf => rfl
+  | node l x r =>
+    simp only [balance]
+    split
+    · cases l with
+      | leaf => rfl
+      | node ll lx lr =>
+        dsimp only
+        split
+        · rename_i hInner
+          cases lr with
+          | leaf => simp [height] at hInner
+          | node a y b =>
+            dsimp only
+            rw [contains_rotateRight]
+            simp [contains, contains_rotateLeft]
         · exact contains_rotateRight z _
-      · rfl
     · split
-      · split
-        · split
-          · rw [contains_rotateLeft]
-            simp [contains, contains_rotateRight]
+      · cases r with
+        | leaf => rfl
+        | node rl rx rr =>
+          dsimp only
+          split
+          · rename_i hInner
+            cases rl with
+            | leaf => simp [height] at hInner
+            | node a y b =>
+              dsimp only
+              rw [contains_rotateLeft]
+              simp [contains, contains_rotateRight]
           · exact contains_rotateLeft z _
-        · rfl
       · rfl
 
 -- ---------------------------------------------------------------------
@@ -234,7 +294,7 @@ theorem IsBST_rotateRight (x : Nat) (ll : Tree) (lx : Nat) (lr r : Tree)
     -- lx < z < x. `fyi` instantiates the existing bounds h3b and h1 for the inspection;
     -- the proof still has to apply h1 below. None of the subtrees needs to be concrete.
     -- Keep keys as vertices here: unlike the usual tree layout, the ordering is the point.
-    spytial (Tree.node ll lx lr) fyi [h1, h3b]
+    spytial (Tree.node ll lx lr) observing [height] with [.., hideField IsBST]
     exact h1 z hzLeft
 
 theorem IsBST_rotateLeft (x : Nat) (l rl : Tree) (rx : Nat) (rr : Tree)

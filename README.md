@@ -43,8 +43,8 @@ lake build
 Open a file in `demos/` and place your cursor on a `#spytial` line. The infoview panel will show the diagram.
 
 For proof-local inspection, [demos/AVL.lean](demos/AVL.lean) draws the bounds that let a subtree
-change sides during rotation. [demos/UnionFind.lean](demos/UnionFind.lean) draws the paths being
-joined in the compression-correctness proof. These inspections explain the next proof step.
+change sides during rotation. [demos/UnionFind.lean](demos/UnionFind.lean) inspects the pointer
+needed to finish a recursive lookup proof, and the roots found before a union links them.
 
 ### Nix dev shell
 
