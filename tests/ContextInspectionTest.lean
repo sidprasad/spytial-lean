@@ -196,14 +196,151 @@ local instance : SpytialIdentity Tree := ⟨.eqv (fun _ _ => false), none⟩
 
 end
 
-/- Keep observation semantics separate: unknown numeric results do not yet
-   expand into max/add equations, and no balance conclusion is invented. -/
+/- A partially computed observation retains its defining relationships. It
+   does not invent an ordering between the unknown children. -/
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `l tree fun l => do
   withLocalDeclD `r tree fun r => do
     let result ← view (node l 1 r)
     assertCount "symbolic heights" result.data "height" 3
-    assertCount "no implicit height expansion" result.data "max" 0
+    assertCount "residual maximum" result.data "max" 1
+    assertCount "residual addition" result.data "add" 1
     assertCount "no invented ordering" result.data "le" 0
+
+/- Facts about the children compute the parent's height before any context
+   expression can allocate a separate unknown for it. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `l tree fun l => do
+  withLocalDeclD `r tree fun r => do
+    let root := node l 7 r
+    withLocalDeclD `hl (← mkEq (height l) (mkRawNatLit 2)) fun _ => do
+    withLocalDeclD `hr (← mkEq (height r) (mkRawNatLit 1)) fun _ => do
+    withLocalDeclD `bound (← mkAppM ``LT.lt #[height root, mkRawNatLit 5]) fun _ => do
+      let result ← view root
+      assertCount "computed observations" result.data "height" 3
+      let some observed := (tuples result.data "height").find?
+          (·.atoms[0]? == result.data.atoms[0]?.map (·.id))
+        | throwError "missing root observation"
+      let some output := result.data.atoms.find? (some ·.id == observed.atoms[1]?)
+        | throwError "missing height result"
+      unless output.label == "3" do
+        throwError "context-known child heights did not compute the parent: {output.label}"
+      let some bound := (tuples result.data "lt")[0]? | throwError "missing bound"
+      unless bound.atoms[0]? == some output.id do
+        throwError "branch condition uses a stale height result"
+
+/- Once observer applications rewrite to local scalars, the residual still
+   has arithmetic structure, even though it no longer mentions height. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `l tree fun l => do
+  withLocalDeclD `r tree fun r => do
+  withLocalDeclD `n (mkConst ``Nat) fun n => do
+  withLocalDeclD `hl (← mkEq (height l) n) fun _ => do
+  withLocalDeclD `hr (← mkEq (height r) (mkRawNatLit 0)) fun _ => do
+    let result ← view (node l 7 r)
+    assertCount "symbolic arithmetic" result.data "add" 1
+    assertCount "maximum simplifies away" result.data "max" 0
+    assertCount "no Nat implementation field" result.data "n" 0
+    if result.data.atoms.any (·.label == "succ") then
+      throwError "residual arithmetic unfolded to Nat.succ"
+    let some scalar := result.data.atoms.find? (·.label == "n")
+      | throwError "lost the known symbolic height"
+    let some addition := (tuples result.data "add")[0]? | throwError "missing addition"
+    unless addition.atoms.contains scalar.id do
+      throwError "residual addition does not use the known height"
+
+/- An irrelevant unknown key does not prevent height evaluation. Command
+   mode has the same reduction semantics, without importing context facts. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `key (mkConst ``Nat) fun key => do
+    let leaf := mkConst ``Tree.leaf
+    let root := mkApp3 (mkConst ``Tree.node) leaf key leaf
+    let data ← relationalize root {} #[height root]
+    assertCount "command observations" data "height" 2
+    assertCount "fully computed height" data "add" 0
+    let some observed := (tuples data "height").find?
+        (·.atoms[0]? == data.atoms[0]?.map (·.id))
+      | throwError "missing root height"
+    unless data.atoms.any (fun atom => some atom.id == observed.atoms[1]? && atom.label == "1") do
+      throwError "unknown key blocked a known height"
+
+def Tree.children : Tree → Option (Tree × Tree)
+  | .leaf => none
+  | .node l _ r => some (l, r)
+
+/- Partial observation results are not restricted to scalars. Constructors
+   and their unknown fields belong to the same ordinary relational datum. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `l tree fun l => do
+  withLocalDeclD `r tree fun r => do
+    let root := node l 7 r
+    let data ← relationalize root {} #[mkApp (mkConst ``Tree.children) root]
+    assertCount "structured results" data "children" 3
+    assertCount "pair first" data "fst" 1
+    assertCount "pair second" data "snd" 1
+    unless data.atoms.any (·.label == "some") do
+      throwError "partially symbolic Option result was discarded"
+    assertTrees "structured result reuses its children" data 3
+
+/- Prepared simplifications carry checked equalities and leave the caller's
+   metavariables untouched. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `l tree fun l => do
+  withLocalDeclD `r tree fun r => do
+  withLocalDeclD `hl (← mkEq (height l) (mkRawNatLit 2)) fun hl => do
+  withLocalDeclD `hr (← mkEq (height r) (mkRawNatLit 1)) fun hr => do
+    let root := node l 7 r
+    let application := height root
+    let cfg ← prepareObservations { observations := #[application] } #[root, l, r] #[hl, hr]
+    let some result := cfg.observationResults[(⟨application⟩ : ExprStructEq)]?
+      | throwError "missing prepared observation"
+    unless (← whnf result.expr).equal (mkRawNatLit 3) do
+      throwError "preparation did not compute the result"
+    let some proof := result.proof? | throwError "missing equality certificate"
+    Iykyk.kernelCheckClaim (← getLCtx) (← mkEq application result.expr) proof
+    assertMatchesReference "computed observation walkers agree" application cfg
+    let hole ← mkFreshExprMVar tree
+    let data ← relationalize (node hole 7 hole) {} #[height (node hole 7 hole)]
+    assertCount "observing holes remains finite" data "height" 2
+    if ← hole.mvarId!.isAssigned then throwError "observing assigned a metavariable"
+    let key ← mkFreshExprMVar (mkConst ``Nat)
+    let leaf := mkConst ``Tree.leaf
+    let root := mkApp3 (mkConst ``Tree.node) leaf key leaf
+    let data ← relationalize root {} #[height root]
+    let some observed := (tuples data "height").find?
+        (·.atoms[0]? == data.atoms[0]?.map (·.id))
+      | throwError "missing height for a tree with a key hole"
+    unless data.atoms.any (fun a => some a.id == observed.atoms[1]? && a.label == "1") do
+      throwError "an irrelevant metavariable prevented evaluation"
+    if ← key.mvarId!.isAssigned then throwError "observing filled the key hole"
+
+def bump (n : Nat) : Nat := n + 1
+
+/- The observer's own newly created outputs must not extend its domain. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  let one := mkRawNatLit 1
+  let data ← relationalize one {} #[mkApp (mkConst ``bump) one]
+  assertCount "fixed observation domain" data "bump" 1
+  unless data.atoms.size == 2 && data.atoms.any (·.label == "2") do
+    throwError "observations recursed into newly computed values"
+
+def Tree.rotateLeft : Tree → Tree
+  | .node l key (.node a pivot b) => .node (.node l key a) pivot b
+  | t => t
+
+/- An observer's input remains an ordinary value: a rotation inside a parent
+   must expose its tree structure, not become a residual Tree graph point. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `l tree fun l => do
+  withLocalDeclD `a tree fun a => do
+  withLocalDeclD `b tree fun b => do
+  withLocalDeclD `r tree fun r => do
+    let rotated := mkApp (mkConst ``Tree.rotateLeft) (node l 1 (node a 2 b))
+    let result ← view (node rotated 3 r)
+    assertTrees "rotation remains structural" result.data 7
+    assertCount "rotation is not an opaque application" result.data "rotateLeft" 0
+    assertCount "all rotated nodes are observed" result.data "height" 7
+    unless (result.data.atoms.filter (fun a => a.type == "Tree" && a.label == "node")).size == 3 do
+      throwError "observing hid a rotated tree's structure"
 
 end ContextInspectionTest

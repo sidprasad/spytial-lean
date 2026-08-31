@@ -83,9 +83,8 @@ private meta partial def reduceKnown (refinements : Std.HashMap FVarId Expr)
   if reduced.isFVar || reduced.isMVar then return reduced
   reduceKnown refinements (fuel - 1) reduced observations
 
-/-- Substitute known local values without reducing the surrounding program.
-    Observations use this to decide whether an application is fully concrete
-    before evaluating it. -/
+/-- Substitute known local values without reducing the surrounding program,
+    retaining a Lean expression for selectors and contextual relevance. -/
 private meta partial def substituteKnown (refinements : Std.HashMap FVarId Expr)
     (fuel : Nat) (expression : Expr) : Expr :=
   let replaced := expression.replace fun subexpression =>
@@ -200,12 +199,23 @@ public meta def relationalizeAfaikWithProvenance (afaik : Iykyk.Afaik)
     (baseConfig : WalkConfig := {}) (observations : Array Expr := #[]) :
     MetaM (JsonDataInstance × Provenance × Expr) :=
   withoutModifyingEnv do
-    let config ← contextWalkConfig afaik baseConfig observations
+    let mut config ← contextWalkConfig afaik baseConfig observations
     let refinements := config.refinements
     let root ← if afaik.root.isFVar || afaik.root.isMVar then
       pure afaik.root
     else
       reduceKnown refinements 8 afaik.root observations
+    unless observations.isEmpty do
+      let (_, discovery) ← StateT.run (s := {}) do
+        let mut anchors ← addWitnesses afaik true
+        let rootId ← walkExpr config root
+        anchors := anchors.push (root, rootId)
+        for fact in afaik.facts do
+          if let some (variableId, value) ← refinementOf? (← displayedProposition fact) then
+            if refinements[variableId]?.any (·.equal value) then continue
+          anchors ← walkFact config fact anchors
+      config ← prepareObservations config (discovery.observationTerms.map (·.1))
+        (afaik.facts.map (·.proof))
     let (_, state) ← StateT.run (s := {}) do
       -- Witnesses first: a witness can occur inside the refined root, and the
       -- walk reuses its atom only when it is already registered.

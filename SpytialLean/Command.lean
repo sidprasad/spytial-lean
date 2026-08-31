@@ -539,6 +539,18 @@ private meta def scopeForObservations (base : SelScope) (observations : Array Ex
       | none => scope.rels.insert name (scope.root, some arity) }
   return { scope with lenient := scope.lenient || heads.contains none }
 
+/-- Observation reduction can expose computations absent from the root type
+    and the original facts. Their emitted vocabulary is still checked at its
+    actual arity, rather than making the whole selector scope lenient. -/
+private meta def scopeWithObservedData (scope : SelScope) (data : JsonDataInstance) :
+    SelScope := Id.run do
+  let mut scope := scope
+  for relation in data.relations do
+    unless scope.rels.contains relation.name do
+      scope := { scope with
+        rels := scope.rels.insert relation.name (scope.root, some relation.types.size) }
+  return scope
+
 /-- An explicit `with [<ops>]` overrides the type's attached spec, unless a
     `..` element splices it back in. Raw Lean selectors resolve against this
     datum, and the spec is rendered to its wire string once, here. -/
@@ -554,6 +566,7 @@ private meta def elabSpytialPayload (t : Syntax) (ops? : Option (Array (TSyntax 
     let spec? ← match ops? with
       | some ops => do
         let scope ← scopeForObservations (← scopeForExpr e) observations
+        let scope := if observations.isEmpty then scope else scopeWithObservedData scope di
         some <$> elabUseSiteOps e ops (some scope)
       | none => lookupTypeSpec e
     let spec? ← spec?.mapM fun s => liftM (resolveLeanSelectors e di prov s)
@@ -796,6 +809,8 @@ private meta def spytialInContextProps? (subject : Expr)
   let spec? ← match ops? with
     | some ops => do
       let scope ← scopeForAfaik view.afaik (← scopeForExpr subject) observations
+      let scope := if observations.isEmpty then scope
+        else scopeWithObservedData scope view.data
       some <$> elabUseSiteOps subject ops (some scope)
     | none => lookupTypeSpec subject
   -- Raw Lean selectors resolve against the knowledge walk exactly as against

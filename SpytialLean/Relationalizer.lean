@@ -187,6 +187,15 @@ public meta structure WalkConfig where
       of these observed heads is represented by its source-level function
       graph before WHNF can replace it with implementation-level constructors. -/
   observations : Array Expr := #[]
+  /-- Proof-producing simplification results prepared before the final walk. -/
+  observationResults : ExprStructMap Simp.Result := {}
+  /-- Named applications in residual computations stay relational before WHNF,
+      including those whose observer calls have simplified to local variables. -/
+  observationResiduals : Std.HashSet ExprStructEq := {}
+  /-- The represented domain before observation-derived structure is added. -/
+  observationDomain : Option (Array Expr) := none
+  /-- Bound on simplification of each observation or dependent computation. -/
+  maxObservationSteps : Nat := 1000
   /-- Retain represented terms even without observations, for contextual
       relevance selection. Does not add any atoms or relations. -/
   recordTerms : Bool := false
@@ -785,8 +794,97 @@ public meta partial def dependsOnObservation (cfg : WalkConfig) (expression : Ex
 public meta def observedGraphSide? (cfg : WalkConfig) (expression : Expr) :
     MetaM (Option (String × Array Expr)) := do
   let some side ← graphSide? expression | return none
+  if cfg.observationResiduals.contains ⟨expression⟩ then return some side
   unless ← dependsOnObservation cfg expression do return none
   return some side
+
+/-- Replace the sole data argument, preserving elaborated implicit arguments. -/
+private meta def observationAt (observation argument value : Expr) : Expr :=
+  mkAppN observation.getAppFn <| observation.getAppArgs.map fun applicationArgument =>
+    if applicationArgument.equal argument then value else applicationArgument
+
+private meta def observationApplications (observations values : Array Expr) :
+    MetaM (Array Expr) := do
+  let mut applications := #[]
+  for observation in observations do
+    let arguments ← dataArgsOf observation
+    unless arguments.size == 1 do continue
+    let argument := arguments[0]!
+    let domainType ← inferType argument
+    for value in values do
+      let compatible ← withoutModifyingState <| withNewMCtxDepth <|
+        isDefEq (← inferType value) domainType
+      if compatible then
+        applications := applications.push (observationAt observation argument value)
+  return applications
+
+/-- Preserve the residual's data computations, not numeral elaboration or
+    constructor internals. Ordinary structural results still use the walker. -/
+private meta partial def residualApplications (cfg : WalkConfig) (e : Expr) :
+    StateT (Std.HashSet ExprStructEq) MetaM Unit := do
+  -- The argument of `height t` is still an ordinary value. Marking its
+  -- internals as computations would turn a reducible rotation into an opaque
+  -- Tree graph point and hide precisely the structure being inspected.
+  if hasObservedHead cfg e then return
+  if e.isAppOf ``OfNat.ofNat then return
+  if (← graphSide? e).isSome then modify (·.insert ⟨e⟩)
+  for argument in ← dataArgsOf e do
+    residualApplications cfg argument
+
+/-- Prepare observations against a fixed, already discovered domain. Only the
+    requested definitions, ordinary simp rules, and supplied proofs can justify
+    a rewrite. Each changed result carries its equality proof; failures retain
+    the source expression. No unification assignment escapes preparation. -/
+public meta def prepareObservations (cfg : WalkConfig) (values : Array Expr)
+    (proofs : Array Expr := #[]) : MetaM WalkConfig := withoutModifyingState do
+  if cfg.observations.isEmpty then return cfg
+  let mut theorems ← getSimpTheorems
+  for observation in cfg.observations do
+    if let .const name _ := observation.getAppFn then
+      -- An imported definition may not expose its body. Its available simp
+      -- lemmas and context equations still apply, even when unfolding cannot.
+      if (← getConstInfo name).isDefinition then
+        theorems ← theorems.addDeclToUnfold name
+  for index in [:proofs.size] do
+    theorems ← theorems.add (.other (.num `spytial.observing index)) #[] proofs[index]!
+  let context ← Simp.mkContext (config := { maxSteps := cfg.maxObservationSteps })
+    (simpTheorems := #[theorems]) (congrTheorems := ← getSimpCongrTheorems)
+  let simprocs := #[(← Simp.getSimprocs)]
+  let mut applications ← observationApplications cfg.observations values
+  for value in values do
+    if (← observedGraphSide? cfg value).isSome then applications := applications.push value
+  let mut results := cfg.observationResults
+  let mut residuals := cfg.observationResiduals
+  for application in applications do
+    if results.contains ⟨application⟩ then continue
+    if application.hasLevelMVar then continue
+    try
+      let result ← withoutModifyingState do
+        let inputMVars ← getMVars application
+        let (result, _) ← withNewMCtxDepth <| Meta.simp application context simprocs
+        let expression ← instantiateMVars result.expr
+        let proof ← instantiateMVars (← result.proof?.getDM (mkEqRefl application))
+        let claim ← mkEq application expression
+        let checked := mkApp2 (mkConst ``id [.zero]) claim proof
+        -- Check uniformly in the existing holes, without assigning them.
+        -- Fresh unresolved holes must not escape the simplifier's saved state.
+        let abstracted ← abstractMVars checked
+        if abstracted.mvars.any (fun m => !inputMVars.contains m.mvarId!) ||
+            abstracted.expr.hasMVar || abstracted.expr.hasLevelMVar then
+          throwError "observation simplification left unresolved metavariables"
+        match Kernel.check (← getEnv) (← getLCtx) abstracted.expr with
+        | .error exception => throwError "{exception.toMessageData (← getOptions)}"
+        | .ok _ => pure { result with expr := expression, proof? := some proof }
+      results := results.insert ⟨application⟩ result
+      let (_, next) ← (residualApplications cfg result.expr).run residuals
+      residuals := next
+    catch error =>
+      logWarning m!"spytial: could not simplify observation {application}; \
+        keeping it symbolic ({error.toMessageData})"
+  return { cfg with
+    observationResults := results
+    observationResiduals := residuals
+    observationDomain := some values }
 
 /-- Emit a named application `f xs` as the graph point `f[xs, f xs]`.
     Repeated applications reuse the same output atom. -/
@@ -809,6 +907,43 @@ private meta def emitFunctionGraph? (cfg : WalkConfig)
   let tuple : JsonTuple := { atoms := ids, types }
   modify fun state => state.addTuple relName types tuple
   return true
+
+/-- A reduced source application may already have emitted this same graph
+    point through its residual (for example after simplifying numeral syntax). -/
+private meta def addComputedTuple (relation : String) (types ids : Array String) :
+    StateT WalkState MetaM Unit := do
+  if let some (previousTypes, tuples) := (← get).relations.get? relation then
+    if previousTypes != types then
+      logWarning m!"spytial: incompatible graph columns for '{relation}'; \
+        the computed tuple is not drawn"
+      return
+    if tuples.any (·.atoms == ids) then return
+  modify fun state => state.addTuple relation types { atoms := ids, types }
+
+/-- An evaluated application is an ordinary result expression plus the graph
+    tuple connecting it to its arguments. Shared by both expression walkers. -/
+private meta def walkComputed? (cfg : WalkConfig) (e : Expr)
+    (recurse : WalkConfig → Expr → StateT WalkState MetaM String) :
+    StateT WalkState MetaM (Option String) := do
+  let some result := cfg.observationResults[(⟨e⟩ : ExprStructEq)]? | return none
+  if result.expr.equal e then return none
+  if let some id := (← get).applicationAtoms[(⟨e⟩ : ExprStructEq)]? then return some id
+  let some (relation, arguments) ← graphSide? e | return none
+  -- Resolve the result before minting an atom for the application. Removing
+  -- this entry also guards self-referential residual rewrites.
+  let nested := { cfg with observationResults := cfg.observationResults.erase ⟨e⟩ }
+  let mut ids := #[]
+  let mut types := #[]
+  for argument in arguments do
+    ids := ids.push (← recurse nested argument)
+    types := types.push (← sigOfType (← inferType argument))
+  let resultId ← recurse nested result.expr
+  ids := ids.push resultId
+  types := types.push (← sigOfType (← inferType e))
+  addComputedTuple relation types ids
+  modify fun state =>
+    { state with applicationAtoms := state.applicationAtoms.insert ⟨e⟩ resultId }
+  return some resultId
 
 /-- Emit `relName` as the flat table over the enumerable domain product;
     report whether it fired. A data codomain gives `(owner, d₁, …, dₖ,
@@ -1033,6 +1168,8 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
   -- (a hole, a hypothesis) falls through to the as-written rendering of
   -- what's there.
   let mode ← shiftForWrappers ctx.mode (← Meta.inferType eOrig)
+  if let some id ← walkComputed? cfg eOrig
+      (fun nested value => walkExpr nested value { ctx with mode }) then return id
   -- An observation is an input to relationalization, not a post-pass. Preserve
   -- the source spelling of named computations that depend on an observed
   -- application; only other expressions WHNF to expose data constructors.
@@ -1118,7 +1255,9 @@ public meta def addObservation (cfg : WalkConfig) (source result : Expr)
     types := types.push (← sigOfType (← inferType argument))
   let resultType := ← sigOfType (← inferType result)
   types := types.push resultType
-  let reducedResult ← whnf result
+  let reducedResult ← match cfg.observationResults[(⟨result⟩ : ExprStructEq)]? with
+    | some normalized => pure normalized.expr
+    | none => pure result
   let state ← get
   let mut knownResult? := state.applicationAtoms[(⟨result⟩ : ExprStructEq)]?
   if knownResult?.isNone then
@@ -1131,7 +1270,7 @@ public meta def addObservation (cfg : WalkConfig) (source result : Expr)
   let resultId ← match knownResult? with
     | some resultId => pure resultId
     | none =>
-      if reducedResult.hasFVar || reducedResult.hasMVar then do
+      if reducedResult.equal result && (result.hasFVar || result.hasMVar) then do
         let state ← get
         let (label, state) := state.freshApplicationLabel
         let (atomId, state) := state.freshId
@@ -1155,19 +1294,16 @@ public meta def addObservation (cfg : WalkConfig) (source result : Expr)
     if tuples.any (fun tuple => tuple.atoms == atomIds) then return
   modify fun state => state.addTuple relation types { atoms := atomIds, types }
 
-/-- Replace the sole data argument in an elaborated unary observation while
-    preserving its already elaborated implicit arguments. -/
-private meta def observationAt (observation argument value : Expr) : Expr :=
-  mkAppN observation.getAppFn <| observation.getAppArgs.map fun applicationArgument =>
-    if applicationArgument.equal argument then value else applicationArgument
-
 /-- Extend the current datum with each requested function's graph over the
     represented values of its domain type. The domain is snapshotted before
     adding any result atoms, so an observation whose codomain is also its
     domain cannot recursively expand the datum. -/
 public meta def addActiveDomainObservations (cfg : WalkConfig)
     (observations : Array Expr) : StateT WalkState MetaM Unit := do
-  let activeDomain := (← get).observationTerms
+  let activeDomain := (← get).observationTerms.filter fun (value, _) =>
+    cfg.observationDomain.all fun domain => domain.any fun original =>
+      original.equal value ||
+        (cfg.observationResults[(⟨original⟩ : ExprStructEq)]?).any (·.expr.equal value)
   for observation in observations do
     let some (_, arguments) ← graphSide? observation | continue
     unless arguments.size == 1 do continue
@@ -1192,8 +1328,12 @@ public meta def addActiveDomainObservations (cfg : WalkConfig)
 public meta def relationalizeWithProvenance (e : Expr) (cfg : WalkConfig := {})
     (observations : Array Expr := #[]) : MetaM (JsonDataInstance × Provenance) :=
   withoutModifyingEnv do
+    let mut observationAwareConfig := { cfg with observations }
+    unless observations.isEmpty do
+      let (_, discovery) ← (walkExpr observationAwareConfig e).run {}
+      observationAwareConfig ← prepareObservations observationAwareConfig
+        (discovery.observationTerms.map (·.1))
     let (_, state) ← StateT.run (s := {}) do
-      let observationAwareConfig := { cfg with observations }
       let _ ← walkExpr observationAwareConfig e
       let observationConfig := { observationAwareConfig with functionGraphs := true }
       addActiveDomainObservations observationConfig observations
@@ -1233,15 +1373,18 @@ public meta partial def referenceRelationalize (e : Expr) (cfg : WalkConfig := {
   let records ← IO.mkRef (#[] : Array RefRecord)
   -- Pass 1: every subterm a fresh atom; modes, holes, the unfold guard, and
   -- custom relationalizers behave exactly as in the fused walker.
-  let rec refWalk (eOrig : Expr) (ctx : WalkCtx) : StateT WalkState MetaM String := do
+  let rec refWalk (cfg : WalkConfig) (eOrig : Expr) (ctx : WalkCtx) :
+      StateT WalkState MetaM String := do
     let origName := eOrig.getAppFn.constName?
     let mode ← shiftForWrappers ctx.mode (← Meta.inferType eOrig)
+    if let some id ← walkComputed? cfg eOrig
+        (fun nested value => refWalk nested value { ctx with mode }) then return id
     let sourceFunctionGraph := (← observedGraphSide? cfg eOrig).isSome
     let e ← if sourceFunctionGraph then pure eOrig else Meta.whnf eOrig
     if let some (_, ancestorId) := ctx.ancestors.find? (fun (a, _) => a.equal e) then
       return ancestorId
     let ty ← Meta.inferType e
-    if let some id ← holeAtom? cfg (fun c => refWalk c { mode, ancestors := ctx.ancestors })
+    if let some id ← holeAtom? cfg (fun c => refWalk cfg c { mode, ancestors := ctx.ancestors })
         e ty then
       return id
     let tyKey ← Meta.whnf ty
@@ -1249,7 +1392,8 @@ public meta partial def referenceRelationalize (e : Expr) (cfg : WalkConfig := {
       (cfg.functionGraphs && (← graphSide? e).isSome)
     unless isFunctionGraph do
       if let some id ← customDispatch? eOrig e tyKey
-          (fun guardId c => refWalk c { mode, ancestors := ctx.ancestors.push (e, guardId) }) then
+          (fun guardId c =>
+            refWalk cfg c { mode, ancestors := ctx.ancestors.push (e, guardId) }) then
         return id
     if cfg.functionGraphs || sourceFunctionGraph then
       if let some id := (← get).applicationAtoms[(⟨e⟩ : ExprStructEq)]? then
@@ -1263,10 +1407,10 @@ public meta partial def referenceRelationalize (e : Expr) (cfg : WalkConfig := {
       | some key => s.symbolicAtoms.insert ⟨key⟩ atomId
       | none => s.symbolicAtoms }
     records.modify (·.push { atomId, expr := e, tyKey, mode, functionGraph := isFunctionGraph })
-    emitNode cfg (fun c => refWalk c { mode, ancestors := ctx.ancestors.push (e, atomId) })
+    emitNode cfg (fun c => refWalk cfg c { mode, ancestors := ctx.ancestors.push (e, atomId) })
       e ty tyKey origName atomId sourceFunctionGraph
     return atomId
-  let (rootId, s) ← (refWalk e {}).run {}
+  let (rootId, s) ← (refWalk cfg e {}).run {}
   -- Pass 2: group occurrences by (type, identity), first occurrence the
   -- representative. Runs in the pass-1 state so atom ids stay consistent;
   -- the identity tables are still empty (pass 1 never consulted them).

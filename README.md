@@ -377,12 +377,21 @@ both command and tactic mode:
 spytial tree observing [height]
 ```
 
-Each observer adds its function graph over every represented value of its input
-type. Thus `observing [height]` gives every visible tree node a `height` tuple,
-not only the selected root. If an application computes, its result appears as
-an ordinary value; if its argument is partial, the result remains a shared
-unknown. The represented domain is fixed before observation results are added,
-so observations cannot recursively expand it.
+For each represented value `t` of the appropriate input type, `observing [height]`
+adds `height t` to the datum, evaluates what it can, and relationalizes the
+result together with its connection to `t`. This applies to every visible tree
+node, not only the selected root. Evaluation uses the observer's defining
+equations and bounded `simp`; tactic mode also supplies the facts established
+by IYKYK. It does not modify the proof state or run a general proof search.
+
+A computed height is an ordinary number. A partial result such as
+`1 + max (height l) (height r)` goes through the same expression walker, exposing
+`add` and `max` relations connected to the children's height results. If the
+context establishes `height l = 2` and `height r = 1`, the parent's result is
+instead `3`. An application that cannot reduce remains a shared unknown with
+its named observation relation. There is no separate symbolic-result view.
+The represented domain is fixed before these results are added, so observations
+do not recursively observe their own newly introduced outputs.
 
 Observation also governs the treatment of context expressions: an observed
 application and the enclosing named computations that depend on it are
