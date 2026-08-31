@@ -418,11 +418,11 @@ private meta partial def itemsParser (cd : Sgq.Construct) (trailing : Bool) :
       if !opt then sub p
       -- A present-but-wrong reading has to be undone: `A -> one` writes a
       -- relation named `one`, not a multiplicity with no right operand.
-      else match rest with
-        | [] => Lean.Parser.optional p
-        | _ =>
-          let restP := itemsParser cd false rest
-          Lean.Parser.atomic (p >> restP) <|> (pushNone >> restP)
+      -- `elabNode` reads the atom off the position, so the absent case pushes a
+      -- null node rather than wrapping the present one in it.
+      else
+        let restP := itemsParser cd false rest
+        Lean.Parser.atomic (p >> restP) <|> (pushNone >> restP)
     | Sgq.Item.«optional» inner =>
       sub (Lean.Parser.optional (Lean.Parser.atomic (itemsParser cd false inner)))
 
