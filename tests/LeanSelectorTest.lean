@@ -368,17 +368,29 @@ info: {"constraints": [{"hideAtom": {"selector": "none"}}]}
 #guard_msgs in
 #spytial.spec lSmall with [hideAtom lean (fun _ : Float => true)]
 
--- Lean's own error, and only Lean's error: no follow-on complaint about the
--- holes in the recovery term.
+-- Lean's own error says what went wrong; the warning says what the op does
+-- about it. No follow-on complaint about the holes in the recovery term.
 /--
 error: Invalid field `nosuchfield`: The environment does not contain `LRB.nosuchfield`, so it is not possible to project the field `nosuchfield` from an expression
   n
 of type `LRB`
 ---
+warning: this term carries a sorry, so the op selects nothing at render
+---
 info: {"constraints": [{"hideAtom": {"selector": "none"}}]}
 -/
 #guard_msgs in
 #spytial.spec lSmall with [hideAtom lean (fun n : LRB => n.nosuchfield)]
+
+-- A written `sorry` takes the same recovery, and Lean says nothing about one
+-- inside a command, so the warning is the whole report.
+/--
+warning: this term carries a sorry, so the op selects nothing at render
+---
+info: {"constraints": [{"hideAtom": {"selector": "none"}}]}
+-/
+#guard_msgs in
+#spytial.spec lSmall with [hideAtom lean ((sorry : Spytial.Sel LRB LRB))]
 
 /-! ## `lean` is not a reserved word
 

@@ -742,10 +742,13 @@ resolves it against a datum. -/
 private meta def elabLeanRel (scope : SelScope) (stx : TSyntax `term) :
     TermElabM EExpr := do
   let fn ← instantiateMVars (← Term.withSynthesize <| Term.elabTerm stx none)
-  -- Lean already reported whatever went wrong; a second message about the
-  -- recovery term's holes would only bury it. The unknown arity disables
-  -- downstream position checks.
-  if fn.hasSorry then return { sel := .empty, kind := .relation }
+  -- Lean has reported an elaboration failure of its own, and a written `sorry`
+  -- reports nothing at all, so what the op then does is worth its own line:
+  -- the spec still renders, with this op selecting nothing.
+  if fn.hasSorry then
+    logWarningAt stx "this term carries a sorry, so the op selects nothing at \
+      render"
+    return { sel := .empty, kind := .relation }
   if fn.hasExprMVar || fn.hasFVar then
     throwErrorAt stx "a raw Lean selector must be a closed term; this one \
       still has holes or local variables"
