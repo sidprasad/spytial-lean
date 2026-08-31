@@ -203,11 +203,12 @@ public meta structure JManifest where
   blocks : List JBlock
   deriving Inhabited, FromJson
 
-/-! ## House style
+/-! ## Choices the manifest leaves open
 
 The manifest describes core's YAML surface; how its fields lay out as Lean
-arguments is this package's own. Each table is keyed by manifest ids, and
-`parseManifest` rejects an entry naming an id the manifest no longer has. -/
+arguments is this package's own choice. Each table is keyed by manifest ids,
+and `parseManifest` rejects an entry naming an id the manifest no longer
+has. -/
 
 /-- Items where an optional selector may lead the argument list even though the
     manifest does not list it first. Without an entry a selector leads only
@@ -515,10 +516,10 @@ private meta def parseManifest : Except String RawManifest := do
           .error s!"{i.id}.{intro.field}: introduces.referencedBy names \
             {path.quote}, which is not a field"
 
-  -- Verify the house-style tables still name live manifest entries.
+  -- Verify this package's own tables still name live manifest entries.
   for id in leadingSelectorOverride do
     unless items.any (·.id == id) do
-      .error s!"house style: a table names {id.quote}, which is not a live item"
+      .error s!"leadingSelectorOverride names {id.quote}, which is not a live item"
   for id in m.hold.supportedBy do
     unless items.any (·.id == id) || deprecatedItems.any (·.1 == id) do
       .error s!"hold.supportedBy: names {id.quote}, which is not an item"
@@ -532,7 +533,7 @@ private meta def parseManifest : Except String RawManifest := do
     let carriers := items.filter fun i =>
       i.fields.any fun f => f.name == fname && f.type matches .boolean _
     if carriers.isEmpty then
-      .error s!"house style: boolSugar {word.quote} names the field {fname.quote}, \
+      .error s!"boolSugar {word.quote} names the field {fname.quote}, \
         which no live item has"
 
   -- Hold support is stated twice, per item and as one list, so each side

@@ -21,8 +21,8 @@ private meta def manifestText : String :=
 /-! ## Which spelling spytial-lean writes
 
 A token can have aliases (`or` is also `||`). The manifest lists them in
-grammar order and takes no view; which one to *emit* is this package's house
-style. -/
+grammar order and takes no view; which one to *emit* is this package's
+choice. -/
 
 /-- Roles whose several spellings are alternatives to choose between at each
     use (an arrow's multiplicity), not aliases for one thing. -/
@@ -105,7 +105,7 @@ public meta def CharClass.contains (cc : CharClass) (c : Char) : Bool :=
   cc.ranges.any (fun r => r.from ≤ c && c ≤ r.to) || cc.chars.contains c
 
 public meta structure Part where
-  /-- The spelling this package writes. One of `spellings`; house style. -/
+  /-- The spelling this package writes. One of `spellings`; its choice. -/
   text : String
   /-- Every spelling the engine accepts, in grammar order. -/
   spellings : List String
@@ -300,10 +300,10 @@ private meta def parseManifest : Except String RawManifest := do
       template := c.template, parts,
       operators := c.operators.map (·.id) }]
 
-  -- Verify the house-style table still names live manifest entries.
+  -- Verify this package's own table still names live manifest entries.
   for (cid, role) in namedParts do
     let some c := cons.find? (·.id == cid)
-      | .error s!"house style: a table names {cid.quote}, which is not a live construct"
+      | .error s!"namedParts names {cid.quote}, which is not a live construct"
     unless c.parts.any (·.1 == role) do
       .error s!"{cid}: the package writes the part {role.quote}, which it has \
         no spelling for"
@@ -386,7 +386,7 @@ public meta structure Op where
   /-- The manifest's own spelling of the id, for diagnostics. -/
   name : String
   construct : ConstructId
-  /-- The spelling this package writes. One of `spellings`; house style. -/
+  /-- The spelling this package writes. One of `spellings`; its choice. -/
   text : String
   spellings : List String
   /-- Whether the engine runs this operator: `is` parses and is refused

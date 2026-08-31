@@ -47,15 +47,15 @@ the package's version, not the file's shape.
 
 ## What is not the manifests'
 
-House style is this package's own and lives beside the tables it refines:
+Some choices are this package's own and live beside the tables they refine:
 which spelling to emit where the engine accepts several
 (`preferredSpelling`), whitespace (`Selector.lean`), and how manifest fields
-lay out as Lean arguments (`SpecLang.lean`'s house-style tables, now the
-leading-selector override and the bare-word bool sugar). Every table entry is
-keyed by manifest ids and checked against the live manifest, so an entry that
-stops matching upstream fails the build by name.
+lay out as Lean arguments (`SpecLang.lean`'s leading-selector override and
+bare-word bool sugar). Every table entry is keyed by manifest ids and
+checked against the live manifest, so an entry that stops matching upstream
+fails the build by name.
 
-Three more facts were house tables here and are core's own members now.
+Three more facts were hand tables here and are core's own members now.
 `introduces` gives the string field that names a group or an inferred edge,
 which of those kinds it names, and the `item.field` positions where the engine
 resolves such a name — which is what lets a reference from any other field

@@ -24,7 +24,7 @@ edit here.
 What is *not* the engine's, and so is written here: the vocabulary leaves
 (`sig`/`rel`/`var` are resolved Lean names, not bare identifiers), the
 constructor-label literal a spytial spec compares against, and the whitespace
-house style.
+choices.
 
 Specs store this AST in the environment, so nodes carry no `Syntax` and must
 pickle into `.olean`s. `SpytialLean.SelectorElab` resolves and checks; `toSGQ`
@@ -159,7 +159,7 @@ public meta def sgqStringLit (s : String) : String :=
 /-! ## Whitespace
 
 Both spacings parse — simple-graph-query's lexer skips whitespace between
-every token — so this is house style, not a language fact. It is stated as two
+every token — so this is this package's choice, not a language fact. It is stated as two
 tables over the generated enumerations rather than per construct, so a
 construct added upstream is formatted without an edit, and a *role* added
 upstream is a non-exhaustive match rather than a silent default. -/
@@ -198,7 +198,7 @@ private meta def opAir (o : Sgq.Op) (beside : Bool) : Air :=
 /-- Whether writing `l` and `r` adjacently would lex differently from writing
     them apart: two bare-name runs would merge into one name, or some lexeme
     would span the boundary. Over-approximates — a space is always safe and a
-    missing one is not — so it is a floor under the house style above, and
+    missing one is not — so it is a floor under the spacing tables above, and
     `not a` needs no entry in either table. -/
 private meta def glues (l r : String) : Bool :=
   if l.isEmpty || r.isEmpty then false
@@ -333,7 +333,7 @@ private meta partial def renderItems (cd : Sgq.Construct) (op : Option Sgq.OpId)
         let a ← argAt cd args i
         -- `none` is the part not written, which is what the position allows.
         let .atom spelling := a | wrongArg cd i "an optional part" a
-        -- Aliases write house style; alternatives write what the source chose.
+        -- Aliases write the chosen spelling; alternatives write what the source wrote.
         if let some s := spelling then
           let part := cd.part role
           out := out.push (if part.alternatives then s else part.text, roleAir role)
