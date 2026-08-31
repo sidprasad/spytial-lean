@@ -68,10 +68,6 @@ bare words `bareWordVocab` lists. -/
 /-- Unwraps the `spytialOpArg` node to whichever alternative parsed. -/
 private meta def argInner (arg : TSyntax `spytialOpArg) : Syntax := arg.raw[0]
 
-private meta def arityExpectOf : SpecLang.SelWidth → ArityExpect
-  | .unary => .unary | .pair => .pair | .edge => .edge
-  | .unaryOrPair => .unaryOrPair | .nary => .nary
-
 private meta def orVals (vs : List String) : String := "|".intercalate vs
 
 open SpecLang in
@@ -359,10 +355,10 @@ private meta def elabBlockArg (item : ItemSpec) (usage : String) (inner : Syntax
 open SpecLang in
 /-- `name: value` for everything a keyword can carry. -/
 private meta def elabKwValue (scope : SelScope) (usage : String)
-    (sel : Syntax → SelWidth → TermElabM Sel) (f : FieldSpec) (v : Syntax) :
+    (sel : Syntax → List SelForm → TermElabM Sel) (f : FieldSpec) (v : Syntax) :
     TermElabM FieldVal := do
   match f.type with
-  | .selector w => return .sel (← sel v w)
+  | .selector forms => return .sel (← sel v forms)
   | .relation =>
     if v.isOfKind selIdentKind then
       return .rel (← elabFieldName scope ⟨v[0]⟩)
@@ -389,6 +385,16 @@ private meta def trailingWordField? (item : ItemSpec) (w : String) :
     | _ => none
 
 open SpecLang in
+/-- A field's accepted widths in one op: a form whose `requires` names a field
+    the op does not write is unavailable there. -/
+private meta def arityForms (written : List String) (forms : List SelForm) :
+    List ArityForm :=
+  forms.map fun f =>
+    { min := f.min, max := f.max,
+      blockedBy := f.requires.bind fun r =>
+        if written.contains (fieldName r) then none else some (fieldName r) }
+
+open SpecLang in
 meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
     TermElabM SpytialOp := do
   let (name, head) ←
@@ -405,10 +411,18 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
           {", ".intercalate ((allItems.map itemName).mergeSort (· < ·))}"
     let item := ItemSpec.of itemId
     let usage := itemUsage item
-    let sel (stx : Syntax) (w : SelWidth) : TermElabM Sel := do
+    -- A form can make a width conditional on a sibling field, which may be
+    -- written after the selector, so the keywords are read off the argument
+    -- list before any of it elaborates.
+    let written := argStxs.toList.filterMap fun a =>
+      let inner := argInner a
+      if inner.isOfKind ``spytialKwArg then some inner[0].getId.toString
+      else if inner.isOfKind ``spytialBlockStx then some inner[1].getId.toString
+      else none
+    let sel (stx : Syntax) (forms : List SelForm) : TermElabM Sel := do
       if stx.isOfKind numLitKind then
         throwErrorAt stx m!"expected a selector; usage: {usage}"
-      elabSelector scope (arityExpectOf w) ⟨stx⟩
+      elabSelector scope (arityForms written forms) ⟨stx⟩
     let setField (fields : Array (FieldId × FieldVal)) (ref : Syntax)
         (f : FieldId) (v : FieldVal) : TermElabM (Array (FieldId × FieldVal)) := do
       if fields.any (·.1 == f) then
@@ -454,8 +468,8 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
         -- the optional selector the table lets lead
         let some lf := item.leadingSelector | unreachable!
         let some f := item.field? lf | unreachable!
-        let .selector w := f.type | unreachable!
-        fields ← setField fields inner lf (.sel (← sel inner w))
+        let .selector forms := f.type | unreachable!
+        fields ← setField fields inner lf (.sel (← sel inner forms))
       else
         match pending with
         | fid :: rest =>
@@ -464,8 +478,8 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
           match f.type with
           | .enumList vs _ =>
             tail := some (f, #[← enumWord (fieldName fid) vs (.ofSel inner) usage], inner)
-          | .selector w =>
-            fields ← setField fields inner fid (.sel (← sel inner w))
+          | .selector forms =>
+            fields ← setField fields inner fid (.sel (← sel inner forms))
           | .relation =>
             unless inner.isOfKind selIdentKind do
               throwErrorAt inner m!"expected a relation name; usage: {usage}"

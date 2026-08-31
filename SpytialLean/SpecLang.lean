@@ -23,17 +23,8 @@ private meta def manifestText : String :=
 
 Ids stay strings until the enumerations exist. -/
 
-/-- The widths a selector position accepts, and how the engine consumes a
-    tuple there. `pair` projects first/last of a wider tuple; `edge` reads
-    the whole tuple (source, label columns…, target); `nary` takes any
-    width. `unaryOrPair` and `edge` refine a manifest arity whose second
-    form is prose-only — see `selWidthOverride`. -/
-public meta inductive SelWidth where
-  | unary | pair | edge | unaryOrPair | nary
-  deriving Repr, DecidableEq, Inhabited
-
-/-- The manifest states one string; two fields carry a prose-only second form
-    that `selWidthOverride` refines. -/
+/-- The arity word an accepted form declares. Redundant with the form's own
+    column bounds, which is what makes it worth cross-checking. -/
 json_union DeclaredArity where
   | unary
   | binary
@@ -63,8 +54,18 @@ json_union Section where
   | constraints
   | directives
 
+/-- One shape a selector position accepts. `meaning` is prose the manifest
+    states for a reader and is not decoded. -/
+public meta structure JAccept where
+  arity : DeclaredArity
+  minColumns : Nat
+  maxColumns : Option Nat
+  /-- A sibling field that has to be set for this form to apply at all. -/
+  requires : Option String
+  deriving Repr, Inhabited, FromJson
+
 json_union JFieldType on "type" where
-  | selector (arity : DeclaredArity)
+  | selector (arity : DeclaredArity) (accepts : List JAccept)
   | relation
   | "string" => str
   | «enum» (values : List String) (default : Option String)
@@ -143,19 +144,6 @@ arguments is this package's own. Each table is keyed by manifest ids, and
     `size (lo) 30 20` reads better than `size 30 20 (lo)`. -/
 private meta def leadingSelectorOverride : List String := ["size"]
 
-/-- Selector widths refined past the manifest's single `arity` string.
-    TODO(spytial-core): both of these fields state a second form in prose only;
-    the manifest should carry the full width set. The declared base is asserted
-    so an upstream change forces a re-read here.
-    - group.selector: "A unary selector builds a single unkeyed group."
-    - inferredEdge.selector: "May be unary when `draw` is given — the single
-      atom then feeds both ends"; and the engine reads the whole tuple
-      (source, labels…, target), not first/last. -/
-private meta def selWidthOverride :
-    List ((String × String) × DeclaredArity × SelWidth) :=
-  [ (("group", "selector"), .binary, .unaryOrPair),
-    (("inferredEdge", "selector"), .binary, .edge) ]
-
 /-- The graph-side name an item introduces for later ops to reference, with its
     arity. TODO(spytial-core): the manifest types these fields as plain
     strings; that `group.name` binds a unary group and `inferredEdge.name` an
@@ -176,8 +164,13 @@ private meta def boolSugarTable : List (String × String × Bool) :=
 
 /-! ## Assembling the tables' input -/
 
+private meta structure RawSelForm where
+  min : Nat
+  max : Option Nat
+  requires : Option String
+
 private meta inductive RawFieldType where
-  | selector (width : SelWidth)
+  | selector (forms : List RawSelForm)
   | relation
   | str
   | «enum» (values : List String) (dflt : Option String)
@@ -240,6 +233,19 @@ private meta def bound (incl excl : Option JsonNumber) : Except String (Option B
   | none, some n => .ok (some ⟨n, true⟩)
   | none, none => .ok none
 
+/-- An accepted form's column bounds, checked against the arity word beside
+    them: the bounds are what the elaborator uses, so a disagreement means one
+    of the two moved upstream and this reading is stale. -/
+private meta def selForm (a : JAccept) : Except String RawSelForm := do
+  let agrees := match a.arity with
+    | .unary => a.minColumns == 1 && a.maxColumns == some 1
+    | .binary => a.minColumns == 2 && a.maxColumns == some 2
+    | .nary => 2 ≤ a.minColumns && a.maxColumns.isNone
+  unless agrees do
+    .error s!"an accepted form's arity word and its column bounds \
+      ({a.minColumns}, {repr a.maxColumns}) disagree"
+  return { min := a.minColumns, max := a.maxColumns, requires := a.requires }
+
 private meta def altForm (a : JAltForm) : Except String RawAltForm := do
   unless a.type == "block" do .error "alternativeForm is not a block"
   let enums := a.fields.filterMap fun | .«enum» n => some n | _ => none
@@ -260,14 +266,12 @@ private meta def fieldOf (itemId : String) (j : Json) : Except String (Option Ra
     | some a => some <$> (altForm a).mapError here
     | none => pure none
   let type : RawFieldType ← match ty with
-    | .selector arity =>
-      match selWidthOverride.lookup (itemId, name) with
-      | some (expected, refined) =>
-        if arity == expected then pure (.selector refined)
-        else .error (here s!"selWidthOverride assumed the declared arity {repr expected}, \
-          but the manifest moved — re-read its prose")
-      | none => pure (.selector (match arity with
-          | .unary => .unary | .binary => .pair | .nary => .nary))
+    | .selector arity accepts =>
+      let some first := accepts.head?
+        | .error (here "a selector position with no accepted form")
+      unless first.arity == arity do
+        .error (here "the declared arity is not the first accepted form's")
+      pure (.selector (← (accepts.mapM selForm).mapError here))
     | .relation => pure .relation
     | .str => pure .str
     | .«enum» values dflt => pure (.«enum» values dflt)
@@ -305,6 +309,12 @@ private meta def itemOf (j : Json) : Except String (Option RawItem) := do
   for f in fields do
     if f.required && f.type.isBlock then
       .error s!"{id}.{f.name}: a required block has no positional surface"
+  for f in fields do
+    if let .selector forms := f.type then
+      for r in forms.filterMap (·.requires) do
+        unless fields.any (·.name == r) do
+          .error s!"{id}.{f.name}: an accepted form requires {r.quote}, which \
+            the item does not have"
   let positional := (fields.filter (·.required)).map (·.name)
   -- A variadic enum-list swallows the rest of the argument list.
   for (f, k) in positional.zipIdx do
@@ -464,9 +474,19 @@ public meta structure AltForm where
   blocks : List (FieldId × BlockId)
   deriving Repr, Inhabited
 
+/-- One shape a selector position accepts: the tuple widths it takes, and a
+    sibling field that has to be set alongside for the form to apply at all
+    (`inferredEdge`'s unary form needs `draw`). `max` absent is no upper
+    bound. -/
+public meta structure SelForm where
+  min : Nat
+  max : Option Nat
+  requires : Option FieldId
+  deriving Repr, Inhabited
+
 /-- What a field holds. Drives parsing, checking, and lowering alike. -/
 public meta inductive FieldType where
-  | selector (width : SelWidth)
+  | selector (forms : List SelForm)
   /-- A relation name from the walker's vocabulary. -/
   | relation
   | str
@@ -525,13 +545,6 @@ constraint — item-level rather than a field, so which items take it is
 ids. `deprecatedItems` and `deprecatedFields` are the account of the surface
 we decline, so a coverage test can insist nothing is dropped silently. -/
 
-private meta instance : Quote SelWidth := ⟨fun
-  | .unary => mkCIdent ``SelWidth.unary
-  | .pair => mkCIdent ``SelWidth.pair
-  | .edge => mkCIdent ``SelWidth.edge
-  | .unaryOrPair => mkCIdent ``SelWidth.unaryOrPair
-  | .nary => mkCIdent ``SelWidth.nary⟩
-
 private meta instance : Quote Int := ⟨fun
   | .ofNat n => Syntax.mkCApp ``Int.ofNat #[quote n]
   | .negSucc n => Syntax.mkCApp ``Int.negSucc #[quote n]⟩
@@ -548,8 +561,12 @@ private meta instance : Quote EnumListRules := ⟨fun r =>
 -- `quote (List Term)` splices pre-built terms verbatim
 private meta instance : Quote Term := ⟨id⟩
 
+private meta def quoteSelForm (f : RawSelForm) : Term :=
+  Syntax.mkCApp ``SelForm.mk #[quote f.min, quote f.max,
+    quote (f.requires.map fun r => (enumCtor `FieldId r : Term))]
+
 private meta def quoteFieldType : RawFieldType → Term
-  | .selector w => Syntax.mkCApp ``FieldType.selector #[quote w]
+  | .selector fs => Syntax.mkCApp ``FieldType.selector #[quote (fs.map quoteSelForm)]
   | .relation => mkCIdent ``FieldType.relation
   | .str => mkCIdent ``FieldType.str
   | .«enum» vs d => Syntax.mkCApp ``FieldType.«enum» #[quote vs, quote d]

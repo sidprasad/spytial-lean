@@ -936,18 +936,37 @@ end
 
 /-! ## Entry points -/
 
-/-- What a position accepts. A wider selector in a `pair` position warns rather
-    than errors: the engine projects first and last at runtime. -/
-meta inductive ArityExpect where
-  | unary
-  | pair
-  | edge
-  | unaryOrPair
-  | nary
+/-- One shape a selector position accepts: the tuple widths it takes, with
+    `max` absent meaning no upper bound. `blockedBy` names a field the form
+    needs and the op did not write — the form is then unavailable, and only
+    the diagnostic still reads it, to say what would unlock the width. -/
+meta structure ArityForm where
+  min : Nat
+  max : Option Nat
+  blockedBy : Option String := none
   deriving Repr, Inhabited
 
+meta def ArityForm.holds (f : ArityForm) (a : Nat) : Bool :=
+  f.min ≤ a && f.max.all (a ≤ ·)
+
+/-- Adjacent and overlapping ranges merge, so a position taking two columns
+    and three-or-more reads as one span rather than two. -/
+private meta def mergeRanges (forms : List ArityForm) : Array (Nat × Option Nat) :=
+  (forms.toArray.qsort (·.min < ·.min)).foldl (init := #[]) fun acc f =>
+    match acc.back? with
+    | some (_, none) => acc
+    | some (lo, some hi) =>
+      if f.min ≤ hi + 1 then acc.set! (acc.size - 1) (lo, f.max.map (Nat.max hi))
+      else acc.push (f.min, f.max)
+    | none => acc.push (f.min, f.max)
+
+private meta def widthPhrase (forms : List ArityForm) : String :=
+  " or ".intercalate <| (mergeRanges forms).toList.map fun
+    | (lo, some hi) => if lo == hi then toString lo else s!"{lo} to {hi}"
+    | (lo, none) => s!"{lo} or wider"
+
 /-- A whole-selector string literal is the raw escape hatch. -/
-meta def elabSelector (scope : SelScope) (expect : ArityExpect)
+meta def elabSelector (scope : SelScope) (accepts : List ArityForm)
     (stx : TSyntax `spytial_sel) : TermElabM Sel := do
   if stx.raw.isOfKind selStrKind then
     if let some s := stx.raw[0].isStrLit? then
@@ -957,28 +976,13 @@ meta def elabSelector (scope : SelScope) (expect : ArityExpect)
     throwErrorAt stx m!"a selector picks out atoms or tuples, but this is \
       {kindName e.kind}"
   if let some a := e.arity then
-    match expect with
-    | .unary =>
-      unless a == 1 do
-        throwErrorAt stx m!"this position selects atoms (arity 1), but the \
-          selector has arity {a}"
-    | .pair =>
-      if a < 2 then
-        throwErrorAt stx m!"this position selects pairs (arity 2), but the \
-          selector has arity {a}"
-      else if a > 2 then
-        logWarningAt stx m!"arity-{a} selector in a pair position: only the \
-          first and last columns of each tuple are used"
-    | .edge =>
-      if a < 2 then
-        throwErrorAt stx m!"this position selects edges (arity 2 or wider: \
-          source, then label columns, then target), but the selector has \
-          arity {a}"
-    | .unaryOrPair =>
-      unless a == 1 || a == 2 do
-        throwErrorAt stx m!"this position selects atoms or pairs (arity 1 or \
-          2), but the selector has arity {a}"
-    | .nary => pure ()
+    let (available, blocked) := accepts.partition (·.blockedBy.isNone)
+    unless available.any (·.holds a) do
+      let unlock := (blocked.filter (·.holds a)).filterMap (·.blockedBy)
+      throwErrorAt stx m!"this position accepts a selector of arity \
+        {widthPhrase available}, but this one has arity {a}\
+        {if unlock.isEmpty then m!"" else
+          m!"; arity {a} needs {" or ".intercalate (unlock.map (s!"'{·}'"))}"}"
   return e.sel
 
 meta def elabFieldName (scope : SelScope) (stx : TSyntax `ident) : TermElabM String := do

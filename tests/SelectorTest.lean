@@ -366,8 +366,6 @@ The walker emits one ternary `scrutinee` whatever the discriminant count, so
 strict scopes accept it — in selector and field positions. -/
 
 /--
-warning: arity-3 selector in a pair position: only the first and last columns of each tuple are used
----
 info: {"directives":
  [{"edgeStyle":
    {"lineStyle": {"pattern": "dashed", "color": "gray"},
@@ -418,11 +416,11 @@ error: this position expects a relational expression, but the selector is a labe
 #guard_msgs in
 #spytial.spec sExample with [atomStyle {x : SBDD | @:x = «SRB.nil»} (borderStyle "red")]
 
-/-- error: this position selects atoms (arity 1), but the selector has arity 2 -/
+/-- error: this position accepts a selector of arity 1, but this one has arity 2 -/
 #guard_msgs in
 #spytial.spec sExample with [hideAtom lo]
 
-/-- error: this position selects pairs (arity 2), but the selector has arity 1 -/
+/-- error: this position accepts a selector of arity 2 or wider, but this one has arity 1 -/
 #guard_msgs in
 #spytial.spec sExample with [orientation SBDD below]
 
@@ -656,21 +654,15 @@ info: {"constraints":
 #spytial.spec sLTS with [hideAtom {x : SLTS | step in SLTS->SQ->SQ}]
 
 -- A join off the table drops the owner column.
-/-- error: this position selects atoms (arity 1), but the selector has arity 3 -/
+/-- error: this position accepts a selector of arity 1, but this one has arity 3 -/
 #guard_msgs in
 #spytial.spec sDA with [hideAtom SDA.tr]
 
-/--
-warning: arity-4 selector in a pair position: only the first and last columns of each tuple are used
----
-info: {"constraints": [{"orientation": {"selector": "tr", "directions": ["below"]}}]}
--/
+/-- info: {"constraints": [{"orientation": {"selector": "tr", "directions": ["below"]}}]} -/
 #guard_msgs in
 #spytial.spec sDA with [orientation tr below]
 
 /--
-warning: arity-3 selector in a pair position: only the first and last columns of each tuple are used
----
 info: {"constraints":
  [{"orientation": {"selector": "step", "directions": ["below"]}}]}
 -/
@@ -686,21 +678,28 @@ info: {"constraints":
 #spytial.spec sDA with [inferredEdge e SDA.tr]
 
 /--
-error: this position selects edges (arity 2 or wider: source, then label columns, then target), but the selector has arity 1
+error: this position accepts a selector of arity 2 or wider, but this one has arity 1; arity 1 needs 'draw'
 -/
 #guard_msgs in
 #spytial.spec sDA with [inferredEdge e SQ]
 
+-- … and with `draw`, the unary form the manifest states: the atom feeds both ends.
 /--
-warning: arity-3 selector in a pair position: only the first and last columns of each tuple are used
----
+info: {"directives":
+ [{"inferredEdge": {"selector": "SQ", "name": "e", "draw": "_ -> g"}}],
+ "constraints": [{"group": {"selector": "SQ", "name": "g"}}]}
+-/
+#guard_msgs in
+#spytial.spec sDA with [group SQ g, inferredEdge e SQ draw: "_ -> g"]
+
+/--
 info: {"constraints":
  [{"orientation": {"selector": "scrutinee", "directions": ["below"]}}]}
 -/
 #guard_msgs in
 #spytial.spec sExample with [orientation scrutinee below]
 
-/-- error: this position selects atoms (arity 1), but the selector has arity 3 -/
+/-- error: this position accepts a selector of arity 1, but this one has arity 3 -/
 #guard_msgs in
 #spytial.spec sExample with [hideAtom scrutinee]
 
@@ -721,7 +720,7 @@ info: {"constraints": [{"hideAtom": {"selector": "bogus"}}]}
 #spytial.spec sProc with [hideAtom bogus]
 
 -- open vocabulary is not open arity
-/-- error: this position selects atoms (arity 1), but the selector has arity 2 -/
+/-- error: this position accepts a selector of arity 1, but this one has arity 2 -/
 #guard_msgs in
 #spytial.spec sProc with [hideAtom handler]
 
@@ -873,7 +872,7 @@ info: {"constraints":
   hideAtom {x : SBDD | some x.{y, z : SBDD | z in y.lo}}
 ]
 
-/-- error: this position selects atoms (arity 1), but the selector has arity 2 -/
+/-- error: this position accepts a selector of arity 1, but this one has arity 2 -/
 #guard_msgs in
 #spytial.spec sExample with [atomStyle (lo.hi) (borderStyle "#111")]
 
@@ -1205,8 +1204,6 @@ public def sUnicode : SUnicode := .leaf
 /-! ## Products chain left; quantifiers keep their parens under a connective -/
 
 /--
-warning: arity-3 selector in a pair position: only the first and last columns of each tuple are used
----
 info: {"constraints":
  [{"orientation": {"selector": "SBDD->SBDD->SBDD", "directions": ["below"]}}]}
 -/
