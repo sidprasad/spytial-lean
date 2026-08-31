@@ -8,10 +8,9 @@ A selector picks out the atoms an op applies to. The relational DSL spells that
 in Forge's expression language — `{x : RBNode | @:(x.color) = red}` — which is
 checked, but limited to what a relational query can say about the *diagram*.
 
-`lean (…)` steps outside it: write an ordinary Lean function over your own type,
-and Spytial runs it on the values it walked. Everything Lean can compute is
-available, including recursion over your own functions, which no relational
-query language can express.
+`lean (…)` uses the Lean terms interpreting those same atoms: write an ordinary
+Lean predicate over your own type. Spytial can compute it on concrete values,
+including recursive functions, and use proof-context evidence for symbolic ones.
 
 The function's type is its arity: `σ → Bool` picks out atoms, `σ₁ → σ₂ → Bool`
 picks out pairs, testing every one. The general form, `Spytial.Sel T α`, is a
@@ -103,12 +102,11 @@ evaluates: -/
 
 /-! ## The general form
 
-The shapes above are shorthand for one contract: a selector is a function of
-the value being drawn — `Spytial.Sel T α`, wrapping `T → Spytial.Tuples α`.
-Because it receives the whole tree, it can compare nodes *against* the tree,
-which no per-node predicate can: a predicate never sees the root. It is plain
-code: walk the tree yourself, return the values to select, test it with
-`#eval`. -/
+A whole-value selector — `Spytial.Sel T α`, wrapping `T → Spytial.Tuples α` —
+receives the entire value being drawn. It can traverse that tree and compare
+nodes against its root without capturing a particular inspection's root in
+the predicate. It needs a fully determined value and executable code: walk the
+tree yourself, return the values to select, test it with `#eval`. -/
 
 def RBNode.subtrees : RBNode → List RBNode
   | .nil => [.nil]
@@ -118,3 +116,30 @@ def deepHalf : Spytial.Sel RBNode RBNode :=
   ⟨fun root => root.subtrees.filter (fun n => 2 * n.height ≤ root.height)⟩
 
 #spytial.spec skewed with [hideAtom lean (deepHalf)]
+
+/-! ## The same predicate during a proof
+
+Before reasoning about a parent, draw what the child-height assumptions tell
+us: the left subtree is height 3, the right is height 1, and the parent is
+therefore height 4. None of their keys or internal trees needs to be known.
+The blue highlight is the same Lean predicate in a command and in the proof.
+-/
+
+spytial_ops heightFocus : RBNode [
+  attribute key,
+  attribute color,
+  orientation left left below,
+  orientation right right below,
+  hideAtom lean (fun n : RBNode => n matches .nil),
+  atomStyle lean (fun n : RBNode => n.height = 3) (fillStyle "#dbeafe"),
+  flag hideDisconnectedBuiltIns
+]
+
+#spytial skewed observing [RBNode.height] with [..heightFocus, attribute height]
+
+example (left right : RBNode) (key : Nat)
+    (hLeft : left.height = 3) (hRight : right.height = 1) :
+    (RBNode.node .black key left right).height = 4 := by
+  let parent := RBNode.node .black key left right
+  spytial parent observing [RBNode.height] with [..heightFocus, attribute height]
+  simp [RBNode.height, hLeft, hRight]

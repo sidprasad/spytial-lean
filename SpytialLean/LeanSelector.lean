@@ -14,36 +14,16 @@ open Lean Meta
 
 /-! # Resolving embedded Lean selectors
 
-`known (…)` matches a Prop-valued predicate against extracted proof-context
-facts over represented terms, including symbolic ones. See `evalKnownRel`.
-The following describes the separate, unchanged executable `lean (…)` path.
+Both selector styles range over the relationalized datum. A Lean predicate
+uses the terms and certified evidence interpreting its atoms, not JSON labels.
+Closed predicates on closed values retain the compiled evaluation path.
+Symbolic applications use direct evidence and bounded simplification; a
+missing proof is not a proof of negation.
 
-`SpytialLean.Sel` states the contract: a Lean selector is a function called on
-the value being drawn, returning the selected tuples of values, read as a set.
-This file resolves one against a concrete datum.
-
-Resolution builds **one term** per selector and runs it through Lean's own
-compiled evaluator — the same machinery as `#eval`. The walked values of each
-column are quoted into an array in atom order; the term computes index tuples
-into those arrays; an index *is* an atom. Nothing here reduces user code with
-`whnf`; the user's function runs as compiled code.
-
-Which term is built depends on the selector's type (`classifyLeanRel`):
-
-* a predicate (`σ₁ → ⋯ → σₙ → Bool`/`Prop`) filters the index product
-  directly — no equality instances needed, because nothing is returned;
-* a `Spytial.Sel T α` is applied to the datum, and every returned column is
-  located by `==` (`BEq`).
-
-Failures are loud. A function from a module that is not `meta import`ed and a
-missing `BEq` or `Decidable` instance are reported as errors — never as an
-empty selection.
-
-Two boundaries carry over from the walk itself: atoms with no closed value
-behind them (holes, hypotheses, custom-relationalizer emissions — and, in a
-knowledge walk, subterms the context leaves symbolic) are never selected, and
-a column holds one representative value per atom (under structural identity,
-*the* value it stands for). -/
+Whole-value `Spytial.Sel` programs still execute on a closed root and locate
+returned values by `BEq`. Atoms without a Lean interpretation cannot be
+selected by a Lean predicate. Identity remains the relationalizer's decision.
+-/
 
 public section
 
@@ -138,20 +118,13 @@ meta def boolifyPred (fn : Expr) (doms : Array Expr) : MetaM Expr := do
       let prop := (mkAppN fn xs).headBeta
       -- `decide`'s instance argument trails the proposition, so `mkAppM`
       -- would leave it unapplied; synthesize it directly.
-      let inst ← try synthInstance (← mkAppM ``Decidable #[prop])
+      -- Typeclass search does not unfold an ordinary named predicate on its
+      -- own. Expose its proposition before asking for the decision procedure.
+      let inst ← try synthInstance (← mkAppM ``Decidable #[← whnf prop])
         catch _ => throwError "the proposition{indentExpr prop}\nneeds a \
           `Decidable` instance to run as a selector"
       mkLambdaFVars xs (mkApp2 (mkConst ``decide) prop inst)
   go 0 #[]
-
-/-- Knowledge selectors accept predicates, not executable whole-value programs
-    or Boolean tests. No `Decidable` instance is required. -/
-meta def classifyKnownRel (fn : Expr) : MetaM LeanRelKind := do
-  let kind ← classifyLeanRel fn
-  unless kind.shape matches .pred true do
-    throwError "a `known` selector must return `Prop`; use `lean` for executable \
-      Boolean predicates or `Spytial.Sel` programs"
-  return kind
 
 /-! ## Resolution context -/
 
@@ -163,21 +136,13 @@ private meta def maxSelectedTuples : Nat := 4096
     even when nothing is selected. -/
 private meta def maxEnumeratedPoints : Nat := 1000000
 
-/-- The extracted knowledge available to a selector. `facts` must be types of
-    certified proofs from the extraction, in the current local context.
-    `terms` associates walked terms (including aliases) with existing atoms;
-    an unbacked custom emission has no entry. -/
-meta structure SelectorKnowledge where
-  terms : Array (Expr × String)
-  facts : Array Expr
-
 /-- What a raw Lean selector resolves against: the datum, the walked instance,
     and the subterm behind each atom. -/
 meta structure LeanSelCtx where
   datum : Expr
   di : JsonDataInstance
   prov : Provenance
-  knowledge? : Option SelectorKnowledge := none
+  evidence : SelectorEvidence := {}
 
 /-- One column: the walked atoms of type `σ`, with the value behind each, in
     atom order. The evaluated term reports indexes into this array, so an
@@ -235,9 +200,11 @@ private meta def coerceToParent? (datum datumTy T : Expr) : MetaM (Option Expr) 
 /-! ## Evaluating one selector -/
 
 /-- The tuples the selector term selects on this datum, as arrays of atom ids. -/
-meta def evalLeanRel (ctx : LeanSelCtx) (fn : Expr) : MetaM (Array (Array String)) := do
+private meta def evalCompiledRel (ctx : LeanSelCtx) (fn : Expr)
+    (columns? : Option (Array (Array String × Array Expr)) := none) :
+    MetaM (Array (Array String)) := do
   let kind ← classifyLeanRel fn
-  let cols ← kind.domains.mapM ctx.columnFor
+  let cols ← columns?.getDM (kind.domains.mapM ctx.columnFor)
   let us ← (cols.zip kind.domains).mapM fun ((_, es), σ) => mkArrayLit σ es.toList
   let term ← match kind.shape with
     | .pred isProp =>
@@ -301,44 +268,134 @@ meta def evalLeanRel (ctx : LeanSelCtx) (fn : Expr) : MetaM (Array (Array String
       not render legibly"
   return out
 
-/-! ## Matching extracted knowledge
+/-! ## Predicates over the represented datum -/
 
-Each selected tuple has an extracted fact definitionally equal to the predicate
-applied to represented terms. Failure to match is unknown, not a proof of its
-negation. We neither execute predicates nor search for additional proofs.
--/
+private meta structure PredicateEvidence where
+  facts : Array (Expr × Expr)
+  simpContext : Simp.Context
+  simprocs : Simp.SimprocsArray
 
-private meta def knowledgeColumn (ctx : LeanSelCtx) (knowledge : SelectorKnowledge)
+private meta def checkPredicateProof (proposition proof : Expr) : MetaM Expr := do
+  let proof ← instantiateMVars proof
+  let checked := mkApp2 (mkConst ``id [.zero]) proposition proof
+  if checked.hasExprMVar || checked.hasLevelMVar || checked.hasSorry then
+    throwError "Lean selector evidence contains unresolved holes or sorry"
+  match Kernel.check (← getEnv) (← getLCtx) checked with
+  | .error exception => throwError "{exception.toMessageData (← getOptions)}"
+  | .ok _ => return proof
+
+private meta def preparePredicateEvidence (evidence : SelectorEvidence) :
+    MetaM PredicateEvidence := do
+  let mut theorems ← getSimpTheorems
+  let mut facts := #[]
+  for proof in evidence.proofs do
+    let proof ← instantiateMVars proof
+    -- A hole is not evidence and must never be solved as a side effect.
+    if proof.hasExprMVar || proof.hasLevelMVar || proof.hasSorry then continue
+    let proposition ← instantiateMVars (← inferType proof)
+    unless ← isProp proposition do continue
+    let proof ← checkPredicateProof proposition proof
+    facts := facts.push (proposition, proof)
+    theorems ← theorems.add (.other (.num `spytial.selector facts.size)) #[] proof
+  let simpContext ← Simp.mkContext
+    (config := { maxSteps := 1000, autoUnfold := true })
+    (simpTheorems := #[theorems]) (congrTheorems := ← getSimpCongrTheorems)
+  return { facts, simpContext, simprocs := #[(← Simp.getSimprocs)] }
+
+/-- Establish a proposition without assigning any of the inspected holes.
+    Failure to establish it is not evidence for its negation. -/
+private meta def provePredicate? (evidence : PredicateEvidence) (proposition : Expr) :
+    MetaM (Option Expr) := withoutModifyingState <| withNewMCtxDepth do
+  for (fact, proof) in evidence.facts do
+    if ← isDefEq proposition fact then
+      return some (← checkPredicateProof proposition proof)
+  -- A named predicate need not be a simp lemma. Expose its outer proposition;
+  -- the simplifier then computes/re-writes the relevant applications inside it.
+  let normalized ← whnf proposition
+  let (result, _) ← simp normalized evidence.simpContext evidence.simprocs
+  unless result.expr.isConstOf ``True do return none
+  let proof ← mkOfEqTrue (← result.getProof' normalized)
+  return some (← checkPredicateProof proposition proof)
+
+/-- Candidates come only from represented atoms with correctly typed Lean
+    terms. Aliases must denote the representative value: a coarser identity
+    classifier is not a proof of Lean equality. -/
+private meta def predicateColumn (ctx : LeanSelCtx) (evidence : PredicateEvidence)
     (domain : Expr) : MetaM (Array (String × Expr)) := do
   let mut column := #[]
   for atom in ctx.di.atoms do
-    for (term, id) in knowledge.terms do
-      if id != atom.id then continue
+    let mut candidates := #[]
+    if let some term := ctx.prov[atom.id]? then candidates := candidates.push term
+    for (term, id) in ctx.evidence.terms do
+      if id == atom.id && !candidates.any (·.equal term) then
+        candidates := candidates.push term
+    let mut representative? := none
+    for term in candidates do
       let term ← instantiateMVars term
-      -- In particular, matching must never solve a hole in the user's goal.
-      if term.hasExprMVar then continue
-      if ← withNewMCtxDepth (isDefEq (← inferType term) domain) then
-        column := column.push (id, term)
+      if term.hasExprMVar || term.hasLevelMVar || term.hasSorry then continue
+      unless ← withoutModifyingState <| withNewMCtxDepth <|
+          isDefEq (← inferType term) domain do continue
+      if let some representative := representative? then
+        let equal ← withoutModifyingState <| withNewMCtxDepth <| isDefEq term representative
+        unless equal do
+          unless (← provePredicate? evidence (← mkEq term representative)).isSome do continue
+      else
+        representative? := some term
+      column := column.push (atom.id, term)
   return column
 
-/-- Select existing atom tuples with direct extracted evidence. Multiple terms
-    can denote one drawn atom after refinement or identity merging; evidence
-    about any such tuple of terms selects that tuple of atoms once. -/
-meta def evalKnownRel (ctx : LeanSelCtx) (fn : Expr) : MetaM (Array (Array String)) := do
-  let some knowledge := ctx.knowledge? |
-    throwError "a `known` selector needs extracted proof-context knowledge; \
-      use it with the `spytial` tactic, not `#spytial`"
+private meta def sortSelected (di : JsonDataInstance) (tuples : Array (Array String)) :
+    Array (Array String) := Id.run do
+  let order := di.atoms.zipIdx |>.foldl (init := ({} : Std.HashMap String Nat))
+    fun indices (atom, index) => indices.insert atom.id index
+  return tuples.qsort fun a b => Id.run do
+    for (x, y) in a.zip b do
+      if order[x]! < order[y]! then return true
+      if order[x]! > order[y]! then return false
+    return false
+
+/-- Resolve an existing Lean selector against the represented datum. Closed
+    evaluation and proof-backed simplification are two ways to establish the
+    same predicate, in commands and proof contexts alike. -/
+meta def evalLeanRel (ctx : LeanSelCtx) (fn : Expr) : MetaM (Array (Array String)) :=
+    withoutModifyingState <| withNewMCtxDepth do
   let fn ← instantiateMVars fn
-  if fn.hasExprMVar then throwError "a `known` selector cannot contain unresolved holes"
-  let kind ← classifyKnownRel fn
-  let columns ← kind.domains.mapM (knowledgeColumn ctx knowledge)
-  let facts ← knowledge.facts.mapM instantiateMVars
-  let facts := facts.filter fun fact => !fact.hasExprMVar
-  let comparisons := columns.foldl (fun n column => n * column.size) 1 * facts.size
+  if fn.hasExprMVar || fn.hasLevelMVar then
+    throwError "a Lean selector cannot contain unresolved holes"
+  let kind ← classifyLeanRel fn
+  let .pred isProp := kind.shape | return ← evalCompiledRel ctx fn
+  let env ← getEnv
+  let executable := fun expression => isClosedValue expression &&
+    !expression.getUsedConstants.any (isNoncomputable env ·)
+  let compiled ← if executable fn then
+    if isProp then
+      try
+        -- Local and classical Decidable instances are evidence, not necessarily
+        -- executable code. They must not force an otherwise symbolic check into #eval.
+        pure (executable (← boolifyPred fn kind.domains))
+      catch _ => pure false
+    else pure true
+  else pure false
+  let evidence ← preparePredicateEvidence ctx.evidence
+  let columns ← kind.domains.mapM (predicateColumn ctx evidence)
+  -- Include backed custom roots too, not only the legacy value-provenance
+  -- table. Each atom contributes one closed representative to compiled code.
+  let closedColumns := columns.map fun column =>
+    column.foldl (init := (#[], #[])) fun (ids, terms) (id, term) =>
+      if executable term && !ids.contains id then (ids.push id, terms.push term)
+      else (ids, terms)
+  let mut selected := #[]
+  if compiled then
+    unless closedColumns.any (·.1.isEmpty) do
+      selected ← evalCompiledRel ctx fn (some closedColumns)
+    if (columns.zip closedColumns).all (fun (column, (ids, _)) =>
+        column.all fun (id, _) => ids.contains id) then return selected
+  let points := columns.foldl (fun n column => n * column.size) 1
+  -- Include direct fact comparisons in the work cap, not just successful matches.
+  let comparisons := points * max 1 evidence.facts.size
   if comparisons > maxEnumeratedPoints then
-    throwError "this `known` selector requires {comparisons} fact comparisons, over the \
+    throwError "this Lean predicate requires {comparisons} candidate/evidence checks, over the \
       limit of {maxEnumeratedPoints}; use a narrower predicate or inspection"
-  if facts.isEmpty then return #[]
   let rec visit (remaining : List (Array (String × Expr))) (ids : Array String)
       (terms : Array Expr) (selected : Array (Array String)) : MetaM (Array (Array String)) := do
     match remaining with
@@ -347,14 +404,18 @@ meta def evalKnownRel (ctx : LeanSelCtx) (fn : Expr) : MetaM (Array (Array Strin
         visit rest (ids.push id) (terms.push term) selected) selected
     | [] =>
       if selected.contains ids then return selected
-      let proposition := (mkAppN fn terms).headBeta
-      for fact in facts do
-        if ← withNewMCtxDepth (isDefEq proposition fact) then
-          if selected.size >= maxSelectedTuples then
-            throwError "a `known` selector selects more than {maxSelectedTuples} tuples"
-          return selected.push ids
+      -- Compiled evaluation already decided these tuples, including false ones.
+      if compiled && (ids.zip closedColumns).all (fun (id, (closedIds, _)) =>
+          closedIds.contains id) then return selected
+      let application := (mkAppN fn terms).headBeta
+      let proposition ← if isProp then pure application
+        else mkEq application (mkConst ``Bool.true)
+      if (← provePredicate? evidence proposition).isSome then
+        if selected.size >= maxSelectedTuples then
+          throwError "a Lean predicate selects more than {maxSelectedTuples} tuples"
+        return selected.push ids
       return selected
-  visit columns.toList #[] #[] #[]
+  return sortSelected ctx.di (← visit columns.toList #[] #[] selected)
 
 /-- Tuples as a selector: `` `a1->`a2 + `a3->`a4 ``, or `none` when empty. The
     products bind tighter than the union, so neither side needs parentheses. -/
@@ -377,7 +438,6 @@ mutual
 
 meta partial def Sel.resolveLean (ctx : LeanSelCtx) : Sel → MetaM Sel
   | .leanRel fn => return tupleUnion (← evalLeanRel ctx fn)
-  | .knownRel fn => return tupleUnion (← evalKnownRel ctx fn)
   | .union a b => return .union (← a.resolveLean ctx) (← b.resolveLean ctx)
   | .diff a b => return .diff (← a.resolveLean ctx) (← b.resolveLean ctx)
   | .inter a b => return .inter (← a.resolveLean ctx) (← b.resolveLean ctx)
@@ -446,7 +506,7 @@ spec with no embedded Lean selector needs none of that, so callers check first. 
 mutual
 
 meta partial def Sel.hasLeanRel : Sel → Bool
-  | .leanRel _ | .knownRel _ => true
+  | .leanRel _ => true
   | .union a b | .diff a b | .inter a b | .prod a b | .join a b
   | .override a b | .restrictDom a b | .restrictRan a b => a.hasLeanRel || b.hasLeanRel
   | .prodMult a _ _ b => a.hasLeanRel || b.hasLeanRel
@@ -480,7 +540,7 @@ meta partial def SelForm.hasLeanRel : SelForm → Bool
 
 end
 
-/-- Whether any op in `spec` carries an executable or knowledge-backed Lean selector. -/
+/-- Whether any op in `spec` carries an embedded Lean selector. -/
 meta def SpytialSpec.hasLeanRel (spec : SpytialSpec) : Bool :=
   spec.any fun stamped => match stamped.op with
     | .orientation s _ | .align s _ | .cyclic s _ | .group s _ _ | .hideAtom s
@@ -508,8 +568,8 @@ private meta def resolveOp (ctx : LeanSelCtx) : SpytialOp → MetaM SpytialOp
     report cites what they wrote, not the atom ids it resolved to. -/
 meta def resolveLeanSelectors (datum : Expr) (di : JsonDataInstance)
     (prov : Provenance) (spec : SpytialSpec)
-    (knowledge? : Option SelectorKnowledge := none) : MetaM SpytialSpec := do
-  let ctx : LeanSelCtx := { datum, di, prov, knowledge? }
+    (evidence : SelectorEvidence := {}) : MetaM SpytialSpec := do
+  let ctx : LeanSelCtx := { datum, di, prov, evidence }
   spec.mapM fun stamped => return { stamped with op := ← resolveOp ctx stamped.op }
 
 end

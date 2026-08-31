@@ -46,10 +46,17 @@ public meta inductive IdentityRoute where
   | eqvRel (r : Expr)
   deriving Inhabited
 
-/-- Atom id → the (post-whnf) subterm that minted it. Populated for ordinary
-    value atoms only: holes, hypotheses, and custom-relationalizer atoms have no
-    subterm a Lean predicate could be applied to, and are absent. -/
+/-- Atom id → the (post-whnf) representative that minted an ordinary value atom.
+    Symbolic variables and custom roots are tracked separately in selector terms. -/
 public meta abbrev Provenance := Std.HashMap String Expr
+
+/-- Lean interpretation of the represented atoms. Proofs include retained
+    context facts and checked observation equations, never facts reconstructed
+    from display labels. Entries without a corresponding atom are ignored. -/
+public meta structure SelectorEvidence where
+  terms : Array (Expr × String) := #[]
+  proofs : Array Expr := #[]
+  deriving Inhabited
 
 /-- State maintained while walking an expression tree. -/
 public meta structure WalkState where
@@ -100,15 +107,13 @@ public meta structure WalkState where
   eqvSeen : ExprStructMap String := {}
   /-- What each atom was walked from, for raw Lean selectors. -/
   provenance : Provenance := {}
-  /-- One usable Lean term for each represented atom. Unlike selector
-      provenance, this includes symbolic holes and custom-relationalizer roots:
-      observations may be applied to those terms even though raw selectors must
-      not resolve against them. The first term for a merged atom is retained. -/
+  /-- One observation input per represented atom, including symbolic holes and
+      custom roots. The first term for a merged atom is retained. -/
   observationTerms : Array (Expr × String) := #[]
   /-- Terms actually walked to each atom, including symbolic terms and aliases.
-      Knowledge selectors may use evidence about any of these terms. Custom
-      emissions with no walked term deliberately have no entry. -/
-  knowledgeTerms : Array (Expr × String) := #[]
+      Predicate resolution checks aliases against the drawn representative.
+      Custom emissions with no walked term deliberately have no entry. -/
+  selectorTerms : Array (Expr × String) := #[]
   /-- `r w w` per closed subterm on the `.eqv` route — see `identityVerdict`. -/
   eqvRefl : ExprStructMap Bool := {}
   /-- Per-walk cache: whnf'd type → its `Repr` instance for leaf labels;
@@ -206,8 +211,8 @@ public meta structure WalkConfig where
   /-- Context mode shares exact open constructor terms (including local let
       aliases). Ordinary walks and `Raw` occurrence semantics are unchanged. -/
   shareSymbolicValues : Bool := false
-  /-- Retain symbolic term-to-atom associations for knowledge selectors. -/
-  recordKnowledgeTerms : Bool := false
+  /-- Retain term-to-atom associations for Lean predicate selectors. -/
+  recordSelectorTerms : Bool := false
   /-- Largest domain product a function tabulates into; over it, the function
       stays a leaf. -/
   maxTableTuples : Nat := 512
@@ -1206,16 +1211,16 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
 
 /-- Record an expression at its actual drawn atom, retaining aliases without
     duplicating the same term-to-atom association. -/
-public meta def WalkState.rememberKnowledgeTerm (state : WalkState) (term : Expr)
+public meta def WalkState.rememberSelectorTerm (state : WalkState) (term : Expr)
     (atomId : String) : WalkState :=
-  if state.knowledgeTerms.any fun (e, id) => id == atomId && e.equal term then state
-  else { state with knowledgeTerms := state.knowledgeTerms.push (term, atomId) }
+  if state.selectorTerms.any fun (e, id) => id == atomId && e.equal term then state
+  else { state with selectorTerms := state.selectorTerms.push (term, atomId) }
 
-private meta def withKnowledgeTerm (cfg : WalkConfig) (term : Expr)
+private meta def withSelectorTerm (cfg : WalkConfig) (term : Expr)
     (walk : StateT WalkState MetaM String) : StateT WalkState MetaM String := do
   let atomId ← walk
-  if cfg.recordKnowledgeTerms then
-    modify fun state => state.rememberKnowledgeTerm term atomId
+  if cfg.recordSelectorTerms then
+    modify fun state => state.rememberSelectorTerm term atomId
   return atomId
 
 /-- Walk a Lean expression and produce atoms + relations.
@@ -1230,7 +1235,7 @@ private meta def withKnowledgeTerm (cfg : WalkConfig) (term : Expr)
     instance is consulted at all;
     `Raw`/`Viewed` shift the mode for their subtree. -/
 public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
-    (ctx : WalkCtx := {}) : StateT WalkState MetaM String := withKnowledgeTerm cfg eOrig do
+    (ctx : WalkCtx := {}) : StateT WalkState MetaM String := withSelectorTerm cfg eOrig do
   -- Save original name before WHNF unfolds it
   let origName := eOrig.getAppFn.constName?
   -- Raw/Viewed shift the ambient mode; recognized on the pre-whnf type because
@@ -1393,10 +1398,11 @@ public meta def addActiveDomainObservations (cfg : WalkConfig)
     would let two modules that draw the same third-party type mint the same
     instance name, and importing both would fail. The result is plain data, so
     nothing outlives the rollback. -/
-public meta def relationalizeWithProvenance (e : Expr) (cfg : WalkConfig := {})
-    (observations : Array Expr := #[]) : MetaM (JsonDataInstance × Provenance) :=
+public meta def relationalizeWithEvidence (e : Expr) (cfg : WalkConfig := {})
+    (observations : Array Expr := #[]) :
+    MetaM (JsonDataInstance × Provenance × SelectorEvidence) :=
   withoutModifyingEnv do
-    let mut observationAwareConfig := { cfg with observations }
+    let mut observationAwareConfig := { cfg with observations, recordSelectorTerms := true }
     unless observations.isEmpty do
       let (_, discovery) ← (walkExpr observationAwareConfig e).run {}
       observationAwareConfig ← prepareObservations observationAwareConfig
@@ -1405,7 +1411,15 @@ public meta def relationalizeWithProvenance (e : Expr) (cfg : WalkConfig := {})
       let _ ← walkExpr observationAwareConfig e
       let observationConfig := { observationAwareConfig with functionGraphs := true }
       addActiveDomainObservations observationConfig observations
-    return (state.toDataInstance, state.provenance)
+    return (state.toDataInstance, state.provenance, {
+      terms := state.selectorTerms
+      proofs := observationAwareConfig.observationResults.toArray.filterMap (·.2.proof?) })
+
+/-- Compatibility projection for callers that only need value provenance. -/
+public meta def relationalizeWithProvenance (e : Expr) (cfg : WalkConfig := {})
+    (observations : Array Expr := #[]) : MetaM (JsonDataInstance × Provenance) := do
+  let (data, prov, _) ← relationalizeWithEvidence e cfg observations
+  return (data, prov)
 
 /-- Walk an expression and produce a complete data instance. -/
 public meta def relationalize (e : Expr) (cfg : WalkConfig := {})

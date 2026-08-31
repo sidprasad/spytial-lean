@@ -1,6 +1,6 @@
 # Facts belong to the values being inspected
 
-Tactic-mode `spytial` shows the selected value together with relevant,
+Tactic-mode `spytial` shows the inspected expression together with relevant,
 proof-backed context. A local name should not change which facts are relevant,
 and a fact referring to an already represented symbolic subtree should refer
 to that same subtree atom.
@@ -38,18 +38,15 @@ hypothesis mentions the new whole tree. A fact about an old parent still refers
 to that old parent, not to the new root. The resulting datum can therefore
 include old structure needed to express the retained facts.
 
-For a structured subject, the widget initially shows **Selected value**: the
-selected expression's structure and its observations, computed using the retained
-context. **Value and context** shows the full relational datum, including old
-structures needed by facts. Both views use the same atom IDs and observed results;
-switching views does not copy subtrees or change identity. The context facts are
-listed below the diagram in either view. For an unknown scalar, the relationships
-are the useful inspection, so the widget initially shows the full context.
+The widget shows one relational datum: the selected expression together with all
+relevant structures and relationships needed by its retained facts. For example,
+an after-rotation inspection can include an old parent mentioned by a branch
+inequality. This is program knowledge, not a second display mode. Use layout
+operations such as `hideAtom`, `hideField`, and selectors to control what the
+diagram presents. The context facts are listed below the diagram.
 
-`spytial.datum` still prints the full datum. The widget payload additionally records
-the selected root and its value-only data before context-only structures are
-added. An after-rotation tree can therefore be inspected on its own without
-discarding the inequalities about earlier parents.
+`spytial.datum` prints the same datum. The widget payload additionally records the
+selected root and its source term so the infoview can identify what was inspected.
 
 The AVL layout renders `height` and `key` as attributes. It also enables core's
 `hideDisconnectedBuiltIns` flag: scalar nodes left unconnected after attribute

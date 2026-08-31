@@ -43,22 +43,9 @@ private meta def assertTrees (label : String) (data : JsonDataInstance) (count :
   unless (data.atoms.filter (·.type == "Tree")).size == count do
     throwError "{label}: expected {count} tree atoms\n{canonInstance data}"
 
-private meta def assertInspectionSubset (view : ContextView) : MetaM Unit := do
-  let selected := view.inspection.data
-  unless selected.atoms.any (·.id == view.inspection.root) do
-    throwError "selected root is missing"
-  for atom in selected.atoms do
-    unless view.data.atoms.any (fun full =>
-        full.id == atom.id && full.type == atom.type && full.label == atom.label) do
-      throwError "inspection changed atom identity: {atom.id}"
-  for relation in selected.relations do
-    for tuple in relation.tuples do
-      unless (tuples view.data relation.name).any (·.atoms == tuple.atoms) do
-        throwError "inspection invented a {relation.name} tuple"
-      unless tuple.atoms.all (fun id => selected.atoms.any (·.id == id)) do
-        throwError "inspection left a dangling {relation.name} tuple"
-  unless selected.relations.map (·.id) == view.data.relations.map (·.id) do
-    throwError "inspection lost layout vocabulary"
+private meta def assertInspectionMetadata (view : ContextView) : MetaM Unit := do
+  unless view.data.atoms.any (·.id == view.inspection.root) do
+    throwError "inspected root is missing from the context-informed datum"
   unless view.inspection.facts.size == view.afaik.facts.size do
     throwError "inspection omitted a certified context fact"
 
@@ -128,22 +115,7 @@ private meta def assertInspectionSubset (view : ContextView) : MetaM Unit := do
       let result ← view after
       assertCount "after retains old bounds" result.data "lt" 2
       assertTrees "old and new parents stay distinct" result.data 9
-      assertInspectionSubset result
-      let selected := result.inspection.data
-      unless result.inspection.hasStructure do throwError "rotation has no selected structure"
-      assertTrees "selected rotated tree" selected 7
-      assertCount "every selected tree has a height" selected "height" 7
-      assertCount "selected left edges" selected "left" 3
-      assertCount "selected right edges" selected "right" 3
-      assertCount "bounds remain in supporting context" selected "lt" 0
-      let children := (tuples selected "left" ++ tuples selected "right").map (·.atoms[1]!)
-      for atom in selected.atoms.filter (·.type == "Tree") do
-        let expected := if atom.id == result.inspection.root then 0 else 1
-        unless (children.filter (· == atom.id)).size == expected do
-          throwError "selected rotation is not a tree at {atom.id}"
-      let ids := (tuples selected "height").map (·.atoms[0]!)
-      unless (selected.atoms.filter (·.type == "Tree")).all (fun a => ids.contains a.id) do
-        throwError "a selected subtree has no height"
+      assertInspectionMetadata result
 
 /- A refinement of the selected variable exposes children whose facts also
    belong to its view. No unrelated relation is admitted through the type. -/
@@ -166,13 +138,13 @@ private meta def assertInspectionSubset (view : ContextView) : MetaM Unit := do
     let leaf := mkConst ``Tree.leaf
     let root := mkApp3 (mkConst ``Tree.node) leaf (mkApp f x) leaf
     let result ← view root
-    assertInspectionSubset result
-    assertCount "explicit application belongs to selected value" result.inspection.data "f" 1
-    unless result.inspection.data.atoms.any (·.label == "x") do
-      throwError "selected expression lost the argument of its explicit application"
+    assertInspectionMetadata result
+    assertCount "explicit application belongs to the inspection" result.data "f" 1
+    unless result.data.atoms.any (·.label == "x") do
+      throwError "inspection lost the argument of its explicit application"
 
-/- Preallocated witnesses belonging only to supporting context are observed
-   there, without leaking into the selected value preview. -/
+/- Relevant context witnesses belong to the same inspected datum and receive
+   the requested observation. -/
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `R (← mkArrow tree (← mkArrow tree (mkSort Level.zero))) fun R => do
   withLocalDeclD `l tree fun l => do
@@ -180,11 +152,9 @@ private meta def assertInspectionSubset (view : ContextView) : MetaM Unit := do
       mkAppM ``Exists #[← mkLambdaFVars #[w] (mkApp2 R l w)]
     withLocalDeclD `h proposition fun _ => do
       let result ← view (node l 1 (mkConst ``Tree.leaf)) false
-      assertInspectionSubset result
-      assertTrees "witness retained in full context" result.data 4
-      assertTrees "unused witness excluded from selected value" result.inspection.data 3
+      assertInspectionMetadata result
+      assertTrees "witness retained in inspection" result.data 4
       assertCount "witness also observed" result.data "height" 4
-      assertCount "only selected values observed in preview" result.inspection.data "height" 3
 
 /- An existing fact's neighbor can bring another relevant fact into scope,
    regardless of declaration order. The third tree need not be in the root. -/
@@ -291,22 +261,18 @@ end
         | throwError "missing height result"
       unless output.label == "3" do
         throwError "context-known child heights did not compute the parent: {output.label}"
-      assertInspectionSubset result
-      unless result.inspection.data.atoms.any (fun a => a.id == output.id && a.label == "3") do
-        throwError "selected preview failed to use the context to compute height"
+      assertInspectionMetadata result
       let some bound := (tuples result.data "lt")[0]? | throwError "missing bound"
       unless bound.atoms[0]? == some output.id do
         throwError "branch condition uses a stale height result"
 
-/- A scalar's relationships are the inspection, not a second structural view.
-   Observing it must not change the default into an isolated value preview. -/
+/- A scalar and its contextual relationships inhabit the same inspection. -/
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `x (mkConst ``Nat) fun x => do
   withLocalDeclD `y (mkConst ``Nat) fun y => do
   withLocalDeclD `h (← mkAppM ``LT.lt #[x, y]) fun _ => do
     let (_, some result) ← wdykInContext x | throwError "missing scalar context"
-    assertInspectionSubset result
-    if result.inspection.hasStructure then throwError "scalar misclassified as a structure"
+    assertInspectionMetadata result
     assertCount "scalar retains comparison" result.data "lt" 1
 
 /- Known symbolic heights remain shared values. Arithmetic used internally to

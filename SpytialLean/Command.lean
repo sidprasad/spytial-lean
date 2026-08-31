@@ -498,11 +498,11 @@ private meta def resolveObservations (subject : Expr) (stx : Syntax) :
     keeping the provenance raw Lean selectors resolve against. -/
 private meta def elabRelationalized (t : Syntax) (cfg : WalkConfig := {})
     (observerSyntaxes : Array Syntax := #[]) :
-    TermElabM (Expr × Array Expr × JsonDataInstance × Provenance) := do
+    TermElabM (Expr × Array Expr × JsonDataInstance × Provenance × SelectorEvidence) := do
   let e ← elabTermInstantiated t
   let observations ← resolveObservationTerms e observerSyntaxes
-  let (di, prov) ← relationalizeWithProvenance e cfg observations
-  return (e, observations, di, prov)
+  let (di, prov, evidence) ← relationalizeWithEvidence e cfg observations
+  return (e, observations, di, prov, evidence)
 
 /-- Elaborate a use-site `with [...]` for `e`. Without `..` the list replaces
     `e`'s attached spec; a `..` element splices the attached spec at that
@@ -562,14 +562,14 @@ private meta def elabSpytialPayload (t : Syntax) (ops? : Option (Array (TSyntax 
   -- selector scope needs `SpytialEnum`. Wrapping only the walk would leave the
   -- spec half persisting its instances. Both results are plain data.
   withoutModifyingEnv do
-    let (e, observations, di, prov) ← elabRelationalized t cfg observerSyntaxes
+    let (e, observations, di, prov, evidence) ← elabRelationalized t cfg observerSyntaxes
     let spec? ← match ops? with
       | some ops => do
         let scope ← scopeForObservations (← scopeForExpr e) observations
         let scope := if observations.isEmpty then scope else scopeWithObservedData scope di
         some <$> elabUseSiteOps e ops (some scope)
       | none => lookupTypeSpec e
-    let spec? ← spec?.mapM fun s => liftM (resolveLeanSelectors e di prov s)
+    let spec? ← spec?.mapM fun s => liftM (resolveLeanSelectors e di prov s evidence)
     return (di, spec?.map SpytialSpec.render)
 
 private meta def spytialProps (di : JsonDataInstance) (cndSpec? : Option String) : Json :=
@@ -730,8 +730,8 @@ meta def elabSpytialSpecDebug : CommandElab := fun
       -- datum. A spec without one renders identically without it, and skipping
       -- it also skips asking each walked type for a `SpytialIdentity`.
       if spec.hasLeanRel then
-        let (di, prov) ← relationalizeWithProvenance e
-        return (← resolveLeanSelectors e di prov spec).render
+        let (di, prov, evidence) ← relationalizeWithEvidence e
+        return (← resolveLeanSelectors e di prov spec evidence).render
       else
         return spec.render
     logInfo m!"{specStr}"
@@ -745,7 +745,7 @@ syntax (name := spytialDatumDebug) "#spytial.datum " term
 
 @[command_elab spytialDatumDebug]
 meta def elabSpytialDatumDebug : CommandElab := fun stx => do
-  let (_, _, di, _) ← liftTermElabM <| elabRelationalized stx[1] {} (optionalTerms stx[2])
+  let (_, _, di, _, _) ← liftTermElabM <| elabRelationalized stx[1] {} (optionalTerms stx[2])
   logInfo m!"{(toJson di).pretty}"
 
 /-! ## Proof visualization -/
@@ -775,7 +775,7 @@ syntax (name := spytialProofDatumDebug) "#spytial.proof.datum " term : command
 @[command_elab spytialProofDatumDebug]
 meta def elabSpytialProofDatumDebug : CommandElab := fun
   | `(#spytial.proof.datum $t:term) => do
-    let (_, _, di, _) ← liftTermElabM <| elabRelationalized t { filterProofs := false }
+    let (_, _, di, _, _) ← liftTermElabM <| elabRelationalized t { filterProofs := false }
     logInfo m!"{(toJson di).pretty}"
   | stx => throwError "Unexpected syntax {stx}."
 
@@ -813,11 +813,10 @@ private meta def spytialInContextProps? (subject : Expr)
         else scopeWithObservedData scope view.data
       some <$> elabUseSiteOps subject ops (some scope)
     | none => lookupTypeSpec subject
-  -- `lean` keeps its closed-value contract; only explicit `known` leaves
-  -- inspect the symbolic term mapping and certified facts.
-  let knowledge ← view.selectorKnowledge
+  -- Both selector styles range over this datum. Lean predicates retain the
+  -- represented terms and checked evidence instead of reading display labels.
   let spec? ← spec?.mapM fun s =>
-    liftM (resolveLeanSelectors view.datum view.data view.prov s (some knowledge))
+    liftM (resolveLeanSelectors view.datum view.data view.prov s view.evidence)
   let props := spytialProps view.data (spec?.map SpytialSpec.render)
   return (some (props.setObjVal! "inspection" (toJson view.inspection)), status)
 

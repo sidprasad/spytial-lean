@@ -11,22 +11,7 @@ export interface RelationalData {
 export interface InspectedValue {
   root: string;
   term: string;
-  data: RelationalData;
-  hasStructure: boolean;
   facts: string[];
-}
-
-export type InspectionMode = 'value' | 'context';
-
-export function initialInspectionMode(inspection?: InspectedValue): InspectionMode {
-  // For an unknown scalar, the relations are the useful part of inspection.
-  return inspection?.hasStructure ? 'value' : 'context';
-}
-
-export function inspectionData(
-  full: RelationalData, inspection: InspectedValue | undefined, mode: InspectionMode,
-): RelationalData {
-  return mode === 'value' && inspection ? inspection.data : full;
 }
 
 /** Supply Lean's scalar classification to core's existing built-in hiding

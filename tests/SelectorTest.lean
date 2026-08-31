@@ -1263,7 +1263,6 @@ SpytialLean.selBox
 SpytialLean.selCard
 SpytialLean.selIdent
 SpytialLean.selJoinOp
-SpytialLean.selKnown
 SpytialLean.selLean
 SpytialLean.selNegNum
 SpytialLean.selNum

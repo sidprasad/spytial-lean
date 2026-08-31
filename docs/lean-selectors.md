@@ -1,9 +1,9 @@
 # Lean selectors
 
 A layout op needs a selector: the set of nodes or tuples it applies to. The
-relational language queries the diagram; `lean (…)` runs an ordinary Lean
-function over your data instead. Anything Lean can compute is available,
-including recursion over your own functions. The form is the keyword `lean`,
+relational language queries the diagram; `lean (…)` describes a selection
+using Lean functions and predicates. Both range over the same relationalized
+datum, with Lean terms and evidence retained for its atoms. The form is the keyword `lean`,
 then a term in round brackets — the brackets tell the parser where the term
 ends.
 
@@ -35,7 +35,11 @@ def myTree : RBNode :=
 
 A function returning `Bool` or `Prop` keeps the walked tuples it accepts. Each
 argument is one column, up to four; Spytial tries every combination of nodes.
-A `Prop` is decided through its `Decidable` instance, so `=` and `<` work.
+Closed predicates on closed values run through Lean's compiled evaluator;
+`Prop` predicates use `Decidable` when available, so `=` and `<` work.
+For symbolic values, direct evidence and bounded simplification can establish
+the predicate without determining the entire value. This path needs no
+`Decidable` instance. A Boolean predicate matches when it is established to be `true`.
 
 ```lean
 -- 1 argument: picks single nodes
@@ -71,8 +75,8 @@ def smallKeys : Spytial.Sel RBNode RBNode :=
 #spytial myTree with [hideAtom lean (smallKeys)]
 ```
 
-Because it receives the whole value, a `Sel` can say things a predicate
-cannot — compare every node against the root, for example. A `Sel` is plain
+Because it receives the whole value, a `Sel` can perform a traversal itself
+instead of enumerating represented candidates. A `Sel` is plain
 computable code: run it with `#eval`, test it with `#guard`, compose it with
 `∪`.
 
@@ -97,31 +101,82 @@ Use `#spytial.spec` to print what a selector resolved to (node ids like
 `` `atom_3 ``, `+` for union, `->` joining tuple columns), and
 `#spytial.datum` to see which node is which.
 
+## The same selector across contexts
+
+For a tree type with a `height` function, one attached specification can be
+used for computed values and for inspection inside a definition or proof:
+
+```lean
+spytial_spec Tree [
+  atomStyle lean (fun n : Tree => height n = 3) (fillStyle "#dbeafe")
+]
+
+#spytial concreteTree
+
+example (t : Tree) (h : height t = 3) : True := by
+  spytial t
+  trivial
+```
+
+In the proof, `t` is selected without knowing its children. In the command,
+the same property can be computed. `observing [height]` is not required to
+use this predicate: observation adds heights to the datum for display; the
+selector only selects among atoms already present. When observations are
+requested, their checked equalities are also available to selector resolution.
+
+The domain is the refined, relationalized datum, not every variable in the
+surrounding proof. Each candidate has a represented Lean term of the actual
+argument type, checked independently of short names and labels. Binary and
+wider predicates select tuples of these atoms. Resolution adds no data atoms
+or relations; an `inferredEdge` can then display its selected tuples.
+
+Inline predicates may capture parameters in scope:
+
+```lean
+spytial t with [
+  atomStyle lean (fun n : Tree => height n = threshold) (fillStyle "#dbeafe")
+]
+```
+
+Symbolic matching first checks retained proofs by definitional equality, then
+uses bounded `simp` with ordinary simp rules, computation through available
+definitions, the retained context proofs, and observation equations. For
+example, child heights `2` and `1` can establish parent height `3`; separate
+proofs of `P x` and `Q x` can establish `P x ∧ Q x`. New proofs are kernel-checked.
+This is not unrestricted theorem search: no `aesop`, `omega`, or invented
+assumptions. Use proved hypotheses or `fyi` when further reasoning is needed.
+
+Missing evidence means no established match, not an established negation.
+`lean (fun x => ¬ P x)` needs support for the negation. The same applies to
+Boolean `!`. Relational difference, `Tree - lean (P)`, instead means all tree
+atoms not selected by `P`, including those whose status is undetermined.
+
 ## The rules that bite
 
-These rules concern executable `lean (…)` selectors. In proofs,
-[`known (…)`](knowledge-selectors.md) instead selects symbolic terms using
-extracted evidence, without executing a predicate.
-
-- **Closed, non-dependent terms only.** A selector cannot capture local
-  variables, and dependent argument types are rejected.
+- **Non-dependent arguments, no unresolved holes.** Predicates may capture
+  local variables, but dependent argument types are rejected. Metavariable
+  holes are neither selected nor assigned by resolution.
 - **`meta import` for other modules.** A selector runs at elaboration time;
-  Lean's error names the exact import to add. Same-file definitions need
-  nothing.
-- **Only values are selectable.** Group names, invented relations
-  (`scrutinee`), custom-relationalizer nodes, and open terms (holes,
-  hypotheses) never match; use the relational language for those. In the
-  `spytial` tactic this means a selector runs on the values the context
-  establishes — a subterm the context leaves symbolic never matches, and a
-  `Spytial.Sel` is refused unless the context determines the whole value.
-  This also applies to a `Spytial.Sel` inherited from an attached
-  `spytial_spec`: because the selector is part of that specification, Spytial
-  reports an error rather than silently omitting it. This is a limitation of
-  whole-value selectors in tactic mode. They execute ordinary Lean code on a
-  concrete value; they cannot currently interpret that code using the partial
-  knowledge extracted from the proof context.
+  compiled code from another module must be available via `meta import`.
+  Symbolic reduction also needs accessible bodies or suitable lemmas: use
+  `@[expose]` for definitions intended to unfold across module boundaries.
+  An unavailable body cannot be guessed from a displayed value.
+- **A Lean interpretation is required.** Symbolic variables and shared
+  existential witnesses can match. Synthetic custom-relationalizer nodes
+  without a corresponding term, group names, and invented relation names
+  cannot; use the relational language for those.
+- **Identity remains the relationalizer's policy.** A coarser classifier can
+  merge unequal values. Predicates inspect the drawn representative, not any
+  arbitrary member of that class. Refinement aliases are accepted when they
+  are established equal to the representative; `.asWritten` occurrences stay distinct.
+- **Whole-value programs still need a whole value.** `Spytial.Sel` remains
+  executable, closed code. An incomplete root is an explicit error, including
+  for an attached spec; the selector is never silently discarded.
 - **At most 4 columns, at most 4096 selected tuples.** Wider or bigger cannot
-  render legibly.
+  render legibly. Compiled enumeration is capped at one million points;
+  symbolic enumeration includes candidate/evidence comparisons in that bound.
+  Simplification is capped at 1,000 steps per check. Limit failures are errors,
+  not silently truncated selections.
 
 ## What a conflict report shows
 
@@ -139,7 +194,7 @@ attached `spytial_spec` keeps the line it was declared on, so a spec re-run
 against another value still points at where it was written. Turn it off with
 `set_option spytial.source false` to keep the emitted spec free of source text.
 
-`spytial_spec` stores the function and re-runs it for each value drawn, as
-compiled code. [demos/LeanSelectors.lean](../demos/LeanSelectors.lean) is a
+`spytial_spec` stores the selector and resolves it against each inspection's
+datum and evidence. [demos/LeanSelectors.lean](../demos/LeanSelectors.lean) is a
 worked example; [selectors.md](selectors.md) has the grammar and checking
 rules.

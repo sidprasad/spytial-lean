@@ -362,12 +362,11 @@ chain.
 
 In tactic mode, `spytial term` asks
 [IYKYK](https://github.com/sidprasad/iykyk) what the current context establishes
-about `term` and translates that `Afaik` knowledge into relational data.
-For structured values, the infoview starts with the selected value and its
-observations; **Value and context** reveals the full graph, including any earlier
-structures referred to by retained facts. The facts are listed below either view.
-Scalar inspections start with the full context. `spytial.datum term` prints the
-full relational datum, and
+about `term` and translates that `Afaik` knowledge into one relational datum.
+The infoview shows the selected expression together with all relevant structures,
+observations, and relationships; layout operations such as `hideAtom` and
+`hideField` control its presentation. The retained facts are listed below the
+diagram. `spytial.datum term` prints the same relational datum, and
 `spytial term fyi [hypothesis]` supplies an explicit proved hypothesis or
 forward rule to IYKYK. Spytial uses IYKYK's `wdyk` API directly and enables
 `simp` normalization so constructor clashes and same-constructor equations
@@ -416,15 +415,19 @@ Observation changes the relational datum passed to Spytial. The existing
 
 See [Observations](docs/observations.md) for the contract, examples, and limitations.
 
-To select symbolic nodes using extracted evidence, use `known (…)`:
+The same `lean (…)` predicate selectors work in commands, definitions, and proofs:
 
 ```lean
 spytial tree with [
-  atomStyle known (fun n : Tree => height n = 3) (fillStyle "#dbeafe")
+  atomStyle lean (fun n : Tree => height n = 3) (fillStyle "#dbeafe")
 ]
 ```
 
 A fact `h : height tree = 3` can select `tree` without determining its children.
-Missing evidence means unknown, not false. This draft form works in tactic mode,
-including attached specifications; executable `lean (…)` selectors are unchanged.
-See [knowledge selectors](docs/knowledge-selectors.md) for the matching contract and limits.
+Both selector styles range over the refined, relationalized datum. Lean predicates
+use the terms associated with its atoms and retained proofs, including checked
+observation equations. Computation, direct evidence, and bounded simplification
+establish matches; missing evidence is not evidence of falsehood. Attached
+`spytial_spec` predicates use this same interpretation at each inspection.
+Arbitrary whole-value `Spytial.Sel` programs still require a determined root.
+See [Lean selectors](docs/lean-selectors.md) for examples and reasoning limits.

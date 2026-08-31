@@ -272,10 +272,6 @@ syntax:100 (name := selAtomLit) name : spytial_sel
     `lean` still reads as `selIdent`. -/
 syntax:100 (name := selLean) &"lean " "(" term ")" : spytial_sel
 
-/-- A predicate supported by extracted facts about represented terms. The
-    soft keyword leaves a relation named `known` usable as an identifier. -/
-syntax:100 (name := selKnown) &"known " "(" term ")" : spytial_sel
-
 -- `univ`/`iden`/`none` have no rules of their own: an atom-keyed rule never
 -- fires on an unspaced `univ.lo`, so `resolveExprIdent` reads them off the ident.
 
@@ -471,14 +467,14 @@ private meta def elabLeanRel (scope : SelScope) (stx : TSyntax `term) :
   -- recovery term's holes would only bury it. The unknown arity disables
   -- downstream position checks.
   if fn.hasSorry then return .rel .none_ none
-  if fn.hasExprMVar || fn.hasFVar then
-    throwErrorAt stx "a raw Lean selector must be a closed term; this one \
-      still has holes or local variables"
+  if fn.hasExprMVar || fn.hasLevelMVar then
+    throwErrorAt stx "a Lean selector cannot contain unresolved holes"
   let kind ← withRef stx <| classifyLeanRel fn
-  -- A `Prop`-valued predicate runs through `decide`; refuse an undecidable
-  -- one here, where the message can point at the selector.
-  if let .pred true := kind.shape then
-    discard <| withRef stx <| boolifyPred fn kind.domains
+  -- Predicates can capture local parameters and use evidence without a
+  -- Decidable instance. Whole-value programs still require executable code.
+  if let .sel _ := kind.shape then
+    if fn.hasFVar then
+      throwErrorAt stx "a whole-value Lean selector must be a closed term"
   -- A column over a type the walk cannot produce can never be filled; in a
   -- strict scope that is a mistake worth naming, in a lenient one unknowable.
   unless scope.lenient do
@@ -488,14 +484,6 @@ private meta def elabLeanRel (scope : SelScope) (stx : TSyntax `term) :
           logWarningAt stx m!"'{n}' is not among the types reachable from \
             '{scope.root}', so this selector cannot match anything"
   return .rel (.leanRel fn) (some kind.arity)
-
-private meta def elabKnownRel (stx : TSyntax `term) : TermElabM EExpr := do
-  let fn ← instantiateMVars (← Term.withSynthesize <| Term.elabTerm stx none)
-  if fn.hasSorry then return .rel .none_ none
-  if fn.hasExprMVar then
-    throwErrorAt stx "a `known` selector cannot contain unresolved holes"
-  let kind ← withRef stx <| classifyKnownRel fn
-  return .rel (.knownRel fn) (some kind.arity)
 
 mutual
 
@@ -560,7 +548,6 @@ private meta partial def elabExpr (scope : SelScope) (env : LEnv) :
       let (sb, ab) ← elabRel scope env stx[2]
       return .rel (.join sa sb) (← joinArity stx aa ab)
     | ``selLean => elabLeanRel scope ⟨stx[2]⟩
-    | ``selKnown => elabKnownRel ⟨stx[2]⟩
     | _ => elabBoxJoin? scope env stx
 
 private meta partial def elabBoxJoin? (scope : SelScope) (env : LEnv) (stx : Syntax) :

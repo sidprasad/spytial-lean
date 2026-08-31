@@ -129,7 +129,7 @@ private meta def addWitnesses (afaik : Iykyk.Afaik) (recordObservationTerms : Bo
     set { state.addAtom atom with
       applicationAtoms :=
         (state.applicationAtoms.insert ⟨witness.term⟩ atomId).insert ⟨reduced⟩ atomId
-      knowledgeTerms := state.knowledgeTerms.push (witness.term, atomId)
+      selectorTerms := state.selectorTerms.push (witness.term, atomId)
       observationTerms := if recordObservationTerms then
         state.observationTerms.push (witness.term, atomId)
       else state.observationTerms }
@@ -170,7 +170,7 @@ private meta def walkFact (cfg : WalkConfig)
     atomIds := atomIds.push atomId
     types := types.push (← sigOfType (← inferType argument))
     -- Keep the source term even if a proved equality refined this endpoint.
-    modify fun state => state.rememberKnowledgeTerm rawArgument atomId
+    modify fun state => state.rememberSelectorTerm rawArgument atomId
   -- An observation may already have emitted the graph point established by
   -- this equation. Relations contain tuples, not one copy per justification.
   unless ((← get).relations.get? relation).any (fun (_, tuples) =>
@@ -194,27 +194,25 @@ private meta def contextWalkConfig (afaik : Iykyk.Afaik) (baseConfig : WalkConfi
     observations := observations
     shareSymbolicValues := true }
 
-/-- The selected value before supporting context is added. Atom IDs are shared
-    with the full datum, not independently minted for a second visualization. -/
+/-- Metadata shown alongside one context-informed inspection. -/
 public meta structure InspectedValue where
   root : String
   term : String
-  data : JsonDataInstance
-  hasStructure : Bool
   facts : Array String
   deriving ToJson, Inhabited
 
-private meta def selectedValueData (root : String) (witnessIds : Array String)
-    (data : JsonDataInstance) : JsonDataInstance := Id.run do
-  -- Everything emitted by the root walk belongs to the selected expression,
-  -- including custom relations and function graphs whose result is last.
-  -- Only preallocated witnesses not yet used by that walk are excluded.
+private meta def rootWalkAtomIds (root : String) (witnessIds : Array String)
+    (data : JsonDataInstance) : Std.HashSet String := Id.run do
+  -- Preallocated witnesses used by the root walk belong with the root's other
+  -- terms. Unused witnesses are deferred so their observations follow the fact
+  -- that introduced them, preserving the full datum's stable walk order.
   let mut used := (∅ : Std.HashSet String).insert root
   for relation in data.relations do
     for tuple in relation.tuples do
       for atom in tuple.atoms do used := used.insert atom
-  return { data with atoms := data.atoms.filter fun atom =>
-    !witnessIds.contains atom.id || used.contains atom.id }
+  return data.atoms.foldl (init := ∅) fun atoms atom =>
+    if !witnessIds.contains atom.id || used.contains atom.id then atoms.insert atom.id
+    else atoms
 
 /-- Translate proof-backed knowledge into Spytial's relational data. The
     proofs remain owned by IYKYK. Requested observations parameterize the
@@ -226,10 +224,10 @@ private meta def selectedValueData (root : String) (witnessIds : Array String)
     substituted, closed exactly when the context determines the value. -/
 private meta def relationalizeAfaikInspection (afaik : Iykyk.Afaik)
     (baseConfig : WalkConfig := {}) (observations : Array Expr := #[]) :
-    MetaM (JsonDataInstance × Provenance × Expr × InspectedValue × Array (Expr × String)) :=
+    MetaM (JsonDataInstance × Provenance × Expr × InspectedValue × SelectorEvidence) :=
   withoutModifyingEnv do
     let mut config ← contextWalkConfig afaik
-      { baseConfig with recordKnowledgeTerms := true } observations
+      { baseConfig with recordSelectorTerms := true } observations
     let refinements := config.refinements
     let root ← if afaik.root.isFVar || afaik.root.isMVar then
       pure afaik.root
@@ -246,43 +244,39 @@ private meta def relationalizeAfaikInspection (afaik : Iykyk.Afaik)
           anchors ← walkFact config fact anchors
       config ← prepareObservations config (discovery.observationTerms.map (·.1))
         (afaik.facts.map (·.proof))
-    let ((rootId, hasStructure, valueData), state) ← StateT.run (s := {}) do
+    let (rootId, state) ← StateT.run (s := {}) do
       -- Witnesses first: a witness can occur inside the refined root, and the
       -- walk reuses its atom only when it is already registered.
       let mut anchors ← addWitnesses afaik (!observations.isEmpty)
       let witnessIds := anchors.map (·.2)
       let rootId ← walkExpr config root
-      let rootData := selectedValueData rootId witnessIds (← get).toDataInstance
-      let hasStructure := !rootData.relations.isEmpty
-      modify fun state => state.rememberKnowledgeTerm afaik.root rootId
+      modify fun state => state.rememberSelectorTerm afaik.root rootId
       unless anchors.any fun (expression, _) => expression.equal root do
         anchors := anchors.push (root, rootId)
-      -- Compute against the already prepared context proofs, but capture the
-      -- selected value before context-only structures enter the graph.
-      let isSelected := fun (entry : Expr × String) =>
-        rootData.atoms.any (·.id == entry.2)
-      let deferred := (← get).observationTerms.filter (!isSelected ·)
-      modify fun state => { state with observationTerms := state.observationTerms.filter isSelected }
+      -- Emit root-walk observations before relations introduced by facts.
+      let rootAtoms := rootWalkAtomIds rootId witnessIds (← get).toDataInstance
+      let belongsToRootWalk := fun (entry : Expr × String) =>
+        rootAtoms.contains entry.2
+      let deferred := (← get).observationTerms.filter (!belongsToRootWalk ·)
+      modify fun state => {
+        state with observationTerms := state.observationTerms.filter belongsToRootWalk }
       addActiveDomainObservations config observations
-      let valueData := selectedValueData rootId witnessIds (← get).toDataInstance
       modify fun state => { state with observationTerms := state.observationTerms ++ deferred }
       for fact in afaik.facts do
         if let some (variableId, value) ← refinementOf? (← displayedProposition fact) then
           if refinements[variableId]?.any (·.equal value) then continue
         anchors ← walkFact config fact anchors
       addActiveDomainObservations config observations
-      return (rootId, hasStructure, valueData)
+      return rootId
     let facts ← afaik.facts.mapM fun fact => do
       return (← ppExpr (← displayedProposition fact)).pretty
     let inspection : InspectedValue := {
-      root := rootId, term := (← ppExpr afaik.root).pretty
-      -- Keep empty declarations for context-only relations: the same checked
-      -- layout remains meaningful in either view, with empty selections here.
-      data := { valueData with relations := state.toDataInstance.relations.map fun relation =>
-        (valueData.relations.find? (·.id == relation.id)).getD { relation with tuples := #[] } }
-      hasStructure, facts }
+      root := rootId, term := (← ppExpr afaik.root).pretty, facts }
     return (state.toDataInstance, state.provenance,
-      substituteKnown refinements 8 afaik.root, inspection, state.knowledgeTerms)
+      substituteKnown refinements 8 afaik.root, inspection, {
+        terms := state.selectorTerms
+        proofs := afaik.facts.map (·.proof) ++
+          config.observationResults.toArray.filterMap (·.2.proof?) })
 
 /-- Translate context knowledge, preserving the original data/provenance API. -/
 public meta def relationalizeAfaikWithProvenance (afaik : Iykyk.Afaik)
@@ -313,14 +307,9 @@ public meta structure ContextView where
       with its known refinements substituted. -/
   datum : Expr
   inspection : InspectedValue
-  /-- Symbolic terms and aliases actually represented by atoms in `data`. -/
-  terms : Array (Expr × String)
+  /-- Terms and certified evidence interpreting the atoms in `data`. -/
+  evidence : SelectorEvidence
   deriving Inhabited
-
-/-- Knowledge selectors use certified propositions, not displayed relation
-    names (which can collide or omit negative facts). -/
-public meta def ContextView.selectorKnowledge (view : ContextView) : MetaM SelectorKnowledge := do
-  return { terms := view.terms, facts := ← view.afaik.facts.mapM displayedProposition }
 
 /-- Local names and their definitions have one spelling for relevance
     matching. This does not unfold observed functions or change their proofs. -/
@@ -399,10 +388,10 @@ public meta def wdykInContext (subject : Expr) (walkConfig : WalkConfig := {})
       let afaik ← if wdykConfig.rootOnly && !(← isProp (← inferType subject)) then
         projectToRepresentation afaik walkConfig observations
       else pure afaik
-      let (data, prov, datum, inspection, terms) ←
+      let (data, prov, datum, inspection, evidence) ←
         relationalizeAfaikInspection afaik walkConfig observations
       let inspection := { inspection with term := (← ppExpr subject).pretty }
-      return ({ truncated := afaik.truncated }, some { afaik, data, prov, datum, inspection, terms })
+      return ({ truncated := afaik.truncated }, some { afaik, data, prov, datum, inspection, evidence })
 
 private meta def isWitnessTerm (afaik : Iykyk.Afaik) (expression : Expr) : Bool :=
   afaik.witnesses.any fun witness => witness.term.equal expression
@@ -427,7 +416,7 @@ private meta partial def functionGraphScopeEntries (afaik : Iykyk.Afaik) (cfg : 
     heads := heads ++ childHeads
   return (relations, heads)
 
-/-- Extend the selected value's normal Spytial scope (`base`) with the
+/-- Extend the inspected expression's normal Spytial scope (`base`) with the
     relations that this IYKYK result can emit. -/
 public meta def scopeForAfaik (afaik : Iykyk.Afaik) (base : SelScope)
     (observations : Array Expr := #[]) : MetaM SelScope := do

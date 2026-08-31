@@ -430,9 +430,9 @@ example : True := by
 
 /-! ## Raw Lean selectors in tactic position
 
-The knowledge walk keeps the subterm behind each atom, so a `lean (…)`
-selector resolves in tactic mode exactly as in command mode: it runs on the
-closed values the context establishes, and symbolic subterms never match. -/
+The knowledge walk keeps the term behind each atom. These tests pin closed
+evaluation and the whole-value restriction; KnowledgeSelectorTest also covers
+predicate resolution from evidence about symbolic terms. -/
 
 section WireSpec
 open Lean Meta Elab Tactic
@@ -490,7 +490,7 @@ example (xs : List Nat) (h : xs = [1]) : True := by
   spytial xs with [hideAtom lean (fun n : Nat => n == 1)]
   trivial
 
--- symbolic atoms have no value behind them and never match
+-- The inequality alone establishes neither endpoint to be zero.
 set_option linter.unusedVariables false in
 set_option spytial.source false in
 /-- info: {"constraints": [{"hideAtom": {"selector": "none"}}]} -/

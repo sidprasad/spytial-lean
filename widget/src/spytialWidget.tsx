@@ -5,8 +5,7 @@ import spytialcore from 'spytial-core';
 // @ts-ignore — virtual module for components bundle (provides mountErrorMessageModal, ErrorAPI)
 import spytialComponents from 'spytial-core-components';
 import {
-  initialInspectionMode, inspectionData, withLeanScalarTypes,
-  type InspectedValue, type InspectionMode, type RelationalData,
+  withLeanScalarTypes, type InspectedValue, type RelationalData,
 } from './inspection';
 
 const { JSONDataInstance, LayoutInstance, parseLayoutSpec, SGraphQueryEvaluator } = spytialcore;
@@ -36,17 +35,6 @@ function injectCss() {
     .spytial-error {
       padding: 8px;
       color: var(--vscode-errorForeground);
-    }
-    .spytial-inspection-controls { display: flex; gap: 6px; margin: 8px 0; }
-    .spytial-inspection-controls button {
-      cursor: pointer; padding: 4px 8px;
-      color: var(--vscode-button-secondaryForeground, #222);
-      background: var(--vscode-button-secondaryBackground, #eee);
-      border: 1px solid var(--vscode-panel-border, #bbb); border-radius: 3px;
-    }
-    .spytial-inspection-controls button[aria-pressed="true"] {
-      color: var(--vscode-button-foreground, white);
-      background: var(--vscode-button-background, #245b9e);
     }
     .spytial-inspection-note { font-size: 12px; margin: 6px 0; }
     .spytial-facts { margin: 8px 0; font-size: 12px; }
@@ -221,13 +209,7 @@ export default function SpytialWidget(props: SpytialWidgetProps) {
   const [loading, setLoading] = React.useState(true);
   const [height, setHeight] = React.useState(DEFAULT_HEIGHT);
   const errorMountedRef = React.useRef(false);
-  const [mode, setMode] = React.useState<InspectionMode>(() =>
-    initialInspectionMode(props.inspection));
-  const data = inspectionData(props.dataInstance, props.inspection, mode);
-
-  React.useEffect(() => {
-    setMode(initialInspectionMode(props.inspection));
-  }, [props.inspection]);
+  const data = props.dataInstance;
 
   React.useEffect(() => { injectCss(); }, []);
 
@@ -332,17 +314,6 @@ export default function SpytialWidget(props: SpytialWidgetProps) {
           <div className="spytial-inspection-note">
             Inspecting <code>{props.inspection.term}</code>
           </div>
-          {props.inspection.hasStructure && props.inspection.facts.length > 0 &&
-            <div className="spytial-inspection-controls" aria-label="Inspection view">
-              <button type="button" aria-pressed={mode === 'value'}
-                onClick={() => setMode('value')}>Selected value</button>
-              <button type="button" aria-pressed={mode === 'context'}
-                onClick={() => setMode('context')}>Value and context</button>
-            </div>}
-          {mode === 'context' && props.inspection.hasStructure &&
-            <div className="spytial-inspection-note">
-              Supporting context may include earlier structures, not just the selected value.
-            </div>}
         </>}
         {loading && <div className="spytial-loading">Loading diagram...</div>}
         {error && <div className="spytial-error">Error: {error}</div>}

@@ -34,8 +34,7 @@ sel ::=
   | string                                       (* escape hatch / string literal *)
   | int                                          (* integer literal *)
   | "`" name                                     (* atom literal, a Lean name literal *)
-  | "lean" "(" term ")"                          (* executable selector; arity 1–4 *)
-  | "known" "(" term ")"                         (* knowledge predicate; arity 1–4 *)
+  | "lean" "(" term ")"                          (* Lean selector; arity 1–4 *)
 
 mult ::= "lone" | "one" | "some" | "set"
 
@@ -126,70 +125,66 @@ the `nil` constructor, and `@str:(x.v) = "abc"` the `String` atom holding
 character — is a compile error.) `ni` and its negations lower verbatim
 (`a ni b`, `a !ni b`); the engine owns their semantics.
 
-## Raw Lean selectors
+## Lean selectors
 
-`lean (f)` selects by running an ordinary Lean function over the values the
-relationalizer walked, rather than by querying the relational encoding:
+`lean (f)` selects atoms or tuples from the refined, relationalized datum.
+Each candidate must have a represented Lean term of the corresponding
+argument type. The surrounding inspection supplies available information;
+it does not change the selector language.
 
 ```lean
 hideAtom      lean (fun n : RBNode => n matches .nil)
 inferredEdge  kids lean (fun p c : RBNode => (p.children).contains c)
 ```
 
-`f` must be closed and non-dependent. The contract (`SpytialLean/Sel.lean`) is
-`Spytial.Sel T α`, a structure wrapping `T → Spytial.Tuples α`: a plain
-function of the value being drawn, returning the selected tuples of values,
-read as a set. `f`'s type says which form it is:
+The function type determines the form and arity:
 
 | `f` | arity | meaning |
 |-----|-------|---------|
-| `σ₁ → ⋯ → σₙ → Bool` (or `Prop`, via `Decidable`) | n | one decision per point of the product |
-| `Spytial.Sel T α` | columns of `α` | called on the datum, selecting exactly what it returns |
+| `σ₁ → ⋯ → σₙ → Bool` or `Prop` | n | represented tuples whose predicate is established |
+| `Spytial.Sel T α` | columns of `α` | execute on the root, locate returned values in the datum |
 
-Resolution runs against the value being drawn (an attached `spytial_spec`
-stores `f` and resolves it once per value): the walked values of each column
-are quoted into one term, and the term runs through the compiled evaluator —
-the same machinery as `#eval`, so a definition from another module must be
-`meta import`ed, and `whnf` never touches user code. The selector rewrites to
-the tuples it selected — `` `a1->`a2->`a3 + `a4->`a5->`a6 ``, which the engine
-resolves by atom id — or `none` when nothing matches. At most 4 columns; at
-most 4096 selected tuples.
+Predicates have one to four non-dependent arguments and may capture local
+parameters. Closed predicates on closed values use compiled evaluation
+(`Decidable` for propositions). Otherwise direct proof matching and bounded
+simplification use the retained context facts and checked observation
+equations. No `Decidable` instance is required for this proof-backed path.
+Both command mode and tactic mode use the same resolver, including predicates
+stored in an attached `spytial_spec`.
 
-Selection is by *value*, and by default the walk keys atoms by value too
-(structural identity, derived on demand), so a selected value selects exactly
-one atom; under `SpytialIdentity.asWritten` it selects every occurrence.
-A `Sel`'s returned values are located by `==`, so each of its column types
-needs `BEq`; predicates return nothing and need no instance.
-A `Sel` is ordinary computable code — build it with the anonymous constructor
-(`⟨fun root => …⟩`), walk your own type inside it, test it with `#eval`. When
-the *position* matters rather than the value, that is the relational
-language's job (`left`, `right`, field names).
+A `Spytial.Sel` remains closed executable code over a fully determined root.
+Returned values are located by `BEq`; it needs that instance for each column.
+An incomplete root remains an explicit error, even in an attached spec.
+This does not silently replace a required selector with an empty selection.
 
-`lean` reaches values, not the diagram, so it cannot name a group or an inferred
-edge introduced by an earlier op, and it cannot name a relation the walker
-synthesizes. Those stay in the relational language, which composes with it:
-`hideAtom lean (p) + Color` is one selector.
+Predicates inspect the represented value, not just its display label or
+identity key. A coarser identity classifier does not establish Lean equality
+between merged values; resolution uses the drawn representative and
+established aliases. Under `SpytialIdentity.asWritten`, equal values remain
+separate atoms and a matching predicate selects each occurrence.
 
-A resolved `lean (f)` is a list of atom ids, which says nothing to a reader of
-a conflict report, so each layout constraint also carries the source it was
-written as (`source.text`/`source.location`; `spytial.source`, on by default).
-Core cites that in place of its own rendering of the rule.
+Resolution rewrites `lean (f)` to atom tuples, such as
+`` `a1->`a2 + `a3->`a4 ``, or `none` when no matches are established.
+Missing evidence is not a proof of negation: `lean (fun x => ¬ P x)` requires
+support for the negation. Relational difference `univ - lean (P)` is ordinary
+set subtraction and includes undetermined cases.
 
-[lean-selectors.md](lean-selectors.md) is the user-facing guide: how to use it,
-which shape to pick, what does not work, and what each error means.
+Selection never adds atoms or facts to the datum. Synthetic atoms without
+Lean terms, group names, and invented relation names remain the relational
+language's domain. The two styles compose: `hideAtom lean (p) + Color`.
 
-## Knowledge-backed selectors
+At most 4,096 tuples can be selected. Compiled enumeration is capped at one
+million points; symbolic candidate/evidence checks have the same bound.
+Simplification is bounded to 1,000 steps per check. Limit failures are errors,
+not partial selections. Compiled imports must be available via `meta import`;
+symbolic unfolding requires accessible definitions or suitable lemmas.
 
-`known (p)` is a separate, tactic-only form. It selects tuples of represented
-terms when applying the Prop-valued predicate `p` matches an extracted fact
-by definitional equality. Terms may be symbolic; no compiled evaluation or
-`Decidable` instance is involved. An inline predicate may capture local
-parameters. Attached specs defer matching until the proof-local inspection.
+A resolved selector carries its original source text and location
+(`spytial.source`, on by default), so a conflict report cites the user's
+predicate rather than only generated atom IDs.
 
-Missing evidence is unknown, not false; `known (fun x => ¬ P x)` needs its own
-fact. Set difference from `known (P)` is not logical negation of `P`.
-The full contract and deliberate limits are in
-[knowledge-selectors.md](knowledge-selectors.md).
+[lean-selectors.md](lean-selectors.md) provides examples, the reasoning
+contract, and limitations.
 
 ## What gets checked
 
