@@ -31,27 +31,13 @@ After a deliberate change, `just rebless-sgq` rewrites the golden. -/
 
 /-! ## Building nodes
 
-A node is a construct id, the operator written, and one argument per template
-position that carries something. These are the handful of shapes the corpus
-uses, spelled once. -/
+`Sel.op` fills an operator's template. The shapes below fill positions no
+operand reaches — a negation slot, a multiplicity, binders — and are spelled
+once here rather than at every case. -/
 
-private meta def constructOf (o : Sgq.OpId) : Sgq.ConstructId := (Sgq.Op.of o).construct
-
-/-- Fills an operator's template: the given operands in order, every optional
-    part absent. Template-driven like the elaborator, so a construct that grows
-    a slot cannot leave these builders short. -/
-private meta def node (o : Sgq.OpId) (operands : Array Sel) : Sel :=
-  let cd := Sgq.Construct.of (constructOf o)
-  let (args, _) := cd.template.foldl (init := (#[], 0)) fun (acc, n) item =>
-    match item with
-    | .operand _ => (acc.push (Arg.expr operands[n]!), n + 1)
-    | .part _ true | .«optional» _ => (acc.push (Arg.atom none), n)
-    | _ => (acc, n)
-  .node cd.id (some o) args
-
-private meta def nullary (o : Sgq.OpId) : Sel := node o #[]
-private meta def unary (o : Sgq.OpId) (x : Sel) : Sel := node o #[x]
-private meta def binary (o : Sgq.OpId) (x y : Sel) : Sel := node o #[x, y]
+private meta def nullary (o : Sgq.OpId) : Sel := Sel.op o #[]
+private meta def unary (o : Sgq.OpId) (x : Sel) : Sel := Sel.op o #[x]
+private meta def binary (o : Sgq.OpId) (x y : Sel) : Sel := Sel.op o #[x, y]
 /-- The negation is a slot of the comparison, not an operator of its own. -/
 private meta def cmp (o : Sgq.OpId) (neg : Bool) (x y : Sel) : Sel :=
   .node .«comparison» (some o) #[.expr x, .atom (if neg then some "!" else none), .expr y]
@@ -66,8 +52,6 @@ private meta def call (f : String) (xs : Array Sel) : Sel :=
   .node .«application» none #[.expr (.builtin f), .exprs xs]
 private meta def boxJoin (f : Sel) (xs : Array Sel) : Sel :=
   .node .«application» none #[.expr f, .exprs xs]
-private meta def atomLit (n : String) : Sel :=
-  .node .«atomLiteral» (some .«atomLiteral») #[.name n]
 private meta def implies (c t : Sel) (e : Option Sel) : Sel :=
   .node .«implies» (some .«implies»)
     (#[Arg.expr c, .expr t, .atom (e.map fun _ => "else")] ++
@@ -123,7 +107,7 @@ private meta def bases : List (String × Sel) :=
   [("sig", .sig `Foo "Foo"), ("rel", .rel "tr"), ("rel/", .rel "/"),
    ("relKw", .rel "in"), ("relSpace", .rel "a b"), ("relUni", .rel "σ"),
    ("relEmpty", .rel ""), ("relSlashy", .rel "util/ordering"), ("relDbl", .rel "//"),
-   ("var", .var `x), ("varUni", .var `σ), ("atom", atomLit "atom_0"),
+   ("var", .var `x), ("varUni", .var `σ), ("atom", Sel.atomLit "atom_0"),
    ("raw", .raw "x or y")]
 
 private meta def fA : Sel := unary .«nonEmpty» a

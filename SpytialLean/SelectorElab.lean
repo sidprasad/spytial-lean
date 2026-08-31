@@ -4,6 +4,7 @@ public import Lean
 public meta import SpytialLean.Selector
 public meta import SpytialLean.TypeShape
 public meta import SpytialLean.Relationalizer
+public meta import SpytialLean.LeanSelector
 
 namespace SpytialLean
 
@@ -23,8 +24,9 @@ construct.
 Written here because no manifest can carry it: the scope itself (it depends on
 the target type) and its hover information, the constructor-label literal a
 spytial spec compares against, the `raw` escape hatch, `let` (which the engine
-parses and refuses, and which we desugar), and the leaves Lean's own lexer
-claims before any token table sees them.
+parses and refuses, and which we desugar), `lean (…)` (which is not the
+engine's language at all), and the leaves Lean's own lexer claims before any
+token table sees them.
 
 A scope is strict when the vocabulary is closed: a monomorphic type built from
 monomorphic fields. A type parameter, a function field that does not tabulate,
@@ -212,6 +214,20 @@ meta def withSelTokens (p : Parser) : Parser where
     clearTokenCache c <|
       adaptUncacheableContextFn (fun c => { c with tokens := selTokens })
         (fun c s => p.fn c (clearTokenCache c s)) c s
+
+/-- The inverse, for the one rule that holds an ordinary Lean term: under
+    `selTokens` a term's own tokens do not lex at all. -/
+meta def withHostTokens (p : Parser) : Parser where
+  info := p.info
+  fn := fun c s =>
+    clearTokenCache c <|
+      adaptUncacheableContextFn (fun c => { c with tokens := getTokenTable c.env })
+        (fun c s => p.fn c (clearTokenCache c s)) c s
+
+@[combinator_formatter withHostTokens] meta def withHostTokens.formatter
+    (p : PrettyPrinter.Formatter) : PrettyPrinter.Formatter := p
+@[combinator_parenthesizer withHostTokens] meta def withHostTokens.parenthesizer
+    (p : PrettyPrinter.Parenthesizer) : PrettyPrinter.Parenthesizer := p
 
 /-! ### The category
 
@@ -460,16 +476,18 @@ derive_sgq_rules
 
 /-! ### Leaves
 
-Four literal forms and one construct that the generated rules cannot carry.
+Four literal forms and two constructs that the generated rules cannot carry.
 Numbers, strings and the backquoted atom literal are lexical rather than
 constructs, and Lean's lexer reads them structurally. `let` the engine parses
-and refuses; we desugar it by substitution, so it keeps a rule of its own. -/
+and refuses; we desugar it by substitution, so it keeps a rule of its own. And
+`lean (…)` is not the engine's at all. -/
 
 meta def selIdentKind : SyntaxNodeKind := `selIdent
 meta def selStrKind : SyntaxNodeKind := `selStr
 meta def selNumKind : SyntaxNodeKind := `selNum
 meta def selNegNumKind : SyntaxNodeKind := `selNegNum
 meta def selAtomLitKind : SyntaxNodeKind := `selAtomLit
+meta def selLeanKind : SyntaxNodeKind := `selLean
 
 private meta def atomPrec : Nat := (Sgq.Construct.of .«name»).prec
 
@@ -489,6 +507,17 @@ private meta def atomPrec : Nat := (Sgq.Construct.of .«name»).prec
   leadingNode selAtomLitKind (Sgq.Construct.of .«atomLiteral»).prec nameLit
 /-- Desugared by substitution in the elaborator; the engine has no `let`. -/
 @[spytial_sel_parser] meta def sgqLetRule : Parser := ruleFor .«let»
+/-- `lean (…)`: an ordinary Lean function read as a relation. Outside the
+    engine's grammar entirely, so it is written rather than generated, and it
+    knows two implementation details it has to: the term needs Lean's own
+    token table back, and it is bracketed by the grammar's own delimiters,
+    which is what puts them in `selTokens`. The word is not reserved, so a
+    relation named `lean` still reads as an identifier. -/
+@[spytial_sel_parser] meta def sgqLeanRule : Parser :=
+  let g := Sgq.Construct.of .«grouping»
+  leadingNode selLeanKind atomPrec
+    (spelledAs "lean" >> spelledAs (g.part .«open»).text >>
+      withHostTokens termParser >> spelledAs (g.part .«close»).text)
 
 /-! ## Elaboration -/
 
@@ -666,6 +695,38 @@ private meta def coerceVal (scope : SelScope) (stx : Syntax) (wantBool : Bool) :
     throwErrorAt x m!"'{constName}' is not a constructor; label comparisons \
       expect a constructor or a literal"
 
+/-! ### Raw Lean selectors
+
+`lean (…)` steps outside the relational vocabulary: the term is an ordinary
+Lean function, checked by Lean's own elaborator. Its type fixes the columns it
+selects and their arity (`classifyLeanRel`); `SpytialLean.LeanSelector`
+resolves it against a datum. -/
+
+private meta def elabLeanRel (scope : SelScope) (stx : TSyntax `term) :
+    TermElabM EExpr := do
+  let fn ← instantiateMVars (← Term.withSynthesize <| Term.elabTerm stx none)
+  -- Lean already reported whatever went wrong; a second message about the
+  -- recovery term's holes would only bury it. The unknown arity disables
+  -- downstream position checks.
+  if fn.hasSorry then return { sel := .empty, kind := .relation }
+  if fn.hasExprMVar || fn.hasFVar then
+    throwErrorAt stx "a raw Lean selector must be a closed term; this one \
+      still has holes or local variables"
+  let kind ← withRef stx <| classifyLeanRel fn
+  -- A `Prop`-valued predicate runs through `decide`; refuse an undecidable
+  -- one here, where the message can point at the selector.
+  if let .pred true := kind.shape then
+    discard <| withRef stx <| boolifyPred fn kind.domains
+  -- A column over a type the walk cannot produce can never be filled; in a
+  -- strict scope that is a mistake worth naming, in a lenient one unknowable.
+  unless scope.lenient do
+    for col in kind.domains do
+      if let some n ← typeHead? col then
+        unless scope.types.contains n do
+          logWarningAt stx m!"'{n}' is not among the types reachable from \
+            '{scope.root}', so this selector cannot match anything"
+  return { sel := .leanRel fn, kind := .relation, arity := some kind.arity }
+
 mutual
 
 private meta partial def elabExpr (scope : SelScope) (env : LEnv) (stx : Syntax) :
@@ -685,11 +746,10 @@ private meta partial def elabExpr (scope : SelScope) (env : LEnv) (stx : Syntax)
     return { sel := .num (-(Int.ofNat (stx[1].isNatLit?.getD 0))), kind := .number }
   else if k == selAtomLitKind then
     match stx[0].isNameLit? with
-    | some n =>
-      return { sel := .node .«atomLiteral» (Sgq.Construct.of .«atomLiteral»).operators.head?
-                 #[.name n.toString],
-               kind := .relation, arity := some 1 }
+    | some n => return { sel := .atomLit n.toString, kind := .relation, arity := some 1 }
     | none => throwErrorAt stx "malformed atom literal"
+  else if k == selLeanKind then
+    elabLeanRel scope ⟨stx[2]⟩
   else if k == nodeKind .«let» then
     elabLet scope env stx
   else match constructOfKind.get? k with

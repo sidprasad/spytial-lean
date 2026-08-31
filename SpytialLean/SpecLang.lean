@@ -120,6 +120,17 @@ public meta structure JHold where
   supportedBy : List String
   deriving Inhabited, FromJson
 
+/-- The provenance block a generator stamps an op with. `supportedBy` is where
+    core parses it, `displayedBy` where it reads it back out — the ops whose
+    conflict reports quote the author's own text instead of core's rendering
+    of the rule. -/
+public meta structure JSource where
+  field : String
+  fields : List Json
+  supportedBy : List String
+  displayedBy : List String
+  deriving Inhabited, FromJson
+
 public meta structure JDocument where
   sections : List Section
   deriving Inhabited, FromJson
@@ -129,6 +140,7 @@ public meta structure JManifest where
   languageVersion : String
   document : JDocument
   hold : JHold
+  source : JSource
   blocks : List JBlock
   deriving Inhabited, FromJson
 
@@ -206,6 +218,7 @@ private meta structure RawItem where
   leadingSelector : Option String
   introduces : Option (String × Nat)
   mustSetSomething : Bool
+  displaysSource : Bool
 
 private meta structure RawBlock where
   name : String
@@ -342,7 +355,8 @@ private meta def itemOf (j : Json) : Except String (Option RawItem) := do
   return some { id, yamlKey, constraint, scalar := shape matches .scalar,
                 supportsHold := i.supportsHold.getD false,
                 fields, positional, leadingSelector, introduces,
-                mustSetSomething := mustSetSomethingTable.contains id }
+                mustSetSomething := mustSetSomethingTable.contains id,
+                displaysSource := false }
 
 private meta def blockOf (b : JBlock) : Except String RawBlock := do
   let fields ← b.fields.filterMapM (fieldOf b.name)
@@ -371,6 +385,12 @@ private meta def parseManifest : Except String RawManifest := do
 
   let items ← rawItems.toList.filterMapM itemOf
   let blocks ← m.blocks.mapM blockOf
+  let sourceFields ← m.source.fields.filterMapM (fieldOf m.source.field)
+
+  -- `Spec.lean`'s `OpSource` is these two fields, by name.
+  unless sourceFields.map (·.name) == ["text", "location"] do
+    .error s!"source.fields is {sourceFields.map (·.name)}; OpSource models \
+      a text and a location"
 
   let mut deprecatedItems : List (String × String) := []
   let mut deprecatedFields : List (String × String) := []
@@ -391,6 +411,12 @@ private meta def parseManifest : Except String RawManifest := do
   for id in m.hold.supportedBy do
     unless items.any (·.id == id) || deprecatedItems.any (·.1 == id) do
       .error s!"hold.supportedBy: names {id.quote}, which is not an item"
+  for id in m.source.supportedBy do
+    unless items.any (·.id == id) || deprecatedItems.any (·.1 == id) do
+      .error s!"source.supportedBy: names {id.quote}, which is not an item"
+  for id in m.source.displayedBy do
+    unless m.source.supportedBy.contains id do
+      .error s!"source.displayedBy: {id.quote} is not in supportedBy"
   for (word, fname, _) in boolSugarTable do
     let carriers := items.filter fun i =>
       i.fields.any fun f => f.name == fname && f.type matches .boolean _
@@ -400,16 +426,17 @@ private meta def parseManifest : Except String RawManifest := do
 
   -- Hold support is per-item in the manifest but our table wants it resolved.
   let items := items.map fun i =>
-    { i with supportsHold := i.supportsHold && m.hold.supportedBy.contains i.id }
+    { i with supportsHold := i.supportsHold && m.hold.supportedBy.contains i.id,
+             displaysSource := m.source.displayedBy.contains i.id }
   for id in m.hold.supportedBy do
     if let some i := items.find? (·.id == id) then
       unless i.supportsHold do
         .error s!"{id}: hold.supportedBy and items[].supportsHold disagree"
 
-  -- Field ids are global across items and blocks: the same name means the same
-  -- serialized key everywhere.
-  let fieldIds := ((items.flatMap (·.fields) ++ blocks.flatMap (·.fields)).flatMap
-    RawField.ids).eraseDups
+  -- Field ids are global across items, blocks and the source stamp: the same
+  -- name means the same serialized key everywhere.
+  let fieldIds := ((items.flatMap (·.fields) ++ blocks.flatMap (·.fields)
+    ++ sourceFields).flatMap RawField.ids).eraseDups
   for i in items do
     if blocks.any (·.name == i.id) then
       .error s!"{i.id.quote} is both an item and a block; the id namespaces would collide"
@@ -528,6 +555,10 @@ public meta structure ItemSpec where
   /-- Reject an instance that sets none of its optional fields: they are
       its entire effect. -/
   mustSetSomething : Bool
+  /-- Core reads this op's `source` stamp back out, so carrying one buys a
+      conflict report that quotes the author. Elsewhere it parses and is
+      ignored, and the stamp is left off. -/
+  displaysSource : Bool
   deriving Repr, Inhabited
 
 public meta structure BlockSpec where
@@ -541,9 +572,11 @@ One command declares them all. `items` and `blocks` are the language itself.
 `holdField`/`holdValues`/`holdDefault` are `hold: never`, which negates a
 constraint — item-level rather than a field, so which items take it is
 `ItemSpec.supportsHold`, cross-checked above against the manifest's own
-`hold.supportedBy`. `boolSugar` is the bare words above, resolved to field
-ids. `deprecatedItems` and `deprecatedFields` are the account of the surface
-we decline, so a coverage test can insist nothing is dropped silently. -/
+`hold.supportedBy`. `sourceField` is the key the provenance stamp rides under,
+likewise item-level as `ItemSpec.displaysSource`. `boolSugar` is the bare words
+above, resolved to field ids. `deprecatedItems` and `deprecatedFields` are the
+account of the surface we decline, so a coverage test can insist nothing is
+dropped silently. -/
 
 private meta instance : Quote Int := ⟨fun
   | .ofNat n => Syntax.mkCApp ``Int.ofNat #[quote n]
@@ -594,7 +627,7 @@ private meta def quoteItem (i : RawItem) : Term :=
     quote (i.leadingSelector.map fun f => (enumCtor `FieldId f : Term)),
     quote (i.introduces.map fun (f, n) =>
       (Syntax.mkCApp ``Prod.mk #[enumCtor `FieldId f, quote n] : Term)),
-    quote i.mustSetSomething]
+    quote i.mustSetSomething, quote i.displaysSource]
 
 private meta def quoteBlock (b : RawBlock) : Term :=
   Syntax.mkCApp ``BlockSpec.mk #[enumCtor `BlockId b.name, quote (b.fields.map quoteField)]
@@ -609,6 +642,7 @@ elab "derive_spec_tables" : command => do
   declareDef `holdField (← `(String)) (quote m.lexical.hold.field)
   declareDef `holdValues (← `(List String)) (quote m.lexical.hold.values)
   declareDef `holdDefault (← `(String)) (quote m.lexical.hold.default)
+  declareDef `sourceField (← `(String)) (quote m.lexical.source.field)
   declareDef `boolSugar (← `(List (String × FieldId × Bool)))
     (quote (boolSugarTable.map fun (w, f, v) =>
       (Syntax.mkCApp ``Prod.mk #[quote w,

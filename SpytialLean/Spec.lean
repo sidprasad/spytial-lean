@@ -38,6 +38,28 @@ public meta inductive FieldVal where
   | block (fields : List (FieldId × FieldVal))
   deriving Repr, Inhabited
 
+/-- Where an op was written. Spytial is a *generator* of specs, so the wire
+    form carries the Lean the user actually wrote: core cites this in conflict
+    reports and warnings in place of its own rendering of the rule, which for a
+    resolved Lean selector would otherwise be a list of atom ids. -/
+public meta structure OpSource where
+  /-- The op exactly as written, e.g. `hideAtom lean (RBNode.isLeaf)`. -/
+  text : String
+  /-- `File.lean:12`, appended to the displayed text. -/
+  location : Option String := none
+  deriving Repr, Inhabited
+
+/-- Stamp each layout constraint with the Lean it was written as. On by
+    default: it is what makes a conflict report cite the user's own line
+    instead of the engine's rendering. Turn it off to keep the emitted spec
+    free of source text — the goldens that pin lowering do, rather than
+    restate a stamp on every op. -/
+public meta register_option spytial.source : Bool := {
+  defValue := true
+  descr := "carry each layout constraint's own source text in the emitted \
+            spec, for conflict reports"
+}
+
 /-- One Spytial operation: a manifest item with its set fields. Unset
     optional fields are absent, not defaulted — the serialized spec carries
     what the source said and core supplies its own defaults. -/
@@ -47,6 +69,9 @@ public meta structure SpytialOp where
   /-- `hold: never` negates a constraint; only items with
       `ItemSpec.supportsHold` carry it. -/
   hold : Option String := none
+  /-- Where it was written. An attached spec keeps the stamp it was declared
+      with, so re-running it against another value still points there. -/
+  source : Option OpSource := none
   deriving Repr, Inhabited
 
 /-- A list of Spytial operations forming a complete layout specification. -/
@@ -89,15 +114,25 @@ public meta partial def FieldVal.toJson : FieldVal → Json
   | .bool b => Json.bool b
   | .block fs => Json.mkObj (fs.map fun (f, v) => (fieldName f, v.toJson))
 
+public meta instance : ToJson OpSource where
+  toJson s := Json.mkObj <|
+    (fieldName .text, Json.str s.text) ::
+      (s.location.map fun l => (fieldName .location, Json.str l)).toList
+
 public meta instance : ToJson SpytialOp where
   toJson op :=
     let i := ItemSpec.of op.item
     let fields := op.fields.map fun (f, v) => (fieldName f, v.toJson)
+    -- The stamp rides beside `hold`, and only where core reads it back: a
+    -- scalar payload has nowhere to put it, and elsewhere it is bytes core
+    -- parses and ignores.
+    let extras :=
+      (op.hold.map fun h => (holdField, Json.str h)).toList ++
+      (if i.displaysSource then (op.source.map (sourceField, toJson ·)).toList else [])
     let payload :=
       match i.scalar, op.fields with
       | true, [(_, v)] => v.toJson
-      | _, _ => Json.mkObj <| fields ++
-          (op.hold.map fun h => (holdField, Json.str h)).toList
+      | _, _ => Json.mkObj (fields ++ extras)
     Json.mkObj [(i.yamlKey, payload)]
 
 /-- A spec with no ops renders as the empty string, not `{}`. -/

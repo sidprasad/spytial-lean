@@ -5,6 +5,11 @@ meta import SpytialLean.Command
 
 open SpytialLean Lean Elab Command
 
+-- These goldens pin the op surface, not the source stamp, so they leave the
+-- stamp out rather than restate it on every op. It has its own tests, under
+-- `## The source stamp` in LeanSelectorTest.
+set_option spytial.source false
+
 /-! # Tests for the manifest-driven op surface
 
 `SelectorTest.lean` pins the pre-rewrite battery byte-for-byte; this file

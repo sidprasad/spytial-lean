@@ -56,7 +56,7 @@ sel ::=
   | string                                       (* escape hatch / string literal *)
   | int                                          (* integer literal *)
   | "`" name                                     (* atom literal, a Lean name literal *)
-  | "lean" "(" term ")"                          (* raw Lean predicate; arity 1 *)
+  | "lean" "(" term ")"                          (* a Lean function; arity from its type *)
 
 mult         ::= "lone" | "one" | "some" | "two" | "set"
 multiplicity ::= "no" | "some" | "lone" | "one" | "two" | "set"
@@ -206,7 +206,7 @@ synthesizes. Those stay in the relational language, which composes with it:
 `hideAtom lean (p) + Color` is one selector.
 
 A resolved `lean (f)` is a list of atom ids, which says nothing to a reader of
-a conflict report, so each layout constraint also carries the source it was
+a conflict report, so the ops core cites in one also carry the source they were
 written as (`source.text`/`source.location`; `spytial.source`, on by default).
 Core cites that in place of its own rendering of the rule.
 
@@ -219,13 +219,13 @@ The elaborator computes the target type's **data vocabulary**: the reachable
 closure of type sigs, field-relation names, and nullary-constructor labels
 that the relationalizer can emit. It checks every identifier and every
 operator's operand width against this vocabulary; the widths are the
-manifest's `arity`, measured against the engine rather than transcribed. Op positions have arity
-expectations: `hideAtom` and `atomStyle` select atoms (arity 1),
-`orientation` and `align` select pairs. `hideAtom left` is a compile error.
-A wider selector in a pair position warns, because the engine keeps only the
-first and last column there. `inferredEdge` takes any arity from 2 up without
-a warning: it draws the first column to the last and folds the columns
-between them into the edge label.
+manifest's `accepts` — the column counts each op position takes — measured
+against the engine rather than transcribed. `hideAtom` and `atomStyle` select
+atoms (arity 1), so `hideAtom left` is a compile error. `orientation` and
+`align` take two columns or more, keeping the first and the last.
+`inferredEdge` takes two or more, drawing the first column to the last and
+folding the columns between into the edge label — or one, when `draw` says
+where the single atom's other end goes.
 
 Checking is **strict** exactly when the vocabulary is closed: a monomorphic
 type built from monomorphic fields. A type parameter, a function field that

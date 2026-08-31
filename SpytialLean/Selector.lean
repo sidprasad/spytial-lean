@@ -70,12 +70,42 @@ public meta inductive Sel where
   /-- Escape hatch: an unchecked SGQ string, lowered verbatim. The body is
       arbitrary SGQ, so it binds loosest and composition parenthesizes it. -/
   | raw (sgq : String)
+  /-- A raw Lean function over the values the relationalizer walked, read as a
+      relation: its argument types are the columns it ranges over and its
+      codomain fixes the arity (`SpytialLean.classifyLeanRel`). Resolved
+      against a concrete datum by `resolveLeanSelectors` — which rewrites it to
+      the union of the tuples it selects — before anything lowers to SGQ. -/
+  | leanRel (fn : Expr)
   deriving Repr, BEq
 
 end
 
 public meta instance : Inhabited Sel := ⟨.raw ""⟩
 public meta instance : Inhabited Arg := ⟨.atom none⟩
+
+/-! ## Building nodes
+
+A production says where its operands go, so one builder serves every operator:
+the operands in order, every optional part absent. Template-driven like the
+elaborator, so a construct that grows a slot cannot leave a caller short. The
+two leaves below fill positions no operand reaches. -/
+
+public meta def Sel.op (o : Sgq.OpId) (operands : Array Sel) : Sel :=
+  let cd := Sgq.Construct.of (Sgq.Op.of o).construct
+  let (args, _) := cd.template.foldl (init := (#[], 0)) fun (acc, n) item =>
+    match item with
+    | .operand _ => (acc.push (Arg.expr operands[n]!), n + 1)
+    | .part _ true | .«optional» _ => (acc.push (Arg.atom none), n)
+    | _ => (acc, n)
+  .node cd.id (some o) args
+
+/-- `` `a0 ``: names an atom rather than taking an operand. -/
+public meta def Sel.atomLit (id : String) : Sel :=
+  .node .«atomLiteral» (some .«atomLiteral») #[.name id]
+
+/-- The engine's empty relation, which a selection that matched nothing and a
+    selector Lean failed to elaborate both stand for. -/
+public meta def Sel.empty : Sel := Sel.op .«emptySet» #[]
 
 /-! ## Names and literals
 
@@ -225,6 +255,9 @@ public meta partial def Sel.toSGQCtx (ctx : Nat) : Sel → String
   | .boolLit b => toString b
   -- Raw SGQ is arbitrary, so it binds looser than anything the cascade names.
   | .raw s => parenIf (Sgq.loosest < ctx) s
+  -- Unreachable in a rendered spec: `resolveLeanSelectors` runs first on every
+  -- path that renders. Lowering as the empty relation keeps this total.
+  | .leanRel _ => Sel.empty.toSGQCtx ctx
   | .node c op args =>
     let cd := Sgq.Construct.of c
     parenIf (cd.prec < ctx) (assemble (renderItems cd op cd.template args 0).1)
@@ -327,7 +360,7 @@ binder would capture. -/
 public meta partial def Sel.freeVars : Sel → Array Name
   | .var x => #[x]
   | .sig .. | .rel .. | .builtin .. | .num .. | .str .. | .ctorLit .. | .boolLit ..
-  | .raw .. => #[]
+  | .raw .. | .leanRel .. => #[]
   | .node _ _ args => Id.run do
     let mut bound : Array Name := #[]
     let mut out : Array Name := #[]

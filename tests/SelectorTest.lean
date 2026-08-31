@@ -6,6 +6,11 @@ meta import SpytialLean.Command
 
 open SpytialLean Lean Elab Command
 
+-- These goldens pin the SGQ lowering, not the source stamp, so they leave the
+-- stamp out rather than restate it on every op. It has its own tests, under
+-- `## The source stamp` in LeanSelectorTest.
+set_option spytial.source false
+
 /-! # Tests for the embedded selector DSL
 
 Golden `#guard_msgs` pin the SGQ lowering; negative tests pin one diagnostic
@@ -1334,6 +1339,7 @@ name here; update the EBNF alongside this golden. -/
 info: spytial_sel:
 SpytialLean.sgqAtomLitRule
 SpytialLean.sgqIdentRule
+SpytialLean.sgqLeanRule
 SpytialLean.sgqLetRule
 SpytialLean.sgqNegNumRule
 SpytialLean.sgqNumRule

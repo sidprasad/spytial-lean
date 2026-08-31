@@ -271,85 +271,47 @@ meta def evalLeanRel (ctx : LeanSelCtx) (fn : Expr) : MetaM (Array (Array String
       not render legibly"
   return out
 
-/-- Tuples as a selector: `` `a1->`a2 + `a3->`a4 ``, or `none` when empty. The
-    products bind tighter than the union, so neither side needs parentheses. -/
-private meta def tupleUnion (tuples : Array (Array String)) : Sel :=
-  tuples.foldl (init := .none_) fun acc ids =>
-    let tuple := ids.foldl (init := none) fun t id =>
-      some <| match t with | none => .atomLit id | some t => .prod t (.atomLit id)
-    match tuple, acc with
-    | none, _ => acc
-    | some t, .none_ => t
-    | some t, a => .union a t
+/-- Tuples as a selector: `` `a1->`a2 + `a3->`a4 ``, or the empty relation when
+    nothing was selected. The products bind tighter than the union, so neither
+    side needs parentheses. -/
+private meta def tupleUnion (tuples : Array (Array String)) : Sel := Id.run do
+  let mut out : Option Sel := none
+  for ids in tuples do
+    let mut tuple : Option Sel := none
+    for id in ids do
+      let a := Sel.atomLit id
+      tuple := some <| match tuple with
+        | none => a
+        | some t => Sel.op .«product» #[t, a]
+    if let some t := tuple then
+      out := some <| match out with
+        | none => t
+        | some o => Sel.op .«union» #[o, t]
+  return out.getD .empty
 
 /-! ## Resolution
 
-A congruence over the four selector layers, replacing every `leanRel` leaf with
-the tuples it selects and leaving everything else alone. It mirrors
-`Sel.freeVars`, which walks the same shape. -/
-
-mutual
+A congruence over the selector AST and the field values that carry one,
+replacing every `leanRel` leaf with the tuples it selects and leaving
+everything else alone. It mirrors `Sel.freeVars`, which walks the same shape. -/
 
 meta partial def Sel.resolveLean (ctx : LeanSelCtx) : Sel → MetaM Sel
   | .leanRel fn => return tupleUnion (← evalLeanRel ctx fn)
-  | .union a b => return .union (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .diff a b => return .diff (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .inter a b => return .inter (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .prod a b => return .prod (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .prodMult a lm rm b => return .prodMult (← a.resolveLean ctx) lm rm (← b.resolveLean ctx)
-  | .join a b => return .join (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .override a b => return .override (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .restrictDom a b => return .restrictDom (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .restrictRan a b => return .restrictRan (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .trans a => return .trans (← a.resolveLean ctx)
-  | .reflTrans a => return .reflTrans (← a.resolveLean ctx)
-  | .transpose a => return .transpose (← a.resolveLean ctx)
-  | .compr binders body => do
-    let binders ← binders.mapM fun (x, dom) => return (x, ← dom.resolveLean ctx)
-    return .compr binders (← body.resolveLean ctx)
-  | e@(.sig ..) | e@(.rel ..) | e@(.var ..) | e@.univ | e@.iden | e@.none_
-  | e@(.atomLit ..) | e@(.raw ..) => return e
+  | .node c op args => return .node c op (← args.mapM fun
+      | .expr e => return .expr (← e.resolveLean ctx)
+      | .exprs es => return .exprs (← es.mapM (·.resolveLean ctx))
+      | .binders bs =>
+        return .binders (← bs.mapM fun (x, d) => return (x, ← d.resolveLean ctx))
+      | a@(.name _) | a@(.atom _) => return a)
+  | e@(.sig ..) | e@(.rel ..) | e@(.builtin ..) | e@(.var ..) | e@(.num ..)
+  | e@(.str ..) | e@(.ctorLit ..) | e@(.boolLit ..) | e@(.raw ..) => return e
 
-meta partial def SelInt.resolveLean (ctx : LeanSelCtx) : SelInt → MetaM SelInt
-  | .card e => return .card (← e.resolveLean ctx)
-  | .proj e => return .proj (← e.resolveLean ctx)
-  | .agg op e => return .agg op (← e.resolveLean ctx)
-  | .builtin op args => return .builtin op (← args.mapM (·.resolveLean ctx))
-  | .sumQuant x dom body =>
-    return .sumQuant x (← dom.resolveLean ctx) (← body.resolveLean ctx)
-  | e@(.lit ..) => return e
-
-meta partial def SelVal.resolveLean (ctx : LeanSelCtx) : SelVal → MetaM SelVal
-  | .label proj e => return .label proj (← e.resolveLean ctx)
-  | e@(.ctorLit ..) | e@(.strLit ..) | e@(.boolLit ..) => return e
-
-meta partial def SelForm.resolveLean (ctx : LeanSelCtx) : SelForm → MetaM SelForm
-  | .subset a b => return .subset (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .notSubset a b => return .notSubset (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .ni a b => return .ni (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .notNi a b => return .notNi (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .eq a b => return .eq (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .neq a b => return .neq (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .veq a b => return .veq (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .vneq a b => return .vneq (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .icmp op a b => return .icmp op (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .and a b => return .and (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .or a b => return .or (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .xor a b => return .xor (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .iff a b => return .iff (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .implies a b => return .implies (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .ite c t e =>
-    return .ite (← c.resolveLean ctx) (← t.resolveLean ctx) (← e.resolveLean ctx)
-  | .not a => return .not (← a.resolveLean ctx)
-  | .some_ a => return .some_ (← a.resolveLean ctx)
-  | .no a => return .no (← a.resolveLean ctx)
-  | .lone a => return .lone (← a.resolveLean ctx)
-  | .one a => return .one (← a.resolveLean ctx)
-  | .quant q disj binders body => do
-    let binders ← binders.mapM fun (x, dom) => return (x, ← dom.resolveLean ctx)
-    return .quant q disj binders (← body.resolveLean ctx)
-
-end
+private meta partial def FieldVal.resolveLean (ctx : LeanSelCtx) :
+    FieldVal → MetaM FieldVal
+  | .sel s => return .sel (← s.resolveLean ctx)
+  | .block fs => return .block (← fs.mapM fun (f, v) => return (f, ← v.resolveLean ctx))
+  | v@(.rel ..) | v@(.str ..) | v@(.«enum» ..) | v@(.enums ..) | v@(.num ..)
+  | v@(.bool ..) => return v
 
 /-! ## Detecting raw Lean selectors
 
@@ -357,64 +319,24 @@ Resolution needs the walked datum, and walking it is not free — it also asks
 each type for a `SpytialIdentity`, which reports when it cannot derive one. A
 spec with no raw Lean selector needs none of that, so callers check first. -/
 
-mutual
-
 meta partial def Sel.hasLeanRel : Sel → Bool
   | .leanRel _ => true
-  | .union a b | .diff a b | .inter a b | .prod a b | .join a b
-  | .override a b | .restrictDom a b | .restrictRan a b => a.hasLeanRel || b.hasLeanRel
-  | .prodMult a _ _ b => a.hasLeanRel || b.hasLeanRel
-  | .trans a | .reflTrans a | .transpose a => a.hasLeanRel
-  | .compr binders body =>
-    binders.any (fun (_, d) => d.hasLeanRel) || body.hasLeanRel
-  | .sig .. | .rel .. | .var .. | .univ | .iden | .none_ | .atomLit .. | .raw .. => false
+  | .node _ _ args => args.any fun
+    | .expr e => e.hasLeanRel
+    | .exprs es => es.any Sel.hasLeanRel
+    | .binders bs => bs.any fun (_, d) => d.hasLeanRel
+    | .name _ | .atom _ => false
+  | .sig .. | .rel .. | .builtin .. | .var .. | .num .. | .str .. | .ctorLit ..
+  | .boolLit .. | .raw .. => false
 
-meta partial def SelInt.hasLeanRel : SelInt → Bool
-  | .card e | .proj e | .agg _ e => e.hasLeanRel
-  | .builtin _ args => args.any SelInt.hasLeanRel
-  | .sumQuant _ dom body => dom.hasLeanRel || body.hasLeanRel
-  | .lit .. => false
-
-meta partial def SelVal.hasLeanRel : SelVal → Bool
-  | .label _ e => e.hasLeanRel
-  | .ctorLit .. | .strLit .. | .boolLit .. => false
-
-meta partial def SelForm.hasLeanRel : SelForm → Bool
-  | .subset a b | .notSubset a b | .ni a b | .notNi a b | .eq a b | .neq a b =>
-    a.hasLeanRel || b.hasLeanRel
-  | .veq a b | .vneq a b => a.hasLeanRel || b.hasLeanRel
-  | .icmp _ a b => a.hasLeanRel || b.hasLeanRel
-  | .and a b | .or a b | .xor a b | .iff a b | .implies a b =>
-    a.hasLeanRel || b.hasLeanRel
-  | .ite c t e => c.hasLeanRel || t.hasLeanRel || e.hasLeanRel
-  | .not a => a.hasLeanRel
-  | .some_ a | .no a | .lone a | .one a => a.hasLeanRel
-  | .quant _ _ binders body =>
-    binders.any (fun (_, d) => d.hasLeanRel) || body.hasLeanRel
-
-end
+meta partial def FieldVal.hasLeanRel : FieldVal → Bool
+  | .sel s => s.hasLeanRel
+  | .block fs => fs.any fun (_, v) => v.hasLeanRel
+  | .rel .. | .str .. | .«enum» .. | .enums .. | .num .. | .bool .. => false
 
 /-- Whether any op in `spec` carries a raw Lean selector. -/
 meta def SpytialSpec.hasLeanRel (spec : SpytialSpec) : Bool :=
-  spec.any fun stamped => match stamped.op with
-    | .orientation s _ | .align s _ | .cyclic s _ | .group s _ _ | .hideAtom s
-    | .size s _ _ | .atomStyle s _ _ _ _ | .tag s _ _ | .inferredEdge _ s _ =>
-      s.hasLeanRel
-    | .edgeStyle .. | .hideField .. | .attribute .. | .flag .. => false
-
-/-- One op's selectors, resolved against the datum. -/
-private meta def resolveOp (ctx : LeanSelCtx) : SpytialOp → MetaM SpytialOp
-  | .orientation s ds => return .orientation (← s.resolveLean ctx) ds
-  | .align s d => return .align (← s.resolveLean ctx) d
-  | .cyclic s d => return .cyclic (← s.resolveLean ctx) d
-  | .group s n e => return .group (← s.resolveLean ctx) n e
-  | .hideAtom s => return .hideAtom (← s.resolveLean ctx)
-  | .size s w h => return .size (← s.resolveLean ctx) w h
-  | .atomStyle s b f i l => return .atomStyle (← s.resolveLean ctx) b f i l
-  | .tag s n v => return .tag (← s.resolveLean ctx) n v
-  | .inferredEdge n s l => return .inferredEdge n (← s.resolveLean ctx) l
-  | op@(.edgeStyle ..) | op@(.hideField ..) | op@(.attribute ..) | op@(.flag ..) =>
-    return op
+  spec.any fun op => op.fields.any fun (_, v) => v.hasLeanRel
 
 /-- Rewrite every raw Lean selector in `spec` into the tuples it selects on
     this datum. Runs before any lowering to SGQ; identity on specs with none.
@@ -423,7 +345,8 @@ private meta def resolveOp (ctx : LeanSelCtx) : SpytialOp → MetaM SpytialOp
 meta def resolveLeanSelectors (datum : Expr) (di : JsonDataInstance)
     (prov : Provenance) (spec : SpytialSpec) : MetaM SpytialSpec := do
   let ctx : LeanSelCtx := { datum, di, prov }
-  spec.mapM fun stamped => return { stamped with op := ← resolveOp ctx stamped.op }
+  spec.mapM fun op => return { op with
+    fields := ← op.fields.mapM fun (f, v) => return (f, ← v.resolveLean ctx) }
 
 end
 

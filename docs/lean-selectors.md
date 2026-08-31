@@ -120,11 +120,13 @@ carries the Lean you wrote, and spytial-core cites that instead:
 hideAtom lean (fun n : RBNode => n matches .nil)   (MyTree.lean:12)
 ```
 
-This applies to the layout constraints (`orientation`, `align`, `cyclic`,
-`group`, `size`, `hideAtom`) — the ops that appear in conflict reports. An
-attached `spytial_spec` keeps the line it was declared on, so a spec re-run
-against another value still points at where it was written. Turn it off with
-`set_option spytial.source false` to keep the emitted spec free of source text.
+This applies to the ops that appear in conflict reports — `orientation`,
+`align`, `cyclic`, `group` and `hideAtom`, which is the manifest's own
+`source.displayedBy`. Everywhere else core parses the stamp and ignores it, so
+the spec leaves it off. An attached `spytial_spec` keeps the line it was
+declared on, so a spec re-run against another value still points at where it
+was written. Turn it off with `set_option spytial.source false` to keep the
+emitted spec free of source text.
 
 `spytial_spec` stores the function and re-runs it for each value drawn, as
 compiled code. [demos/LeanSelectors.lean](../demos/LeanSelectors.lean) is a

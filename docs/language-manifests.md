@@ -24,7 +24,9 @@ one list, so a constructor and its JSON spelling cannot drift apart. A tag,
 enum value, or renamed member with no representation stops the build naming
 the construct or item, rather than yielding a plausible table. One drift class
 passes: `deriving FromJson` ignores members it does not know, so a member
-*added* upstream is silently unread until something else fails.
+*added* upstream is silently unread until something else fails. Core 5.4.0 grew
+two — `accepts` on selector fields and the `source` block — and neither
+announced itself.
 
 ## What is not the manifests'
 

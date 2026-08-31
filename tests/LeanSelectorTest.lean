@@ -206,7 +206,7 @@ info: {"directives":
      n matches .node .red _ _ _ && h == .black && k > 1)]
 
 -- The arity reaches the op's position check, so a mismatch is still an error.
-/-- error: this position selects atoms (arity 1), but the selector has arity 2 -/
+/-- error: this position accepts a selector of arity 1, but this one has arity 2 -/
 #guard_msgs in
 #spytial.spec lBig with [hideAtom lean (fun p c : LRB => p.lt == c)]
 
@@ -279,7 +279,7 @@ info: {"constraints":
 #spytial.spec lBig with
   [orientation lean ((⟨fun t => [(t, t.lt)]⟩ : Spytial.Sel LRB (LRB × LRB))) below]
 
-/-- error: this position selects atoms (arity 1), but the selector has arity 2 -/
+/-- error: this position accepts a selector of arity 1, but this one has arity 2 -/
 #guard_msgs in
 #spytial.spec lBig with
   [hideAtom lean ((⟨fun t => [(t, t)]⟩ : Spytial.Sel LRB (LRB × LRB)))]
@@ -424,8 +424,9 @@ info: {"constraints":
 #guard_msgs in
 #masked_spec lBig with [hideAtom lean (fun n : LRB => n matches .nil)]
 
--- Only the constraints are stamped: core cites those in conflict reports, and
--- on a directive the block would be payload it parses and ignores.
+-- Only the ops core cites are stamped: elsewhere the block would be payload it
+-- parses and ignores. Which ops those are is the manifest's own
+-- `source.displayedBy`, so a directive carries no stamp …
 set_option spytial.source true in
 /--
 info: {"directives":
@@ -433,6 +434,13 @@ info: {"directives":
 -/
 #guard_msgs in
 #masked_spec lBig with [atomStyle lean (LRB.isBlack) (borderStyle "black")]
+
+-- … and neither does `size`, which is a constraint core does not cite. The
+-- section an op lowers into is not what decides.
+set_option spytial.source true in
+/-- info: {"constraints": [{"size": {"width": 120, "height": 40}}]} -/
+#guard_msgs in
+#masked_spec lBig with [size 120 40]
 
 -- An attached spec stores its stamp, so a spec re-run against another value in
 -- another file still cites the line it was declared on.
