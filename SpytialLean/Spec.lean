@@ -102,47 +102,49 @@ to a single `{yamlKey: …}` object over its set fields (a `scalar` item's one
 field is the payload itself). Selectors lower through `Sel.toSGQ` here — the
 environment stores the structured spec, and the serialized string exists
 only in the widget payload.
+
+Serialization is fallible for that reason: a selector node whose arguments do
+not fill its template has no lowering (`Selector.argAt`), and the spec it sits
+in has none either.
 -/
 
-public meta instance : ToJson Sel := ⟨fun s => Json.str s.toSGQ⟩
-
-public meta partial def FieldVal.toJson : FieldVal → Json
-  | .sel s => Lean.toJson s
-  | .rel s | .str s | .«enum» s => Json.str s
-  | .enums vs => Lean.toJson vs
-  | .num n => Json.num n
-  | .bool b => Json.bool b
-  | .block fs => Json.mkObj (fs.map fun (f, v) => (fieldName f, v.toJson))
+public meta partial def FieldVal.toJson : FieldVal → Except String Json
+  | .sel s => Json.str <$> s.toSGQ
+  | .rel s | .str s | .«enum» s => .ok (Json.str s)
+  | .enums vs => .ok (Lean.toJson vs)
+  | .num n => .ok (Json.num n)
+  | .bool b => .ok (Json.bool b)
+  | .block fs => do
+    return Json.mkObj (← fs.mapM fun (f, v) => do return (fieldName f, ← v.toJson))
 
 public meta instance : ToJson OpSource where
   toJson s := Json.mkObj <|
     (fieldName .text, Json.str s.text) ::
       (s.location.map fun l => (fieldName .location, Json.str l)).toList
 
-public meta instance : ToJson SpytialOp where
-  toJson op :=
-    let i := ItemSpec.of op.item
-    let fields := op.fields.map fun (f, v) => (fieldName f, v.toJson)
-    -- The stamp rides beside `hold`, and only where core reads it back: a
-    -- scalar payload has nowhere to put it, and elsewhere it is bytes core
-    -- parses and ignores.
-    let extras :=
-      (op.hold.map fun h => (holdField, Json.str h)).toList ++
-      (if i.displaysSource then (op.source.map (sourceField, toJson ·)).toList else [])
-    let payload :=
-      match i.scalar, op.fields with
-      | true, [(_, v)] => v.toJson
-      | _, _ => Json.mkObj (fields ++ extras)
-    Json.mkObj [(i.yamlKey, payload)]
+public meta def SpytialOp.toJson (op : SpytialOp) : Except String Json := do
+  let i := ItemSpec.of op.item
+  let fields ← op.fields.mapM fun (f, v) => do return (fieldName f, ← v.toJson)
+  -- The stamp rides beside `hold`, and only where core reads it back: a
+  -- scalar payload has nowhere to put it, and elsewhere it is bytes core
+  -- parses and ignores.
+  let extras :=
+    (op.hold.map fun h => (holdField, Json.str h)).toList ++
+    (if i.displaysSource then (op.source.map (sourceField, Lean.toJson ·)).toList else [])
+  let payload ← match i.scalar, op.fields with
+    | true, [(_, v)] => v.toJson
+    | _, _ => .ok (Json.mkObj (fields ++ extras))
+  return Json.mkObj [(i.yamlKey, payload)]
 
 /-- A spec with no ops renders as the empty string, not `{}`. -/
-public meta def SpytialSpec.render (spec : SpytialSpec) : String :=
-  let mkSection (key : String) (ops : SpytialSpec) : List (String × Json) :=
-    if ops.isEmpty then [] else [(key, toJson ops)]
+public meta def SpytialSpec.render (spec : SpytialSpec) : Except String String := do
+  let mkSection (key : String) (ops : SpytialSpec) : Except String (List (String × Json)) := do
+    if ops.isEmpty then return []
+    return [(key, Json.arr (← ops.toArray.mapM SpytialOp.toJson))]
   let (constraints, directives) :=
     spec.partition fun op => (ItemSpec.of op.item).constraint
-  match mkSection "constraints" constraints ++ mkSection "directives" directives with
-  | [] => ""
-  | kvs => (Json.mkObj kvs).pretty
+  match (← mkSection "constraints" constraints) ++ (← mkSection "directives" directives) with
+  | [] => return ""
+  | kvs => return (Json.mkObj kvs).pretty
 
 end SpytialLean

@@ -56,7 +56,7 @@ public meta def elabStoredSpec : CommandElab := fun
   | `(#stored_spec $id:ident) => do
     let n ← liftTermElabM (realizeGlobalConstNoOverloadWithInfo id)
     match getSpytialSpec? (← getEnv) n with
-    | some spec => logInfo spec.render
+    | some spec => logInfo (← ofExcept spec.render)
     | none => throwError "no spec attached to '{n}'"
   | _ => throwUnsupportedSyntax
 

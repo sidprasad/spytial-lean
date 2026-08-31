@@ -213,12 +213,14 @@ private meta def assemble (chunks : Array (String × Air)) : String := Id.run do
 
 /-- The argument filling template position `i`. A node is built by the
     elaborator against the same template that renders it, so a short argument
-    array is a bug in one of the two; say which construct rather than panicking
-    on a bare index. -/
-private meta def argAt (cd : Sgq.Construct) (args : Array Arg) (i : Nat) : Arg :=
-  args[i]?.getD <| panic!
-    s!"{Sgq.constructName cd.id}: template position {i} has no argument \
-       ({args.size} given)"
+    array is a bug in one of the two; the node then has no lowering at all,
+    rather than one with the position silently dropped. -/
+private meta def argAt (cd : Sgq.Construct) (args : Array Arg) (i : Nat) :
+    Except String Arg :=
+  match args[i]? with
+  | some a => .ok a
+  | none => .error s!"{Sgq.constructName cd.id}: template position {i} has no \
+      argument ({args.size} given)"
 
 private meta def parenIf (needed : Bool) (s : String) : String :=
   if needed then s!"({s})" else s
@@ -234,63 +236,64 @@ right operand two levels in, which no single precedence number can say. -/
 mutual
 
 /-- `ctx` is the level the enclosing position accepts. -/
-public meta partial def Sel.toSGQCtx (ctx : Nat) : Sel → String
-  | .sig _ s => quoteIfNeeded s
+public meta partial def Sel.toSGQCtx (ctx : Nat) : Sel → Except String String
+  | .sig _ s => .ok (quoteIfNeeded s)
   -- Builtins are constructed only from the engine's own lists
   -- (`elabBuiltinCall?`), so the name lowers verbatim.
-  | .builtin b => b
-  | .rel r => quoteIfNeeded r
-  | .var x => quoteIfNeeded (toString x)
-  | .num n => toString n
+  | .builtin b => .ok b
+  | .rel r => .ok (quoteIfNeeded r)
+  | .var x => .ok (quoteIfNeeded (toString x))
+  | .num n => .ok (toString n)
   -- The relationalizer labels a `String` atom with its Lean spelling, quotes
   -- included (`Relationalizer.lean`), so matching one takes a literal whose
   -- content carries those quotes too.
-  | .str s => sgqStringLit s!"\"{s}\""
+  | .str s => .ok (sgqStringLit s!"\"{s}\"")
   -- Likewise a nullary constructor's atom is labeled with the constructor's
   -- short name, so that spelling is the comparison literal.
-  | .ctorLit c => sgqStringLit (shortName c)
-  | .boolLit b => toString b
+  | .ctorLit c => .ok (sgqStringLit (shortName c))
+  | .boolLit b => .ok (toString b)
   -- Unreachable in a rendered spec: `resolveLeanSelectors` runs first on every
-  -- path that renders. Lowering as the empty relation keeps this total.
+  -- path that renders. Lowering as the empty relation keeps this defined.
   | .leanRel _ => Sel.empty.toSGQCtx ctx
-  | .node c op args =>
+  | .node c op args => do
     let cd := Sgq.Construct.of c
-    parenIf (cd.prec < ctx) (assemble (renderItems cd op cd.template args 0).1)
+    return parenIf (cd.prec < ctx) (assemble (← renderItems cd op cd.template args 0).1)
 
 /-- Walks a template against the arguments that fill it, returning the chunks
     and how many arguments were consumed. -/
 private meta partial def renderItems (cd : Sgq.Construct) (op : Option Sgq.OpId)
     (items : List Sgq.Item) (args : Array Arg) (start : Nat) :
-    Array (String × Air) × Nat := Id.run do
+    Except String (Array (String × Air) × Nat) := do
   let mut out : Array (String × Air) := #[]
   let mut i := start
   let beside := args.any fun a => match a with | .atom (some _) => true | _ => false
-  let expr (a : Arg) (level : Nat) : String :=
-    match a with | .expr e => e.toSGQCtx level | _ => ""
+  let expr (a : Arg) (level : Nat) : Except String String :=
+    match a with | .expr e => e.toSGQCtx level | _ => .ok ""
   for item in items do
     match item with
     | .operand level =>
-      out := out.push (expr (argAt cd args i) level, {})
+      out := out.push (← expr (← argAt cd args i) level, {})
       i := i + 1
     | .body level =>
       out := out.push (cd.part .«bar» |>.text, roleAir .«bar»)
-      out := out.push (expr (argAt cd args i) level, {})
+      out := out.push (← expr (← argAt cd args i) level, {})
       i := i + 1
     | .«repeat» level =>
-      if let .exprs es := (argAt cd args i) then
-        for e in es do out := out.push (e.toSGQCtx level, { left := true, right := true })
+      if let .exprs es := ← argAt cd args i then
+        for e in es do out := out.push (← e.toSGQCtx level, { left := true, right := true })
       i := i + 1
     | .list level role =>
-      if let .exprs es := (argAt cd args i) then
+      if let .exprs es := ← argAt cd args i then
         for (e, n) in es.zipIdx do
           if n != 0 then out := out.push (cd.part role |>.text, roleAir role)
-          out := out.push (e.toSGQCtx level, {})
+          out := out.push (← e.toSGQCtx level, {})
       i := i + 1
     | .binders typed level =>
-      if let .binders bs := (argAt cd args i) then out := out ++ renderBinders cd typed level bs
+      if let .binders bs := ← argAt cd args i then
+        out := out ++ (← renderBinders cd typed level bs)
       i := i + 1
     | .name _ =>
-      if let .name s := (argAt cd args i) then out := out.push (quoteIfNeeded s, {})
+      if let .name s := ← argAt cd args i then out := out.push (quoteIfNeeded s, {})
       i := i + 1
     | .operator | .constant =>
       -- `constant` is the `const` alternation; the numeric and string literals
@@ -303,16 +306,16 @@ private meta partial def renderItems (cd : Sgq.Construct) (op : Option Sgq.OpId)
       if optional then
         -- Aliases write house style; alternatives write what the source chose.
         let part := cd.part role
-        if let .atom (some s) := (argAt cd args i) then
+        if let .atom (some s) := ← argAt cd args i then
           out := out.push (if part.alternatives then s else part.text, roleAir role)
         i := i + 1
       else
         out := out.push (cd.part role |>.text, roleAir role)
     | .«optional» inner =>
-      let present := match (argAt cd args i) with | .atom s => s.isSome | _ => false
+      let present := match ← argAt cd args i with | .atom s => s.isSome | _ => false
       i := i + 1
       if present then
-        let (chunks, next) := renderItems cd op inner args i
+        let (chunks, next) ← renderItems cd op inner args i
         out := out ++ chunks
         i := next
   return (out, i)
@@ -321,7 +324,7 @@ private meta partial def renderItems (cd : Sgq.Construct) (op : Option Sgq.OpId)
     Adjacent binders over the same domain regroup, so the source form survives
     the round trip. -/
 private meta partial def renderBinders (cd : Sgq.Construct) (typed : Bool) (level : Nat)
-    (bs : Array (Name × Sel)) : Array (String × Air) := Id.run do
+    (bs : Array (Name × Sel)) : Except String (Array (String × Air)) := do
   let sep := (cd.part .«separator», roleAir .«separator»)
   let groups := if !typed then bs.map (fun b => (#[b.1], b.2)) else
     bs.foldl (init := #[]) fun (gs : Array (Array Name × Sel)) (x, dom) =>
@@ -337,12 +340,12 @@ private meta partial def renderBinders (cd : Sgq.Construct) (typed : Bool) (leve
       out := out.push (quoteIfNeeded (toString x), {})
     let role := if typed then Sgq.Role.«colon» else .«bind»
     out := out.push (cd.part role |>.text, roleAir role)
-    out := out.push (dom.toSGQCtx level, {})
+    out := out.push (← dom.toSGQCtx level, {})
   return out
 
 end
 
-public meta def Sel.toSGQ (s : Sel) : String := s.toSGQCtx Sgq.loosest
+public meta def Sel.toSGQ (s : Sel) : Except String String := s.toSGQCtx Sgq.loosest
 
 /-! ## Free variables
 

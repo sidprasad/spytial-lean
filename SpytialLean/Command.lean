@@ -651,7 +651,7 @@ private meta def elabSpytialPayload (t : Syntax) (ops? : Option (Array (TSyntax 
       | some ops => some <$> elabUseSiteOps e ops
       | none => lookupTypeSpec e
     let spec? ← spec?.mapM fun s => liftM (resolveLeanSelectors e di prov s)
-    return (di, spec?.map SpytialSpec.render)
+    return (di, ← spec?.mapM fun s => Lean.ofExcept (SpytialSpec.render s))
 
 private meta def spytialProps (di : JsonDataInstance) (cndSpec? : Option String) : Json :=
   Json.mkObj <|
@@ -806,9 +806,9 @@ meta def elabSpytialSpecDebug : CommandElab := fun
       -- it also skips asking each walked type for a `SpytialIdentity`.
       if spec.hasLeanRel then
         let (di, prov) ← relationalizeWithProvenance e
-        return (← resolveLeanSelectors e di prov spec).render
+        Lean.ofExcept (← resolveLeanSelectors e di prov spec).render
       else
-        return spec.render
+        Lean.ofExcept spec.render
     logInfo m!"{specStr}"
   | stx => throwError "Unexpected syntax {stx}."
 

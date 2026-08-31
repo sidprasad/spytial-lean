@@ -134,8 +134,13 @@ private meta def vals : List (String × Sel) :=
    ("ctor", .ctorLit `Foo.tt), ("strLit", .str "hi"),
    ("strEsc", .str "a\"b\\c\nd\te\r"), ("boolT", .boolLit true), ("boolF", .boolLit false)]
 
-private meta def emit (label s : String) : StateM (Array (String × String)) Unit :=
-  modify (·.push (label, s))
+/-- A case with no lowering pins the reason rather than stopping the corpus.
+    No case in the corpus is one today. -/
+private meta def emit (label : String) (lowered : Except String String) :
+    StateM (Array (String × String)) Unit :=
+  modify (·.push (label, match lowered with
+    | .ok s => s
+    | .error e => s!"<no lowering: {e}>"))
 
 private meta def corpus : Array (String × String) :=
   StateT.run (m := Id) (do
