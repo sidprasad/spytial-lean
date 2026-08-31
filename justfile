@@ -7,6 +7,7 @@ build:
 # headless unit tests
 test:
     lake build SpytialTests
+    pnpm -C widget test
 
 # elaborate every demo
 demos:

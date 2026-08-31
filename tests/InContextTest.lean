@@ -149,9 +149,8 @@ private def Tree.height : Tree → Nat
     let observation := mkApp (mkConst ``Tree.height) root
     assertCanon "consumer.activeDomainObservation"
       (← relationalize root {} #[observation])
-      "Tree|node\nTree|left\nTree|right\nNat|•₁\nNat|1\nNat|•₂\nNat|•₃\nNat|•₄\n\
-       add[Nat,Nat,Nat]:4,5,3\nheight[Tree,Nat]:1,6;2,7;0,3\n\
-       left[Tree,Tree]:0,1\nmax[Nat,Nat,Nat]:6,7,5\nright[Tree,Tree]:0,2"
+      "Tree|node\nTree|left\nTree|right\nNat|•₁\nNat|•₂\nNat|•₃\n\
+       height[Tree,Nat]:0,3;1,4;2,5\nleft[Tree,Tree]:0,1\nright[Tree,Tree]:0,2"
 
 /- Values introduced by proof-backed context facts join the same active
    domain, so observing the selected endpoint also observes its neighbor. -/
@@ -163,8 +162,8 @@ private def Tree.height : Tree → Nat
     let leftHeight := mkApp (mkConst ``Tree.height) left
     let view ← viewOf "consumer.contextActiveDomainObservation" left {} #[leftHeight]
     assertCanon "consumer.contextActiveDomainObservation" view.data
-      "Tree|left\nTree|right\nNat|•₁\nNat|•₂\n\
-       edge[Tree,Tree]:0,1\nheight[Tree,Nat]:0,2;1,3"
+      "Tree|left\nNat|•₁\nTree|right\nNat|•₂\n\
+       edge[Tree,Tree]:0,2\nheight[Tree,Nat]:0,1;2,3"
 
 /- Observations parameterize fact relationalization. The source computation
     containing `height` remains `height`/`add`/`lt`; WHNF must not expose
@@ -178,8 +177,8 @@ private def Tree.height : Tree → Nat
     withLocalDeclD `branch (← mkAppM ``LT.lt #[oneMore, leftHeight]) fun _ => do
       let view ← viewOf "consumer.observationContext" left {} #[leftHeight]
       assertCanon "consumer.observationContext" view.data
-        "Tree|left\nNat|•₁\nTree|right\nNat|1\nNat|•₂\nNat|•₃\n\
-         add[Nat,Nat,Nat]:1,3,4\nheight[Tree,Nat]:2,1;0,5\nlt[Nat,Nat]:4,5"
+        "Tree|left\nNat|•₁\nNat|•₂\nNat|•₃\nTree|right\nNat|1\n\
+         add[Nat,Nat,Nat]:3,5,2\nheight[Tree,Nat]:0,1;4,3\nlt[Nat,Nat]:2,1"
       assertMatchesReference "consumer.observationContext.reference" oneMore
         { functionGraphs := true, observations := #[leftHeight] }
       let scope ← scopeForAfaik view.afaik (← SelScope.ofType ``Tree) #[leftHeight]

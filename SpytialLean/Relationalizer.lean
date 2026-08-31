@@ -187,10 +187,11 @@ public meta structure WalkConfig where
       of these observed heads is represented by its source-level function
       graph before WHNF can replace it with implementation-level constructors. -/
   observations : Array Expr := #[]
-  /-- Proof-producing simplification results prepared before the final walk. -/
+  /-- Checked evaluation/simplification results prepared before the final walk. -/
   observationResults : ExprStructMap Simp.Result := {}
-  /-- Named applications in residual computations stay relational before WHNF,
-      including those whose observer calls have simplified to local variables. -/
+  /-- Unresolved computations inside observation results are value boundaries,
+      not requests to draw their implementation. Independently prepared source
+      applications (from observations or context facts) still have graphs. -/
   observationResiduals : Std.HashSet ExprStructEq := {}
   /-- The represented domain before observation-derived structure is added. -/
   observationDomain : Option (Array Expr) := none
@@ -794,7 +795,6 @@ public meta partial def dependsOnObservation (cfg : WalkConfig) (expression : Ex
 public meta def observedGraphSide? (cfg : WalkConfig) (expression : Expr) :
     MetaM (Option (String × Array Expr)) := do
   let some side ← graphSide? expression | return none
-  if cfg.observationResiduals.contains ⟨expression⟩ then return some side
   unless ← dependsOnObservation cfg expression do return none
   return some side
 
@@ -818,22 +818,56 @@ private meta def observationApplications (observations values : Array Expr) :
         applications := applications.push (observationAt observation argument value)
   return applications
 
-/-- Preserve the residual's data computations, not numeral elaboration or
-    constructor internals. Ordinary structural results still use the walker. -/
-private meta partial def residualApplications (cfg : WalkConfig) (e : Expr) :
+/-- Locate computations that must remain symbolic values rather than exposing
+    an observer's implementation. Ordinary structural results still use the walker. -/
+private meta partial def residualApplications (e : Expr) :
     StateT (Std.HashSet ExprStructEq) MetaM Unit := do
-  -- The argument of `height t` is still an ordinary value. Marking its
-  -- internals as computations would turn a reducible rotation into an opaque
-  -- Tree graph point and hide precisely the structure being inspected.
-  if hasObservedHead cfg e then return
   if e.isAppOf ``OfNat.ofNat then return
-  if (← graphSide? e).isSome then modify (·.insert ⟨e⟩)
+  if (← graphSide? e).isSome then
+    modify (·.insert ⟨e⟩)
+    -- Its arguments are not separately requested results. In particular,
+    -- do not mark a helper inside an input tree as an opaque computation.
+    return
   for argument in ← dataArgsOf e do
-    residualApplications cfg argument
+    residualApplications argument
 
-/-- Prepare observations against a fixed, already discovered domain. Only the
-    requested definitions, ordinary simp rules, and supplied proofs can justify
-    a rewrite. Each changed result carries its equality proof; failures retain
+/-- Compute a constructor/literal value without requiring its input to be
+    closed. Stop at unknown data instead of exposing stuck recursors. -/
+private meta partial def observationValue? (e : Expr) : MetaM (Option Expr) :=
+    withIncRecDepth do
+  let reduced ← withTransparency .default <| whnf e
+  if reduced.isLit then return some reduced
+  let .const name _ := reduced.getAppFn | return none
+  unless (← getConstInfo name).isCtor do return none
+  let mut args := reduced.getAppArgs
+  for argument in ← dataArgsOf reduced do
+    let some value ← observationValue? argument | return none
+    args := args.map fun arg => if arg.equal argument then value else arg
+  return some (mkAppN reduced.getAppFn args)
+
+private meta def observationMethods (cfg : WalkConfig) (simprocs : Simp.SimprocsArray) :
+    Simp.Methods :=
+  let methods := Simp.mkDefaultMethodsCore simprocs
+  { methods with pre := fun e => do
+      if e.isApp && !(← isProof e) && !(← isType e) then
+        if let some value ← observationValue? e then
+          -- Do not revisit a computed numeral: simp folds raw literals back
+          -- into OfNat notation, which would start the same evaluation again.
+          unless value.equal e do return .done { expr := value }
+      -- A named helper may expose the constructor on which the observer
+      -- recurses, even when the whole observation is still symbolic.
+      if hasObservedHead cfg e then
+        let args ← dataArgsOf e
+        if args.size == 1 then
+          let argument := args[0]!
+          let value ← withTransparency .default <| whnf argument
+          unless value.equal argument do
+            return .visit { expr := observationAt e argument value }
+      methods.pre e }
+
+/-- Prepare observations against a fixed, already discovered domain. Compute
+    through available definitions, then simplify with ordinary simp rules and
+    supplied proofs. Each result carries a checked equality; failures retain
     the source expression. No unification assignment escapes preparation. -/
 public meta def prepareObservations (cfg : WalkConfig) (values : Array Expr)
     (proofs : Array Expr := #[]) : MetaM WalkConfig := withoutModifyingState do
@@ -850,6 +884,7 @@ public meta def prepareObservations (cfg : WalkConfig) (values : Array Expr)
   let context ← Simp.mkContext (config := { maxSteps := cfg.maxObservationSteps })
     (simpTheorems := #[theorems]) (congrTheorems := ← getSimpCongrTheorems)
   let simprocs := #[(← Simp.getSimprocs)]
+  let methods := observationMethods cfg simprocs
   let mut applications ← observationApplications cfg.observations values
   for value in values do
     if (← observedGraphSide? cfg value).isSome then applications := applications.push value
@@ -861,7 +896,7 @@ public meta def prepareObservations (cfg : WalkConfig) (values : Array Expr)
     try
       let result ← withoutModifyingState do
         let inputMVars ← getMVars application
-        let (result, _) ← withNewMCtxDepth <| Meta.simp application context simprocs
+        let (result, _) ← withNewMCtxDepth <| Simp.main application context (methods := methods)
         let expression ← instantiateMVars result.expr
         let proof ← instantiateMVars (← result.proof?.getDM (mkEqRefl application))
         let claim ← mkEq application expression
@@ -876,7 +911,7 @@ public meta def prepareObservations (cfg : WalkConfig) (values : Array Expr)
         | .error exception => throwError "{exception.toMessageData (← getOptions)}"
         | .ok _ => pure { result with expr := expression, proof? := some proof }
       results := results.insert ⟨application⟩ result
-      let (_, next) ← (residualApplications cfg result.expr).run residuals
+      let (_, next) ← (residualApplications result.expr).run residuals
       residuals := next
     catch error =>
       logWarning m!"spytial: could not simplify observation {application}; \
@@ -885,6 +920,23 @@ public meta def prepareObservations (cfg : WalkConfig) (values : Array Expr)
     observationResults := results
     observationResiduals := residuals
     observationDomain := some values }
+
+/-- One symbolic result, without drawing a graph for the computation that
+    produced it. The requested observer supplies that result's relation. -/
+private meta def symbolicObservationResult (e : Expr) : StateT WalkState MetaM String := do
+  if let some id := (← get).applicationAtoms[(⟨e⟩ : ExprStructEq)]? then return id
+  let type ← sigOfType (← inferType e)
+  let (label, state) := (← get).freshApplicationLabel
+  let (id, state) := state.freshId
+  set { (state.addAtom { id, type, label }) with
+    applicationAtoms := state.applicationAtoms.insert ⟨e⟩ id }
+  return id
+
+private meta def walkSymbolicResult? (cfg : WalkConfig) (e : Expr) :
+    StateT WalkState MetaM (Option String) := do
+  if cfg.observationResiduals.contains ⟨e⟩ && !cfg.observationResults.contains ⟨e⟩ then
+    return some (← symbolicObservationResult e)
+  return none
 
 /-- Emit a named application `f xs` as the graph point `f[xs, f xs]`.
     Repeated applications reuse the same output atom. -/
@@ -1170,6 +1222,7 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
   let mode ← shiftForWrappers ctx.mode (← Meta.inferType eOrig)
   if let some id ← walkComputed? cfg eOrig
       (fun nested value => walkExpr nested value { ctx with mode }) then return id
+  if let some id ← walkSymbolicResult? cfg eOrig then return id
   -- An observation is an input to relationalization, not a post-pass. Preserve
   -- the source spelling of named computations that depend on an observed
   -- application; only other expressions WHNF to expose data constructors.
@@ -1270,12 +1323,8 @@ public meta def addObservation (cfg : WalkConfig) (source result : Expr)
   let resultId ← match knownResult? with
     | some resultId => pure resultId
     | none =>
-      if reducedResult.equal result && (result.hasFVar || result.hasMVar) then do
-        let state ← get
-        let (label, state) := state.freshApplicationLabel
-        let (atomId, state) := state.freshId
-        set (state.addAtom { id := atomId, type := resultType, label })
-        pure atomId
+      if reducedResult.equal result then
+        symbolicObservationResult result
       else
         walkExpr cfg reducedResult
   modify fun state =>
@@ -1379,6 +1428,7 @@ public meta partial def referenceRelationalize (e : Expr) (cfg : WalkConfig := {
     let mode ← shiftForWrappers ctx.mode (← Meta.inferType eOrig)
     if let some id ← walkComputed? cfg eOrig
         (fun nested value => refWalk nested value { ctx with mode }) then return id
+    if let some id ← walkSymbolicResult? cfg eOrig then return id
     let sourceFunctionGraph := (← observedGraphSide? cfg eOrig).isSome
     let e ← if sourceFunctionGraph then pure eOrig else Meta.whnf eOrig
     if let some (_, ancestorId) := ctx.ancestors.find? (fun (a, _) => a.equal e) then

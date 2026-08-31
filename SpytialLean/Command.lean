@@ -817,7 +817,8 @@ private meta def spytialInContextProps? (subject : Expr)
   -- a command-mode walk: the columns hold the closed values the context
   -- establishes, and symbolic subterms never match.
   let spec? ← spec?.mapM fun s => liftM (resolveLeanSelectors view.datum view.data view.prov s)
-  return (some (spytialProps view.data (spec?.map SpytialSpec.render)), status)
+  let props := spytialProps view.data (spec?.map SpytialSpec.render)
+  return (some (props.setObjVal! "inspection" (toJson view.inspection)), status)
 
 /-- Programmatic entry point for Spytial's IYKYK consumer. -/
 public meta def spytialInContextProps (subject : Expr)

@@ -19,6 +19,7 @@ spytial_spec Tree [
   orientation right - Tree->{t : Tree | @:t = leaf} right below,
   align {x, y : Tree | @:x != leaf and @:y != leaf and (x.~(left + right) = y.~(left+right))} horizontal,
   attribute key,
+  flag hideDisconnectedBuiltIns,
   hideAtom {x : Tree | @:x = leaf}
 ]
 
@@ -114,22 +115,22 @@ def AVLTree.toBST (t : AVLTree) : BSTree := ⟨t.1, t.2.1⟩
 -- ---------------------------------------------------------------------
 
 def rotateRight (t : Tree) : Tree := by
-  spytial t                            -- At entry
+  spytial t observing [height] with [.., attribute height] -- At entry
   exact match t with
     | before@(.node (.node ll lx lr) x r) => by
-        spytial before                 -- Before rotation
+        spytial before observing [height] with [.., attribute height] -- Before rotation
         let after := Tree.node ll lx (.node lr x r)
-        spytial after                  -- After rotation
+        spytial after observing [height] with [.., attribute height] -- After rotation
         exact after
     | other => other
 
 def rotateLeft (t : Tree) : Tree := by
-  spytial t                            -- At entry
+  spytial t observing [height] with [.., attribute height] -- At entry
   exact match t with
     | before@(.node l x (.node rl rx rr)) => by
-        spytial before                 -- Before rotation
+        spytial before observing [height] with [.., attribute height] -- Before rotation
         let after := Tree.node (.node l x rl) rx rr
-        spytial after                  -- After rotation
+        spytial after observing [height] with [.., attribute height] -- After rotation
         exact after
     | other => other
 
@@ -137,7 +138,7 @@ def rotateLeft (t : Tree) : Tree := by
     differ from each other in height by up to 2 (the amount a single
     insertion can produce). Standard four-case (LL/LR/RL/RR) dispatch. -/
 def balance (t : Tree) : Tree := by
-  spytial t observing [height]         -- At entry, before any shape is known
+  spytial t observing [height] with [.., attribute height] -- Before any shape is known
   exact match t with
   | .leaf => .leaf
   | before@(.node l x r) =>
@@ -151,18 +152,18 @@ def balance (t : Tree) : Tree := by
           | node a y b =>
             let left := Tree.node ll lx (.node a y b)
             let before := Tree.node left x r
-            spytial before observing [height]  -- The left-right bend
+            spytial before observing [height] with [.., attribute height] -- The left-right bend
             let middle := Tree.node (rotateLeft left) x r
-            spytial middle observing [height]  -- After rotating the child left
+            spytial middle observing [height] with [.., attribute height] -- Child rotated left
             let after := rotateRight middle
-            spytial after observing [height]   -- After rotating the parent right
+            spytial after observing [height] with [.., attribute height] -- Parent rotated right
             exact after
         else by
           -- LL: rotate the parent right; lr moves across to x's left.
           let before := Tree.node (.node ll lx lr) x r
-          spytial before observing [height]
+          spytial before observing [height] with [.., attribute height]
           let after := rotateRight before
-          spytial after observing [height]
+          spytial after observing [height] with [.., attribute height]
           exact after
       | .leaf => before
     else if hRight : height r > height l + 1 then
@@ -175,23 +176,23 @@ def balance (t : Tree) : Tree := by
           | node a y b =>
             let right := Tree.node (.node a y b) rx rr
             let before := Tree.node l x right
-            spytial before observing [height]  -- The right-left bend
+            spytial before observing [height] with [.., attribute height] -- The right-left bend
             let middle := Tree.node l x (rotateRight right)
-            spytial middle observing [height]  -- After rotating the child right
+            spytial middle observing [height] with [.., attribute height] -- Child rotated right
             let after := rotateLeft middle
-            spytial after observing [height]   -- After rotating the parent left
+            spytial after observing [height] with [.., attribute height] -- Parent rotated left
             exact after
         else by
           -- RR: one left rotation, moving rl across to x's right.
           let before := Tree.node l x (.node rl rx rr)
-          spytial before observing [height]
+          spytial before observing [height] with [.., attribute height]
           let after := rotateLeft before
-          spytial after observing [height]
+          spytial after observing [height] with [.., attribute height]
           exact after
       | .leaf => before
     else by
       -- Neither side exceeds the height threshold: the tree is returned unchanged.
-      spytial before observing [height]
+      spytial before observing [height] with [.., attribute height]
       exact before
 
 def avlInsert (x : Nat) : Tree → Tree
@@ -294,7 +295,7 @@ theorem IsBST_rotateRight (x : Nat) (ll : Tree) (lx : Nat) (lr r : Tree)
     -- lx < z < x. `fyi` instantiates the existing bounds h3b and h1 for the inspection;
     -- the proof still has to apply h1 below. None of the subtrees needs to be concrete.
     -- Keep keys as vertices here: unlike the usual tree layout, the ordering is the point.
-    spytial (Tree.node ll lx lr) observing [height] with [.., hideField IsBST]
+    spytial (Tree.node ll lx lr) observing [height] with [.., attribute height, hideField IsBST]
     exact h1 z hzLeft
 
 theorem IsBST_rotateLeft (x : Nat) (l rl : Tree) (rx : Nat) (rr : Tree)
@@ -346,7 +347,7 @@ theorem IsBST_balance (t : Tree) (h : IsBST t) : IsBST (balance t) := by
         · -- Why rotate the child before the parent? The left subtree is too tall, but lr is
           -- taller than ll. Inspect at the LR decision while both still have symbolic names,
           -- before exposing lr's shape and constructing the intermediate BST.
-          spytial lr observing [height] with [.., hideField IsBST]
+          spytial lr observing [height] with [.., attribute height, hideField IsBST]
           cases lr with
           | leaf => exfalso; simp only [height] at *; omega
           | node rl' rx' rr' =>

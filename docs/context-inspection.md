@@ -37,8 +37,24 @@ After a rotation, facts about unchanged subtrees remain relevant even if no
 hypothesis mentions the new whole tree. A fact about an old parent still refers
 to that old parent, not to the new root. The resulting datum can therefore
 include old structure needed to express the retained facts.
-The generic rendering does not yet distinguish old from new structure visually,
-so these combined views can still be cluttered.
+
+For a structured subject, the widget initially shows **Selected value**: the
+selected expression's structure and its observations, computed using the retained
+context. **Value and context** shows the full relational datum, including old
+structures needed by facts. Both views use the same atom IDs and observed results;
+switching views does not copy subtrees or change identity. The context facts are
+listed below the diagram in either view. For an unknown scalar, the relationships
+are the useful inspection, so the widget initially shows the full context.
+
+`spytial.datum` still prints the full datum. The widget payload additionally records
+the selected root and its value-only data before context-only structures are
+added. An after-rotation tree can therefore be inspected on its own without
+discarding the inequalities about earlier parents.
+
+The AVL layout renders `height` and `key` as attributes. It also enables core's
+`hideDisconnectedBuiltIns` flag: scalar nodes left unconnected after attribute
+folding are hidden, but scalar values participating in context comparisons remain
+visible. This is a presentation policy; the datum keeps the scalar values.
 
 Contradiction checks still happen before projection. Inconsistency and
 extraction truncation keep their existing behavior. Programmatic callers that
@@ -64,10 +80,9 @@ are unchanged. The shortcut respects the existing type-level identity policy;
 it does not apply to `asWritten`, `Raw`, or decider-based identities, which can
 deliberately distinguish occurrences. There is no new observation option.
 
-## Separate follow-up: relationships within partial observations
+## Observations and relationships
 
-These fixes do not expand a partial observation into its defining arithmetic.
-For a known node with unknown children, `observing [height]` still records:
+For a known node with unknown children, `observing [height]` records:
 
 ```text
 height(parent, H)
@@ -75,19 +90,21 @@ height(left, HL)
 height(right, HR)
 ```
 
-A further observation design could also retain the defining relationships:
+The observer is evaluated before its result is added. Known child heights can
+therefore compute the parent's height. However, computing an observation does
+not implicitly request the relations used by its implementation:
 
 ```text
 max(HL, HR, M)
 add(1, M, H)
 ```
 
-That design must specify which equations to unfold, where expansion stops,
-how recursive observers stay finite, and how named results remain shared. It
-must preserve the distinction between a known defining equation and a new
-inferred inequality, and avoid exposing `Nat.succ` as an accidental arithmetic
-representation. No new observation syntax or implicit expansion is introduced
-by the context and identity fixes.
+Those `max` and `add` tuples are not emitted merely because `height` uses them.
+An independently retained fact such as `height r + 1 < height l` does introduce
+an `add` relationship, along with the observed heights and the comparison.
+An equation being provable by unfolding a definition does not, by itself,
+request its expansion in the diagram. See [Observations](observations.md) for
+the evaluation and result-representation contract.
 
 In particular, neither retaining branch inequalities nor observing heights
 proves that an arbitrary result is balanced. That requires appropriate

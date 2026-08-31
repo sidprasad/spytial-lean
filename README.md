@@ -362,8 +362,12 @@ chain.
 
 In tactic mode, `spytial term` asks
 [IYKYK](https://github.com/sidprasad/iykyk) what the current context establishes
-about `term`, translates that `Afaik` knowledge into relational data, and displays it
-in the infoview. `spytial.datum term` prints the same data, and
+about `term` and translates that `Afaik` knowledge into relational data.
+For structured values, the infoview starts with the selected value and its
+observations; **Value and context** reveals the full graph, including any earlier
+structures referred to by retained facts. The facts are listed below either view.
+Scalar inspections start with the full context. `spytial.datum term` prints the
+full relational datum, and
 `spytial term fyi [hypothesis]` supplies an explicit proved hypothesis or
 forward rule to IYKYK. Spytial uses IYKYK's `wdyk` API directly and enables
 `simp` normalization so constructor clashes and same-constructor equations
@@ -380,16 +384,19 @@ spytial tree observing [height]
 For each represented value `t` of the appropriate input type, `observing [height]`
 adds `height t` to the datum, evaluates what it can, and relationalizes the
 result together with its connection to `t`. This applies to every visible tree
-node, not only the selected root. Evaluation uses the observer's defining
-equations and bounded `simp`; tactic mode also supplies the facts established
-by IYKYK. It does not modify the proof state or run a general proof search.
+node, not only the selected root. Evaluation computes through available
+definitions, including helper functions, and uses bounded `simp`; tactic mode
+also supplies the facts established by IYKYK. The input need not be closed:
+the height of `node leaf key leaf` is `1` even when `key` is unknown. Evaluation
+does not modify the proof state or run a general proof search.
 
-A computed height is an ordinary number. A partial result such as
-`1 + max (height l) (height r)` goes through the same expression walker, exposing
-`add` and `max` relations connected to the children's height results. If the
-context establishes `height l = 2` and `height r = 1`, the parent's result is
-instead `3`. An application that cannot reduce remains a shared unknown with
-its named observation relation. There is no separate symbolic-result view.
+A computed height is an ordinary number. If the context establishes
+`height l = 2` and `height r = 1`, the parent's result is `3`. Otherwise its
+height can remain a symbolic value, connected by the same `height` relation.
+Computing with `add` and `max` internally does **not** request those relations:
+`observing [height]` observes heights, not the implementation of `height`.
+Structured results still have their ordinary fields; unresolved computations
+inside them stay symbolic. There is no separate symbolic-result view.
 The represented domain is fixed before these results are added, so observations
 do not recursively observe their own newly introduced outputs.
 
@@ -397,7 +404,8 @@ Observation also governs the treatment of context expressions: an observed
 application and the enclosing named computations that depend on it are
 represented before WHNF. For example, with `observing [height]`, a fact
 `height r + 1 < height l` produces `height`, `add`, and `lt` relations rather
-than exposing `Nat.succ` and its constructor field.
+than exposing `Nat.succ` and its constructor field. Here `add` comes from an
+explicit retained fact, not from expanding the definition of `height`.
 
 `#spytial` uses the same observation-aware relationalizer with no proof
 context, so it observes all values represented by the selected datum. Tactic
@@ -405,3 +413,5 @@ mode additionally relationalizes the facts supplied by IYKYK under the
 observation set, then observes the resulting active domain.
 Observation changes the relational datum passed to Spytial. The existing
 `with [...]` clause continues to control only its presentation.
+
+See [Observations](docs/observations.md) for the contract, examples, and limitations.

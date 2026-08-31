@@ -152,19 +152,19 @@ info: {"relations":
 
 #spytial 3 observing [twice] with [attribute twice]
 
--- A symbolic residual is ordinary relational data, including its vocabulary
--- in both command and tactic mode. This also checks observing inside a def.
+-- Only the requested observation enters the layout vocabulary, not the
+-- arithmetic used to implement it. This also checks observing inside a def.
 def observedNext (n : Nat) : Nat := n + 1
 
 run_elab
   Lean.Meta.withLocalDeclD `n (Lean.mkConst ``Nat) fun _ => do
-    let .ok op := Lean.Parser.runParserCategory (← Lean.getEnv) `spytial_op "hideField add"
+    let .ok op := Lean.Parser.runParserCategory (← Lean.getEnv) `spytial_op "attribute observedNext"
       | throwError "could not parse observation layout"
     discard <| spytialPayloadProps (Lean.mkIdent `n)
       (some #[⟨op⟩]) {} #[Lean.mkIdent ``observedNext]
 
 def inspectNext (n : Nat) : Nat := by
-  spytial n observing [observedNext] with [hideField add]
+  spytial n observing [observedNext] with [attribute observedNext]
   exact n + 1
 
 /--

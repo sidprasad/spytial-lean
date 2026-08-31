@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test": "tsc && node --test tests/*.test.mjs",
     "build": "tsc && rollup --environment NODE_ENV:production --config",
     "build-dev": "tsc && rollup --config",
     "watch": "rollup --config --watch"
