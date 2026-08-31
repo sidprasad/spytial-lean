@@ -72,7 +72,7 @@ public section
 
 /-- Dump the `cndSpec` the widget actually receives, so the deferred
     resolution of an attached spec is what gets tested — not a re-render. -/
-syntax (name := wireSpecCmd) "#wire_spec " term : command
+syntax (name := payloadSpecCmd) "#payload_spec " term : command
 
 /-- `#spytial.spec`, with source-stamp lines masked (`maskLines`). -/
 syntax (name := maskedSpecCmd) "#masked_spec " term " with "
@@ -80,9 +80,9 @@ syntax (name := maskedSpecCmd) "#masked_spec " term " with "
 
 end
 
-@[command_elab wireSpecCmd]
-public meta def elabWireSpec : CommandElab := fun
-  | `(#wire_spec $t:term) => do
+@[command_elab payloadSpecCmd]
+public meta def elabPayloadSpec : CommandElab := fun
+  | `(#payload_spec $t:term) => do
     let props ← liftTermElabM <| spytialPayloadProps t
     logInfo (maskLines s!"{props.getObjValD "cndSpec"}")
   | stx => throwError "Unexpected syntax {stx}."
@@ -325,7 +325,7 @@ spytial_spec LRB [
 info: "{\"directives\":\n [{\"atomStyle\": {\"selector\": \"`atom_0\", \"borderStyle\": {\"color\": \"black\"}}}],\n \"constraints\": [{\"hideAtom\": {\"selector\": \"`atom_3\"}}]}"
 -/
 #guard_msgs in
-#wire_spec lSmall
+#payload_spec lSmall
 
 -- An inherited spec: `lookupTypeSpec` composes a parent structure's spec
 -- into a child render, so a parent's `Sel` applies to the child's parent
@@ -343,14 +343,14 @@ spytial_spec LBase [hideAtom lean ((⟨fun b => [b.tag]⟩ : Spytial.Sel LBase N
 info: "{\"constraints\": [{\"hideAtom\": {\"selector\": \"`atom_2\"}}]}"
 -/
 #guard_msgs in
-#wire_spec (LExt.mk ⟨7⟩ 9)
+#payload_spec (LExt.mk ⟨7⟩ 9)
 
 -- Same stored spec, different value: `isBlack` now picks the interior node.
 /--
 info: "{\"directives\":\n [{\"atomStyle\": {\"selector\": \"`atom_3\", \"borderStyle\": {\"color\": \"black\"}}}],\n \"constraints\": [{\"hideAtom\": {\"selector\": \"`atom_6\"}}]}"
 -/
 #guard_msgs in
-#wire_spec lBig
+#payload_spec lBig
 
 /-! ## Rejections -/
 
@@ -420,7 +420,7 @@ info: {"constraints":
 report. Spytial is a generator, so the emitted spec carries the Lean the user
 wrote (`spytial.source`, on by default) and core cites that instead.
 
-`#masked_spec` and `#wire_spec` mask the stamp's line to `N`: what matters is
+`#masked_spec` and `#payload_spec` mask the stamp's line to `N`: what matters is
 that a location is emitted and which file it names, so these goldens do not
 move when the lines above them do. -/
 
@@ -464,4 +464,4 @@ set_option spytial.source true in
 info: "{\"constraints\":\n [{\"orientation\":\n   {\"source\":\n    {\"text\": \"orientation lean below\", \"location\": \"LeanSelectorTest.lean:N\"},\n    \"selector\": \"lean\",\n    \"directions\": [\"below\"]}}]}"
 -/
 #guard_msgs in
-#wire_spec lKw
+#payload_spec lKw
