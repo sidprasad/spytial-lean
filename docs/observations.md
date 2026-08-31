@@ -23,9 +23,13 @@ For every requested unary function `f : A → B` and every represented `t : A`:
 Concrete results are ordinary values, such as the number `2`. A result known
 to equal a local value uses that value. Known result constructors retain their
 ordinary fields, including symbolic fields. An unresolved computation has a
-symbolic result atom (`•`), not an automatically expanded computation graph.
+symbolic result atom (`?₁`, `?₂`, …), not an automatically expanded computation graph.
 Occurrences of a named application share its result, so a context comparison
 and an observation refer to the same value.
+
+These are display labels, not assignable Lean metavariables. The subscript
+distinguishes values within one inspection; repeated references to the same
+atom keep the same label.
 
 The existing type/relationalizer identity policy still determines which input
 values share atoms. Observing does not override an occurrence-based policy.
@@ -90,7 +94,7 @@ inputs can have before/after heights `3 → 2` and `4 → 3` respectively.
 - The existing finite context-fact selection still applies. Observation does
   not rerun IYKYK to discover new facts about its newly produced values.
 - `with [attribute height]` controls presentation, not evaluation. A symbolic
-  height may still display as `•`; pretty-printing its residual formula as an
+  height may still display as `?₁`; pretty-printing its residual formula as an
   attribute would be a separate presentation feature.
 
 This behavior belongs to Spytial's Lean relationalizer. IYKYK supplies checked

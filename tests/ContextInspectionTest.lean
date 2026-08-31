@@ -434,7 +434,7 @@ opaque unavailableHeight : Tree → Nat := Tree.height
   let leaf := mkConst ``Tree.leaf
   let data ← relationalize leaf {} #[mkApp (mkConst ``unavailableHeight) leaf]
   assertCount "opaque observation" data "unavailableHeight" 1
-  unless (data.atoms.filter (·.type == "Nat")).all (·.label.startsWith "•") do
+  unless (data.atoms.filter (·.type == "Nat")).all (·.label.startsWith "?") do
     throwError "opaque observer was reported as a concrete number"
 
 /- Prepared simplifications carry checked equalities and leave the caller's

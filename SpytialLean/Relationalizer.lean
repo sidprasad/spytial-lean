@@ -71,7 +71,7 @@ public meta structure WalkState where
       from closed-value identity and never merges different symbolic terms. -/
   symbolicAtoms : ExprStructMap String := {}
   /-- Counter for short display names of determined but otherwise unnamed
-      application results (`•₁`, `•₂`, ...). -/
+      application results (`?₁`, `?₂`, ...). -/
   nextApplicationLabel : Nat := 0
   /-- Refinements currently being expanded — the cycle guard for mutual
       equations (`h₁ : x = y`, `h₂ : y = x`): a variable re-entered during its
@@ -129,12 +129,11 @@ private meta def subscriptDigit : Char → String
   | '9' => "₉"
   | c => c.toString
 
-/-- A visibly generated display name, distinct from both a program identifier
-    and the `?u` notation used for an unknown existential witness. -/
+/-- A generated display label for an unnamed value, not a Lean metavariable. -/
 private meta def applicationLabel (index : Nat) : String :=
-  "•" ++ String.join ((toString (index + 1)).toList.map subscriptDigit)
+  "?" ++ String.join ((toString (index + 1)).toList.map subscriptDigit)
 
-/-- Allocate the next generated `•ₙ` display name. Every generated label in a
+/-- Allocate the next generated `?ₙ` display name. Every generated label in a
     walk draws from this one counter, so two distinct atoms never share one. -/
 public meta def WalkState.freshApplicationLabel (s : WalkState) : String × WalkState :=
   (applicationLabel s.nextApplicationLabel,

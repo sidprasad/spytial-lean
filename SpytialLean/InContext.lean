@@ -109,7 +109,7 @@ private meta def displayedProposition (fact : Iykyk.KnownFact) : MetaM Expr :=
 /-- Allocate the shared unknowns before anything else walks. Registering each
     choice term in `applicationAtoms` makes all of its occurrences reuse the
     same short-labelled atom rather than displaying `Classical.choose`, and the
-    labels come from the walk's one `•ₙ` counter so no other generated atom can
+    labels come from the walk's one `?ₙ` counter so no other generated atom can
     repeat them. -/
 private meta def addWitnesses (afaik : Iykyk.Afaik) (recordObservationTerms : Bool) :
     StateT WalkState MetaM (Array (Expr × String)) := do

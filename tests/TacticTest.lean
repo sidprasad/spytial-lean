@@ -128,7 +128,7 @@ info: {"relations":
    "id": "measure"}],
  "atoms":
  [{"type": "Nat", "label": "x", "id": "atom_0"},
-  {"type": "Nat", "label": "•₁", "id": "atom_1"}]}
+  {"type": "Nat", "label": "?₁", "id": "atom_1"}]}
 -/
 #guard_msgs in
 example (measure : Nat → Nat) (x : Nat) : True := by
@@ -271,7 +271,7 @@ example (x n : Nat) (h : x < n) : True := by
   spytial.datum x fyi [n]
   trivial
 
--- a witness occurring inside the refined subject is the one shared `•₁` atom
+-- a witness occurring inside the refined subject is the one shared `?₁` atom
 set_option linter.unusedVariables false in
 /--
 info: {"relations":
@@ -292,7 +292,7 @@ info: {"relations":
    "name": "tail",
    "id": "tail"}],
  "atoms":
- [{"type": "Nat", "label": "•₁", "id": "atom_0"},
+ [{"type": "Nat", "label": "?₁", "id": "atom_0"},
   {"type": "List", "label": "xs", "id": "atom_1"},
   {"type": "List", "label": "cons", "id": "atom_2"},
   {"type": "List", "label": "cons", "id": "atom_3"},
@@ -303,8 +303,8 @@ example (xs : List Nat) (h : ∃ y, xs = [y, y]) : True := by
   spytial.datum xs
   trivial
 
--- witness labels and generated application labels share one counter: `•₁` and
--- `•₂`, never `•₁` twice
+-- witness labels and generated application labels share one counter: `?₁` and
+-- `?₂`, never `?₁` twice
 set_option linter.unusedVariables false in
 /--
 info: {"relations":
@@ -321,9 +321,9 @@ info: {"relations":
    "name": "edge",
    "id": "edge"}],
  "atoms":
- [{"type": "α", "label": "•₁", "id": "atom_0"},
+ [{"type": "α", "label": "?₁", "id": "atom_0"},
   {"type": "α", "label": "s", "id": "atom_1"},
-  {"type": "α", "label": "•₂", "id": "atom_2"}]}
+  {"type": "α", "label": "?₂", "id": "atom_2"}]}
 -/
 #guard_msgs in
 example {α : Type} (edge : α → α → Prop) (Reach : α → Prop) (next : α → α) (s : α)
