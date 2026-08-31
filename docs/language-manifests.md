@@ -28,6 +28,23 @@ passes: `deriving FromJson` ignores members it does not know, so a member
 two — `accepts` on selector fields and the `source` block — and neither
 announced itself.
 
+## Format versioning
+
+The spytial-core manifest carries `manifestVersion`, a semver over the file's
+own member shape: which members exist and what they mean. A consumer requires
+the minor that introduced each member it reads, so `SpecLang.lean` states the
+pair it needs (`neededMajor`/`neededMinor`, 1.1 for `introducedKinds`) and
+checks it before decoding the record — a manifest too old to carry a member
+then says so instead of failing by that member's name. An absent
+`manifestVersion` means the file predates format versioning. Either message
+gives the version found and the version needed.
+
+The check is one-sided, which is what a per-member requirement means: a
+manifest ahead of this reader still decodes, because what it grew is what
+nothing here reads yet. That is the drift class above, and the version does
+not close it. The SGQ manifest has no equivalent member; its `sgqVersion` is
+the package's version, not the file's shape.
+
 ## What is not the manifests'
 
 House style is this package's own and lives beside the tables it refines:
@@ -40,16 +57,20 @@ stops matching upstream fails the build by name.
 
 Three more facts were house tables here and are core's own members now.
 `introduces` gives the string field that names a group or an inferred edge,
-how many columns that thing has, and the `item.field` positions where the
-engine resolves such a name — which is what lets a reference from any other
-field position warn instead of passing silently. `inertWhenBare` names the
-fields that are an item's whole effect, so nothing here reapplies a rule for
-which ones count; `itemOf` checks each named field against the item and
-rejects a marked item that names none. `middleColumns` says what an accepted
-form does with the columns between a tuple's first and last, which separates a
-wide selector that is throwing information away from one that is not; a form
-admitting a third column and declaring nothing is a derivation error naming
-the field.
+which of those kinds it names, and the `item.field` positions where the engine
+resolves such a name — which is what lets a reference from any other field
+position warn instead of passing silently. How many columns a kind has is
+`introducedKinds`, so group-is-one and edge-is-two are read rather than
+restated here, and a kind that is not one of its keys is a derivation error
+naming the field. `inertWhenBare` names the fields that are an item's whole
+effect, so nothing here reapplies a rule for which ones count; `itemOf` checks
+each named field against the item and rejects a marked item that names none.
+Absence of the member is indistinguishable from "not inert", so a manifest
+where no item declares it is a derivation error too, rather than a check that
+quietly stops running. `middleColumns` says what an accepted form does with
+the columns between a tuple's first and last, which separates a wide selector
+that is throwing information away from one that is not; a form admitting a
+third column and declaring nothing is a derivation error naming the field.
 
 Deprecated items and fields get no surface: the Lean DSL is new and has no
 legacy specs to keep parsing. `deprecatedItems` and `deprecatedFields` record
@@ -64,9 +85,9 @@ the modules.
 
 Both packages are overridden to a local checkout in `pnpm-workspace.yaml`,
 because both manifests are ahead of their releases. The SGQ manifest ships
-with simple-graph-query#68, which is unpublished. `introduces`,
-`inertWhenBare` and `middleColumns` ship with spytial-core#580/#581, and the
-override points at a built checkout of the two merged; published 5.4.0 stops
-the build at `orientation.selector`, whose n-ary accepted form admits a third
-column and says nothing about the middle ones. Drop each override when a
-release carries its manifest, and the package.json pins take over.
+with simple-graph-query#68, which is unpublished. `manifestVersion`,
+`introducedKinds`, `introduces`, `inertWhenBare` and `middleColumns` ship with
+spytial-core#580/#581, and the override points at a built checkout of the two
+merged; published 5.4.0 carries none of them and now stops the build at the
+format check, reporting the absent `manifestVersion`. Drop each override when
+a release carries its manifest, and the package.json pins take over.
