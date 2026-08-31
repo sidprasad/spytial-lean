@@ -37,10 +37,14 @@ syntax scientific : spytial_block_arg
 syntax ident : spytial_block_arg
 syntax spytial_op_block : spytial_block_arg
 
-/-- `(blockName arg…)`: `atomic` through the first argument, so a
-    parenthesized selector (`(lo)`, `(a + b)`) backtracks out to `spytial_sel`. -/
+/-- `(blockName arg…)`: `atomic` over the whole form, so a parenthesized
+    selector backtracks out to `spytial_sel`. A shorter window cannot decide
+    it — a selector opens `( ident ident` too (`(a one -> b)`, `(a not in b)`,
+    `(all x : T | …)`), and only the close says which one was written. A form
+    that is complete as both is read as a block; write `(some (lo))` for the
+    selector. -/
 syntax (name := spytialBlockStx)
-  atomic("(" ident spytial_block_arg) spytial_block_arg* ")" : spytial_op_block
+  atomic("(" ident spytial_block_arg spytial_block_arg* ")") : spytial_op_block
 
 /-- `name: value` — a scalar keyword argument. The value parses as a selector
     expression, whose leaves also carry the scalar shapes (words, strings,

@@ -1075,6 +1075,20 @@ info: {"constraints":
 #guard_msgs in
 #spytial.spec sExample with [orientation SBDD one -> lone SBDD below]
 
+/--
+info: {"constraints":
+ [{"orientation": {"selector": "SBDD one -> SBDD", "directions": ["below"]}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [orientation SBDD one -> SBDD below]
+
+/--
+info: {"constraints":
+ [{"orientation": {"selector": "SBDD -> lone SBDD", "directions": ["below"]}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [orientation SBDD -> lone SBDD below]
+
 /-- info: {"constraints": [{"hideAtom": {"selector": "{x : SBDD | x = `a0}"}}]} -/
 #guard_msgs in
 #spytial.spec sExample with [hideAtom {x : SBDD | x = `a0}]
@@ -1265,6 +1279,58 @@ info: {"constraints":
 /-- error: cannot use let-bound 'e' here: it refers to 'x', which a nearer binder shadows — the substitution would be captured; rename the inner binder -/
 #guard_msgs in
 #spytial.spec sExample with [hideAtom {x : SBDD | let e = x.lo | all x : SBDD | some e}]
+
+/-! ## A parenthesized op argument: style block or selector
+
+`(blockName arg…)` and a parenthesized selector both open `( ident ident`, so
+the close is the first thing that separates them and an op argument is a
+selector unless it is a complete block form. A form that is complete as both
+reads as a block, which is why the selector `some lo` needs an inner paren
+there. -/
+
+/--
+info: {"constraints":
+ [{"orientation": {"selector": "SBDD one -> SBDD", "directions": ["below"]}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [orientation (SBDD one -> SBDD) below]
+
+/--
+info: {"constraints":
+ [{"orientation": {"selector": "SBDD -> lone SBDD", "directions": ["below"]}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [orientation (SBDD -> lone SBDD) below]
+
+/--
+info: {"constraints":
+ [{"orientation":
+   {"selector": "SBDD one -> lone SBDD", "directions": ["below"]}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [orientation (SBDD one -> lone SBDD) below]
+
+-- Not products, and formulas rather than selectors: reaching the kind checker
+-- is what says the parse got past the block form.
+/-- error: a selector picks out atoms or tuples, but this is a formula -/
+#guard_msgs in
+#spytial.spec sExample with [orientation (SBDD not in SBDD) below]
+
+/-- error: a selector picks out atoms or tuples, but this is a formula -/
+#guard_msgs in
+#spytial.spec sExample with [orientation (all x : SBDD | x in SBDD) below]
+
+/-- error: unknown block '(some …)'; usage: hideAtom <selector> -/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom (some lo)]
+
+/-- error: a selector picks out atoms or tuples, but this is a formula -/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom (some (lo))]
+
+/-- info: {"directives": [{"atomStyle": {"borderStyle": {"color": "red"}}}]} -/
+#guard_msgs in
+#spytial.spec sExample with [atomStyle (borderStyle "red")]
 
 /-! ## Token-table hygiene — the DSL must not reserve words or steal prefixes
 
