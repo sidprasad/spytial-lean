@@ -564,11 +564,27 @@ meta abbrev LEnv := List (Name × LocalBind)
 private meta def constructOfKind : Std.HashMap Name Sgq.ConstructId :=
   Sgq.allConstructs.foldl (init := {}) fun m c => m.insert (nodeKind c) c
 
-/-- Atom constructs read off an identifier rather than a rule of their own. -/
+/-- Atom constructs read off an identifier rather than a rule of their own.
+    `resolveIdent` returns the operator the word spells without re-checking
+    `evaluates`; the command below is what keeps that sound. -/
 private meta def wordConstructs : List Sgq.ConstructId :=
   Sgq.allConstructs.filter fun c =>
     let cd := Sgq.Construct.of c
     cd.evaluates && cd.fixity == .atom && !cd.operators.isEmpty
+
+-- Constructs and operators each carry their own `evaluates`, and `comparison`
+-- already disagrees with its `is`. Nothing on the bare-word path does today; a
+-- bump that changes that is the build's to catch, not an audit's.
+open Command in
+run_cmd
+  for c in wordConstructs do
+    let refused := (Sgq.Construct.of c).operators.filter fun o =>
+      !(Sgq.Op.of o).evaluates
+    unless refused.isEmpty do
+      throwError "sgq manifest: the bare-word construct '{Sgq.constructName c}' \
+        has operators the engine refuses to evaluate \
+        ({", ".intercalate (refused.map Sgq.opName)}), and `resolveIdent` \
+        resolves a word to one without checking"
 
 private meta def kindName : Sgq.Kind → String
   | .relation => "a relational expression" | .number => "an integer expression"
