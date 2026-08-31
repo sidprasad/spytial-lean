@@ -104,8 +104,8 @@ environment stores the structured spec, and the serialized string exists
 only in the widget payload.
 
 Serialization is fallible for that reason: a selector node whose arguments do
-not fill its template has no lowering (`Selector.argAt`), and the spec it sits
-in has none either.
+not fill its template — too few, or one of the wrong kind at a position — has no
+lowering (`Selector.argAt`), and the spec it sits in has none either.
 -/
 
 public meta partial def FieldVal.toJson : FieldVal → Except String Json

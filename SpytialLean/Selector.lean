@@ -82,16 +82,24 @@ public meta instance : Inhabited Arg := ⟨.atom none⟩
 
 /-! ## Building nodes
 
-A production says where its operands go, so one builder serves every operator:
-the operands in order, every optional part absent. Template-driven like the
-elaborator, so a construct that grows a slot cannot leave a caller short. The
-two leaves below fill positions no operand reaches. -/
+A production says where its operands go, so one builder serves every operator
+whose production is written out of operators, operands and optional slots: the
+operands in order, every optional part absent. Template-driven like the
+elaborator, so a construct that grows an operand cannot leave a caller short.
+
+That is the whole domain. A production also written with a name, an argument
+list, binder groups or a body has positions no operand fills, and this builder
+fills none of them — as it fills none of the operands a short array leaves out.
+Either way the positions after it are unfilled, so the node has no lowering
+(`argAt`, `renderItems`) rather than one that guesses. The two leaves below
+fill positions no operand reaches. -/
 
 public meta def Sel.op (o : Sgq.OpId) (operands : Array Sel) : Sel :=
   let cd := Sgq.Construct.of (Sgq.Op.of o).construct
   let (args, _) := cd.template.foldl (init := (#[], 0)) fun (acc, n) item =>
     match item with
-    | .operand _ => (acc.push (Arg.expr operands[n]!), n + 1)
+    | .operand _ => (match operands[n]? with | some e => acc.push (Arg.expr e) | none => acc,
+        n + 1)
     | .part _ true | .«optional» _ => (acc.push (Arg.atom none), n)
     | _ => (acc, n)
   .node cd.id (some o) args
@@ -212,15 +220,28 @@ private meta def assemble (chunks : Array (String × Air)) : String := Id.run do
   return out
 
 /-- The argument filling template position `i`. A node is built by the
-    elaborator against the same template that renders it, so a short argument
-    array is a bug in one of the two; the node then has no lowering at all,
-    rather than one with the position silently dropped. -/
+    elaborator against the same template that renders it, so an argument that is
+    missing or of the wrong kind is a bug in one of the two; the node then has
+    no lowering at all, rather than one with the position silently dropped. -/
 private meta def argAt (cd : Sgq.Construct) (args : Array Arg) (i : Nat) :
     Except String Arg :=
   match args[i]? with
   | some a => .ok a
   | none => .error s!"{Sgq.constructName cd.id}: template position {i} has no \
       argument ({args.size} given)"
+
+/-- Which kind of argument this is, for a position that takes another. -/
+private meta def Arg.what : Arg → String
+  | .expr _ => "an expression"
+  | .exprs _ => "an expression list"
+  | .binders _ => "binder groups"
+  | .name _ => "a name"
+  | .atom _ => "an optional part"
+
+private meta def wrongArg {α : Type} (cd : Sgq.Construct) (i : Nat) (want : String)
+    (got : Arg) : Except String α :=
+  .error s!"{Sgq.constructName cd.id}: template position {i} takes {want}, \
+    got {got.what}"
 
 private meta def parenIf (needed : Bool) (s : String) : String :=
   if needed then s!"({s})" else s
@@ -267,33 +288,38 @@ private meta partial def renderItems (cd : Sgq.Construct) (op : Option Sgq.OpId)
   let mut out : Array (String × Air) := #[]
   let mut i := start
   let beside := args.any fun a => match a with | .atom (some _) => true | _ => false
-  let expr (a : Arg) (level : Nat) : Except String String :=
-    match a with | .expr e => e.toSGQCtx level | _ => .ok ""
+  let expr (pos : Nat) (a : Arg) (level : Nat) : Except String String :=
+    match a with | .expr e => e.toSGQCtx level | _ => wrongArg cd pos "an expression" a
   for item in items do
     match item with
     | .operand level =>
-      out := out.push (← expr (← argAt cd args i) level, {})
+      out := out.push (← expr i (← argAt cd args i) level, {})
       i := i + 1
     | .body level =>
       out := out.push (cd.part .«bar» |>.text, roleAir .«bar»)
-      out := out.push (← expr (← argAt cd args i) level, {})
+      out := out.push (← expr i (← argAt cd args i) level, {})
       i := i + 1
     | .«repeat» level =>
-      if let .exprs es := ← argAt cd args i then
-        for e in es do out := out.push (← e.toSGQCtx level, { left := true, right := true })
+      let a ← argAt cd args i
+      let .exprs es := a | wrongArg cd i "an expression list" a
+      for e in es do out := out.push (← e.toSGQCtx level, { left := true, right := true })
       i := i + 1
     | .list level role =>
-      if let .exprs es := ← argAt cd args i then
-        for (e, n) in es.zipIdx do
-          if n != 0 then out := out.push (cd.part role |>.text, roleAir role)
-          out := out.push (← e.toSGQCtx level, {})
+      let a ← argAt cd args i
+      let .exprs es := a | wrongArg cd i "an expression list" a
+      for (e, n) in es.zipIdx do
+        if n != 0 then out := out.push (cd.part role |>.text, roleAir role)
+        out := out.push (← e.toSGQCtx level, {})
       i := i + 1
     | .binders typed level =>
-      if let .binders bs := ← argAt cd args i then
-        out := out ++ (← renderBinders cd typed level bs)
+      let a ← argAt cd args i
+      let .binders bs := a | wrongArg cd i "binder groups" a
+      out := out ++ (← renderBinders cd typed level bs)
       i := i + 1
     | .name _ =>
-      if let .name s := ← argAt cd args i then out := out.push (quoteIfNeeded s, {})
+      let a ← argAt cd args i
+      let .name s := a | wrongArg cd i "a name" a
+      out := out.push (quoteIfNeeded s, {})
       i := i + 1
     | .operator | .constant =>
       -- `constant` is the `const` alternation; the numeric and string literals
@@ -304,15 +330,20 @@ private meta partial def renderItems (cd : Sgq.Construct) (op : Option Sgq.OpId)
         out := out.push (od.text, opAir od beside)
     | .part role optional =>
       if optional then
+        let a ← argAt cd args i
+        -- `none` is the part not written, which is what the position allows.
+        let .atom spelling := a | wrongArg cd i "an optional part" a
         -- Aliases write house style; alternatives write what the source chose.
-        let part := cd.part role
-        if let .atom (some s) := ← argAt cd args i then
+        if let some s := spelling then
+          let part := cd.part role
           out := out.push (if part.alternatives then s else part.text, roleAir role)
         i := i + 1
       else
         out := out.push (cd.part role |>.text, roleAir role)
     | .«optional» inner =>
-      let present := match ← argAt cd args i with | .atom s => s.isSome | _ => false
+      let a ← argAt cd args i
+      let .atom spelling := a | wrongArg cd i "an optional part" a
+      let present := spelling.isSome
       i := i + 1
       if present then
         let (chunks, next) ← renderItems cd op inner args i
