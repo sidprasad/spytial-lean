@@ -195,8 +195,6 @@ public meta structure JDocument where
   deriving Inhabited, FromJson
 
 public meta structure JManifest where
-  spytialCoreVersion : String
-  languageVersion : String
   /-- Keys are data, so this stays an object rather than becoming a record. -/
   introducedKinds : JsonObject
   document : JDocument
@@ -784,8 +782,6 @@ elab "derive_spec_tables" : command => do
         Syntax.mkCApp ``Prod.mk #[enumCtor `FieldId f, quote v]] : Term)))
   declareDef `deprecatedItems (← `(List (String × String))) (quote m.deprecatedItems)
   declareDef `deprecatedFields (← `(List (String × String))) (quote m.deprecatedFields)
-  declareDef `specCoreVersion (← `(String)) (quote m.lexical.spytialCoreVersion)
-  declareDef `specLanguageVersion (← `(String)) (quote m.lexical.languageVersion)
 
 derive_spec_tables
 
