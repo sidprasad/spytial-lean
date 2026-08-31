@@ -1,0 +1,51 @@
+{"textDocument":
+ {"uri": "file:///tests/interactive/test-cases/introduced_names.lean"},
+ "position": {"line": 17, "character": 36}}
+{"range":
+ {"start": {"line": 17, "character": 36}, "end": {"line": 17, "character": 39}},
+ "contents":
+ {"value": "edge 'hop', introduced by this spec; resolved at edgeStyle.field",
+  "kind": "markdown"}}
+{"textDocument":
+ {"uri": "file:///tests/interactive/test-cases/introduced_names.lean"},
+ "position": {"line": 17, "character": 57}}
+{"range":
+ {"start": {"line": 17, "character": 57}, "end": {"line": 17, "character": 60}},
+ "contents":
+ {"value": "edge 'hop', introduced by this spec; resolved at edgeStyle.field",
+  "kind": "markdown"}}
+{"textDocument":
+ {"uri": "file:///tests/interactive/test-cases/introduced_names.lean"},
+ "position": {"line": 17, "character": 57}}
+[{"targetUri": "file:///tests/interactive/test-cases/introduced_names.lean",
+  "targetSelectionRange":
+  {"start": {"line": 17, "character": 36},
+   "end": {"line": 17, "character": 39}},
+  "targetRange":
+  {"start": {"line": 17, "character": 36},
+   "end": {"line": 17, "character": 39}},
+  "originSelectionRange":
+  {"start": {"line": 17, "character": 57},
+   "end": {"line": 17, "character": 60}}}]
+{"textDocument":
+ {"uri": "file:///tests/interactive/test-cases/introduced_names.lean"},
+ "position": {"line": 22, "character": 39}}
+{"range":
+ {"start": {"line": 22, "character": 39}, "end": {"line": 22, "character": 46}},
+ "contents":
+ {"value":
+  "group 'cluster', introduced by this spec; resolved at inferredEdge.draw, edgeStyle.field",
+  "kind": "markdown"}}
+{"textDocument":
+ {"uri": "file:///tests/interactive/test-cases/introduced_names.lean"},
+ "position": {"line": 25, "character": 44}}
+[{"targetUri": "file:///tests/interactive/test-cases/introduced_names.lean",
+  "targetSelectionRange":
+  {"start": {"line": 22, "character": 39},
+   "end": {"line": 22, "character": 46}},
+  "targetRange":
+  {"start": {"line": 22, "character": 39},
+   "end": {"line": 22, "character": 46}},
+  "originSelectionRange":
+  {"start": {"line": 25, "character": 44},
+   "end": {"line": 25, "character": 51}}}]
