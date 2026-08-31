@@ -60,6 +60,13 @@ what was declined, by name.
 Both manifests are read while `Sgq.lean` and `SpecLang.lean` elaborate
 (`include_str`), which Lean's import graph does not see; the lakefile names
 them as `input_file`s the library needs, so a dependency bump re-elaborates
-the modules. The SGQ manifest ships with simple-graph-query#68, which is
-unpublished; until it lands, `pnpm-workspace.yaml` overrides the package to a
-local checkout.
+the modules.
+
+Both packages are overridden to a local checkout in `pnpm-workspace.yaml`,
+because both manifests are ahead of their releases. The SGQ manifest ships
+with simple-graph-query#68, which is unpublished. `introduces`,
+`inertWhenBare` and `middleColumns` ship with spytial-core#580/#581, and the
+override points at a built checkout of the two merged; published 5.4.0 stops
+the build at `orientation.selector`, whose n-ary accepted form admits a third
+column and says nothing about the middle ones. Drop each override when a
+release carries its manifest, and the package.json pins take over.

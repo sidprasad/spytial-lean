@@ -132,7 +132,7 @@ input_file sgqManifest where
 input_file spytialManifest where
   path := widgetDir / "node_modules" / "spytial-core" / "docs" / "spytial-language.json"
 
-/-- `tests/SelectorLoweringTest.lean`'s 442-case golden. -/
+/-- `tests/SelectorLoweringTest.lean`'s golden. -/
 input_file sgqLoweringGolden where
   path := "tests" / "SelectorLoweringTest.golden.tsv"
   text := true
