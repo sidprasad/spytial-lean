@@ -2,7 +2,7 @@
   "name": "spytial-lean",
   "version": "0.1.0",
   "private": true,
-  "description": "pnpm workspace root: widget/ (infoview bundle) and tests/render/ (render-test harness). No sources of its own.",
+  "description": "pnpm workspace root: widget/ (infoview bundle) and render/ (render-test harness). No sources of its own.",
   "devDependencies": {
     "simple-graph-query": "^3.1.0"
   }

@@ -438,7 +438,7 @@ private meta def lexedByHost (s : String) : Bool :=
     refuses to run; an atom whose every spelling is an identifier, which an
     atom-keyed rule would never see on an unspaced `univ.lo` and which
     `resolveIdent` reads off the identifier instead; and a spelling Lean's lexer
-    claims. `tests/SgqCoverageTest.lean` keeps the account. -/
+    claims. `SpytialTests/SgqCoverageTest.lean` keeps the account. -/
 meta def hasRule (cd : Sgq.Construct) : Bool :=
   cd.evaluates && !cd.template.isEmpty
     && !(cd.fixity == .atom && cd.spellings.all lexesAsIdent)

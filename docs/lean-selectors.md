@@ -129,6 +129,6 @@ was written. Turn it off with `set_option spytial.source false` to keep the
 emitted spec free of source text.
 
 `spytial_spec` stores the function and re-runs it for each value drawn, as
-compiled code. [demos/LeanSelectors.lean](../demos/LeanSelectors.lean) is a
+compiled code. [Demos/LeanSelectors.lean](../Demos/LeanSelectors.lean) is a
 worked example; [selectors.md](selectors.md) has the grammar and checking
 rules.

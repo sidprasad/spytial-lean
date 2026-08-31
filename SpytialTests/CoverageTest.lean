@@ -41,7 +41,7 @@ namespace CoverageFixture
 spytial_spec Graph [hideAtom Nat]
 -- `ropeRel` is deliberately non-`public`, pinning the registration warning.
 /--
-warning: '_private.CoverageTest.0.ropeRel' is not `public`, so a `#spytial` on this type from an importing module fails at render with `Unknown constant` — declare it `public meta def`
+warning: '_private.SpytialTests.CoverageTest.0.ropeRel' is not `public`, so a `#spytial` on this type from an importing module fails at render with `Unknown constant` — declare it `public meta def`
 -/
 #guard_msgs in
 spytial_relationalizer Rope ropeRel

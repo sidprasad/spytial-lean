@@ -45,7 +45,7 @@ checking) with `just test`, or directly with lake:
 lake build SpytialTests
 ```
 
-`tests/SelectorTest.lean` is the behavioral contract for the selector DSL. It
+`SpytialTests/SelectorTest.lean` is the behavioral contract for the selector DSL. It
 pins the SGQ lowering of every surface form: the Forge precedence battery,
 word and symbolic connectives, quantifiers and `let`, the integer layer, box
 join, and the negated comparisons. It also pins one diagnostic per checker
@@ -127,7 +127,7 @@ To add a new layout operation:
 2. Add it to `isConstraint` (if it's a constraint) or leave it as a directive
 3. Add a JSON serialization case in `SpytialOp.toJson` (in `SpytialLean/Spec.lean`)
 4. Add a keyword case to `elabSpytialOp` in `SpytialLean/Command.lean`, giving each selector position its `ArityExpect` and interpreting the other arguments
-5. Add an example in a `demos/` file and a golden in `tests/SelectorTest.lean`
+5. Add an example in a `Demos/` file and a golden in `SpytialTests/SelectorTest.lean`
 6. Rebuild: `lake build Demos SpytialTests`
 
 ## Debugging

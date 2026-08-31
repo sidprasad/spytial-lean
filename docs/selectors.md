@@ -113,7 +113,7 @@ and `let`, which the engine parses and refuses to run and which this package
 implements by substitution. The named constants `univ`, `iden` and `none` have
 no rule at all: their spellings are identifiers, so an atom-keyed rule would
 never fire on an unspaced `univ.lo`, and they are read off the identifier
-instead. `tests/SgqCoverageTest.lean` keeps that account and fails when a
+instead. `SpytialTests/SgqCoverageTest.lean` keeps that account and fails when a
 construct upstream falls outside it.
 
 ## Meaning

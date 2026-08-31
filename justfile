@@ -22,4 +22,4 @@ widget-reload:
 # pins nothing: rewrite, then read the diff.
 rebless-sgq:
     lake build SpytialLean
-    SPYTIAL_REBLESS=1 lake env lean tests/SelectorLoweringTest.lean
+    SPYTIAL_REBLESS=1 lake env lean SpytialTests/SelectorLoweringTest.lean

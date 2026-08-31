@@ -40,7 +40,7 @@ lake update
 lake build
 ```
 
-Open a file in `demos/` and place your cursor on a `#spytial` line. The infoview panel will show the diagram.
+Open a file in `Demos/` and place your cursor on a `#spytial` line. The infoview panel will show the diagram.
 
 ### Nix dev shell
 
@@ -208,7 +208,7 @@ code. Selection is by value, and by default equal values draw as one node, so
 a value names exactly the node it picks.
 
 [docs/lean-selectors.md](docs/lean-selectors.md) is the guide, including what
-does not work. [demos/LeanSelectors.lean](demos/LeanSelectors.lean) is a
+does not work. [Demos/LeanSelectors.lean](Demos/LeanSelectors.lean) is a
 worked example.
 
 The grammar (EBNF), the raw-Lean rules, the integer/value typing rules, and
@@ -312,7 +312,7 @@ SpytialLean/
   Attr.lean           -- Environment extensions (specs, opt-outs)
   Command.lean        -- #spytial, spytial_spec, the op DSL, tactics
   Coverage.lean       -- #spytial.coverage build-time coverage check
-tests/
+SpytialTests/
   TypeShapeTest.lean  -- Naming + walker unit tests
   SelectorTest.lean   -- Golden lowering + checker diagnostics tests
   CoverageTest.lean   -- #spytial.coverage diagnostics tests

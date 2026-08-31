@@ -132,28 +132,25 @@ input_file sgqManifest where
 input_file spytialManifest where
   path := widgetDir / "node_modules" / "spytial-core" / "docs" / "spytial-language.json"
 
-/-- `tests/SelectorLoweringTest.lean`'s golden. -/
+/-- `SpytialTests/SelectorLoweringTest.lean`'s golden. -/
 input_file sgqLoweringGolden where
-  path := "tests" / "SelectorLoweringTest.golden.tsv"
+  path := "SpytialTests" / "SelectorLoweringTest.golden.tsv"
   text := true
 
 @[default_target]
 lean_lib SpytialLean where
   needs := #[widgetJsAll, sgqManifest, spytialManifest]
 
+/-! Both libraries glob their directory, so a file added there is built without
+    an edit here. Neither has a root module: nothing imports a demo or a test. -/
+
 lean_lib Demos where
-  srcDir := "demos"
-  roots := #[`Showcase, `ProofFieldFiltering, `FunctionFields, `TypeClassInstances,
-             `CustomRelationalizer, `ProofTerms, `HoareLogic, `OperationalSemantics,
-             `PartialTerms, `BDD, `Automata, `LeanSelectors]
+  globs := #[.submodules `Demos]
   needs := #[widgetJsAll]
 
 /-- Headless unit tests: `lake build SpytialTests`. -/
 lean_lib SpytialTests where
-  srcDir := "tests"
-  roots := #[`WalkCanon, `TypeShapeTest, `CoverageTest, `TacticTest, `SelectorTest,
-             `LeanSelectorTest, `SelectorLoweringTest, `SgqCoverageTest,
-             `SpecSurfaceTest, `IdentityTest, `IdentityWalkTest, `RelationShapeTest]
+  globs := #[.submodules `SpytialTests]
   needs := #[sgqLoweringGolden]
 
 require proofwidgets from

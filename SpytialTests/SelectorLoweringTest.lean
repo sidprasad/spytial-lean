@@ -208,7 +208,7 @@ private meta def corpus : Array (String × String) :=
 /-- The pinned lowering, one `label<TAB>sgq` per line. Re-bless with
     `just rebless-sgq` after a deliberate change, then read the diff. -/
 private meta def goldenPath : System.FilePath :=
-  "tests" / "SelectorLoweringTest.golden.tsv"
+  "SpytialTests" / "SelectorLoweringTest.golden.tsv"
 
 private meta def rendered : String :=
   String.join (corpus.toList.map fun (label, sgq) => s!"{label}\t{sgq}\n")
