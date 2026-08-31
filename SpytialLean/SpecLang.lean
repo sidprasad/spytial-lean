@@ -82,7 +82,9 @@ public meta structure JAccept where
   maxColumns : Option Nat
   middleColumns : Option MiddleColumns
   requires : Option String
-  deriving Repr, Inhabited, FromJson
+  deriving Repr, Inhabited
+
+json_record JAccept ignoring "meaning"
 
 json_union JFieldType on "type" where
   | selector (arity : DeclaredArity) (accepts : List JAccept)
@@ -104,22 +106,31 @@ json_union JAltField on "type" where
 public meta structure JAltForm where
   «type» : String
   fields : List JAltField
-  deriving Inhabited, FromJson
+  deriving Inhabited
+
+json_record JAltForm ignoring "description"
 
 public meta structure JDeprecated where
   replacedBy : String
-  deriving Inhabited, FromJson
+  deriving Inhabited
+
+-- an item's rewrite hints (`mapping`, `reason`, `warningSpecType`) are core's own
+json_record JDeprecated ignoring "mapping" "reason" "warningSpecType"
 
 /-- `arity` is how many columns a name of that kind has. -/
 public meta structure JIntroducedKind where
   arity : Nat
-  deriving Inhabited, FromJson
+  deriving Inhabited
+
+json_record JIntroducedKind ignoring "description"
 
 /-- `kind` is a key of `introducedKinds`, which is where its arity comes from. -/
 public meta structure JIntroduces where
   kind : String
   referencedBy : List String
-  deriving Inhabited, FromJson
+  deriving Inhabited
+
+json_record JIntroduces
 
 /-- Read off the same object as `JFieldType`, which takes the rest. -/
 public meta structure JField where
@@ -128,11 +139,17 @@ public meta structure JField where
   alternativeForm : Option JAltForm
   introduces : Option JIntroduces
   deprecated : Option JDeprecated
-  deriving Inhabited, FromJson
+  deriving Inhabited
+
+-- `pattern` and `enforcement` are the engine's own value checks
+json_record JField ignoring JFieldType.memberNames "description" "note" "pattern"
+  "enforcement"
 
 public meta structure JInertWhenBare where
   effectFields : List String
-  deriving Inhabited, FromJson
+  deriving Inhabited
+
+json_record JInertWhenBare
 
 public meta structure JItem where
   id : String
@@ -143,19 +160,27 @@ public meta structure JItem where
   inertWhenBare : Option JInertWhenBare
   fields : Option (List Json)
   deprecated : Option JDeprecated
-  deriving Inhabited, FromJson
+  deriving Inhabited
+
+-- `discriminator` and the section-deprecation pair steer core's YAML reader
+json_record JItem ignoring "description" "example" "label" "note" "discriminator"
+  "deprecatedSections" "sectionDeprecation"
 
 public meta structure JBlock where
   name : String
   fields : List Json
-  deriving Inhabited, FromJson
+  deriving Inhabited
+
+json_record JBlock ignoring "description"
 
 public meta structure JHold where
   field : String
   values : List String
   default : String
   supportedBy : List String
-  deriving Inhabited, FromJson
+  deriving Inhabited
+
+json_record JHold ignoring "note"
 
 /-- `supportedBy` is where core parses the provenance stamp, `displayedBy`
     where it reads it back out. -/
@@ -164,11 +189,15 @@ public meta structure JSource where
   fields : List Json
   supportedBy : List String
   displayedBy : List String
-  deriving Inhabited, FromJson
+  deriving Inhabited
+
+json_record JSource ignoring "note"
 
 public meta structure JDocument where
   sections : List Section
-  deriving Inhabited, FromJson
+  deriving Inhabited
+
+json_record JDocument ignoring "notes" "sectionShape" "unknownKeys"
 
 public meta structure JManifest where
   /-- Keys are data, so this stays an object rather than becoming a record. -/
@@ -177,7 +206,12 @@ public meta structure JManifest where
   hold : JHold
   source : JSource
   blocks : List JBlock
-  deriving Inhabited, FromJson
+  deriving Inhabited
+
+-- `items` and `manifestVersion` are read on their own; the version words and
+-- `deprecations` restate what `checkFormat` and `items[].deprecated` already read
+json_record JManifest ignoring "items" "manifestVersion" "language" "languageVersion"
+  "spytialCoreVersion" "documentation" "versioning" "deprecations"
 
 /-! ## Choices the manifest leaves open
 

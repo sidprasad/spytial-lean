@@ -44,7 +44,9 @@ public meta structure Kinds where
   yields : Option Kind
   operands : List (Option Kind)
   inner : Option Kind
-  deriving Repr, Inhabited, FromJson
+  deriving Repr, Inhabited
+
+json_record Kinds
 
 /-- The coarse classification; `template` is where the pieces actually go. -/
 json_union Fixity where
@@ -75,17 +77,23 @@ public meta structure Arity where
   yields : Option ArityRule
   slots : List (Option Nat)
   requires : Option Requires
-  deriving Repr, Inhabited, FromJson
+  deriving Repr, Inhabited
+
+json_record Arity
 
 public meta structure Range where
   «from» : Char
   to : Char
-  deriving Repr, Inhabited, FromJson
+  deriving Repr, Inhabited
+
+json_record Range
 
 public meta structure CharClass where
   ranges : List Range
   chars : List Char
-  deriving Repr, Inhabited, FromJson
+  deriving Repr, Inhabited
+
+json_record CharClass
 
 public meta def CharClass.contains (cc : CharClass) (c : Char) : Bool :=
   cc.ranges.any (fun r => r.from ≤ c && c ≤ r.to) || cc.chars.contains c
@@ -136,7 +144,9 @@ public meta structure JOp where
   evaluates : Bool
   kinds : Kinds
   arity : Arity
-  deriving Inhabited, FromJson
+  deriving Inhabited
+
+json_record JOp
 
 public meta structure JConstruct where
   id : String
@@ -149,7 +159,10 @@ public meta structure JConstruct where
   /-- Keys are data, so this stays an object rather than becoming a record. -/
   parts : JsonObject
   operators : List JOp
-  deriving Inhabited, FromJson
+  deriving Inhabited
+
+-- the template's cascade levels already encode associativity
+json_record JConstruct ignoring "associativity"
 
 public meta structure JQuoted where
   delimiter : Char
@@ -157,33 +170,44 @@ public meta structure JQuoted where
   mustEscape : List Char
   escapeDecodes : JsonObject
   minLength : Nat
-  deriving Inhabited, FromJson
+  deriving Inhabited
+
+json_record JQuoted
 
 public meta structure JBare where
   head : CharClass
   rest : CharClass
   minLength : Nat
-  deriving Inhabited, FromJson
+  deriving Inhabited
+
+json_record JBare
 
 public meta structure JIdentifier where
   bare : JBare
   quoted : JQuoted
   /-- Spellings a bare identifier cannot carry: they lex as some other token. -/
   reserved : List String
-  deriving Inhabited, FromJson
+  deriving Inhabited
+
+json_record JIdentifier
 
 public meta structure JBuiltins where
   binary : List String
   unary : List String
   set : List String
-  deriving Inhabited, FromJson
+  deriving Inhabited
+
+json_record JBuiltins
 
 public meta structure JManifest where
   sgqVersion : String
   identifier : JIdentifier
   «string» : JQuoted
   builtins : JBuiltins
-  deriving Inhabited, FromJson
+  deriving Inhabited
+
+-- `constructs` is read on its own; `number` describes numerals Lean's lexer claims
+json_record JManifest ignoring "constructs" "number"
 
 /-! ## Assembling the tables' input -/
 

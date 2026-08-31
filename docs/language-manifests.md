@@ -17,16 +17,19 @@ deleted, and nothing could have caught it.
 
 ## Decoding
 
-Records mirror the manifests and decode with `deriving FromJson`, whose errors
-name the member that moved. Tagged shapes use `json_union`
-(`SpytialLean.ManifestJson`), which declares an inductive and its decoder from
-one list, so a constructor and its JSON spelling cannot drift apart. A tag,
-enum value, or renamed member with no representation stops the build naming
-the construct or item, rather than yielding a plausible table. One drift class
-passes: `deriving FromJson` ignores members it does not know, so a member
-*added* upstream is silently unread until something else fails. Core 5.4.0 grew
-two — `accepts` on selector fields and the `source` block — and neither
-announced itself.
+Records mirror the manifests and decode through two commands in
+`SpytialLean.ManifestJson`, each declaring a reader from one statement so a
+shape and its decoder cannot drift apart. Tagged shapes use `json_union`: an
+inductive and its decoder from one list, pairing each constructor with its
+JSON spelling. Records use `json_record`: the decoder is read off the
+structure's own fields, and it is closed — a member outside the field list
+stops the build naming it, so a member *added* upstream announces itself
+instead of being silently unread. (That class had already bitten: core 5.4.0
+grew `accepts` and the `source` block, and neither announced itself.) A member
+known and deliberately unread is declared in the command's `ignoring` list; two
+readers sharing one object (`JField`, `JFieldType`) share member lists the same
+way. A tag, enum value, or renamed member with no representation stops the
+build naming the construct or item, rather than yielding a plausible table.
 
 ## Format versioning
 
@@ -39,11 +42,11 @@ then says so instead of failing by that member's name. An absent
 `manifestVersion` means the file predates format versioning. Either message
 gives the version found and the version needed.
 
-The check is one-sided, which is what a per-member requirement means: a
-manifest ahead of this reader still decodes, because what it grew is what
-nothing here reads yet. That is the drift class above, and the version does
-not close it. The SGQ manifest has no equivalent member; its `sgqVersion` is
-the package's version, not the file's shape.
+The check is one-sided, which is what a per-member requirement means: the
+version does not gate a manifest ahead of this reader. What such a manifest
+grew stops the build at the closed member check instead, until the member is
+read or declared ignored. The SGQ manifest has no equivalent member; its
+`sgqVersion` is the package's version, not the file's shape.
 
 ## What is not the manifests'
 

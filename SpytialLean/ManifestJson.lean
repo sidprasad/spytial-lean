@@ -148,6 +148,52 @@ elab_rules : command
       let _self : FromJson $name:ident := ⟨$decoder:ident⟩
       $tagOf >>= $decide))
     elabCommand (← `(public meta instance : FromJson $name:ident := ⟨$decoder:ident⟩))
+    let members := ((tag.map (·.getString)).toList
+        ++ alts.toList.flatMap (fun (alt : TSyntax ``jsonAlt) =>
+      match alt with
+      | `(jsonAlt| | $[$_ => ]? $_ $fields:jsonField*) =>
+        fields.toList.filterMap fun (field : TSyntax ``jsonField) =>
+          match field with
+          | `(jsonField| ($fname:ident : $_)) => some (fname.getId.toString (escape := false))
+          | _ => none
+      | _ => [])).eraseDups
+    elabCommand (← `(public meta def $(mkIdent (name.getId ++ `memberNames)):ident :
+        List String := $(quote members)))
+
+/-! ## Declaring a closed record reader
+
+    json_record JOp
+    json_record JField ignoring JFieldType.memberNames "description"
+
+reads the named structure's fields back off the environment and declares its
+decoder: one `member` per field, refusing any member outside the field list and
+the `ignoring` entries. A string entry names a member left unread on purpose; an
+identifier splices another reader's `memberNames` when two readers share one
+object. -/
+
+syntax (name := jsonRecord) "json_record " ident ("ignoring" (str <|> ident)+)? : command
+
+@[command_elab jsonRecord] meta def elabJsonRecord : CommandElab := fun stx => do
+  let name : Ident := ⟨stx[1]⟩
+  let structName ← resolveGlobalConstNoOverload name
+  let fields := getStructureFields (← getEnv) structName
+  let keys := fields.toList.map (·.toString (escape := false))
+  elabCommand (← `(public meta def $(mkIdent (name.getId ++ `memberNames)):ident :
+      List String := $(quote keys)))
+  let mut allowed : Term ← `(($(quote keys) : List String))
+  for entry in (if stx[2].getNumArgs == 0 then #[] else stx[2][1].getArgs) do
+    allowed ← match entry.isStrLit? with
+      | some s => `($allowed ++ [$(Syntax.mkStrLit s)])
+      | none => `($allowed ++ ($(⟨entry⟩) : List String))
+  let subject := mkIdent `j
+  let args ← fields.mapM fun f =>
+    `(← member _ $subject:ident $(quote (f.toString (escape := false))))
+  let decoder := mkIdent (name.getId ++ `ofJson)
+  elabCommand (← `(public meta def $decoder:ident ($subject:ident : Json) :
+      Except String $name:ident := do
+    onlyMembers $allowed (← fromJson? $subject:ident)
+    return $(Syntax.mkCApp (structName ++ `mk) args)))
+  elabCommand (← `(public meta instance : FromJson $name:ident := ⟨$decoder:ident⟩))
 
 end
 
