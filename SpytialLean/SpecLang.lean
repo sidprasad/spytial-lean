@@ -122,14 +122,20 @@ public meta structure JField where
   deprecated : Option JDeprecated
   deriving Inhabited, FromJson
 
+/-- The fields that are an item's entire effect, named rather than left to a
+    rule the reader would have to reapply. -/
+public meta structure JInertWhenBare where
+  effectFields : List String
+  deriving Inhabited, FromJson
+
 public meta structure JItem where
   id : String
   yamlKey : Option String
   sections : Option (List Section)
   valueShape : Option ValueShape
   supportsHold : Option Bool
-  /-- Set where the item's whole effect is its optional presentation fields. -/
-  inertWhenBare : Option Bool
+  /-- Set where the item's whole effect is the fields it names. -/
+  inertWhenBare : Option JInertWhenBare
   fields : Option (List Json)
   deprecated : Option JDeprecated
   deriving Inhabited, FromJson
@@ -389,16 +395,12 @@ private meta def itemOf (j : Json) : Except String (Option RawItem) := do
     | [i] => pure (some i)
     | is => .error (here s!"two fields introduce a name \
         ({", ".intercalate (is.map (·.field))}); an op introduces at most one")
-  -- `inertWhenBare` says the item's whole effect is its optional presentation
-  -- fields; which those are is the manifest's prose rule, applied here.
-  let inert := i.inertWhenBare.getD false
-  let effectFields :=
-    if inert then
-      (fields.filter fun f =>
-        !f.required && !(f.type matches .selector _) && !(f.type matches .relation)).map (·.name)
-    else []
-  if inert && effectFields.isEmpty then
-    .error (here "inertWhenBare, but no optional field carries an effect")
+  let effectFields := (i.inertWhenBare.map (·.effectFields)).getD []
+  if i.inertWhenBare.isSome && effectFields.isEmpty then
+    .error (here "inertWhenBare names no effect field, so every body would be inert")
+  for f in effectFields do
+    unless fields.any (·.name == f) do
+      .error (here s!"inertWhenBare names the effect field {f.quote}, which it does not have")
   return some { id, yamlKey, constraint, scalar := shape matches .scalar,
                 supportsHold := i.supportsHold.getD false,
                 fields, positional, leadingSelector, introduces, effectFields,

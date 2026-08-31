@@ -42,10 +42,10 @@ Three more facts were house tables here and are core's own members now.
 `introduces` gives the string field that names a group or an inferred edge,
 how many columns that thing has, and the `item.field` positions where the
 engine resolves such a name — which is what lets a reference from any other
-field position warn instead of passing silently. `inertWhenBare` marks the
-items whose whole effect is their optional presentation fields; which fields
-those are is the member's own prose rule (optional, and not of type `selector`
-or `relation`), applied in `itemOf`. `middleColumns` says what an accepted
+field position warn instead of passing silently. `inertWhenBare` names the
+fields that are an item's whole effect, so nothing here reapplies a rule for
+which ones count; `itemOf` checks each named field against the item and
+rejects a marked item that names none. `middleColumns` says what an accepted
 form does with the columns between a tuple's first and last, which separates a
 wide selector that is throwing information away from one that is not; a form
 admitting a third column and declaring nothing is a derivation error naming
