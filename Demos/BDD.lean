@@ -2,53 +2,83 @@ import SpytialLean
 
 open SpytialLean
 
-/-! # Binary Decision Diagrams, three ways -/
+inductive Var where | x₁ | x₂ | x₃ | x₄
 
 inductive BDD where
-  | tt
-  | ff
-  | node (var : Nat) (lo hi : BDD)
-  deriving Repr, BEq, SpytialIdentity
+  | fls
+  | tru
+  | node (id : Nat) (v : Var) (lo hi : BDD)
 
-def expand (f : List Bool → Bool) : Nat → List Bool → BDD
-  | 0,     acc => if f acc.reverse then .tt else .ff
-  | k + 1, acc =>
-    .node (acc.length + 1) (expand f k (false :: acc)) (expand f k (true :: acc))
+/-- `(¬x₁ ∧ ¬x₂ ∧ ¬x₃) ∨ (x₁ ∧ x₂) ∨ (x₂ ∧ x₃)` -/
+def bdd : BDD :=
+  .node 15 .x₁
+    (.node 14 .x₂ (.node 8 .x₃ .tru .fls) (.node 4 .x₃ .fls .tru))
+    (.node 3 .x₂ .fls .tru)
 
-def BDD.reduce : BDD → BDD
-  | .tt => .tt
-  | .ff => .ff
-  | .node v lo hi =>
-    let lo := lo.reduce
-    let hi := hi.reduce
-    if lo == hi then lo else .node v lo hi
+#print bdd
 
-/-- The middle variable is irrelevant, so reduction has something to do. -/
-def fTree : BDD := expand (fun bs => bs.getD 0 false && bs.getD 2 false) 3 []
+#spytial bdd with [] -- (no spec)
 
-def fReduced : BDD := fTree.reduce
-
--- Terminals are excluded from the orientations: each is one shared atom, and
--- one `tt` cannot sit left of one parent and right of another.
-spytial_spec BDD [
-  attribute var,
-  orientation lo - BDD->{x : BDD | @:x = tt or @:x = ff} left below,
-  orientation hi - BDD->{x : BDD | @:x = tt or @:x = ff} right below,
-  hideAtom Nat
+spytial_ops hideNoise : BDD [
+  attribute id,
+  attribute v,
+  hideAtom Nat,
+  hideAtom Var
 ]
 
--- `Raw.mk` opts out of the identity lens: every occurrence stays its own atom.
-#spytial (Raw.mk fTree)
+#spytial bdd with [..hideNoise]
 
-#spytial fTree
+spytial_ops spatial : BDD [
+  align {p, q : BDD | p != q && p.v = q.v} horizontal,
+  orientation lo + hi below
+]
 
-#spytial fReduced
+#spytial bdd with [..hideNoise, ..spatial]
 
-open Lean Meta in
-#eval show MetaM Unit from do
-  let count (e : Expr) : MetaM Nat := return (← relationalize e).atoms.size
-  let asWritten ← count (← mkAppM ``Raw.mk #[mkConst ``fTree])
-  let shared ← count (mkConst ``fTree)
-  let robdd ← count (mkConst ``fReduced)
-  unless (asWritten, shared, robdd) == (22, 10, 6) do
-    throwError "BDD narrative counts drifted: got {(asWritten, shared, robdd)}, expected (22, 10, 6)"
+spytial_ops chrome : BDD [
+  edgeStyle lo (lineStyle "#ef6c00" solid),
+  edgeStyle hi (lineStyle "#2e7d32" solid),
+  atomStyle {b : BDD | @:b != fls && @:b != tru} (borderStyle "#37474f"),
+  atomStyle {b : BDD | @:b = fls} (borderStyle "#c62828" 3) (fillStyle "#ffcdd2"),
+  atomStyle {b : BDD | @:b = tru} (borderStyle "#2e7d32" 3) (fillStyle "#e8f5e9")
+]
+
+#spytial bdd with [..hideNoise, ..spatial, ..chrome]
+
+spytial_ops grouped : BDD [
+  group {u : Var, p : BDD | @:u = @:(p.v)} nodes
+]
+
+#spytial bdd with [..hideNoise, ..spatial, ..chrome, ..grouped]
+
+spytial_spec BDD [..hideNoise, ..spatial, ..chrome, ..grouped]
+
+spytial_ops branches : BDD [
+  orientation {p, q : BDD | q in p.lo && @:q != fls && @:q != tru} left,
+  orientation {p, q : BDD | q in p.hi && @:q != fls && @:q != tru} right
+]
+
+#spytial bdd with [.., ..branches]
+
+/-- `(¬x₁ ∧ ¬x₂ ∧ (x₃ ⊕ x₄)) ∨ (x₁ ∧ x₂ ∧ (x₃ ⊕ x₄))` -/
+def shared : BDD :=
+  let xor : BDD := .node 13 .x₃ (.node 5 .x₄ .fls .tru) (.node 9 .x₄ .tru .fls)
+  .node 19 .x₁ (.node 14 .x₂ xor .fls) (.node 17 .x₂ .fls xor)
+
+-- but its not always valid:
+#spytial shared with [.., ..branches]
+
+-- highlight redundant (`lo = hi`) nodes yellow
+spytial_ops redundant : BDD [
+  atomStyle {p : BDD | some q : BDD | q in p.lo && q in p.hi} (fillStyle "#ffe082")
+]
+
+#spytial bdd with [.., ..redundant]
+
+/-- with redundant node 9 (`lo = hi`) -/
+def unreduced : BDD :=
+  .node 15 .x₁
+    (.node 14 .x₂ (.node 8 .x₃ .tru .fls) (.node 4 .x₃ .fls .tru))
+    (.node 3 .x₂ .fls (.node 9 .x₃ .tru .tru))
+
+#spytial unreduced with [.., ..redundant]
