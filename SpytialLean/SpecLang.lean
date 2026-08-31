@@ -29,8 +29,10 @@ added. -/
 private meta def neededMajor : Nat := 1
 private meta def neededMinor : Nat := 1
 
+/-- The leading `MAJOR.MINOR`. Those two are the whole requirement, so whatever
+    follows the minor — a patch, a prerelease, build metadata — is not read. -/
 private meta def majorMinor (v : String) : Option (Nat × Nat) := do
-  let [major, minor, _] := v.splitOn "." | none
+  let major :: minor :: _ := v.splitOn "." | none
   return (← major.toNat?, ← minor.toNat?)
 
 private meta def checkFormat (version? : Option String) : Except String Unit := do
@@ -39,7 +41,8 @@ private meta def checkFormat (version? : Option String) : Except String Unit := 
     | .error s!"no manifestVersion, so this manifest predates format \
         versioning; this reader needs {needed} or later"
   let some (major, minor) := majorMinor version
-    | .error s!"manifestVersion is {version.quote}, which is not a semver"
+    | .error s!"manifestVersion is {version.quote}, which does not begin with a \
+        numeric MAJOR.MINOR"
   unless major == neededMajor && neededMinor ≤ minor do
     .error s!"manifestVersion is {version}; this reader needs {needed} or \
       later, within major {neededMajor}"
