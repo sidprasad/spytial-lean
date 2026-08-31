@@ -139,9 +139,14 @@ json_union JItem on "item" where
   | part (role : String) («optional» : Bool)
   | «optional» (items : List JItem)
 
+/-- The parts an item is written with. A binder group and a body carry no role
+    of their own, so the two readers of a template (`SelectorElab`'s rules and
+    `Selector`'s lowering) reach for theirs by name. -/
 private meta partial def JItem.roles : JItem → List String
   | .list _ r => [r]
   | .part r _ => [r]
+  | .binders style _ => ["separator", if style matches .typed then "colon" else "bind"]
+  | .body _ => ["bar"]
   | .«optional» is => is.flatMap JItem.roles
   | _ => []
 
@@ -247,13 +252,21 @@ private meta def escapePairs (o : JsonObject) : Except String (List (Char × Cha
       s!"string.escapeDecodes: {e}"
     return (decoded, spelling)
 
+/-- Parts reached by construct and role rather than off a template item, which
+    is the one way a template walk cannot see them. Lean's lexer claims a
+    numeric literal before any token table does, so `constant` has no generated
+    rule and `SelectorElab.sgqNegNumRule` writes the sign itself. -/
+private meta def namedParts : List (String × String) := [("constant", "negation")]
+
 private meta def parseManifest : Except String RawManifest := do
   let json ← Json.parse manifestText
   let m : JManifest ← fromJson? json
   let constructs ← eachKeyedBy JConstruct "id" (← member (Array Json) json "constructs")
 
-  unless (m.identifier.quoted.escapeDecodes.getJson? "n").isNone do
-    .error "identifier.quoted now decodes escapes; Selector.lean assumes a \
+  let escapes := m.identifier.quoted.escapeDecodes.toArray.map (·.1)
+  unless escapes.isEmpty do
+    .error s!"identifier.quoted now decodes the escapes \
+      {", ".intercalate (escapes.toList.map (·.quote))}; Selector.lean assumes a \
       backslash only removes itself"
 
   let mut cons : List RawConstruct := []
@@ -269,12 +282,12 @@ private meta def parseManifest : Except String RawManifest := do
         text := ← pick s!"{c.id}.{role}" spellings,
         spellings := spellings,
         alternatives := alternativeRoles.contains s!"{c.id}.{role}" })]
-    -- a template naming a role the construct has no spelling for would look
-    -- up nothing at every use; catch it here instead
+    -- a part written with no spelling behind it would look up nothing at every
+    -- use; catch it here instead
     for role in c.template.flatMap JItem.roles do
       unless parts.any (·.1 == role) do
-        .error s!"{c.id}: the template names the part {role.quote}, which it \
-          has no spelling for"
+        .error s!"{c.id}: the template is written with the part {role.quote}, \
+          which it has no spelling for"
     for o in c.operators do
       lexemes := lexemes ++ o.spellings
       ops := ops ++ [{
@@ -286,6 +299,14 @@ private meta def parseManifest : Except String RawManifest := do
       evaluates := c.evaluates, kinds := c.kinds, arity := c.arity,
       template := c.template, parts,
       operators := c.operators.map (·.id) }]
+
+  -- Verify the house-style table still names live manifest entries.
+  for (cid, role) in namedParts do
+    let some c := cons.find? (·.id == cid)
+      | .error s!"house style: a table names {cid.quote}, which is not a live construct"
+    unless c.parts.any (·.1 == role) do
+      .error s!"{cid}: the package writes the part {role.quote}, which it has \
+        no spelling for"
 
   let dup := ops.filter fun o => 1 < (ops.filter (·.id == o.id)).length
   unless dup.isEmpty do
@@ -509,8 +530,9 @@ public meta def constructName (c : ConstructId) : String := (Construct.of c).nam
 
 public meta def opName (o : OpId) : String := (Op.of o).name
 
-/-- A role the construct spells. Total by construction: the derive command
-    checks that every role a template names is one the construct has. -/
+/-- A role the construct spells. Total for the roles this package reads: the
+    derive command checks that a construct spells every part its template is
+    written with, and every part `namedParts` reaches by hand. -/
 public meta def Construct.part (c : Construct) (r : Role) : Part :=
   (c.parts.lookup r).getD { text := "", spellings := [], alternatives := false }
 
