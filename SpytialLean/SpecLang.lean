@@ -535,6 +535,12 @@ private meta def parseManifest : Except String RawManifest := do
       .error s!"{i.id}: items[].supportsHold is {i.supportsHold} but \
         hold.supportedBy {if listed then "lists" else "does not list"} it"
 
+  -- An absent `inertWhenBare` is indistinguishable from "not inert", so the
+  -- member going away would take the bare-body check with it silently.
+  unless items.any fun i => !i.effectFields.isEmpty do
+    .error "no item declares inertWhenBare; the member left the manifest or \
+      the pin moved past it"
+
   let items := items.map fun i =>
     { i with displaysSource := m.source.displayedBy.contains i.id }
 
