@@ -12,8 +12,6 @@ open Lean Elab Command SpytialLean.ManifestJson
 simple-graph-query publishes its grammar as `docs/sgq-language.json`; this module
 parses the resolved package's copy into id enumerations and tables. -/
 
--- TODO(sgq#68): unpublished; pnpm-workspace.yaml overrides the package to a
--- local checkout until a release ships the manifest.
 private meta def manifestText : String :=
   include_str ".." / "node_modules" / "simple-graph-query" / "docs" / "sgq-language.json"
 

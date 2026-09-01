@@ -83,7 +83,5 @@ them as targets the library needs — sequenced after the pnpm install that
 creates them, so a fresh checkout builds first try — and a dependency bump
 re-elaborates the modules.
 
-simple-graph-query is overridden to a local checkout in
-`pnpm-workspace.yaml`, because its manifest ships with simple-graph-query#68,
-which is unpublished. Drop the override when a release carries the file, and
-the package.json pin takes over. spytial-core resolves to its published 5.4.0.
+`Sgq.lean` reads the root package's `simple-graph-query`; `SpecLang.lean`
+reads the widget's `spytial-core`.
