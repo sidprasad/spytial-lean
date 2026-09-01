@@ -65,6 +65,28 @@ public meta def hypLabel (userName : Name) : String :=
 public meta def isProofLikeType (ty : Expr) : MetaM Bool := do
   return (← Meta.isProp ty) || ty.isSort
 
+/-! ## Context-fact naming
+
+Shared with the context consumer, so its selector scope predicts what the
+walker emits. -/
+
+/-- The relation an equality hypothesis emits into when it does not refine a
+    variable (`f a = g b`). -/
+public meta def eqRelName : String := "="
+
+/-- The relation name for a decomposable Prop application, from its head: a
+    constant's short name, a local relation's user name (`variable
+    (R : α → α → Prop)` is a free variable, not a constant). `Eq` takes
+    its notation name. Negative heads and heads that name nothing return
+    `none`. -/
+public meta def propRelName? (head : Expr) : MetaM (Option String) := do
+  match head with
+  | .const ``Eq _ => return some eqRelName
+  | .const ``Ne _ => return none
+  | .const n _ => return some (shortName n)
+  | .fvar fvarId => return some (hypLabel (← fvarId.getUserName))
+  | _ => return none
+
 /-! ## Function tabulation -/
 
 /-- `ppExpr` may qualify a constructor; a diagram label wants the short name. -/

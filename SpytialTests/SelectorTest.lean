@@ -1311,6 +1311,7 @@ example : Nat := let univ := 3; univ
 example : Nat := let iden := 4; iden
 example : Nat := let sum := hygieneSum; sum
 example : Nat := let none := 7; none
+example : Nat := let known := 8; known
 
 -- reaching the global table would give these to every importing module. `+` is
 -- the control: a symbol both languages have is found, so the lookup does fire

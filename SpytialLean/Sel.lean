@@ -3,13 +3,15 @@ module
 /-! # The Lean selector contract
 
 A selector is a plain Lean function in one of two forms: a predicate over
-walked values (`σ → Bool`, curried up to arity 4), keeping the tuples it
-accepts, or a `Sel T α`, called on the value being drawn.
+represented values (`σ → Bool` or `σ → Prop`, curried up to arity 4), keeping
+the tuples it establishes, or a `Sel T α`, called on the value being drawn.
 
 Selection is by value, so a type declared `SpytialIdentity.asWritten` keeps one
 atom per occurrence and a value then selects all of its occurrences. Spytial
 runs a selector at elaboration time, so a function it calls from another module
-must be reachable by `meta import`. -/
+must be reachable by `meta import`. A predicate over symbolic inputs is instead
+established from retained evidence and bounded simplification, which needs no
+`Decidable` instance. -/
 
 namespace Spytial
 

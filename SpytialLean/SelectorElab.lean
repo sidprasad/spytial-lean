@@ -98,6 +98,22 @@ meta def SelScope.introduce (scope : SelScope) (name : String) (i : Introduced) 
     SelScope :=
   { scope with introduced := scope.introduced.insert name i }
 
+/-- Union of two scopes, for a value view whose positive facts span several
+    types. Lenient if either side is; a relation name claimed at two
+    different arities keeps the name with its width unchecked. -/
+meta def SelScope.merge (a b : SelScope) : SelScope := Id.run do
+  let mut rels := a.rels
+  for (n, owner, arity?) in b.rels do
+    rels := match rels.get? n with
+      | some (o, a?) => if a? == arity? then rels else rels.insert n (o, none)
+      | none => rels.insert n (owner, arity?)
+  return { root := a.root
+           types := b.types.fold (init := a.types) fun m k v => m.insert k v
+           rels
+           ctorLabels := b.ctorLabels.fold (init := a.ctorLabels) fun m k v => m.insert k v
+           introduced := b.introduced.fold (init := a.introduced) fun m k v => m.insert k v
+           lenient := a.lenient || b.lenient }
+
 /-! ## Diagnostics -/
 
 private meta def sortDedup (xs : Array String) : Array String :=
@@ -614,14 +630,14 @@ private meta def elabLeanRel (scope : SelScope) (stx : TSyntax `term) :
     logWarningAt stx "this term carries a sorry, so the op selects nothing at \
       render"
     return { sel := .empty, kind := .relation }
-  if fn.hasExprMVar || fn.hasFVar then
-    throwErrorAt stx "a raw Lean selector must be a closed term; this one \
-      still has holes or local variables"
+  if fn.hasExprMVar || fn.hasLevelMVar then
+    throwErrorAt stx "a Lean selector cannot contain unresolved holes"
   let kind ← withRef stx <| classifyLeanRel fn
-  -- a `Prop`-valued predicate runs through `decide`; refuse an undecidable one
-  -- here, where the message can point at the selector
-  if let .pred true := kind.shape then
-    discard <| withRef stx <| boolifyPred fn kind.domains
+  -- a predicate may capture local parameters and be established from evidence
+  -- without a `Decidable` instance; a whole-value program still runs as code
+  if let .sel _ := kind.shape then
+    if fn.hasFVar then
+      throwErrorAt stx "a whole-value Lean selector must be a closed term"
   unless scope.lenient do
     for col in kind.domains do
       if let some n ← typeHead? col then
