@@ -435,28 +435,6 @@ opaque unavailableHeight : Tree → Nat := Tree.height
   unless (data.atoms.filter (·.type == "Nat")).all (·.label.startsWith "?") do
     throwError "opaque observer was reported as a concrete number"
 
-namespace FirstGraph
-opaque inspect : Nat → Nat
-end FirstGraph
-namespace SecondGraph
-opaque inspect : Nat → Nat
-end SecondGraph
-
-/- Same-short-name functions retain distinct semantic identities even when
-   their graph schemas match. The second is kept as a leaf rather than merged
-   into the first function's relation. -/
-#eval show Lean.Elab.TermElabM Unit from do
-  let nat := mkConst ``Nat
-  withLocalDeclD `x nat fun x => do
-  withLocalDeclD `y nat fun y => do
-    let first := mkApp (mkConst ``FirstGraph.inspect) x
-    let second := mkApp (mkConst ``SecondGraph.inspect) y
-    let root ← mkAppM ``Prod.mk #[first, second]
-    let oldMessages ← Lean.Core.getMessageLog
-    let data ← relationalize root { functionGraphs := true }
-    Lean.Core.setMessageLog oldMessages
-    assertCount "qualified graph collision" data "inspect" 1
-
 /- Symbolic observation results are still Lean-interpreted atoms. A predicate
    can select the exact open application even though it cannot be evaluated. -/
 #eval show Lean.Elab.TermElabM Unit from do
@@ -488,21 +466,6 @@ def negativeThree (_ : Nat) : Int := -3
     | throwError "missing negative Int result"
   if result.label.startsWith "?" then
     throwError "negative Int was classified as a symbolic residual"
-
-/- A rejected observation schema is checked before any endpoints or result
-   atoms are allocated. -/
-#eval show Lean.Elab.TermElabM Unit from do
-  let leaf := mkConst ``Tree.leaf
-  let application := height leaf
-  let relations : Std.HashMap String (Array String × Array JsonTuple) :=
-    ({} : Std.HashMap String (Array String × Array JsonTuple))
-      |>.insert "height" (#[], #[])
-  let initial : WalkState := { relations }
-  let oldMessages ← Lean.Core.getMessageLog
-  let (_, state) ← (addObservation {} application application #[leaf] #[]).run initial
-  Lean.Core.setMessageLog oldMessages
-  unless state.atoms.isEmpty && state.applicationAtoms.isEmpty do
-    throwError "rejected observation left orphaned atoms"
 
 /- Warnings produced during saved-state observation preparation are replayed
    after restoration instead of disappearing with the temporary meta state. -/

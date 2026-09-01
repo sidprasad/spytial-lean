@@ -63,11 +63,6 @@ public meta structure WalkState where
   atoms : Array JsonAtom := #[]
   /-- Map from relation name to accumulated tuples. -/
   relations : Std.HashMap String (Array String × Array JsonTuple) := {}
-  /-- The internal source that claimed each named function/predicate relation.
-      Names remain short for SGQ, but distinct constants or locals may not
-      silently contribute graph tuples to the same displayed name. Structural
-      relations retain their existing tuple-local typing semantics. -/
-  relationOrigins : Std.HashMap String String := {}
   nextId : Nat := 0
   /-- Hole atoms, one per metavariable: occurrences of one `?m` are one hole
       under every mode — substitution structure, not identity policy. -/
@@ -196,47 +191,6 @@ public meta def WalkState.addRelation (s : WalkState) (relName : String)
     (types : Array String) : WalkState :=
   if s.relations.contains relName then s
   else { s with relations := s.relations.insert relName (types, #[]) }
-
-/-- A stable internal identity for a named relation head. Display names stay
-    short; this key prevents two same-short-name constants or locals from
-    being treated as one relation. -/
-public meta def relationHeadOrigin? (head : Expr) : Option String :=
-  match head with
-  | .const name _ => some s!"constant:{name}"
-  | .fvar id => some s!"local:{id.name}"
-  | _ => none
-
-/-- Claim a displayed relation name and schema before walking any of its
-    endpoints. Returning `false` means callers must not allocate atoms for the
-    rejected tuple. -/
-public meta def reserveRelation (relName origin : String) (types : Array String) :
-    StateT WalkState MetaM Bool := do
-  let state ← get
-  if let some (declaredTypes, _) := state.relations.get? relName then
-    if declaredTypes != types then
-      if declaredTypes.size != types.size then
-        logWarning m!"spytial: '{relName}' names relations of arity \
-          {declaredTypes.size} and {types.size}; the second is not drawn"
-      else
-        logWarning m!"spytial: incompatible columns for relation '{relName}'; \
-          the tuple from {origin} is not drawn"
-      return false
-    match state.relationOrigins.get? relName with
-    | some declaredOrigin =>
-      if declaredOrigin != origin then
-        logWarning m!"spytial: the short relation name '{relName}' refers to both \
-          {declaredOrigin} and {origin}; the latter is not drawn"
-        return false
-    | none =>
-      -- A custom relationalizer may have emitted the relation without an
-      -- origin. It is safer to reject a named source than to conflate them.
-      logWarning m!"spytial: the short relation name '{relName}' is already used by \
-        an unqualified relation; the tuple from {origin} is not drawn"
-      return false
-  modify fun state =>
-    { state.addRelation relName types with
-      relationOrigins := state.relationOrigins.insert relName origin }
-  return true
 
 /-- Convert accumulated state to ordinary extracted data. -/
 public meta def WalkState.toDataInstance (s : WalkState) : JsonDataInstance :=
@@ -866,11 +820,6 @@ public meta def graphSide? (side : Expr) : MetaM (Option (String × Array Expr))
   if args.isEmpty then return none
   return some (name, args)
 
-/-- The semantic source of a function-graph relation, kept separate from its
-    short displayed name. -/
-public meta def graphRelationOrigin? (side : Expr) : Option String :=
-  relationHeadOrigin? side.getAppFn
-
 /-- Whether `application` has the same function head as one of the explicitly
     requested observations. Function identity, rather than the applied root
     argument, makes `observing [height]` govern every `height _` appearing in
@@ -1082,28 +1031,30 @@ private meta def emitFunctionGraph? (cfg : WalkConfig)
     StateT WalkState MetaM Bool := do
   unless cfg.functionGraphs do return false
   let some (relName, args) ← graphSide? e | return false
-  let some origin := graphRelationOrigin? e | return false
-  let mut types ← args.mapM fun arg => do sigOfType (← inferType arg)
-  types := types.push typeName
-  unless ← reserveRelation relName origin types do return false
   let label ← modifyGet WalkState.freshApplicationLabel
   modify fun state =>
     let state := state.addAtom { id := atomId, type := typeName, label }
     { state with applicationAtoms := state.applicationAtoms.insert ⟨e⟩ atomId }
   let mut ids : Array String := #[]
+  let mut types : Array String := #[]
   for arg in args do
     ids := ids.push (← recurse arg)
+    types := types.push (← sigOfType (← inferType arg))
   ids := ids.push atomId
+  types := types.push typeName
   let tuple : JsonTuple := { atoms := ids, types }
   modify fun state => state.addTuple relName types tuple
   return true
 
 /-- A reduced source application may already have emitted this same graph
     point through its residual (for example after simplifying numeral syntax). -/
-private meta def addComputedTuple (relation origin : String) (types ids : Array String) :
+private meta def addComputedTuple (relation : String) (types ids : Array String) :
     StateT WalkState MetaM Unit := do
-  unless ← reserveRelation relation origin types do return
-  if let some (_, tuples) := (← get).relations.get? relation then
+  if let some (previousTypes, tuples) := (← get).relations.get? relation then
+    if previousTypes != types then
+      logWarning m!"spytial: incompatible graph columns for '{relation}'; \
+        the computed tuple is not drawn"
+      return
     if tuples.any (·.atoms == ids) then return
   modify fun state => state.addTuple relation types { atoms := ids, types }
 
@@ -1116,19 +1067,18 @@ private meta def walkComputed? (cfg : WalkConfig) (e : Expr)
   if result.expr.equal e then return none
   if let some id := (← get).applicationAtoms[(⟨e⟩ : ExprStructEq)]? then return some id
   let some (relation, arguments) ← graphSide? e | return none
-  let some origin := graphRelationOrigin? e | return none
-  let mut types ← arguments.mapM fun argument => do sigOfType (← inferType argument)
-  types := types.push (← sigOfType (← inferType e))
-  unless ← reserveRelation relation origin types do return none
   -- Resolve the result before minting an atom for the application. Removing
   -- this entry also guards self-referential residual rewrites.
   let nested := { cfg with observationResults := cfg.observationResults.erase ⟨e⟩ }
   let mut ids := #[]
+  let mut types := #[]
   for argument in arguments do
     ids := ids.push (← recurse nested argument)
+    types := types.push (← sigOfType (← inferType argument))
   let resultId ← recurse nested result.expr
   ids := ids.push resultId
-  addComputedTuple relation origin types ids
+  types := types.push (← sigOfType (← inferType e))
+  addComputedTuple relation types ids
   modify fun state =>
     { state with applicationAtoms := state.applicationAtoms.insert ⟨e⟩ resultId }
   return some resultId
@@ -1441,18 +1391,16 @@ public meta def addObservation (cfg : WalkConfig) (source result : Expr)
     (arguments : Array Expr) (anchors : Array (Expr × String)) :
     StateT WalkState MetaM Unit := do
   let some (relation, _) ← graphSide? source | return
-  let some origin := graphRelationOrigin? source | return
-  let mut types ← arguments.mapM fun argument => do sigOfType (← inferType argument)
-  types := types.push (← sigOfType (← inferType result))
-  -- Reserve before walking endpoints: a rejected short-name/schema collision
-  -- must not leave atoms that no relation can reach.
-  unless ← reserveRelation relation origin types do return
   let mut atomIds := #[]
+  let mut types := #[]
   for argument in arguments do
     let atomId ← match anchors.find? (fun (seen, _) => seen.equal argument) with
       | some (_, atomId) => pure atomId
       | none => walkExpr cfg argument
     atomIds := atomIds.push atomId
+    types := types.push (← sigOfType (← inferType argument))
+  let resultType := ← sigOfType (← inferType result)
+  types := types.push resultType
   let reducedResult ← match cfg.observationResults[(⟨result⟩ : ExprStructEq)]? with
     | some normalized => pure normalized.expr
     | none => pure result
@@ -1480,7 +1428,11 @@ public meta def addObservation (cfg : WalkConfig) (source result : Expr)
     { state with applicationAtoms := applications }
   atomIds := atomIds.push resultId
   let state ← get
-  if let some (_, tuples) := state.relations.get? relation then
+  if let some (declaredTypes, tuples) := state.relations.get? relation then
+    if declaredTypes != types then
+      logWarning m!"spytial: '{relation}' names relations of arity \
+        {declaredTypes.size} and {types.size}; the observation is not drawn"
+      return
     if tuples.any (fun tuple => tuple.atoms == atomIds) then return
   modify fun state => state.addTuple relation types { atoms := atomIds, types }
 
