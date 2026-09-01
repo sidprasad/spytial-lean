@@ -31,22 +31,16 @@ readers sharing one object (`JField`, `JFieldType`) share member lists the same
 way. A tag, enum value, or renamed member with no representation stops the
 build naming the construct or item, rather than yielding a plausible table.
 
-## Format versioning
+## Version pin
 
-The spytial-core manifest carries `manifestVersion`, a semver over the file's
-own member shape: which members exist and what they mean. A consumer requires
-the minor that introduced each member it reads, so `SpecLang.lean` states the
-pair it needs (`neededMajor`/`neededMinor`, 1.1 for `introducedKinds`) and
-checks it before decoding the record — a manifest too old to carry a member
-then says so instead of failing by that member's name. An absent
-`manifestVersion` means the file predates format versioning. Either message
-gives the version found and the version needed.
-
-The check is one-sided, which is what a per-member requirement means: the
-version does not gate a manifest ahead of this reader. What such a manifest
-grew stops the build at the closed member check instead, until the member is
-read or declared ignored. The SGQ manifest has no equivalent member; its
-`sgqVersion` is the package's version, not the file's shape.
+The spytial-core manifest has no version over its own member shape, only
+`languageVersion`, the date the language last changed. The tables in
+`SpecLang.lean` that stand in for members the manifest lacks (below) hold for
+one language, so `tablesLanguageVersion` states the `languageVersion` they
+were audited against and derivation fails on any other, naming both dates. A
+language change is exactly when a table can go stale, and nothing else would
+say so. The SGQ manifest has no equivalent member either; its `sgqVersion` is
+the package's version, not the file's shape.
 
 ## What is not the manifests'
 
@@ -58,22 +52,20 @@ bare-word bool sugar). Every table entry is keyed by manifest ids and
 checked against the live manifest, so an entry that stops matching upstream
 fails the build by name.
 
-Three more facts were hand tables here and are core's own members now.
-`introduces` gives the string field that names a group or an inferred edge,
-which of those kinds it names, and the `item.field` positions where the engine
+Three facts the manifest does not carry are tables beside it, proposed
+upstream as spytial-core#580 and #581 and kept here until a release carries
+them. `introducesTable` gives the string field that names a group or an
+inferred edge, which kind it names (`introducedKindsTable` says how many
+columns each kind has), and the `item.field` positions where the engine
 resolves such a name — which is what lets a reference from any other field
-position warn instead of passing silently. How many columns a kind has is
-`introducedKinds`, so group-is-one and edge-is-two are read rather than
-restated here, and a kind that is not one of its keys is a derivation error
-naming the field. `inertWhenBare` names the fields that are an item's whole
-effect, so nothing here reapplies a rule for which ones count; `itemOf` checks
-each named field against the item and rejects a marked item that names none.
-Absence of the member is indistinguishable from "not inert", so a manifest
-where no item declares it is a derivation error too, rather than a check that
-quietly stops running. `middleColumns` says what an accepted form does with
-the columns between a tuple's first and last, which separates a wide selector
-that is throwing information away from one that is not; a form admitting a
-third column and declaring nothing is a derivation error naming the field.
+position warn instead of passing silently. `inertWhenBareTable` names the
+fields that are an item's whole effect, so a body setting none of them is
+rejected at elaboration. `middleColumnsTable` says what the engine does with
+the columns between a wide tuple's first and last, per selector position that
+admits more than two, which separates a wide selector that is throwing
+information away from one that is not. Each entry is checked against the live
+manifest both ways: an entry naming a position the manifest lacks, and a wide
+position the table does not cover, are derivation errors naming the field.
 
 Deprecated items and fields get no surface: the Lean DSL is new and has no
 legacy specs to keep parsing. `deprecatedItems` and `deprecatedFields` record
@@ -87,11 +79,7 @@ them as targets the library needs — sequenced after the pnpm install that
 creates them, so a fresh checkout builds first try — and a dependency bump
 re-elaborates the modules.
 
-Both packages are overridden to a local checkout in `pnpm-workspace.yaml`,
-because both manifests are ahead of their releases. The SGQ manifest ships
-with simple-graph-query#68, which is unpublished. `manifestVersion`,
-`introducedKinds`, `introduces`, `inertWhenBare` and `middleColumns` ship with
-spytial-core#580/#581, and the override points at a built checkout of the two
-merged; published 5.4.0 carries none of them and now stops the build at the
-format check, reporting the absent `manifestVersion`. Drop each override when
-a release carries its manifest, and the package.json pins take over.
+simple-graph-query is overridden to a local checkout in
+`pnpm-workspace.yaml`, because its manifest ships with simple-graph-query#68,
+which is unpublished. Drop the override when a release carries the file, and
+the package.json pin takes over. spytial-core resolves to its published 5.4.0.

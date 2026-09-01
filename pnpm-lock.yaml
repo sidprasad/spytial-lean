@@ -30,7 +30,6 @@ catalogs:
 
 overrides:
   simple-graph-query: file:/home/ironmoon/workspace/spytial/simple-graph-query
-  spytial-core: file:/home/ironmoon/workspace/spytial/core-manifest
 
 importers:
 
@@ -76,8 +75,8 @@ importers:
         specifier: 'catalog:'
         version: 18.3.1(react@18.3.1)
       spytial-core:
-        specifier: file:/home/ironmoon/workspace/spytial/core-manifest
-        version: file:../core-manifest(alasql@4.17.3(react-native@0.86.2(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@18.3.31)(react@18.3.1)(supports-color@8.1.1)))(data-navigator@2.4.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+        specifier: ~5.4.0
+        version: 5.4.0(alasql@4.17.3(react-native@0.86.2(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@18.3.31)(react@18.3.1)(supports-color@8.1.1)))(data-navigator@2.4.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
     devDependencies:
       '@rollup/plugin-commonjs':
         specifier: 'catalog:'
@@ -1628,8 +1627,8 @@ packages:
     resolution: {integrity: sha512-UjgapumWlbMhkBgzT7Ykc5YXUT46F0iKu8SGXq0bcwP5dz/h0Plj6enJqjz1Zbq2l5WaqYnrVbwWOWMyF3F47g==}
     engines: {node: '>=0.10.0'}
 
-  spytial-core@file:../core-manifest:
-    resolution: {directory: ../core-manifest, type: directory}
+  spytial-core@5.4.0:
+    resolution: {integrity: sha512-w4ocdvb1TLgPWITWU1CIarK/jj1Yr9fsLMJzrGcnLGtQcWC7fSYOvElhU5nBuCxsV5bk1nqeaIeIy3hFeB/e3g==}
     engines: {node: '>=16'}
     hasBin: true
     peerDependencies:
@@ -3714,7 +3713,7 @@ snapshots:
 
   source-map@0.6.1: {}
 
-  spytial-core@file:../core-manifest(alasql@4.17.3(react-native@0.86.2(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@18.3.31)(react@18.3.1)(supports-color@8.1.1)))(data-navigator@2.4.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1):
+  spytial-core@5.4.0(alasql@4.17.3(react-native@0.86.2(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@18.3.31)(react@18.3.1)(supports-color@8.1.1)))(data-navigator@2.4.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1):
     dependencies:
       '@codemirror/commands': 6.10.4
       '@codemirror/lang-yaml': 6.1.3
