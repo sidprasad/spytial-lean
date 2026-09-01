@@ -9,10 +9,9 @@ open Lean Meta
 /-!
 # Reifying relational data
 
-`reify expectedType data` reconstructs a closed Lean expression from the output
-of the ordinary relationalizer.  The expected type is essential: atom labels
-contain short constructor names for display, not globally unique declaration
-names.
+`reify expectedType datum` reconstructs a closed Lean expression from a rooted
+relational datum. The expected type is essential: atom labels contain short
+constructor names for display, not globally unique declaration names.
 
 This first implementation deliberately accepts a small, checkable fragment:
 
@@ -21,14 +20,34 @@ This first implementation deliberately accepts a small, checkable fragment:
   constructors;
 * constructor fields are data, not functions or types; omitted proof fields
   must be closed and decidable, so the reifier can rebuild a proof;
-* no custom relationalizer is active; and
+* no custom relationalizer or `Raw`/`Viewed` wrapper is active; and
 * every atom and binary field edge in the datum is consumed.
 
-The reifier does not receive the original value.  `certifyReifyRoundTrip`
-relationalizes a concrete expression, reifies the result, and asks Lean's
-kernel to accept `rfl` at the resulting equality.  This is a certificate for
-that fully instantiated value, not a universal theorem about `MetaM`.
+The ordinary visualization walk may deliberately merge structurally unequal
+values according to `SpytialIdentity`. `relationalizeForReify` instead walks in
+hereditary `asWritten` mode so that the fidelity path preserves occurrences.
+
+The reifier does not receive the original value. `certifyReifyRoundTrip`
+relationalizes a concrete expression through the fidelity path, reifies the
+result, and asks Lean's kernel to accept `rfl` at the resulting equality. This
+is a certificate for that fully instantiated value, not a universal theorem
+about `MetaM`.
 -/
+
+/-- Relational data together with the atom from which reconstruction starts.
+    Atom-array order is not semantically significant. -/
+public meta structure ReifyDatum where
+  root : String
+  data : JsonDataInstance
+
+/-- Relationalize a closed value without consulting identity declarations, so
+    distinct constructor-field occurrences remain available to the reifier. -/
+public meta def relationalizeForReify (original : Expr) : MetaM ReifyDatum := do
+  unless isClosedValue original do
+    throwError "relationalize for reify: the original expression is not fully instantiated"
+  withoutModifyingEnv do
+    let (root, state) ← (walkExpr {} original { mode := .asWritten }).run {}
+    return { root, data := state.toDataInstance }
 
 private meta structure ReifyIndex where
   atoms : Std.HashMap String JsonAtom
@@ -49,8 +68,8 @@ private meta def kernelDefEq (left right : Expr) : MetaM Bool := do
   | .ok answer => return answer
   | .error _ => return false
 
-private meta def indexData (data : JsonDataInstance) : MetaM ReifyIndex := do
-  let some root := data.atoms[0]? | throwError "reify: the datum has no root atom"
+private meta def indexData (datum : ReifyDatum) : MetaM ReifyIndex := do
+  let data := datum.data
   let mut atoms : Std.HashMap String JsonAtom := {}
   for atom in data.atoms do
     if atoms.contains atom.id then
@@ -84,7 +103,9 @@ private meta def indexData (data : JsonDataInstance) : MetaM ReifyIndex := do
       if edges.contains key then
         throwError "reify: '{relation.name}' gives atom '{parentId}' more than one child"
       edges := edges.insert key childId
-  return { atoms, edges, root := root.id }
+  unless atoms.contains datum.root do
+    throwError "reify: the root atom '{datum.root}' is not present in the datum"
+  return { atoms, edges, root := datum.root }
 
 private meta def childFor (index : ReifyIndex) (parentId relation : String) : ReifyM String := do
   let key := (parentId, relation)
@@ -214,12 +235,12 @@ where
       throwError "reify: constructor '{ctorName}' does not build the expected type"
     return mkAppN ctor arguments
 
-/-- Reconstruct a closed constructor value from a relational datum at a caller-supplied type. -/
-public meta def reify (expectedType : Expr) (data : JsonDataInstance) : MetaM Expr :=
+/-- Reconstruct a closed constructor value from a rooted relational datum at a supplied type. -/
+public meta def reify (expectedType : Expr) (datum : ReifyDatum) : MetaM Expr :=
   withoutModifyingState <| withNewMCtxDepth do
     unless isClosedValue expectedType do
       throwError "reify: the expected type is not fully instantiated"
-    let index ← indexData data
+    let index ← indexData datum
     let (value, state) ← (reifyAt index expectedType index.root).run {}
     unless state.usedAtoms.size == index.atoms.size do
       throwError "reify: the datum contains atoms unreachable from its root"
@@ -229,8 +250,9 @@ public meta def reify (expectedType : Expr) (data : JsonDataInstance) : MetaM Ex
 
 /-- Evidence produced for one closed value by the actual relationalizer/reifier pipeline. -/
 public meta structure ReifyCertificate where
-  datum : JsonDataInstance
+  datum : ReifyDatum
   reconstructed : Expr
+  equalityType : Expr
   equalityProof : Expr
 
 /--
@@ -244,14 +266,19 @@ public meta def certifyReifyRoundTrip (original : Expr) : MetaM ReifyCertificate
   let expectedType ← instantiateMVars (← inferType original)
   unless isClosedValue expectedType do
     throwError "reify round trip: the original type is not fully instantiated"
-  let datum ← relationalize original
+  let datum ← relationalizeForReify original
   let reconstructed ← reify expectedType datum
   unless ← kernelDefEq original reconstructed do
     throwError "reify round trip: reconstructed value is not structurally equal to the original"
   let equalityType ← mkAppM ``Eq #[original, reconstructed]
   let equalityProof ← mkEqRefl original
-  unless ← kernelDefEq (← inferType equalityProof) equalityType do
-    throwError "reify round trip: the kernel rejected the equality certificate"
-  return { datum, reconstructed, equalityProof }
+  let checkedType ← match Kernel.check (← getEnv) (← getLCtx) equalityProof with
+    | .ok checkedType => pure checkedType
+    | .error error =>
+      throwError m!"reify round trip: the kernel rejected the equality certificate: \
+        {error.toMessageData (← getOptions)}"
+  unless ← kernelDefEq checkedType equalityType do
+    throwError "reify round trip: the kernel checked the certificate at the wrong type"
+  return { datum, reconstructed, equalityType, equalityProof }
 
 end SpytialLean

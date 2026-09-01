@@ -103,6 +103,15 @@ private meta def assertFails {α} (label : String) (action : MetaM α) : MetaM U
     catch _ => pure false
   if succeeded then throwError "{label}: unexpectedly succeeded"
 
+private meta def assertFailsWith {α} (label expected : String) (action : MetaM α) : MetaM Unit := do
+  try
+    discard action
+    throwError "{label}: unexpectedly succeeded"
+  catch error =>
+    let message ← error.toMessageData.toString
+    unless message.contains expected do
+      throwError "{label}: failed for the wrong reason:\n{message}"
+
 private structure WithFunction where
   apply : Bool → Nat
 
@@ -127,6 +136,8 @@ private structure ModPair where
 private meta def modTwoExpr (value : Nat) : Expr :=
   mkApp (mkConst ``ModTwo.mk) (mkRawNatLit value)
 
+private unsafe def unsafeOne : Nat := 1
+
 #eval show MetaM Unit from do
   let hole ← mkFreshExprMVar (some (mkConst ``Nat))
   assertFails "partially instantiated" (certifyReifyRoundTrip hole)
@@ -140,9 +151,20 @@ private meta def modTwoExpr (value : Nat) : Expr :=
   assertFails "type field" (certifyReifyRoundTrip withType)
 
   let modPair := mkApp2 (mkConst ``ModPair.mk) (modTwoExpr 1) (modTwoExpr 3)
-  assertFails "non-structural identity" (certifyReifyRoundTrip modPair)
+  discard <| certifyReifyRoundTrip modPair
 
-  let datum ← relationalize (mkRawNatLit 1)
+  assertFailsWith "unsafe certificate" "kernel rejected"
+    (certifyReifyRoundTrip (mkConst ``unsafeOne))
+
+  let datum ← relationalizeForReify (mkRawNatLit 1)
   let extra := { id := "extra", type := "Nat", label := "2" : JsonAtom }
-  let malformed := { datum with atoms := datum.atoms.push extra }
-  assertFails "unreachable data" (reify (mkConst ``Nat) malformed)
+  let malformedData := { datum.data with atoms := datum.data.atoms.push extra }
+  assertFails "unreachable data" (reify (mkConst ``Nat) { datum with data := malformedData })
+
+  let original := toExpr (some 7 : Option Nat)
+  let optionDatum ← relationalizeForReify original
+  let reorderedData := { optionDatum.data with atoms := optionDatum.data.atoms.reverse }
+  let optionNat := mkApp (mkConst ``Option [0]) (mkConst ``Nat)
+  let reconstructed ← reify optionNat { optionDatum with data := reorderedData }
+  unless ← isDefEq original reconstructed do
+    throwError "explicit root: atom reordering changed the reconstructed value"
