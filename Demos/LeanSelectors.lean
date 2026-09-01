@@ -5,7 +5,9 @@ open SpytialLean
 /-! # Raw Lean selectors
 
 `lean (…)` takes an ordinary Lean function; its type is its arity: `σ → Bool`
-picks out atoms, `σ₁ → σ₂ → Bool` picks out pairs. -/
+picks out atoms, `σ₁ → σ₂ → Bool` picks out pairs. On a concrete value the
+function runs; on a symbolic one the predicate is established from the proof
+context instead. -/
 
 inductive Color where
   | red | black
@@ -77,7 +79,8 @@ def tidy : RBNode :=
 /-! ## The general form
 
 `Spytial.Sel T α` wraps `T → Spytial.Tuples α`. It receives the whole value, so
-it can compare nodes against the root, which a per-node predicate never sees. -/
+it can compare nodes against the root, which a per-node predicate never sees.
+It needs a fully determined value and executable code. -/
 
 def RBNode.subtrees : RBNode → List RBNode
   | .nil => [.nil]
@@ -87,3 +90,29 @@ def deepHalf : Spytial.Sel RBNode RBNode :=
   ⟨fun root => root.subtrees.filter (fun n => 2 * n.height ≤ root.height)⟩
 
 #spytial.spec skewed with [hideAtom lean (deepHalf)]
+
+/-! ## The same predicate during a proof
+
+Before reasoning about a parent, draw what the child-height assumptions say:
+the left subtree is height 3, the right is height 1, so the parent is height
+4. No key or inner tree needs to be known. The highlight is the same Lean
+predicate in the command and in the proof. -/
+
+spytial_ops heightFocus : RBNode [
+  attribute key,
+  attribute color,
+  orientation left left below,
+  orientation right right below,
+  hideAtom lean (fun n : RBNode => n matches .nil),
+  atomStyle lean (fun n : RBNode => n.height = 3) (fillStyle "#dbeafe"),
+  flag hideDisconnectedBuiltIns
+]
+
+#spytial skewed observing [RBNode.height] with [..heightFocus, attribute height]
+
+example (left right : RBNode) (key : Nat)
+    (hLeft : left.height = 3) (hRight : right.height = 1) :
+    (RBNode.node .black key left right).height = 4 := by
+  let parent := RBNode.node .black key left right
+  spytial parent observing [RBNode.height] with [..heightFocus, attribute height]
+  simp [RBNode.height, hLeft, hRight]

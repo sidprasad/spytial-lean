@@ -121,16 +121,9 @@ by atom id -/
 #guard_msgs in
 #spytial.spec lSmall with [hideAtom lean (fun _ : LHue => false)]
 
-/--
-error: the proposition
-  ∀ (m : Nat),
-    (match x0 with
-        | LRB.nil => true
-        | x => false) =
-        true ∧
-      m > 0
-needs a `Decidable` instance to run as a selector
--/
+-- A proposition needs no Decidable instance when checked by simplification.
+-- This one is false (take m = 0), so it establishes no matches.
+/-- info: {"constraints": [{"hideAtom": {"selector": "none"}}]} -/
 #guard_msgs in
 #spytial.spec lSmall with
   [hideAtom lean (fun n : LRB => ∀ m : Nat, n matches .nil ∧ m > 0)]
