@@ -92,15 +92,23 @@ meta def declareDef (name : Name) (ty val : Term) : CommandElabM Unit := do
 declares the inductive and its decoder from one list: a constructor's fields
 name the sibling members that carry them, and the constructor name is the JSON
 spelling unless written out (`| "n-ary" => nary`). Without `on`, the value is
-the tag itself. -/
+the tag itself. A tagged object is closed per variant — the tag, the chosen
+constructor's fields, and the `ignoring` entries — unless the union is
+`shared`, which leaves the check to the record reading the same object. -/
 
 syntax jsonField := "(" ident " : " term ")"
 syntax jsonAlt := ppLine "| " (str " => ")? ident jsonField*
 syntax (name := jsonUnion)
-  (docComment)? "json_union " ident (" on " str)? " where" jsonAlt* : command
+  (docComment)? "json_union " ident (" on " str)? (&" shared")? (" ignoring" str+)?
+  " where" jsonAlt* : command
 
 elab_rules : command
-  | `($[$doc:docComment]? json_union $name:ident $[on $tag:str]? where $alts:jsonAlt*) => do
+  | `($[$doc:docComment]? json_union $name:ident $[on $tag:str]? $[shared%$sh]?
+      $[ignoring $ignored*]? where $alts:jsonAlt*) => do
+    let ignored := (ignored.getD #[]).toList.map (·.getString)
+    if tag.isNone && (sh.isSome || !ignored.isEmpty) then
+      throwError "an untagged union reads a bare value, so `shared` and `ignoring` \
+        have no object to describe"
     -- Names shared across quotations go through `mkIdent`; a literal would be
     -- hygiene-mangled and the arms would not see the binding.
     let subject := mkIdent `j
@@ -116,14 +124,22 @@ elab_rules : command
           alternatives take no fields; give the union an `on \"member\"`"
       let mut binders := #[]
       let mut args := #[]
+      let mut fieldNames := #[]
       for field in fields do
         let `(jsonField| ($fname:ident : $ftype:term)) := field
           | throwErrorAt field "expected `(name : Type)`"
         binders := binders.push (← `(Lean.Parser.Term.bracketedBinderF| ($fname : $ftype)))
-        args := args.push
-          (← `(← member _ $subject:ident $(quote (fname.getId.toString (escape := false)))))
+        fieldNames := fieldNames.push (fname.getId.toString (escape := false))
+        args := args.push (← `(← member _ $subject:ident $(quote fieldNames.back!)))
       ctors := ctors.push (← `(Lean.Parser.Command.ctor| | $ctor:ident $binders*))
-      let built ← `(do return $(mkIdent (name.getId ++ ctor.getId)):ident $args*)
+      let value ← `($(mkIdent (name.getId ++ ctor.getId)):ident $args*)
+      let built ← match tag with
+        | some t =>
+          if sh.isSome then `(do return $value)
+          else
+            let known := t.getString :: fieldNames.toList ++ ignored
+            `(do onlyMembers $(quote known) (← fromJson? $subject:ident); return $value)
+        | none => `(do return $value)
       arms := arms.push (← `(Lean.Parser.Term.matchAltExpr| | $spelling:str => $built))
     -- No `DecidableEq`: it has no handler for a union that nests itself.
     -- The linter reads the spliced field binders as unused term bindings.
@@ -148,7 +164,7 @@ elab_rules : command
       let _self : FromJson $name:ident := ⟨$decoder:ident⟩
       $tagOf >>= $decide))
     elabCommand (← `(public meta instance : FromJson $name:ident := ⟨$decoder:ident⟩))
-    let members := ((tag.map (·.getString)).toList
+    let members := ((tag.map (·.getString)).toList ++ ignored
         ++ alts.toList.flatMap (fun (alt : TSyntax ``jsonAlt) =>
       match alt with
       | `(jsonAlt| | $[$_ => ]? $_ $fields:jsonField*) =>

@@ -45,7 +45,7 @@ syntax (name := spytialBlockStx)
 
 syntax spytialKwArg := atomic(ident noWs ":" ) selExpr
 
-syntax spytialOpArg := num <|> spytial_op_block <|> spytialKwArg <|> selExpr
+syntax spytialOpArg := num <|> scientific <|> spytial_op_block <|> spytialKwArg <|> selExpr
 
 syntax (name := spytialOpStx) ident spytialOpArg* : spytial_op
 /-- `attribute` is a Lean keyword, so it gets its own rule with the keyword as the atom. -/
@@ -133,13 +133,13 @@ open SpecLang in
 private meta def checkBounds (ref : Syntax) (what : String) (f : FieldSpec)
     (n : JsonNumber) : TermElabM Unit := do
   let .number min max := f.type | return
-  let v := n.toFloat
+  -- exact: a `Float` rounds `1.0000000000000000000000001` onto the bound
   if let some b := min then
-    if (if b.exclusive then v ≤ b.value.toFloat else v < b.value.toFloat) then
+    if (if b.exclusive then !(b.value.lt n) else n.lt b.value) then
       throwErrorAt ref m!"{what} must be \
         {if b.exclusive then "greater than" else "at least"} {toString b.value}"
   if let some b := max then
-    if (if b.exclusive then v ≥ b.value.toFloat else v > b.value.toFloat) then
+    if (if b.exclusive then !(n.lt b.value) else b.value.lt n) then
       throwErrorAt ref m!"{what} must be \
         {if b.exclusive then "less than" else "at most"} {toString b.value}"
 
@@ -383,10 +383,15 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
       if inner.isOfKind ``spytialKwArg then some inner[0].getId.toString
       else if inner.isOfKind ``spytialBlockStx then some inner[1].getId.toString
       else none
+    let isNumber (stx : Syntax) : Bool :=
+      stx.isOfKind numLitKind || stx.isOfKind scientificLitKind
     let sel (stx : Syntax) (forms : List SelForm) : TermElabM Sel := do
-      if stx.isOfKind numLitKind then
+      if isNumber stx then
         throwErrorAt stx m!"expected a selector; usage: {usage}"
       elabSelector scope (arityForms written forms) ⟨stx⟩
+    -- a bare sugar word is never a selector, even where a selector may lead
+    let isTrailingWord (stx : Syntax) : Bool :=
+      (ArgView.ofSel stx).word?.any fun w => (trailingWordField? item w).isSome
     let rel (stx : Syntax) (f : FieldSpec) : TermElabM String :=
       elabFieldName scope s!"{itemName item.id}.{fieldName f.id}" ⟨stx⟩
     let setField (fields : Array (FieldId × FieldVal)) (ref : Syntax)
@@ -430,7 +435,7 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
           && (match pending.head?.bind item.field? with
               | some f => isNumeric f.type
               | none => true)
-          && !inner.isOfKind numLitKind then
+          && !isNumber inner && !isTrailingWord inner then
         let some lf := item.leadingSelector | unreachable!
         let some f := item.field? lf | unreachable!
         let .selector forms := f.type | unreachable!
