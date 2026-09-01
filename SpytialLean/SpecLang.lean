@@ -57,7 +57,7 @@ public meta structure JAccept where
 
 json_record JAccept ignoring "meaning"
 
-json_union JFieldType on "type" where
+json_union JFieldType on "type" shared where
   | selector (arity : DeclaredArity) (accepts : List JAccept)
   | relation
   | "string" => str
@@ -70,7 +70,7 @@ json_union JFieldType on "type" where
   | "icon-path" => iconPath
   | color
 
-json_union JAltField on "type" where
+json_union JAltField on "type" ignoring "description" "default" "values" where
   | «enum» (name : String)
   | block (name : String) (block : String)
 

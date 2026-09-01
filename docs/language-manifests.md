@@ -26,9 +26,13 @@ structure's own fields, and it is closed — a member outside the field list
 stops the build naming it, so a member *added* upstream announces itself
 instead of being silently unread. (That class had already bitten: core 5.4.0
 grew `accepts` and the `source` block, and neither announced itself.) A member
-known and deliberately unread is declared in the command's `ignoring` list; two
-readers sharing one object (`JField`, `JFieldType`) share member lists the same
-way. A tag, enum value, or renamed member with no representation stops the
+known and deliberately unread is declared in the command's `ignoring` list. A
+tagged union's decoder is closed the same way, per variant: the tag, the chosen
+constructor's fields, and its own `ignoring` entries. Two readers sharing one
+object (`JField`, `JFieldType`) split the work: the record's list splices the
+union's `memberNames`, and the union is declared `shared` so it leaves the
+check to the record. A tag, enum value, or renamed member with no
+representation stops the
 build naming the construct or item, rather than yielding a plausible table.
 
 ## Version pin
