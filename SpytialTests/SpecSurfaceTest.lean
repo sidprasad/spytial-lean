@@ -162,6 +162,20 @@ info: {"directives":
 #guard_msgs in
 #spytial.spec sG with [atomStyle SG (iconStyle (opacity 1.5))]
 
+-- the bound is checked on the number, not on a `Float` that rounds onto it
+/-- error: opacity must be at most 1 -/
+#guard_msgs in
+#spytial.spec sG with [atomStyle SG (iconStyle (opacity 1.0000000000000000000000001))]
+
+/-- info: {"constraints": [{"size": {"width": 1.5, "height": 2}}]} -/
+#guard_msgs in
+#spytial.spec sG with [size 1.5 2]
+
+-- a sugar word where an optional selector may lead is the sugar
+/-- info: {"directives": [{"atomStyle": {"showLabel": true}}]} -/
+#guard_msgs in
+#spytial.spec sG with [atomStyle labels]
+
 /-! ## addEdge: bare enum vs block form -/
 
 /--
