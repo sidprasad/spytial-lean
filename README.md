@@ -42,6 +42,10 @@ lake build
 
 Open a file in `demos/` and place your cursor on a `#spytial` line. The infoview panel will show the diagram.
 
+For proof-local inspection, [demos/AVL.lean](demos/AVL.lean) draws the bounds that let a subtree
+change sides during rotation. [demos/UnionFind.lean](demos/UnionFind.lean) inspects the pointer
+needed to finish a recursive lookup proof, and the roots found before a union links them.
+
 ### Nix dev shell
 
 A [flake](flake.nix) provides a dev shell (elan + Node + pnpm + just) — run `nix develop`. To opt into [direnv](https://direnv.net/): `ln -s nix/envrc .envrc && direnv allow`.
@@ -266,7 +270,7 @@ Directions: `above`, `below`, `left`, `right`, `directlyAbove`,
 
 ## How it works
 
-1. **Relationalizer** (`SpytialLean/Relationalizer.lean`) — Walks the Lean `Expr` tree after WHNF reduction. Constructors become atoms (nodes), data arguments become relations (edges). Type and proof arguments are skipped.
+1. **Relationalizer** (`SpytialLean/Relationalizer.lean`) — Walks the Lean `Expr` tree. It normally uses WHNF to expose data constructors, which become atoms (nodes) whose data arguments become relations (edges). Requested observations instead preserve their source-level computation slice as function-graph relations before WHNF. Type and proof arguments are skipped.
 
 2. **Selector DSL** (`SpytialLean/Selector.lean`, `SelectorElab.lean`) — Selectors elaborate to a reified AST, checked against the vocabulary derived from `TypeShape`. The checker and the relationalizer share the naming logic, so the checker predicts what the walker emits. Specs are stored structurally; the SGQ strings are produced only in the widget payload.
 
@@ -354,6 +358,76 @@ An explicit `with [...]` still fully overrides the inherited spec, and `..`
 splices it back in — for an extending type it carries the composed parent
 chain.
 
-## TODO
+## Proof contexts
 
-- Better integration with Lean's tactic mode (`spytial` tactic, panel widgets)
+In tactic mode, `spytial term` asks
+[IYKYK](https://github.com/sidprasad/iykyk) what the current context establishes
+about `term` and translates that `Afaik` knowledge into one relational datum.
+The infoview shows the selected expression together with all relevant structures,
+observations, and relationships; layout operations such as `hideAtom` and
+`hideField` control its presentation. The retained facts are listed below the
+diagram. `spytial.datum term` prints the same relational datum, and
+`spytial term fyi [hypothesis]` supplies an explicit proved hypothesis or
+forward rule to IYKYK. Spytial uses IYKYK's `wdyk` API directly and enables
+`simp` normalization so constructor clashes and same-constructor equations
+are reflected in the diagram. Broader proof search is deliberately deferred.
+
+The `observing` clause supplies named unary functions to the relationalizer in
+both command and tactic mode:
+
+```lean
+#spytial tree observing [height]
+spytial tree observing [height]
+```
+
+For each represented value `t` of the appropriate input type, `observing [height]`
+adds `height t` to the datum, evaluates what it can, and relationalizes the
+result together with its connection to `t`. This applies to every visible tree
+node, not only the selected root. Evaluation computes through available
+definitions, including helper functions, and uses bounded `simp`; tactic mode
+also supplies the facts established by IYKYK. The input need not be closed:
+the height of `node leaf key leaf` is `1` even when `key` is unknown. Evaluation
+does not modify the proof state or run a general proof search.
+
+A computed height is an ordinary number. If the context establishes
+`height l = 2` and `height r = 1`, the parent's result is `3`. Otherwise its
+height can remain a symbolic value, connected by the same `height` relation.
+Computing with `add` and `max` internally does **not** request those relations:
+`observing [height]` observes heights, not the implementation of `height`.
+Structured results still have their ordinary fields; unresolved computations
+inside them stay symbolic. There is no separate symbolic-result view.
+The represented domain is fixed before these results are added, so observations
+do not recursively observe their own newly introduced outputs.
+
+Observation also governs the treatment of context expressions: an observed
+application and the enclosing named computations that depend on it are
+represented before WHNF. For example, with `observing [height]`, a fact
+`height r + 1 < height l` produces `height`, `add`, and `lt` relations rather
+than exposing `Nat.succ` and its constructor field. Here `add` comes from an
+explicit retained fact, not from expanding the definition of `height`.
+
+`#spytial` uses the same observation-aware relationalizer with no proof
+context, so it observes all values represented by the selected datum. Tactic
+mode additionally relationalizes the facts supplied by IYKYK under the
+observation set, then observes the resulting active domain.
+Observation changes the relational datum passed to Spytial. The existing
+`with [...]` clause continues to control only its presentation.
+
+See [Observations](docs/observations.md) for the contract, examples, and limitations.
+
+The same `lean (…)` predicate selectors work in commands, definitions, and proofs:
+
+```lean
+spytial tree with [
+  atomStyle lean (fun n : Tree => height n = 3) (fillStyle "#dbeafe")
+]
+```
+
+A fact `h : height tree = 3` can select `tree` without determining its children.
+Both selector styles range over the refined, relationalized datum. Lean predicates
+use the terms associated with its atoms and retained proofs, including checked
+observation equations. Computation, direct evidence, and bounded simplification
+establish matches; missing evidence is not evidence of falsehood. Attached
+`spytial_spec` predicates use this same interpretation at each inspection.
+Arbitrary whole-value `Spytial.Sel` programs still require a determined root.
+See [Lean selectors](docs/lean-selectors.md) for examples and reasoning limits.

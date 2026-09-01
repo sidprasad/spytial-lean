@@ -99,6 +99,22 @@ meta def SelScope.ofType (root : Name) (seeds : Array Name := #[]) : MetaM SelSc
 meta def SelScope.introduce (scope : SelScope) (name : String) (arity : Nat) : SelScope :=
   { scope with introduced := scope.introduced.insert name arity }
 
+/-- Union of two scopes, for a value view whose positive facts span several
+    types. Lenient if either side is; a relation name claimed at two
+    different arities keeps the name with its width unchecked. -/
+meta def SelScope.merge (a b : SelScope) : SelScope := Id.run do
+  let mut rels := a.rels
+  for (n, owner, arity?) in b.rels do
+    rels := match rels.get? n with
+      | some (o, a?) => if a? == arity? then rels else rels.insert n (o, none)
+      | none => rels.insert n (owner, arity?)
+  return { root := a.root
+           types := b.types.fold (init := a.types) fun m k v => m.insert k v
+           rels
+           ctorLabels := b.ctorLabels.fold (init := a.ctorLabels) fun m k v => m.insert k v
+           introduced := b.introduced.fold (init := a.introduced) fun m k v => m.insert k v
+           lenient := a.lenient || b.lenient }
+
 /-! ## Diagnostics -/
 
 private meta def editDistance (a b : String) : Nat := Id.run do
@@ -451,14 +467,14 @@ private meta def elabLeanRel (scope : SelScope) (stx : TSyntax `term) :
   -- recovery term's holes would only bury it. The unknown arity disables
   -- downstream position checks.
   if fn.hasSorry then return .rel .none_ none
-  if fn.hasExprMVar || fn.hasFVar then
-    throwErrorAt stx "a raw Lean selector must be a closed term; this one \
-      still has holes or local variables"
+  if fn.hasExprMVar || fn.hasLevelMVar then
+    throwErrorAt stx "a Lean selector cannot contain unresolved holes"
   let kind ← withRef stx <| classifyLeanRel fn
-  -- A `Prop`-valued predicate runs through `decide`; refuse an undecidable
-  -- one here, where the message can point at the selector.
-  if let .pred true := kind.shape then
-    discard <| withRef stx <| boolifyPred fn kind.domains
+  -- Predicates can capture local parameters and use evidence without a
+  -- Decidable instance. Whole-value programs still require executable code.
+  if let .sel _ := kind.shape then
+    if fn.hasFVar then
+      throwErrorAt stx "a whole-value Lean selector must be a closed term"
   -- A column over a type the walk cannot produce can never be filled; in a
   -- strict scope that is a mistake worth naming, in a lenient one unknowable.
   unless scope.lenient do

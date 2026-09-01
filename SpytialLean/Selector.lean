@@ -76,7 +76,7 @@ public meta inductive Sel where
   /-- A raw Lean function over the values the relationalizer walked, read as a
       relation: its argument types are the columns it ranges over and its
       codomain fixes the arity (`SpytialLean.classifyLeanRel`). Resolved against
-      a concrete datum by `resolveLeanSelectors` — which rewrites it to the
+      the represented datum by `resolveLeanSelectors` — which rewrites it to the
       union of the tuples it selects — before anything lowers to SGQ. -/
   | leanRel (fn : Expr)
   deriving Repr, BEq

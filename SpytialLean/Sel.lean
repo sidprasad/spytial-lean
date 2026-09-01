@@ -6,9 +6,10 @@ A layout op needs a selector: a set of tuples of diagram atoms. This file
 defines what a selector *is* when written in Lean: a plain Lean function, in
 one of two forms.
 
-* **A predicate over walked values.** `σ → Bool` (curried up to arity 4)
-  keeps the walked tuples it accepts. Nothing is returned, so no equality
-  instances are needed.
+* **A predicate over represented values.** `σ → Bool` or `σ → Prop` (curried
+  up to arity 4) selects represented tuples whose predicate can be established
+  by computation or retained Lean evidence. Nothing is returned, so no equality
+  instances are needed. Inputs can be symbolic.
 * **A function of the value being drawn.** `Sel T α` wraps `T → Tuples α`;
   Spytial calls it on the datum at resolution time, and the returned tuples
   are selected — each returned value located by `==` (`BEq`).
@@ -24,11 +25,12 @@ Two rules complete the contract:
 * **`Tuples` is read as a set.** Order and duplicates are ignored; Spytial
   deduplicates and sorts the result before it reaches the diagram.
 
-Everything is ordinary computable code: a selector runs under `#eval` and can
-be tested like any other function. Because Spytial runs it at elaboration
-time, a function it calls from another module must be imported with
-`meta import` (Lean reports this itself when it is missing). Definitions in
-the same file need nothing.
+Whole-value programs and Boolean predicates are ordinary computable code and
+can be tested with `#eval`. Compiled execution at elaboration time requires
+`meta import` for functions from other modules. Predicate resolution can also
+use direct proofs and bounded simplification on symbolic inputs; no Decidable
+instance is required for that path. All selections remain within the datum's
+represented atoms.
 -/
 
 namespace Spytial

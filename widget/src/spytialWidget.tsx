@@ -4,6 +4,9 @@ import { useRpcSession } from '@leanprover/infoview';
 import spytialcore from 'spytial-core';
 // @ts-ignore — virtual module for components bundle (provides mountErrorMessageModal, ErrorAPI)
 import spytialComponents from 'spytial-core-components';
+import {
+  withLeanScalarTypes, type InspectedValue, type RelationalData,
+} from './inspection';
 
 const { JSONDataInstance, LayoutInstance, parseLayoutSpec, SGraphQueryEvaluator } = spytialcore;
 const { isPositionalConstraintError, isGroupOverlapError, isHiddenNodeConflictError } =
@@ -33,6 +36,10 @@ function injectCss() {
       padding: 8px;
       color: var(--vscode-errorForeground);
     }
+    .spytial-inspection-note { font-size: 12px; margin: 6px 0; }
+    .spytial-facts { margin: 8px 0; font-size: 12px; }
+    .spytial-facts code { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .spytial-facts li { margin: 5px 0; }
     .spytial-container {
       position: relative;
       overflow: hidden;
@@ -187,16 +194,9 @@ function injectCss() {
 }
 
 interface SpytialWidgetProps {
-  dataInstance: {
-    atoms: Array<{ id: string; type: string; label: string }>;
-    relations: Array<{
-      id: string;
-      name: string;
-      types: string[];
-      tuples: Array<{ atoms: string[]; types: string[] }>;
-    }>;
-  };
+  dataInstance: RelationalData;
   cndSpec?: string;
+  inspection?: InspectedValue;
 }
 
 const MIN_HEIGHT = 200;
@@ -209,6 +209,7 @@ export default function SpytialWidget(props: SpytialWidgetProps) {
   const [loading, setLoading] = React.useState(true);
   const [height, setHeight] = React.useState(DEFAULT_HEIGHT);
   const errorMountedRef = React.useRef(false);
+  const data = props.dataInstance;
 
   React.useEffect(() => { injectCss(); }, []);
 
@@ -244,6 +245,7 @@ export default function SpytialWidget(props: SpytialWidgetProps) {
     setLoading(true);
     setError(null);
     if (CnDCore.ErrorAPI) CnDCore.ErrorAPI.clearAllErrors();
+    let cancelled = false;
 
     const render = async () => {
       try {
@@ -251,7 +253,8 @@ export default function SpytialWidget(props: SpytialWidgetProps) {
           await new Promise(resolve => setTimeout(resolve, 200));
         }
 
-        const instance = new JSONDataInstance(props.dataInstance);
+        if (cancelled) return;
+        const instance = new JSONDataInstance(withLeanScalarTypes(data));
         const spec = parseLayoutSpec(props.cndSpec || '');
         const evaluator = new SGraphQueryEvaluator();
         evaluator.initialize({ sourceData: instance });
@@ -275,7 +278,7 @@ export default function SpytialWidget(props: SpytialWidgetProps) {
         }
 
         const container = containerRef.current;
-        if (!container) return;
+        if (!container || cancelled) return;
         container.innerHTML = '';
 
         const graphEl = document.createElement('webcola-cnd-graph');
@@ -286,8 +289,9 @@ export default function SpytialWidget(props: SpytialWidgetProps) {
         }
 
         await (graphEl as any).renderLayout(result.layout);
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       } catch (e: any) {
+        if (cancelled) return;
         console.error('SpytialWidget render error:', e);
         setError(e.message || String(e));
         setLoading(false);
@@ -297,14 +301,20 @@ export default function SpytialWidget(props: SpytialWidgetProps) {
     render();
 
     return () => {
+      cancelled = true;
       if (containerRef.current) containerRef.current.innerHTML = '';
     };
-  }, [props.dataInstance, props.cndSpec]);
+  }, [data, props.cndSpec]);
 
   return (
     <details open={true}>
       <summary className="mv2 pointer">Spytial Diagram</summary>
       <div className="ml1">
+        {props.inspection && <>
+          <div className="spytial-inspection-note">
+            Inspecting <code>{props.inspection.term}</code>
+          </div>
+        </>}
         {loading && <div className="spytial-loading">Loading diagram...</div>}
         {error && <div className="spytial-error">Error: {error}</div>}
         <div ref={errorMountRef} />
@@ -312,6 +322,12 @@ export default function SpytialWidget(props: SpytialWidgetProps) {
           <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
           <div className="spytial-resize-handle" onMouseDown={onResizeStart} />
         </div>
+        {props.inspection && props.inspection.facts.length > 0 &&
+          <details className="spytial-facts" open>
+            <summary>Context facts ({props.inspection.facts.length})</summary>
+            <ul>{props.inspection.facts.map((fact, index) =>
+              <li key={index}><code>{fact}</code></li>)}</ul>
+          </details>}
       </div>
     </details>
   );
