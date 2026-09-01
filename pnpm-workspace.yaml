@@ -7,16 +7,17 @@ packages:
 # a stable path. spytial-core embeds its own prebuilt sgq bundle, so nothing
 # here changes what the widget evaluates.
 #
-# TEMPORARY: the manifest only exists on an unreleased branch, so the override
-# points at a local checkout. Drop it once a published sgq carries the file, and
-# the `^3.1.0` pin in package.json takes over.
+# TEMPORARY: no published sgq carries the manifest yet, so the package resolves
+# to the commit that added it (simple-graph-query#68). Once a release ships it:
+# delete this override, raise package.json's range to that release, add it to
+# minimumReleaseAgeExclude below, and run `pnpm install`.
 #
 # TEMPORARY likewise for spytial-core: `introduces`, `inertWhenBare`, and
 # `middleColumns` exist only on spytial-core#580/#581, and this branch derives
 # from them, so the override points at a built checkout of the two merged. Drop
 # it when a release carries them, and the widget's `~5.4.0` pin takes over.
 overrides:
-  simple-graph-query: file:/home/ironmoon/workspace/spytial/simple-graph-query
+  spytial-lean>simple-graph-query: github:sidprasad/simple-graph-query#43e0f5340ec8c5fb426fe8b2ff3baf142056b1f5
   spytial-core: file:/home/ironmoon/workspace/spytial/core-manifest
 
 # Pinned to stay consistent with the infoview bundle.

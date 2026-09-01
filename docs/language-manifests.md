@@ -91,11 +91,5 @@ them as targets the library needs — sequenced after the pnpm install that
 creates them, so a fresh checkout builds first try — and a dependency bump
 re-elaborates the modules.
 
-Both packages are overridden to a local checkout in `pnpm-workspace.yaml`,
-because both manifests are ahead of their releases. The SGQ manifest ships
-with simple-graph-query#68, which is unpublished. `manifestVersion`,
-`introducedKinds`, `introduces`, `inertWhenBare` and `middleColumns` ship with
-spytial-core#580/#581, and the override points at a built checkout of the two
-merged; published 5.4.0 carries none of them and now stops the build at the
-format check, reporting the absent `manifestVersion`. Drop each override when
-a release carries its manifest, and the package.json pins take over.
+`Sgq.lean` reads the root package's `simple-graph-query`; `SpecLang.lean`
+reads the widget's `spytial-core`.
