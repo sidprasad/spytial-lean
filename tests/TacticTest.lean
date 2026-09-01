@@ -152,6 +152,14 @@ info: {"relations":
 
 #spytial 3 observing [twice] with [attribute twice]
 
+-- The observer's domain, not the selected root's type, determines where it
+-- applies. `twice` observes the Nat inside this pair without having to accept
+-- the pair itself.
+set_option linter.unusedVariables false in
+example (n : Nat) (flag : Bool) : True := by
+  spytial (n, flag) observing [twice]
+  trivial
+
 -- Only the requested observation enters the layout vocabulary, not the
 -- arithmetic used to implement it. This also checks observing inside a def.
 def observedNext (n : Nat) : Nat := n + 1
@@ -339,6 +347,55 @@ end ArityFoo
 namespace ArityBar
 inductive Adj : Nat → Nat → Nat → Prop
 end ArityBar
+
+namespace SameArityFoo
+inductive Adj : Nat → Nat → Prop
+end SameArityFoo
+namespace SameArityBar
+inductive Adj : Nat → Nat → Prop
+end SameArityBar
+
+-- A shared short name and schema do not make distinct predicates identical.
+-- Keep the first qualified relation and reject the second without changing
+-- the user-facing SGQ name.
+#eval show Lean.Elab.TermElabM Unit from do
+  Lean.Meta.withLocalDeclD `x (Lean.mkConst ``Nat) fun x => do
+  Lean.Meta.withLocalDeclD `y (Lean.mkConst ``Nat) fun y => do
+  Lean.Meta.withLocalDeclD `z (Lean.mkConst ``Nat) fun z => do
+  Lean.Meta.withLocalDeclD `h₁ (Lean.mkApp2 (Lean.mkConst ``SameArityFoo.Adj) x y) fun _ => do
+  Lean.Meta.withLocalDeclD `h₂ (Lean.mkApp2 (Lean.mkConst ``SameArityBar.Adj) x z) fun _ => do
+    let oldMessages ← Lean.Core.getMessageLog
+    let (_, some view) ← wdykInContext x
+      | throwError "missing same-short-name context view"
+    Lean.Core.setMessageLog oldMessages
+    let some relation := view.data.relations.find? (·.name == "Adj")
+      | throwError "missing retained Adj relation"
+    unless relation.tuples.size == 1 do
+      throwError "distinct qualified predicates were conflated"
+
+namespace FunctionClash
+def Seen (n : Nat) : Nat := n
+end FunctionClash
+namespace PredicateClash
+inductive Seen : Nat → Prop
+end PredicateClash
+
+-- Walking a fact argument can itself encounter a same-short-name function.
+-- The fact reserves its schema first, so that nested walk cannot invalidate
+-- the precheck and produce a mixed-width relation.
+#eval show Lean.Elab.TermElabM Unit from do
+  Lean.Meta.withLocalDeclD `x (Lean.mkConst ``Nat) fun x => do
+    let application := Lean.mkApp (Lean.mkConst ``FunctionClash.Seen) x
+    let proposition := Lean.mkApp (Lean.mkConst ``PredicateClash.Seen) application
+    Lean.Meta.withLocalDeclD `h proposition fun _ => do
+      let oldMessages ← Lean.Core.getMessageLog
+      let (_, some view) ← wdykInContext x
+        | throwError "missing nested-collision context view"
+      Lean.Core.setMessageLog oldMessages
+      let some relation := view.data.relations.find? (·.name == "Seen")
+        | throwError "missing retained Seen fact"
+      unless relation.tuples.size == 1 && relation.tuples.all (·.atoms.size == 1) do
+        throwError "walking the fact argument changed the fact relation's schema"
 
 set_option linter.unusedVariables false in
 /--

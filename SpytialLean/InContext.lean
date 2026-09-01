@@ -42,6 +42,13 @@ public meta def propTupleShape? (proposition : Expr) : MetaM (Option (String × 
   if args.isEmpty then return none
   return some (name, args)
 
+/-- The qualified source behind `propTupleShape?`'s short display name. -/
+private meta def propTupleOrigin? (proposition : Expr) : MetaM (Option String) := do
+  if let some (_, domain, result) := proposition.eq? then
+    if (← graphSide? domain).isSome then return graphRelationOrigin? domain
+    if (← graphSide? result).isSome then return graphRelationOrigin? result
+  return relationHeadOrigin? proposition.getAppFn
+
 /-- An equality that supplies visible structure for a local variable. An
     equation involving a named application remains a relation instead. -/
 private meta def refinementOf? (proposition : Expr) : MetaM (Option (FVarId × Expr)) := do
@@ -126,13 +133,12 @@ private meta def addWitnesses (afaik : Iykyk.Afaik) (recordObservationTerms : Bo
       type := ← sigOfType witness.type
       label
     }
-    set { state.addAtom atom with
+    set <| ({ state.addAtom atom with
       applicationAtoms :=
         (state.applicationAtoms.insert ⟨witness.term⟩ atomId).insert ⟨reduced⟩ atomId
-      selectorTerms := state.selectorTerms.push (witness.term, atomId)
       observationTerms := if recordObservationTerms then
         state.observationTerms.push (witness.term, atomId)
-      else state.observationTerms }
+      else state.observationTerms }).rememberSelectorTerm witness.term atomId
     anchors := anchors.push (witness.term, atomId)
   return anchors
 
@@ -143,19 +149,17 @@ private meta def walkFact (cfg : WalkConfig)
     StateT WalkState MetaM (Array (Expr × String)) := do
   let some (relation, rawArguments) ← propTupleShape? (← displayedProposition fact)
     | return initialAnchors
-  -- Predicates that differ only past their short name land in one relation; a
-  -- tuple of another width would corrupt it, so the colliding fact stays
-  -- undrawn instead.
-  if let some (declaredTypes, _) := (← get).relations.get? relation then
-    if declaredTypes.size != rawArguments.size then
-      logWarning m!"spytial: '{relation}' names relations of arity \
-        {declaredTypes.size} and {rawArguments.size}; the second is not drawn"
-      return initialAnchors
+  let some origin ← propTupleOrigin? (← displayedProposition fact)
+    | return initialAnchors
+  -- Resolve every endpoint and its schema before walking any of them. Walking
+  -- one endpoint may itself emit a same-named relation, so an arity-only
+  -- precheck against the old state is insufficient.
+  let arguments ← rawArguments.mapM fun argument => liftM (contextArgument cfg argument)
+  let types ← arguments.mapM fun argument => liftM do sigOfType (← inferType argument)
+  unless ← reserveRelation relation origin types do return initialAnchors
   let mut anchors := initialAnchors
   let mut atomIds := #[]
-  let mut types := #[]
-  for rawArgument in rawArguments do
-    let argument ← contextArgument cfg rawArgument
+  for (rawArgument, argument) in rawArguments.zip arguments do
     let mut atomId? := none
     for (seen, atomId) in anchors do
       if seen.equal argument then
@@ -168,7 +172,6 @@ private meta def walkFact (cfg : WalkConfig)
         anchors := anchors.push (argument, atomId)
         pure atomId
     atomIds := atomIds.push atomId
-    types := types.push (← sigOfType (← inferType argument))
     -- Keep the source term even if a proved equality refined this endpoint.
     modify fun state => state.rememberSelectorTerm rawArgument atomId
   -- An observation may already have emitted the graph point established by
@@ -188,6 +191,10 @@ private meta def contextWalkConfig (afaik : Iykyk.Afaik) (baseConfig : WalkConfi
     if let some (variableId, value) ← refinementOf? (← displayedProposition fact) then
       unless refinements.contains variableId do
         refinements := refinements.insert variableId value
+  let candidateRefinements := refinements
+  for (variableId, _) in candidateRefinements.toArray do
+    if refinementIsCyclic candidateRefinements variableId then
+      refinements := refinements.erase variableId
   return { baseConfig with
     refinements := refinements
     functionGraphs := true

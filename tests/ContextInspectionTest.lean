@@ -129,6 +129,25 @@ private meta def assertInspectionMetadata (view : ContextView) : MetaM Unit := d
     assertTrees "refined subject" result.data 3
     assertCount "refined subject's child facts" result.data "lt" 1
 
+/- Mutually constructor-expanding equalities cannot be used as finite value
+   refinements. Their variables stay stable opaque atoms and the equations
+   remain visible instead of changing the memoized identity during expansion. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x tree fun x => do
+  withLocalDeclD `y tree fun y => do
+    let leaf := mkConst ``Tree.leaf
+    let xValue := node y 1 leaf
+    let yValue := node x 2 leaf
+    withLocalDeclD `hx (← mkEq x xValue) fun _ => do
+    withLocalDeclD `hy (← mkEq y yValue) fun _ => do
+      let (status, some result) ← wdykInContext x {} { mechanisms := #[.simp] }
+        | throwError "cyclic refinements lost the context view"
+      if status.inconsistent then throwError "test context was unexpectedly rejected"
+      unless result.data.atoms.any (fun atom =>
+          atom.id == result.inspection.root && atom.label == "x") do
+        throwError "cyclic refinement changed the root variable's stable atom"
+      assertCount "cyclic refinements stay as equations" result.data "=" 2
+
 /- The selected expression includes explicit function graphs even though their
    arguments are not reached by following edges forward from the result. -/
 #eval show Lean.Elab.TermElabM Unit from do
@@ -207,6 +226,19 @@ private meta def assertInspectionMetadata (view : ContextView) : MetaM Unit := d
   let literal ← mkAppOptM ``OfNat.ofNat #[some nat, some (mkRawNatLit 1), some unusual]
   unless (← normalizeReferenceTerm literal).equal (mkRawNatLit 9) do
     throwError "reference normalization ignored the literal's instance"
+
+/- Reference normalization reduces `OfNat` through the instance for every
+   numeric type, not only Nat. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  let stx ← `(term| (1 : Int))
+  let literal ← Lean.Elab.Term.elabTerm stx none
+  Lean.Elab.Term.synthesizeSyntheticMVarsNoPostponing
+  let normalized ← normalizeReferenceTerm (← instantiateMVars literal)
+  if normalized.isAppOf ``OfNat.ofNat then
+    throwError "non-Nat literal remained an OfNat application"
+  let reduced ← whnf normalized
+  unless reduced.getAppFn.isConstOf ``Int.ofNat do
+    throwError "Int literal did not reduce through its OfNat instance"
 
 section
 
@@ -402,6 +434,92 @@ opaque unavailableHeight : Tree → Nat := Tree.height
   assertCount "opaque observation" data "unavailableHeight" 1
   unless (data.atoms.filter (·.type == "Nat")).all (·.label.startsWith "?") do
     throwError "opaque observer was reported as a concrete number"
+
+namespace FirstGraph
+opaque inspect : Nat → Nat
+end FirstGraph
+namespace SecondGraph
+opaque inspect : Nat → Nat
+end SecondGraph
+
+/- Same-short-name functions retain distinct semantic identities even when
+   their graph schemas match. The second is kept as a leaf rather than merged
+   into the first function's relation. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  let nat := mkConst ``Nat
+  withLocalDeclD `x nat fun x => do
+  withLocalDeclD `y nat fun y => do
+    let first := mkApp (mkConst ``FirstGraph.inspect) x
+    let second := mkApp (mkConst ``SecondGraph.inspect) y
+    let root ← mkAppM ``Prod.mk #[first, second]
+    let oldMessages ← Lean.Core.getMessageLog
+    let data ← relationalize root { functionGraphs := true }
+    Lean.Core.setMessageLog oldMessages
+    assertCount "qualified graph collision" data "inspect" 1
+
+/- Symbolic observation results are still Lean-interpreted atoms. A predicate
+   can select the exact open application even though it cannot be evaluated. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  let nat := mkConst ``Nat
+  withLocalDeclD `measure (← mkArrow nat nat) fun measure => do
+  withLocalDeclD `x nat fun x => do
+    let application := mkApp measure x
+    let (data, prov, evidence) ← relationalizeWithEvidence x {} #[application]
+    let predicate ← withLocalDeclD `n nat fun n => do
+      mkLambdaFVars #[n] (← mkEq n application)
+    let selected ← evalLeanRel { datum := x, di := data, prov, evidence } predicate
+    let some point := (tuples data "measure")[0]?
+      | throwError "missing symbolic observation tuple"
+    let some resultId := point.atoms[1]? | throwError "missing symbolic result"
+    unless selected == #[#[resultId]] do
+      throwError "Lean selector could not see a symbolic observation result"
+
+def negativeThree (_ : Nat) : Int := -3
+
+/- Negative Int observations are constructor values, not residual named
+   computations with generated unknown labels. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  let zero := mkRawNatLit 0
+  let application := mkApp (mkConst ``negativeThree) zero
+  let data ← relationalize zero {} #[application]
+  let some point := (tuples data "negativeThree")[0]?
+    | throwError "missing negative Int observation"
+  let some result := data.atoms.find? (fun atom => point.atoms[1]? == some atom.id)
+    | throwError "missing negative Int result"
+  if result.label.startsWith "?" then
+    throwError "negative Int was classified as a symbolic residual"
+
+/- A rejected observation schema is checked before any endpoints or result
+   atoms are allocated. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  let leaf := mkConst ``Tree.leaf
+  let application := height leaf
+  let relations : Std.HashMap String (Array String × Array JsonTuple) :=
+    ({} : Std.HashMap String (Array String × Array JsonTuple))
+      |>.insert "height" (#[], #[])
+  let initial : WalkState := { relations }
+  let oldMessages ← Lean.Core.getMessageLog
+  let (_, state) ← (addObservation {} application application #[leaf] #[]).run initial
+  Lean.Core.setMessageLog oldMessages
+  unless state.atoms.isEmpty && state.applicationAtoms.isEmpty do
+    throwError "rejected observation left orphaned atoms"
+
+/- Warnings produced during saved-state observation preparation are replayed
+   after restoration instead of disappearing with the temporary meta state. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `l tree fun l => do
+  withLocalDeclD `r tree fun r => do
+  withLocalDeclD `hl (← mkEq (height l) (mkRawNatLit 2)) fun hl => do
+  withLocalDeclD `hr (← mkEq (height r) (mkRawNatLit 1)) fun hr => do
+    let root := node l 7 r
+    let application := height root
+    let before ← Lean.Core.getMessageLog
+    let _ ← prepareObservations
+      { observations := #[application], maxObservationSteps := 1 } #[root] #[hl, hr]
+    let after ← Lean.Core.getMessageLog
+    Lean.Core.setMessageLog before
+    unless after.toArray.size > before.toArray.size do
+      throwError "observation warning was rolled back with the meta state"
 
 /- Prepared simplifications carry checked equalities and leave the caller's
    metavariables untouched. -/

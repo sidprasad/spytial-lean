@@ -466,33 +466,34 @@ private meta def elabTermInstantiated (t : Syntax) : TermElabM Expr := do
   Term.synthesizeSyntheticMVarsNoPostponing
   instantiateMVars e
 
-/-- Elaborate named unary data functions into requested applications. Their
-    function heads later parameterize relationalization of the root and any
-    proof-context expressions. -/
-private meta def resolveObservationTerms (subject : Expr) (observerSyntaxes : Array Syntax) :
+/-- Elaborate named unary data functions into typed templates. The placeholder
+    records the observer's own domain; it is replaced by every compatible
+    represented value later, so the selected root need not itself have that
+    domain (for example, inspect both trees inside a pair with `height`). -/
+private meta def resolveObservationTerms (observerSyntaxes : Array Syntax) :
     TermElabM (Array Expr) :=
   observerSyntaxes.mapM fun observerSyntax => do
     let observer ← elabTermInstantiated observerSyntax
-    let observation ← try
-      mkAppM' observer #[subject]
-    catch _ =>
-      throwErrorAt observerSyntax m!"'observing' expects a unary function applicable to \
-        the selected value, but '{observerSyntax}' has type {← inferType observer}"
+    let (arguments, binderInfos, _) ← forallMetaTelescopeReducing (← inferType observer)
+    let explicitArguments := (arguments.zip binderInfos).filterMap fun (argument, info) =>
+      if info.isExplicit then some argument else none
+    unless explicitArguments.size == 1 do
+      throwErrorAt observerSyntax m!"'observing' expects a unary function, but \
+        '{observerSyntax}' has type {← inferType observer}"
+    let observation := mkAppN observer arguments
     if ← isProp observation then
       throwErrorAt observerSyntax "'observing' expects a data-returning function, not a predicate"
     let resultType ← whnf (← inferType observation)
-    if resultType.isForall then
-      throwErrorAt observerSyntax "'observing' expects a unary function"
     if resultType.isSort then
       throwErrorAt observerSyntax "'observing' expects a function returning a data value"
     unless (← graphSide? observation).isSome do
       throwErrorAt observerSyntax "'observing' expects a named function"
     return observation
 
-private meta def resolveObservations (subject : Expr) (stx : Syntax) :
+private meta def resolveObservations (stx : Syntax) :
     TermElabM (Array Expr) :=
   if stx.getNumArgs == 0 then pure #[]
-  else resolveObservationTerms subject stx[2].getSepArgs
+  else resolveObservationTerms stx[2].getSepArgs
 
 /-- Elaborate a term to a fully instantiated expression and relationalize it,
     keeping the provenance raw Lean selectors resolve against. -/
@@ -500,7 +501,7 @@ private meta def elabRelationalized (t : Syntax) (cfg : WalkConfig := {})
     (observerSyntaxes : Array Syntax := #[]) :
     TermElabM (Expr × Array Expr × JsonDataInstance × Provenance × SelectorEvidence) := do
   let e ← elabTermInstantiated t
-  let observations ← resolveObservationTerms e observerSyntaxes
+  let observations ← resolveObservationTerms observerSyntaxes
   let (di, prov, evidence) ← relationalizeWithEvidence e cfg observations
   return (e, observations, di, prov, evidence)
 
@@ -838,7 +839,7 @@ private meta def spytialInContextTac (term : Syntax)
   let (props?, status) ← withMainContext do
     let subject ← elabTermInstantiated term
     spytialInContextProps? subject ops? {} (← resolveFyi fyiSyntax)
-      (← resolveObservations subject observingSyntax)
+      (← resolveObservations observingSyntax)
   if status.inconsistent then
     logWarning "spytial: IYKYK found an inconsistent context; no diagram rendered"
     return
@@ -878,7 +879,7 @@ open Tactic in
 @[tactic spytialDatumTactic]
 meta def elabSpytialDatumTactic : Tactic := fun stx => withMainContext do
   let subject ← elabTermInstantiated stx[1]
-  let observations ← resolveObservations subject stx[2]
+  let observations ← resolveObservations stx[2]
   let (status, view?) ← wdykInContext subject {}
     (contextConfig (← resolveFyi stx[3])) observations
   if status.inconsistent then

@@ -270,7 +270,7 @@ private meta def evalCompiledRel (ctx : LeanSelCtx) (fn : Expr)
 
 /-! ## Predicates over the represented datum -/
 
-private meta structure PredicateEvidence where
+meta structure PredicateEvidence where
   facts : Array (Expr × Expr)
   simpContext : Simp.Context
   simprocs : Simp.SimprocsArray
@@ -357,8 +357,8 @@ private meta def sortSelected (di : JsonDataInstance) (tuples : Array (Array Str
 /-- Resolve an existing Lean selector against the represented datum. Closed
     evaluation and proof-backed simplification are two ways to establish the
     same predicate, in commands and proof contexts alike. -/
-meta def evalLeanRel (ctx : LeanSelCtx) (fn : Expr) : MetaM (Array (Array String)) :=
-    withoutModifyingState <| withNewMCtxDepth do
+private meta def evalLeanRelPrepared (ctx : LeanSelCtx) (evidence : PredicateEvidence)
+    (fn : Expr) : MetaM (Array (Array String)) := do
   let fn ← instantiateMVars fn
   if fn.hasExprMVar || fn.hasLevelMVar then
     throwError "a Lean selector cannot contain unresolved holes"
@@ -376,7 +376,6 @@ meta def evalLeanRel (ctx : LeanSelCtx) (fn : Expr) : MetaM (Array (Array String
       catch _ => pure false
     else pure true
   else pure false
-  let evidence ← preparePredicateEvidence ctx.evidence
   let columns ← kind.domains.mapM (predicateColumn ctx evidence)
   -- Include backed custom roots too, not only the legacy value-provenance
   -- table. Each atom contributes one closed representative to compiled code.
@@ -417,6 +416,13 @@ meta def evalLeanRel (ctx : LeanSelCtx) (fn : Expr) : MetaM (Array (Array String
       return selected
   return sortSelected ctx.di (← visit columns.toList #[] #[] selected)
 
+/-- Resolve one Lean selector directly. Bulk spec resolution uses the prepared
+    variant above so several `lean (...)` leaves share one checked evidence and
+    simplifier context. -/
+meta def evalLeanRel (ctx : LeanSelCtx) (fn : Expr) : MetaM (Array (Array String)) :=
+    withoutModifyingState <| withNewMCtxDepth do
+  evalLeanRelPrepared ctx (← preparePredicateEvidence ctx.evidence) fn
+
 /-- Tuples as a selector: `` `a1->`a2 + `a3->`a4 ``, or `none` when empty. The
     products bind tighter than the union, so neither side needs parentheses. -/
 private meta def tupleUnion (tuples : Array (Array String)) : Sel :=
@@ -436,64 +442,69 @@ the tuples it selects and leaving everything else alone. It mirrors
 
 mutual
 
-meta partial def Sel.resolveLean (ctx : LeanSelCtx) : Sel → MetaM Sel
-  | .leanRel fn => return tupleUnion (← evalLeanRel ctx fn)
-  | .union a b => return .union (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .diff a b => return .diff (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .inter a b => return .inter (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .prod a b => return .prod (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .prodMult a lm rm b => return .prodMult (← a.resolveLean ctx) lm rm (← b.resolveLean ctx)
-  | .join a b => return .join (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .override a b => return .override (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .restrictDom a b => return .restrictDom (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .restrictRan a b => return .restrictRan (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .trans a => return .trans (← a.resolveLean ctx)
-  | .reflTrans a => return .reflTrans (← a.resolveLean ctx)
-  | .transpose a => return .transpose (← a.resolveLean ctx)
+meta partial def Sel.resolveLean (ctx : LeanSelCtx) (evidence : PredicateEvidence) :
+    Sel → MetaM Sel
+  | .leanRel fn => return tupleUnion (← evalLeanRelPrepared ctx evidence fn)
+  | .union a b => return .union (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
+  | .diff a b => return .diff (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
+  | .inter a b => return .inter (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
+  | .prod a b => return .prod (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
+  | .prodMult a lm rm b => return .prodMult (← a.resolveLean ctx evidence) lm rm (← b.resolveLean ctx evidence)
+  | .join a b => return .join (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
+  | .override a b => return .override (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
+  | .restrictDom a b => return .restrictDom (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
+  | .restrictRan a b => return .restrictRan (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
+  | .trans a => return .trans (← a.resolveLean ctx evidence)
+  | .reflTrans a => return .reflTrans (← a.resolveLean ctx evidence)
+  | .transpose a => return .transpose (← a.resolveLean ctx evidence)
   | .compr binders body => do
-    let binders ← binders.mapM fun (x, dom) => return (x, ← dom.resolveLean ctx)
-    return .compr binders (← body.resolveLean ctx)
+    let binders ← binders.mapM fun (x, dom) => return (x, ← dom.resolveLean ctx evidence)
+    return .compr binders (← body.resolveLean ctx evidence)
   | e@(.sig ..) | e@(.rel ..) | e@(.var ..) | e@.univ | e@.iden | e@.none_
   | e@(.atomLit ..) | e@(.raw ..) => return e
 
-meta partial def SelInt.resolveLean (ctx : LeanSelCtx) : SelInt → MetaM SelInt
-  | .card e => return .card (← e.resolveLean ctx)
-  | .proj e => return .proj (← e.resolveLean ctx)
-  | .agg op e => return .agg op (← e.resolveLean ctx)
-  | .builtin op args => return .builtin op (← args.mapM (·.resolveLean ctx))
+meta partial def SelInt.resolveLean (ctx : LeanSelCtx) (evidence : PredicateEvidence) :
+    SelInt → MetaM SelInt
+  | .card e => return .card (← e.resolveLean ctx evidence)
+  | .proj e => return .proj (← e.resolveLean ctx evidence)
+  | .agg op e => return .agg op (← e.resolveLean ctx evidence)
+  | .builtin op args => return .builtin op (← args.mapM (·.resolveLean ctx evidence))
   | .sumQuant x dom body =>
-    return .sumQuant x (← dom.resolveLean ctx) (← body.resolveLean ctx)
+    return .sumQuant x (← dom.resolveLean ctx evidence) (← body.resolveLean ctx evidence)
   | e@(.lit ..) => return e
 
-meta partial def SelVal.resolveLean (ctx : LeanSelCtx) : SelVal → MetaM SelVal
-  | .label proj e => return .label proj (← e.resolveLean ctx)
+meta partial def SelVal.resolveLean (ctx : LeanSelCtx) (evidence : PredicateEvidence) :
+    SelVal → MetaM SelVal
+  | .label proj e => return .label proj (← e.resolveLean ctx evidence)
   | e@(.ctorLit ..) | e@(.strLit ..) | e@(.boolLit ..) => return e
 
-meta partial def SelForm.resolveLean (ctx : LeanSelCtx) : SelForm → MetaM SelForm
-  | .subset a b => return .subset (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .notSubset a b => return .notSubset (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .ni a b => return .ni (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .notNi a b => return .notNi (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .eq a b => return .eq (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .neq a b => return .neq (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .veq a b => return .veq (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .vneq a b => return .vneq (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .icmp op a b => return .icmp op (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .and a b => return .and (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .or a b => return .or (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .xor a b => return .xor (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .iff a b => return .iff (← a.resolveLean ctx) (← b.resolveLean ctx)
-  | .implies a b => return .implies (← a.resolveLean ctx) (← b.resolveLean ctx)
+meta partial def SelForm.resolveLean (ctx : LeanSelCtx) (evidence : PredicateEvidence) :
+    SelForm → MetaM SelForm
+  | .subset a b => return .subset (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
+  | .notSubset a b => return .notSubset (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
+  | .ni a b => return .ni (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
+  | .notNi a b => return .notNi (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
+  | .eq a b => return .eq (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
+  | .neq a b => return .neq (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
+  | .veq a b => return .veq (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
+  | .vneq a b => return .vneq (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
+  | .icmp op a b => return .icmp op (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
+  | .and a b => return .and (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
+  | .or a b => return .or (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
+  | .xor a b => return .xor (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
+  | .iff a b => return .iff (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
+  | .implies a b => return .implies (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
   | .ite c t e =>
-    return .ite (← c.resolveLean ctx) (← t.resolveLean ctx) (← e.resolveLean ctx)
-  | .not a => return .not (← a.resolveLean ctx)
-  | .some_ a => return .some_ (← a.resolveLean ctx)
-  | .no a => return .no (← a.resolveLean ctx)
-  | .lone a => return .lone (← a.resolveLean ctx)
-  | .one a => return .one (← a.resolveLean ctx)
+    return .ite (← c.resolveLean ctx evidence) (← t.resolveLean ctx evidence)
+      (← e.resolveLean ctx evidence)
+  | .not a => return .not (← a.resolveLean ctx evidence)
+  | .some_ a => return .some_ (← a.resolveLean ctx evidence)
+  | .no a => return .no (← a.resolveLean ctx evidence)
+  | .lone a => return .lone (← a.resolveLean ctx evidence)
+  | .one a => return .one (← a.resolveLean ctx evidence)
   | .quant q disj binders body => do
-    let binders ← binders.mapM fun (x, dom) => return (x, ← dom.resolveLean ctx)
-    return .quant q disj binders (← body.resolveLean ctx)
+    let binders ← binders.mapM fun (x, dom) => return (x, ← dom.resolveLean ctx evidence)
+    return .quant q disj binders (← body.resolveLean ctx evidence)
 
 end
 
@@ -549,16 +560,17 @@ meta def SpytialSpec.hasLeanRel (spec : SpytialSpec) : Bool :=
     | .edgeStyle .. | .hideField .. | .attribute .. | .flag .. => false
 
 /-- One op's selectors, resolved against the datum. -/
-private meta def resolveOp (ctx : LeanSelCtx) : SpytialOp → MetaM SpytialOp
-  | .orientation s ds => return .orientation (← s.resolveLean ctx) ds
-  | .align s d => return .align (← s.resolveLean ctx) d
-  | .cyclic s d => return .cyclic (← s.resolveLean ctx) d
-  | .group s n e => return .group (← s.resolveLean ctx) n e
-  | .hideAtom s => return .hideAtom (← s.resolveLean ctx)
-  | .size s w h => return .size (← s.resolveLean ctx) w h
-  | .atomStyle s b f i l => return .atomStyle (← s.resolveLean ctx) b f i l
-  | .tag s n v => return .tag (← s.resolveLean ctx) n v
-  | .inferredEdge n s l => return .inferredEdge n (← s.resolveLean ctx) l
+private meta def resolveOp (ctx : LeanSelCtx) (evidence : PredicateEvidence) :
+    SpytialOp → MetaM SpytialOp
+  | .orientation s ds => return .orientation (← s.resolveLean ctx evidence) ds
+  | .align s d => return .align (← s.resolveLean ctx evidence) d
+  | .cyclic s d => return .cyclic (← s.resolveLean ctx evidence) d
+  | .group s n e => return .group (← s.resolveLean ctx evidence) n e
+  | .hideAtom s => return .hideAtom (← s.resolveLean ctx evidence)
+  | .size s w h => return .size (← s.resolveLean ctx evidence) w h
+  | .atomStyle s b f i l => return .atomStyle (← s.resolveLean ctx evidence) b f i l
+  | .tag s n v => return .tag (← s.resolveLean ctx evidence) n v
+  | .inferredEdge n s l => return .inferredEdge n (← s.resolveLean ctx evidence) l
   | op@(.edgeStyle ..) | op@(.hideField ..) | op@(.attribute ..) | op@(.flag ..) =>
     return op
 
@@ -568,9 +580,13 @@ private meta def resolveOp (ctx : LeanSelCtx) : SpytialOp → MetaM SpytialOp
     report cites what they wrote, not the atom ids it resolved to. -/
 meta def resolveLeanSelectors (datum : Expr) (di : JsonDataInstance)
     (prov : Provenance) (spec : SpytialSpec)
-    (evidence : SelectorEvidence := {}) : MetaM SpytialSpec := do
+    (evidence : SelectorEvidence := {}) : MetaM SpytialSpec :=
+    withoutModifyingState <| withNewMCtxDepth do
+  unless spec.hasLeanRel do return spec
   let ctx : LeanSelCtx := { datum, di, prov, evidence }
-  spec.mapM fun stamped => return { stamped with op := ← resolveOp ctx stamped.op }
+  let prepared ← preparePredicateEvidence evidence
+  spec.mapM fun stamped =>
+    return { stamped with op := ← resolveOp ctx prepared stamped.op }
 
 end
 
