@@ -235,18 +235,19 @@ atoms (arity 1), so `hideAtom left` is a compile error. `orientation` and
 folding the columns between into the edge label — or one, when `draw` says
 where the single atom's other end goes.
 
-Each accepted form also says what the engine does with the columns between a
-tuple's first and last. Where it discards them, a selector wider than two
-columns warns: `orientation tr below` on a ternary `tr` draws the first atom
-to the third and the middle one is not read. Where it shows them —
+For each accepted form the derivation knows what the engine does with the
+columns between a tuple's first and last. Where it discards them, a selector
+wider than two columns warns: `orientation tr below` on a ternary `tr` draws
+the first atom to the third and the middle one is not read. Where it shows
+them —
 `inferredEdge`, which folds them into the edge label, and `tag`, which uses
 them as key segments — a wide selector is doing what the position is for, and
 there is no warning.
 
 A group name or an inferred-edge name introduced by an earlier op lives in the
 drawn graph, which the engine never queries: naming one in a *selector*
-warns. In a *field-name* position it depends on the position, which the
-manifest states — `edgeStyle hop` resolves the inferred edge `hop`, while
+warns. In a *field-name* position it depends on the position, which is stated
+per position — `edgeStyle hop` resolves the inferred edge `hop`, while
 `hideField hop` and `attribute hop` match before that edge exists and warn.
 
 Checking is **strict** exactly when the vocabulary is closed: a monomorphic
