@@ -121,14 +121,16 @@ the Lean `@[widget_module]`.
 
 ## Adding a new SpytialOp
 
-To add a new layout operation:
-
-1. Add the constructor to `SpytialOp` in `SpytialLean/Spec.lean`
-2. Add it to `isConstraint` (if it's a constraint) or leave it as a directive
-3. Add a JSON serialization case in `SpytialOp.toJson` (in `SpytialLean/Spec.lean`)
-4. Add a keyword case to `elabSpytialOp` in `SpytialLean/Command.lean`, giving each selector position its `ArityExpect` and interpreting the other arguments
-5. Add an example in a `Demos/` file and a golden in `SpytialTests/SelectorTest.lean`
-6. Rebuild: `lake build Demos SpytialTests`
+There is nothing to add here. The op surface is derived from spytial-core's
+`docs/spytial-language.json` while `SpytialLean/SpecLang.lean` elaborates, and
+the selector grammar from simple-graph-query's `docs/sgq-language.json` in
+`SpytialLean/Sgq.lean`; the elaborator, the serializer and the usage strings
+read those tables. A new item or field lands by bumping the dependency and
+rebuilding, and a shape the tables cannot represent fails that build naming
+the item. What stays hand-written — the Lean-side spelling choices and the
+facts the manifest does not carry yet — is listed in
+[docs/language-manifests.md](docs/language-manifests.md). Pin new surface in
+`SpytialTests/SpecSurfaceTest.lean` and show it in a `Demos/` file.
 
 ## Debugging
 
