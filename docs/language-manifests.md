@@ -54,7 +54,10 @@ which spelling to emit where the engine accepts several
 lay out as Lean arguments (`SpecLang.lean`'s leading-selector override and
 bare-word bool sugar). Every table entry is keyed by manifest ids and
 checked against the live manifest, so an entry that stops matching upstream
-fails the build by name.
+fails the build by name. Positional order is the manifest's field order, and a
+bare scalar in a block fills the first field of its class; core states
+neither as stable, so `SpecSurfaceTest.lean` pins both and fails when they
+move.
 
 Three facts the manifest does not carry are tables beside it, proposed
 upstream as spytial-core#580 and #581 and kept here until a release carries

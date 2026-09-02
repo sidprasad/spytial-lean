@@ -623,6 +623,15 @@ public meta inductive FieldType where
   | color
   deriving Repr, Inhabited
 
+/-- What a bare string or number inside a `(block …)` may fill. -/
+public meta def FieldType.isStringy : FieldType → Bool
+  | .color | .iconPath | .str => true
+  | _ => false
+
+public meta def FieldType.isNumeric : FieldType → Bool
+  | .number .. => true
+  | _ => false
+
 public meta structure FieldSpec where
   id : FieldId
   type : FieldType

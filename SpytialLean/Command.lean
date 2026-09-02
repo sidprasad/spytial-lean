@@ -123,10 +123,6 @@ private meta def itemUsage (i : ItemSpec) : String :=
   let hold := if i.supportsHold then [s!"[hold: {orVals holdValues}]"] else []
   " ".intercalate ([itemName i.id] ++ lead ++ positional ++ rest ++ hold)
 
-private meta def isStringy : SpecLang.FieldType → Bool
-  | .color | .iconPath | .str => true
-  | _ => false
-
 open SpecLang in
 private meta def bareWordVocab (i : ItemSpec) : List String :=
   i.fields.flatMap fun f =>
@@ -135,10 +131,6 @@ private meta def bareWordVocab (i : ItemSpec) : List String :=
       | .«enum» vs _ => if f.alt.isSome then [] else vs
       | .boolean _ => (boolSugar.filter (fun (_, bf, _) => bf == f.id)).map (·.1)
       | _ => []
-
-private meta def isNumeric : SpecLang.FieldType → Bool
-  | .number .. => true
-  | _ => false
 
 private meta def jsonNumOf? (stx : Syntax) : Option JsonNumber :=
   if let some n := stx.isNatLit? then
@@ -250,12 +242,12 @@ private meta def elabBlock (usage : String) (b : BlockSpec) (stx : Syntax) :
       throwErrorAt ref m!"duplicate {fieldName f} in ({blockName b.id} …)"
   for inner in blockArgs stx do
     if let some s := inner.isStrLit? then
-      let some f := b.fields.find? (isStringy ·.type)
+      let some f := b.fields.find? (·.type.isStringy)
         | throwErrorAt inner m!"({blockName b.id} …) takes no string; usage: {usage}"
       dup inner f.id set
       set := set.push (f.id, .str s)
     else if let some n := jsonNumOf? inner then
-      let some f := b.fields.find? (isNumeric ·.type)
+      let some f := b.fields.find? (·.type.isNumeric)
         | throwErrorAt inner m!"({blockName b.id} …) takes no number; usage: {usage}"
       dup inner f.id set
       checkBounds inner s!"{fieldName f.id} of ({blockName b.id} …)" f n
@@ -451,7 +443,7 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
         tail := some (f, chosen.push w, inner)
       else if i == 0 && item.leadingSelector.isSome
           && (match pending.head?.bind item.field? with
-              | some f => isNumeric f.type
+              | some f => f.type.isNumeric
               | none => true)
           && !isNumber inner && !isTrailingWord inner then
         let some lf := item.leadingSelector | unreachable!
