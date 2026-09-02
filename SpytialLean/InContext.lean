@@ -160,6 +160,13 @@ private meta def walkFact (cfg : WalkConfig)
       if seen.equal argument then
         atomId? := some atomId
         break
+    -- Root and earlier fact walks record every visited subterm, not just their
+    -- explicit anchors. A fact about one of those subterms reuses the drawn atom.
+    if atomId?.isNone then
+      for (seen, atomId) in (← get).selectorTerms do
+        if seen.equal argument then
+          atomId? := some atomId
+          break
     let atomId ← match atomId? with
       | some atomId => pure atomId
       | none => do
