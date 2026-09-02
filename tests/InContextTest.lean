@@ -64,6 +64,19 @@ private meta def node (left right : Expr) : Expr :=
       "Tree|node\nTree|leaf\nNat|1\nTree|leaf\nNat|2\n\
        left[Tree,Tree]:0,1\nright[Tree,Tree]:0,3\nvalue[Tree,Nat]:1,2;3,4"
 
+/- A fact whose endpoint is a constructor subterm reuses the atom reached by
+   the root walk instead of drawing the entire subtree a second time. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `P (← mkArrow tree (mkSort Level.zero)) fun P => do
+    let child := node (leaf 1) (leaf 2)
+    let root := node child (leaf 3)
+    withLocalDeclD `h (mkApp P child) fun _ => do
+      let view ← viewOf "consumer.sharedSubtermFact" root { rootOnly := false }
+      assertCanon "consumer.sharedSubtermFact" view.data
+        "Tree|node\nTree|node\nTree|leaf\nNat|1\nTree|leaf\nNat|2\nTree|leaf\nNat|3\n\
+         P[Tree]:1\nleft[Tree,Tree]:1,2;0,1\nright[Tree,Tree]:1,4;0,6\n\
+         value[Tree,Nat]:2,3;4,5;6,7"
+
 /-! ## Existential identity survives translation -/
 
 #eval show Lean.Elab.TermElabM Unit from do
