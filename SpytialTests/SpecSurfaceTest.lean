@@ -239,3 +239,36 @@ error: edgeStyle sets nothing; usage: edgeStyle <field> [selector: <selector>] [
 -/
 #guard_msgs in
 #spytial.spec sG with [edgeStyle lo]
+
+/-! ## Field order is the surface
+
+Positional arguments are the required fields in the manifest's order, and a
+bare string or number inside a `(block …)` fills the first field of its class.
+Core states neither as stable; this pin yells when either moves. -/
+
+/--
+info: orientation: selector directions
+align: selector direction
+group: selector name
+size: width height
+tag: toTag name value
+inferredEdge: name selector
+lineStyle: a bare string is color, not highlight
+-/
+#guard_msgs in
+open SpecLang in
+run_cmd do
+  let items := allItems.filterMap fun i =>
+    let s := ItemSpec.of i
+    if s.positional.length < 2 then none
+    else some s!"{itemName i}: {" ".intercalate (s.positional.map fieldName)}"
+  let blocks := allBlocks.flatMap fun b =>
+    let fs := (BlockSpec.of b).fields
+    [("string", FieldType.isStringy), ("number", FieldType.isNumeric)].filterMap
+      fun (what, cls) =>
+        match fs.filter (cls ·.type) with
+        | f :: rest@(_ :: _) =>
+          some s!"{blockName b}: a bare {what} is {fieldName f.id}, not \
+            {", ".intercalate (rest.map (fieldName ·.id))}"
+        | _ => none
+  logInfo (String.intercalate "\n" (items ++ blocks))

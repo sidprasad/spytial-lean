@@ -37,6 +37,10 @@ meta structure LeanRelKind where
 
 meta def LeanRelKind.arity (k : LeanRelKind) : Nat := k.domains.size
 
+/-- `Sel.lean` spells `selIdx1..maxSelArity` and `locate1..maxSelArity` by hand;
+    the arity checks below keep `n` inside that range. -/
+private meta def rung (stem : Name) (n : Nat) : Name := stem.appendAfter (toString n)
+
 /-- Reducible normalization at each level, so an `abbrev` standing for a
     product contributes its own columns rather than reading as one. -/
 private meta partial def splitProds (α : Expr) : MetaM (Array Expr) := do
@@ -173,12 +177,7 @@ private meta def evalCompiledRel (ctx : LeanSelCtx) (fn : Expr)
           {maxEnumeratedPoints}; write a `Spytial.Sel` that computes its \
           tuples instead"
       let p ← if isProp then boolifyPred fn kind.domains else pure fn
-      let helper := match kind.domains.size with
-        | 1 => ``Spytial.Sel.selIdx1
-        | 2 => ``Spytial.Sel.selIdx2
-        | 3 => ``Spytial.Sel.selIdx3
-        | _ => ``Spytial.Sel.selIdx4
-      mkAppM helper (us.push p)
+      mkAppM (rung `Spytial.Sel.selIdx kind.domains.size) (us.push p)
     | .sel T =>
       unless isClosedValue ctx.datum do
         throwError "a `Spytial.Sel` runs on the whole value being drawn, but \
@@ -191,12 +190,7 @@ private meta def evalCompiledRel (ctx : LeanSelCtx) (fn : Expr)
         else throwError "this selector expects a value of type {T}, but the \
           value being drawn has type {datumTy}"
       let body ← mkAppM ``Spytial.Sel.select #[fn, datum]
-      let helper := match kind.domains.size with
-        | 1 => ``Spytial.Sel.locate1
-        | 2 => ``Spytial.Sel.locate2
-        | 3 => ``Spytial.Sel.locate3
-        | _ => ``Spytial.Sel.locate4
-      try mkAppM helper (us.push body)
+      try mkAppM (rung `Spytial.Sel.locate kind.domains.size) (us.push body)
       catch ex => throwError "{ex.toMessageData}\n\nthis selector returns \
         values, and a returned value is located by `==` — add `deriving BEq` \
         to the returned type"

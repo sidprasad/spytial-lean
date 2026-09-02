@@ -72,12 +72,18 @@ meta def declareAll (all enum : Name) (ids : List String) : CommandElabM Unit :=
   elabCommand (← `(public meta def $(mkIdent all):ident :
       List $(mkIdent enum):ident := [$refs,*]))
 
-meta def declareNames (fn enum : Name) (ids : List String) : CommandElabM Unit := do
+/-- `fn : enum → ty` as one exhaustive match, so a row that goes missing is a
+    compile error rather than a default. -/
+meta def declareTable (fn enum : Name) (ty : Term) (rows : List (String × Term)) :
+    CommandElabM Unit := do
   let ns ← getCurrNamespace
-  let alts : Array (TSyntax ``Lean.Parser.Term.matchAlt) ← ids.toArray.mapM fun s =>
-    `(Lean.Parser.Term.matchAltExpr| | $(enumCtor ns enum s):term => $(quote s):term)
+  let alts : Array (TSyntax ``Lean.Parser.Term.matchAlt) ← rows.toArray.mapM fun (s, v) =>
+    `(Lean.Parser.Term.matchAltExpr| | $(enumCtor ns enum s):term => $v:term)
   elabCommand (← `(public meta def $(mkIdent fn):ident (id : $(mkIdent enum):ident) :
-      String := match id with $alts:matchAlt*))
+      $ty := match id with $alts:matchAlt*))
+
+meta def declareNames (fn enum : Name) (ids : List String) : CommandElabM Unit := do
+  declareTable fn enum (← `(String)) (ids.map fun s => (s, quote s))
 
 meta def declareDef (name : Name) (ty val : Term) : CommandElabM Unit := do
   elabCommand (← `(public meta def $(mkIdent name):ident : $ty := $val))

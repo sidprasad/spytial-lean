@@ -1247,10 +1247,8 @@ info: {"constraints":
 
 /-! ## A parenthesized op argument: style block or selector
 
-`(blockName arg…)` and a parenthesized selector both open `( ident ident`, so
-the close is the first thing that separates them: an op argument is a selector
-unless it is a complete block form, and a form complete as both reads as a
-block. -/
+`(blockName arg…)` and a parenthesized selector both open `( ident`; the head
+decides. A block name opens a block, anything else is a selector. -/
 
 /--
 info: {"constraints":
@@ -1283,13 +1281,14 @@ info: {"constraints":
 #guard_msgs in
 #spytial.spec sExample with [orientation (all x : SBDD | x in SBDD) below]
 
-/-- error: unknown block '(some …)'; usage: hideAtom <selector> -/
+-- `some` is not a block name, so this reaches the kind checker as a selector
+/-- error: a selector picks out atoms or tuples, but this is a formula -/
 #guard_msgs in
 #spytial.spec sExample with [hideAtom (some lo)]
 
-/-- error: a selector picks out atoms or tuples, but this is a formula -/
+/-- error: unknown block '(lineStyle …)'; usage: hideAtom <selector> -/
 #guard_msgs in
-#spytial.spec sExample with [hideAtom (some (lo))]
+#spytial.spec sExample with [hideAtom (lineStyle "red")]
 
 /-- info: {"directives": [{"atomStyle": {"borderStyle": {"color": "red"}}}]} -/
 #guard_msgs in
