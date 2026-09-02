@@ -282,6 +282,11 @@ private meta def parseManifest : Except String RawManifest := do
       unless parts.any (·.1 == role) do
         .error s!"{c.id}: the template is written with the part {role.quote}, \
           which it has no spelling for"
+    for item in c.template do
+      if let .«optional» inner := item then
+        unless inner.all (fun i => i matches .operand _ | .part ..) do
+          .error s!"{c.id}: an optional template group may hold only operands \
+            and parts; the elaborator reads nothing else inside one"
     return { id := c.id, prec := c.precedence, fixity := c.fixity,
              evaluates := c.evaluates, kinds := c.kinds, arity := c.arity,
              template := c.template, parts,

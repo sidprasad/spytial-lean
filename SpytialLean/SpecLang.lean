@@ -409,6 +409,12 @@ private meta def itemOf (displayedBy : List String) (j : Json) :
   for f in fields do
     if f.required && f.type.isBlock then
       .error s!"{id}.{f.name}: a required block has no positional surface"
+    if f.required && f.type matches RawFieldType.boolean _ then
+      .error s!"{id}.{f.name}: a required boolean has no positional surface; \
+        booleans are trailing bare words"
+    if !f.required && f.type matches RawFieldType.enumList .. then
+      .error s!"{id}.{f.name}: an optional enum-list has no surface; enum-lists \
+        are positional"
   for f in fields do
     if let .selector forms := f.type then
       for r in forms.filterMap (·.requires) do
