@@ -714,8 +714,9 @@ private meta def quoteBlock (b : RawBlock) : Term :=
 
 elab "derive_spec_tables" : command => do
   let m ← manifest!
-  declareDef `items (← `(Array ItemSpec)) (← `(#[$((m.items.map quoteItem).toArray),*]))
-  declareDef `blocks (← `(Array BlockSpec)) (← `(#[$((m.blocks.map quoteBlock).toArray),*]))
+  declareTable `ItemSpec.of `ItemId (← `(ItemSpec)) (m.items.map fun i => (i.id, quoteItem i))
+  declareTable `BlockSpec.of `BlockId (← `(BlockSpec))
+    (m.blocks.map fun b => (b.name, quoteBlock b))
   declareDef `holdField (← `(String)) (quote m.lexical.hold.field)
   declareDef `holdValues (← `(List String)) (quote m.lexical.hold.values)
   declareDef `holdDefault (← `(String)) (quote m.lexical.hold.default)
@@ -730,16 +731,6 @@ elab "derive_spec_tables" : command => do
 derive_spec_tables
 
 /-! ## Reading the tables -/
-
-private meta def itemTable : Std.HashMap ItemId ItemSpec :=
-  items.foldl (init := {}) fun m i => m.insert i.id i
-
-private meta def blockTable : Std.HashMap BlockId BlockSpec :=
-  blocks.foldl (init := {}) fun m b => m.insert b.id b
-
-public meta def ItemSpec.of (i : ItemId) : ItemSpec := itemTable.getD i default
-
-public meta def BlockSpec.of (b : BlockId) : BlockSpec := blockTable.getD b default
 
 public meta def ItemSpec.field? (i : ItemSpec) (f : FieldId) : Option FieldSpec :=
   i.fields.find? (·.id == f)
