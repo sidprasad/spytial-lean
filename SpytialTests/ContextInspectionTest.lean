@@ -272,7 +272,7 @@ end
     let result ← view (node l 1 r)
     assertCount "symbolic heights" result.data "height" 3
     assertCount "no implicit maximum observation" result.data "max" 0
-    assertCount "no implicit addition observation" result.data "add" 0
+    assertCount "no implicit addition observation" result.data "hAdd" 0
     assertCount "no invented ordering" result.data "le" 0
 
 /- Facts about the children compute the parent's height before any context
@@ -316,7 +316,7 @@ end
   withLocalDeclD `hl (← mkEq (height l) n) fun _ => do
   withLocalDeclD `hr (← mkEq (height r) (mkRawNatLit 0)) fun _ => do
     let result ← view (node l 7 r)
-    assertCount "symbolic result does not expose addition" result.data "add" 0
+    assertCount "symbolic result does not expose addition" result.data "hAdd" 0
     assertCount "maximum simplifies away" result.data "max" 0
     assertCount "no Nat implementation field" result.data "n" 0
     if result.data.atoms.any (·.label == "succ") then
@@ -334,7 +334,7 @@ end
     let root := mkApp3 (mkConst ``Tree.node) leaf key leaf
     let data ← relationalize root {} #[height root]
     assertCount "command observations" data "height" 2
-    assertCount "fully computed height" data "add" 0
+    assertCount "fully computed height" data "hAdd" 0
     let some observed := (tuples data "height").find?
         (·.atoms[0]? == data.atoms[0]?.map (·.id))
       | throwError "missing root height"
@@ -405,7 +405,7 @@ private meta def assertRootObservation (data : JsonDataInstance) (relation label
     let root := node (mkApp (mkConst ``Tree.singleton) (mkRawNatLit 4)) 7 r
     let data ← relationalize root {} #[height root]
     assertCount "partially known tree heights" data "height" 4
-    assertCount "no implementation addition" data "add" 0
+    assertCount "no implementation addition" data "hAdd" 0
     assertCount "no implementation maximum" data "max" 0
     let some child := (tuples data "left").find?
         (·.atoms[0]? == data.atoms[0]?.map (·.id)) | throwError "missing child"
@@ -422,7 +422,7 @@ def Tree.heightPair (t : Tree) : Nat × Nat := (t.height, t.height + 1)
   let data ← relationalize root {} #[mkApp (mkConst ``Tree.heightPair) root]
   assertCount "structured computed observations" data "heightPair" 3
   assertCount "structured results do not request height" data "height" 0
-  assertCount "structured results do not request addition" data "add" 0
+  assertCount "structured results do not request addition" data "hAdd" 0
   unless data.atoms.any (·.label == "3") do throwError "pair's arithmetic did not evaluate"
 
 opaque unavailableHeight : Tree → Nat := Tree.height
@@ -549,6 +549,6 @@ def Tree.rotateLeft : Tree → Tree
     assertTrees "input helpers remain structural for other observers" paired 7
     assertCount "every input gets a structured observation" paired "heightPair" 7
     assertCount "partial structured results do not request height" paired "height" 0
-    assertCount "partial structured results do not request addition" paired "add" 0
+    assertCount "partial structured results do not request addition" paired "hAdd" 0
 
 end ContextInspectionTest

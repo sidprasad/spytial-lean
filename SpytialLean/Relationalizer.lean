@@ -685,28 +685,45 @@ private meta def decideProp? (p : Expr) : MetaM (Option Bool) := do
     | _ => evalBool? (← mkAppOptM ``Decidable.decide #[some p, some inst])
   catch _ => return none
 
-/-- The arguments of an application that carry data. Proofs, types, and
-    typeclass instances are elaboration machinery rather than graph columns. -/
+/-- Whether an application argument is elaboration-only: a proof, a type or
+    type family, or a typeclass instance. -/
+private meta def isElaborationArgument (argument : Expr) : MetaM Bool := do
+  let type ← inferType argument
+  if ← isProofLikeType type then return true
+  if (← Meta.isClass? type).isSome then return true
+  forallTelescopeReducing type fun _ result => return result.isSort
+
+/-- The arguments of an application that carry data. Besides removing
+    elaboration-only arguments, omit an implicit argument when the type of a
+    retained argument determines it. Independent implicit data remains a graph
+    column because dropping it could identify distinct applications. -/
 public meta def dataArgsOf (e : Expr) : MetaM (Array Expr) := do
+  let arguments := e.getAppArgs
+  let elaborationArguments ← arguments.mapM isElaborationArgument
+  let parameterInfo? ← try
+    pure (some (← getFunInfoNArgs e.getAppFn arguments.size).paramInfo)
+  catch _ => pure none
+  let mut determinedParameters := #[]
+  if let some parameterInfo := parameterInfo? then
+    for index in [:min arguments.size parameterInfo.size] do
+      unless elaborationArguments[index]! do
+        determinedParameters := determinedParameters ++ parameterInfo[index]!.backDeps
   let mut out : Array Expr := #[]
-  for a in e.getAppArgs do
-    if ← isProofArg a then continue
-    if (← Meta.isClass? (← inferType a)).isSome then continue
-    out := out.push a
+  for index in [:arguments.size] do
+    if elaborationArguments[index]! then continue
+    if let some parameterInfo := parameterInfo? then
+      if let some info := parameterInfo[index]? then
+        if !info.isExplicit && determinedParameters.contains index then continue
+    out := out.push arguments[index]!
   return out
 
 /-- Read a named application as a point in the function's graph. Constructors
     are values, not functions being observed. -/
 public meta def graphSide? (side : Expr) : MetaM (Option (String × Array Expr)) := do
-  let name? ← match side.getAppFn with
-    | .const ``HAdd.hAdd _ => pure (some "add")
-    | .const n _ =>
-      match (← getEnv).find? n with
-      | some (.ctorInfo _) => pure none
-      | _ => pure (some (shortName n))
-    | .fvar id => pure (some (hypLabel (← id.getUserName)))
-    | _ => pure none
-  let some name := name? | return none
+  let head := side.getAppFn
+  if let .const n _ := head then
+    if (← getEnv).find? n matches some (.ctorInfo _) then return none
+  let some name ← relationHeadName? head | return none
   let args ← dataArgsOf side
   if args.isEmpty then return none
   return some (name, args)
@@ -766,24 +783,46 @@ public meta def observedGraphSide? (cfg : WalkConfig) (expression : Expr) :
   unless ← dependsOnObservation cfg expression do return none
   return some side
 
-/-- Replace the sole data argument, preserving elaborated implicit arguments. -/
+/-- Replace an observation's explicit argument, preserving elaborated implicit arguments. -/
 private meta def observationAt (observation argument value : Expr) : Expr :=
   mkAppN observation.getAppFn <| observation.getAppArgs.map fun applicationArgument =>
     if applicationArgument.equal argument then value else applicationArgument
+
+/-- Find the explicit argument introduced by a unary observation template.
+    Taking the last explicit argument also supports partially applied observers. -/
+private meta def observationArgument? (observation : Expr) : MetaM (Option Expr) := do
+  let arguments := observation.getAppArgs
+  let parameterInfo := (← getFunInfoNArgs observation.getAppFn arguments.size).paramInfo
+  let mut argument? := none
+  for (argument, info) in arguments.zip parameterInfo do
+    if info.isExplicit then argument? := some argument
+  let some argument := argument? | return none
+  if ← isProofArg argument then return none
+  if (← Meta.isClass? (← inferType argument)).isSome then return none
+  return some argument
+
+/-- Freshen an observation template for one value, then use the value's type to
+    instantiate the observer's implicit arguments and universe levels. -/
+private meta def instantiateObservationAt? (observation value : Expr) : MetaM (Option Expr) := do
+  withoutModifyingState do
+    let template ← abstractMVars observation
+    withNewMCtxDepth do
+      let (templateMVars, _, observation) ← openAbstractMVarsResult template
+      let some argument ← observationArgument? observation | return none
+      unless ← isDefEqGuarded (← inferType value) (← inferType argument) do return none
+      let application ← instantiateMVars (observationAt observation argument value)
+      if application.hasLevelMVar then return none
+      let remainingMVars ← getMVars application
+      if templateMVars.any fun mvar => remainingMVars.contains mvar.mvarId! then return none
+      return some application
 
 private meta def observationApplications (observations values : Array Expr) :
     MetaM (Array Expr) := do
   let mut applications := #[]
   for observation in observations do
-    let arguments ← dataArgsOf observation
-    unless arguments.size == 1 do continue
-    let argument := arguments[0]!
-    let domainType ← inferType argument
     for value in values do
-      let compatible ← withoutModifyingState <| withNewMCtxDepth <|
-        isDefEq (← inferType value) domainType
-      if compatible then
-        applications := applications.push (observationAt observation argument value)
+      if let some application ← instantiateObservationAt? observation value then
+        applications := applications.push application
   return applications
 
 /-- Compute a constructor/literal value without requiring its input to be
@@ -826,9 +865,7 @@ private meta def observationMethods (cfg : WalkConfig) (simprocs : Simp.Simprocs
       -- A named helper may expose the constructor on which the observer
       -- recurses, even when the whole observation is still symbolic.
       if hasObservedHead cfg e then
-        let args ← dataArgsOf e
-        if args.size == 1 then
-          let argument := args[0]!
+        if let some argument ← observationArgument? e then
           let value ← withTransparency .default <| whnf argument
           unless value.equal argument do
             return .visit { expr := observationAt e argument value }
@@ -1300,17 +1337,9 @@ public meta def addActiveDomainObservations (cfg : WalkConfig)
       original.equal value ||
         (cfg.observationResults[(⟨original⟩ : ExprStructEq)]?).any (·.expr.equal value)
   for observation in observations do
-    let some (_, arguments) ← graphSide? observation | continue
-    unless arguments.size == 1 do continue
-    let argument := arguments[0]!
-    let domainType ← inferType argument
+    let some _ ← graphSide? observation | continue
     for (value, atomId) in activeDomain do
-      let compatible ← liftM <| try
-        withoutModifyingState <| withNewMCtxDepth <|
-          isDefEq (← inferType value) domainType
-      catch _ => pure false
-      unless compatible do continue
-      let application := observationAt observation argument value
+      let some application ← liftM <| instantiateObservationAt? observation value | continue
       addObservation cfg application application #[value] #[(value, atomId)]
 
 /-- `withoutModifyingEnv` because the walk derives instances: persisting them
