@@ -794,14 +794,36 @@ private meta def decideProp? (p : Expr) : MetaM (Option Bool) := do
     | _ => evalBool? (← mkAppOptM ``Decidable.decide #[some p, some inst])
   catch _ => return none
 
-/-- The arguments of an application that carry data. Proofs, types, and
-    typeclass instances are elaboration machinery rather than graph columns. -/
+/-- Whether an application argument is elaboration-only: a proof, a type or
+    type family, or a typeclass instance. -/
+private meta def isElaborationArgument (argument : Expr) : MetaM Bool := do
+  let type ← inferType argument
+  if ← isProofLikeType type then return true
+  if (← Meta.isClass? type).isSome then return true
+  forallTelescopeReducing type fun _ result => return result.isSort
+
+/-- The arguments of an application that carry data. Besides removing
+    elaboration-only arguments, omit an implicit argument when the type of a
+    retained argument determines it. Independent implicit data remains a graph
+    column because dropping it could identify distinct applications. -/
 public meta def dataArgsOf (e : Expr) : MetaM (Array Expr) := do
+  let arguments := e.getAppArgs
+  let elaborationArguments ← arguments.mapM isElaborationArgument
+  let parameterInfo? ← try
+    pure (some (← getFunInfoNArgs e.getAppFn arguments.size).paramInfo)
+  catch _ => pure none
+  let mut determinedParameters := #[]
+  if let some parameterInfo := parameterInfo? then
+    for index in [:min arguments.size parameterInfo.size] do
+      unless elaborationArguments[index]! do
+        determinedParameters := determinedParameters ++ parameterInfo[index]!.backDeps
   let mut out : Array Expr := #[]
-  for a in e.getAppArgs do
-    if ← isProofArg a then continue
-    if (← Meta.isClass? (← inferType a)).isSome then continue
-    out := out.push a
+  for index in [:arguments.size] do
+    if elaborationArguments[index]! then continue
+    if let some parameterInfo := parameterInfo? then
+      if let some info := parameterInfo[index]? then
+        if !info.isExplicit && determinedParameters.contains index then continue
+    out := out.push arguments[index]!
   return out
 
 /-- Read a named application as a point in the function's graph. Constructors
