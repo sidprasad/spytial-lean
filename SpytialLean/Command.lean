@@ -789,6 +789,44 @@ meta def elabSpytialRelationalizerCmd : CommandElab := fun
     liftCoreM <| setSpytialRelationalizer typeName defName
   | stx => throwError "Unexpected syntax {stx}."
 
+/-! ## spytial_view command -/
+
+/-- `spytial_view <Type> <ViewType> <defName>` registers a view for a type:
+    the walker draws values of `<Type>` by rewriting each to the
+    `<ViewType>`-valued term the `SpytialView` def produces and walking that
+    instead. `<ViewType>` is what the selector scope follows, so specs over
+    `<Type>` check against the view's vocabulary. The def must be `public
+    meta def` to be usable from importing modules.
+
+    ```
+    public meta def exprView : SpytialView := fun e nonce => do ...
+
+    spytial_view Lean.Expr ExprViewNode exprView
+    ```
+-/
+syntax (name := spytialViewCmd) "spytial_view " ident ident ident : command
+
+@[command_elab spytialViewCmd]
+meta def elabSpytialViewCmd : CommandElab := fun
+  | `(spytial_view $typeId:ident $targetId:ident $defId:ident) => do
+    let typeName ← liftCoreM <| realizeGlobalConstNoOverloadWithInfo typeId
+    let target ← liftCoreM <| realizeGlobalConstNoOverloadWithInfo targetId
+    let defName ← liftCoreM <| realizeGlobalConstNoOverloadWithInfo defId
+    -- fail mistyped registrations here, not opaquely at dispatch
+    liftTermElabM do
+      let declType := (← getConstInfo defName).type
+      unless (← Meta.isDefEq declType (Lean.mkConst ``SpytialView)) do
+        throwError s!"'{defName}' must have type `SpytialView`"
+      unless (← getEnv).find? target matches some (.inductInfo _) do
+        throwErrorAt targetId m!"'{target}' is not an inductive type; the view \
+          target is what the selector scope follows"
+    if isPrivateName defName then
+      logWarningAt defId m!"'{defName}' is not `public`, so a `#spytial` on this \
+        type from an importing module fails at render with `Unknown constant` — \
+        declare it `public meta def`"
+    liftCoreM <| setSpytialView typeName target defName
+  | stx => throwError "Unexpected syntax {stx}."
+
 /-- `#spytial.spec <term> with [<ops>]` prints the spec string handed to core. -/
 syntax (name := spytialSpecDebug) "#spytial.spec " term " with " "[" spytial_op,*,? "]" : command
 

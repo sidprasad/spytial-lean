@@ -47,6 +47,10 @@ meta structure SelScope where
   /-- Constructor label → constructor, for `@:x = tt` literals. -/
   ctorLabels : Std.HashMap String Name := {}
   introduced : Std.HashMap String Introduced := {}
+  /-- Constructor short name → constructor, for types declaring
+      `SpytialCtorTypes`: their atoms are constructor-typed, so the
+      constructors resolve as type sigs, not label literals. -/
+  ctorSigs : Std.HashMap String Name := {}
   /-- Open-world marker (see module docstring): unknown names become warnings. -/
   lenient : Bool := false
   deriving Inhabited
@@ -56,6 +60,14 @@ meta structure SelScope where
     closures must stay in the vocabulary until it treats them as scalars. -/
 private meta def scalarTypes : List Name :=
   [``Nat, ``String, ``Float]
+
+/-- Whether `t` declares an instance of the (display-layer) class `cls`;
+    `false` wherever synthesis cannot even be posed (universe-parameterized
+    heads), degrading to the un-declared behavior. -/
+private meta def hasClassInstance (cls t : Name) : MetaM Bool := do
+  try
+    return (← Meta.synthInstance? (← Meta.mkAppM cls #[Lean.mkConst t])).isSome
+  catch _ => return false
 
 /-- `seeds` are types the head constant alone cannot predict: `DA.FinAcc Seen2
     Letter` emits `Seen2`'s fields, but `tr` is a function over `DA.FinAcc`'s
@@ -77,16 +89,28 @@ meta def SelScope.ofType (root : Name) (seeds : Array Name := #[]) : MetaM SelSc
     if (getSpytialRelationalizerName? env t).isSome then
       scope := { scope with lenient := true }
       continue
+    -- a declared view rewrites values of this type: the vocabulary is the
+    -- view target's, and stays closed
+    if let some (target, _) := getSpytialViewReg? env t then
+      queue := queue.push target
+      continue
     if scalarTypes.contains t then
+      continue
+    -- a declared leaf never decomposes: nothing past it
+    if ← hasClassInstance ``SpytialLeaf t then
       continue
     match ← TypeShape.ofInductive t with
     | none =>
       scope := { scope with lenient := true }
     | some ts =>
+      let ctorTyped ← hasClassInstance ``SpytialCtorTypes t
       for c in ts.ctors do
-        scope := { scope with ctorLabels := scope.ctorLabels.insert c.ctorShort c.ctorName }
+        if ctorTyped then
+          scope := { scope with ctorSigs := scope.ctorSigs.insert c.ctorShort c.ctorName }
+        else
+          scope := { scope with ctorLabels := scope.ctorLabels.insert c.ctorShort c.ctorName }
         for f in c.fields do
-          unless f.isProofLike do
+          unless f.isProofLike || f.hidden do
             scope := { scope with rels := scope.rels.insert f.relName (t, f.arity?) }
             match f.table, f.typeHead with
             | some tbl, _ => queue := queue ++ tbl.columnHeads
@@ -123,6 +147,7 @@ private meta def SelScope.vocabulary (scope : SelScope) : Array String := Id.run
   let mut out : Array String := #[]
   for (r, _) in scope.rels do out := out.push r
   for (_, s) in scope.types do out := out.push s
+  for (n, _) in scope.ctorSigs do out := out.push n
   for (n, _) in scope.introduced do out := out.push n
   return sortDedup out
 
@@ -869,6 +894,9 @@ private meta partial def resolveIdent (scope : SelScope) (env : LEnv)
     addIntroducedInfo stx s i.kind i.referencedBy i.decl
     warnGraphSideName stx s
     return { sel := .rel s, kind := .relation, arity := some i.arity }
+  -- a `SpytialCtorTypes` constructor is an atom type: a sig, not a label
+  if let some ctorName := scope.ctorSigs.get? s then
+    return { sel := .sig ctorName s, kind := .relation, arity := some 1 }
   if let some e ← resolveTypeRef? then return e
   unknownName scope stx s!"name '{s}'" { sel := Sel.rel s, kind := .relation }
 where
