@@ -13,7 +13,7 @@ unknown observation leaves, rather than as unrelated fresh values.
 
 ## Stages
 
-Observation has four internal stages:
+Observation has five internal stages:
 
 1. **Domain discovery.** Spytial snapshots the represented values to which each
    requested unary function applies.
@@ -25,8 +25,17 @@ Observation has four internal stages:
    or `b ≤ a` using its bounded `simp` and `omega` query mechanisms. Successful
    checked proofs are fed back into simplification; unsuccessful queries leave
    the expression symbolic.
-4. **Relationalization.** The final result is connected to its input by the
-   requested observation relation and emitted with the rest of the datum.
+4. **Proof-backed normalization.** Arithmetic normalizers may propose a more
+   compact residual, such as replacing `1 + (x + 2)` with `x + 3`. Spytial
+   accepts the replacement only when Lean produces a proof of equality and
+   composes that proof with the residualization evidence.
+5. **Relationalization and presentation.** Unknown observation leaves receive
+   shared symbolic atoms. A generic renderer asks Lean for each application's
+   notation, tracks whether children are atomic or compound, and groups
+   compound children structurally. It contains no formatting rules for
+   particular functions or operators. The final result is connected to its
+   input by the requested observation relation and emitted with the rest of
+   the datum.
 
 The focused queries do not add facts to the inspected `Afaik`. They only help
 normalize the observation result before the final datum is produced.
@@ -50,7 +59,8 @@ For every requested unary function `f : A → B` and every represented `t : A`:
 
 Concrete results are ordinary values such as `2`. An irreducible observed
 application receives a generated display name such as `?₁`. A deterministic
-residual is labelled by an expression over those shared names. For example:
+residual is proof-normalized before being labelled by an expression over those
+shared names. For example:
 
 ```text
 height(l)      = ?₁

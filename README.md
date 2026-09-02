@@ -401,6 +401,11 @@ mode, Spytial recognizes focused questions such as which side of a symbolic
 `max` is larger, asks IYKYK's bounded proof API, and simplifies again with any
 checked answers. With sufficient context this can produce related labels such
 as `?₁ + 3` and `?₁ + 2`.
+Arithmetic compaction changes the retained Lean residual only when Lean proves
+the normalized expression equal to it. Symbolic presentation then uses one
+generic structural rule: atomic children remain bare and compound children are
+grouped, while Lean supplies the notation. The renderer has no special cases
+for `max`, addition, or other named operations.
 Structured results still have their ordinary fields; unresolved computations
 inside them stay symbolic. There is no separate symbolic-result view or
 observation-detail modifier.

@@ -294,6 +294,27 @@ end
       throwError "unexpected symbolic root height: {rootResult.label}"
     assertCount "no invented ordering" result.data "le" 0
 
+opaque combineHeights (left right : Nat) : Nat := left + right
+
+def Tree.combinedHeight : Tree → Nat
+  | .leaf => 0
+  | .node l _ r => combineHeights (combineHeights l.combinedHeight 1) r.combinedHeight
+
+/- Symbolic rendering obtains notation from Lean and groups compound children
+   structurally, including for operations the renderer has never named. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `l tree fun l => do
+  withLocalDeclD `r tree fun r => do
+    let root := node l 1 r
+    let data ← relationalize root {} #[mkApp (mkConst ``Tree.combinedHeight) root]
+    let some rootId := data.atoms[0]?.map (·.id) | throwError "missing root"
+    let rootHeight ← graphResult "generic symbolic renderer" data "combinedHeight" rootId
+    let some result := data.atoms.find? (·.id == rootHeight)
+      | throwError "generic symbolic result has no atom"
+    unless result.label == "combineHeights (combineHeights ?₁ 1) ?₂" do
+      throwError "unexpected generic symbolic result: {result.label}"
+    assertCount "generic expression stays in the label" data "combineHeights" 0
+
 /- Facts about the children compute the parent's height before any context
    expression can allocate a separate unknown for it. -/
 #eval show Lean.Elab.TermElabM Unit from do
@@ -447,7 +468,7 @@ private meta def assertRootObservation (data : JsonDataInstance) (relation label
     let rootHeight ← graphResult "partial root height" data "height" rootId
     let some rootResult := data.atoms.find? (·.id == rootHeight)
       | throwError "partial root height has no atom"
-    unless rootResult.label == "(max (1) ?₁) + 1" do
+    unless rootResult.label == "(max 1 ?₁) + 1" do
       throwError "unexpected partial root height: {rootResult.label}"
     let some child := (tuples data "left").find?
         (·.atoms[0]? == data.atoms[0]?.map (·.id)) | throwError "missing child"
