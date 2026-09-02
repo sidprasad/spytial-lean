@@ -61,6 +61,55 @@ public meta def SpytialOp.introduces? (op : SpytialOp) : Option (String × Intro
   | some (.str s) => some (s, i)
   | _ => none
 
+/-! ## Checking an op against the tables
+
+The elaborator builds ops that fit their item. Anything else that builds one
+meets the same check here, at the boundary every spec crosses. -/
+
+private meta def FieldVal.fits : FieldVal → FieldType → Bool
+  | .sel _, .selector _ | .rel _, .relation
+  | .str _, .str | .str _, .iconPath | .str _, .color
+  | .num _, .number .. | .bool _, .boolean _ => true
+  | .«enum» v, .«enum» vs _ => vs.contains v
+  | .enums vs, .enumList all _ => vs.all all.contains
+  | _, _ => false
+
+mutual
+
+private meta partial def FieldVal.check (path : String) (f : FieldSpec) :
+    FieldVal → Except String Unit
+  | .block fs =>
+    match f.type, f.alt with
+    | .block bid, _ => checkFields path (BlockSpec.of bid).fields [] fs
+    | .«enum» vs _, some alt =>
+      let specs := alt.blocks.map (fun (bf, bid) =>
+          ({ id := bf, type := .block bid, required := false, alt := none } : FieldSpec))
+        ++ [{ id := alt.enumField, type := .«enum» vs none, required := true, alt := none }]
+      checkFields path specs [alt.enumField] fs
+    | _, _ => .error s!"{path} is not a block field"
+  | v => unless v.fits f.type do .error s!"{path} holds a value of the wrong shape"
+
+private meta partial def checkFields (path : String) (specs : List FieldSpec)
+    (required : List FieldId) (fs : List (FieldId × FieldVal)) : Except String Unit := do
+  for (fid, v) in fs do
+    let some f := specs.find? (·.id == fid)
+      | .error s!"{path} has no field {fieldName fid}"
+    if 1 < (fs.filter (·.1 == fid)).length then
+      .error s!"{path}.{fieldName fid} is set twice"
+    v.check s!"{path}.{fieldName fid}" f
+  for r in required do
+    unless fs.any (·.1 == r) do .error s!"{path} is missing {fieldName r}"
+
+end
+
+public meta def SpytialOp.check (op : SpytialOp) : Except String Unit := do
+  let i := ItemSpec.of op.item
+  let path := itemName op.item
+  checkFields path i.fields ((i.fields.filter (·.required)).map (·.id)) op.fields
+  if let some h := op.hold then
+    unless i.supportsHold do .error s!"{path} does not support hold"
+    unless holdValues.contains h do .error s!"{path}: hold must be one of {holdValues}"
+
 /-! ## Spec serialization
 
 `parseLayoutSpec` in spytial-core is js-yaml's `yaml.load` and JSON is valid
@@ -81,6 +130,7 @@ public meta instance : ToJson OpSource where
       (s.location.map fun l => (fieldName .location, Json.str l)).toList
 
 public meta def SpytialOp.toJson (op : SpytialOp) : Except String Json := do
+  op.check
   let i := ItemSpec.of op.item
   let fields ← op.fields.mapM fun (f, v) => do return (fieldName f, ← v.toJson)
   -- A scalar payload has nowhere to put these.
