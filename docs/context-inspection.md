@@ -107,4 +107,4 @@ In particular, neither retaining branch inequalities nor observing heights
 proves that an arbitrary result is balanced. That requires appropriate
 preconditions and a proof.
 
-The datum-level regression tests are in `tests/ContextInspectionTest.lean`.
+The datum-level regression tests are in `SpytialTests/ContextInspectionTest.lean`.

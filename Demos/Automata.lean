@@ -12,6 +12,11 @@ structure FLTS (State Label : Type) where
 structure DA (State Symbol : Type) extends FLTS State Symbol where
   start : State
 
+-- `tr` is a function field, so no structural identity is derivable; each
+-- render holds one automaton, so as-written loses nothing.
+instance {State Label : Type} : SpytialIdentity (FLTS State Label) := .asWritten
+instance {State Symbol : Type} : SpytialIdentity (DA State Symbol) := .asWritten
+
 -- Specs compose down `extends`, so every `DA` below draws with this one.
 spytial_spec FLTS [
   inferredEdge step FLTS.tr,
@@ -32,7 +37,6 @@ def daFin : DA (Fin 3) Bool where
 
 #spytial daFin
 
-/-- The same automaton over named states. -/
 inductive St where | s0 | s1 | s2
   deriving DecidableEq, SpytialIdentity
 
@@ -48,10 +52,12 @@ def daSt : DA St Bool where
 
 #spytial daSt
 
-/-- Nondeterministic: `Tr` tabulates a tuple wherever it decides true. -/
+/-- `Tr` tabulates a tuple wherever it decides true. -/
 structure NA (State Symbol : Type) where
   Tr : State → Symbol → State → Prop
   start : State → Prop
+
+instance {State Symbol : Type} : SpytialIdentity (NA State Symbol) := .asWritten
 
 spytial_spec NA [
   inferredEdge step NA.Tr,

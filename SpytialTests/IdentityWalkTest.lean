@@ -5,7 +5,7 @@ meta import SpytialLean.Identity
 public meta import SpytialLean.MetaEncode
 public meta import SpytialLean.Relationalizer
 meta import SpytialLean.Command
-meta import WalkCanon
+meta import SpytialTests.WalkCanon
 
 open SpytialLean Lean Meta
 
@@ -17,12 +17,6 @@ private meta def assertEq {α} [BEq α] [Repr α] (label : String) (got expected
 private meta def assert (label : String) (b : Bool) : MetaM Unit := do
   unless b do throwError "{label}: assertion failed"
 
-/-! ## Fixtures
-
-`WTree` opts in to derived structural identity; `UTree` is its identical twin
-with no clause, so it takes the derive-on-demand default. `OTree` below is the
-as-written control. -/
-
 public inductive WTree where
   | leaf (n : Nat)
   | node (l r : WTree)
@@ -32,22 +26,19 @@ public inductive UTree where
   | leaf (n : Nat)
   | node (l r : UTree)
 
-/-- The same shape, declining the derive-on-demand default. -/
 public inductive OTree where
   | leaf (n : Nat)
   | node (l r : OTree)
 
 public instance : SpytialIdentity OTree := SpytialIdentity.asWritten
 
-/-- Derived over an `asWritten` field. `Holder` keeps merging arms of its own,
-    so it cannot present `asWritten`; it degrades to `.eqv` with a decider that
-    is false on `hold` and true on `stump`. -/
+/-- Merging arms of its own over an `asWritten` field, so it cannot present
+    `asWritten`: it degrades to `.eqv`, non-reflexive on `hold`. -/
 public inductive Holder where
   | stump
   | hold (t : OTree)
   | both (a b : Holder)
 
-/-- Parity: a genuinely relational (`.eqv`) identity. -/
 public structure ModTwo where
   n : Nat
 
@@ -59,13 +50,10 @@ public structure Trio where
   b : ModTwo
   c : ModTwo
 
-/-- Derived over an encoded (`List Nat`) field: the field routes through the
-    lifted `ToIdentityKey` encoding, meta-side and runtime alike. -/
 public structure Sack where
   items : List Nat
   deriving SpytialIdentity
 
-/-- Derived over `Bool`/`Int`/`Option String` encodings. -/
 public structure Mixed where
   flag : Bool
   count : Int
@@ -74,8 +62,6 @@ public structure Mixed where
 
 /-- Deliberate opacity: keys by its spelling, never by its unfolding. -/
 @[irreducible] public def hiddenTree : WTree := .node (.leaf 1) (.leaf 1)
-
-/-! ## Expr builders (headless, like the TypeShape walker tests) -/
 
 private meta def wleaf (n : Nat) : Expr := mkApp (mkConst ``WTree.leaf) (mkRawNatLit n)
 private meta def wnode (l r : Expr) : Expr := mkApp2 (mkConst ``WTree.node) l r
@@ -95,8 +81,6 @@ private meta unsafe def evalKeyOptUnsafe (e : Expr) : MetaM (Option IdentityKey)
 @[implemented_by evalKeyOptUnsafe]
 private meta opaque evalKeyOpt (e : Expr) : MetaM (Option IdentityKey)
 
-/-- The walker's meta-side structural key must equal the compiled derived
-    classifier's key, byte for byte. -/
 private meta def checkMetaMatchesRuntime (label : String) (val : Expr) : MetaM Unit := do
   let (mk?, _) ← (structuralKey? val).run {}
   let some mkey := mk? | throwError "{label}: meta-side key not computed"
@@ -106,8 +90,7 @@ private meta def checkMetaMatchesRuntime (label : String) (val : Expr) : MetaM U
     throwError "{label}: meta key {repr mkey} ≠ runtime key {repr rkey}"
 
 /-! ## Derive-on-demand default: no clause ⇒ equal subterms merge. `asWritten`
-declines, node-locally — the `Nat` children keep consulting their own type,
-which is what separates it from a `Raw` region. -/
+declines node-locally, which is what separates it from a `Raw` region. -/
 
 #eval show MetaM Unit from do
   let di ← relationalize (unode (uleaf 1) (uleaf 1))
@@ -117,9 +100,8 @@ which is what separates it from a `Raw` region. -/
   let di ← relationalize (onode (oleaf 1) (oleaf 1))
   assertEq "aswritten.labels" (di.atoms.map (·.label)) #["node", "leaf", "1", "leaf"]
 
-/-! An `asWritten` field disqualifies the constructors that carry it, and only
-those: the composite's decider is non-reflexive exactly there, so the walker's
-exact-spelling shortcut must not fire. -/
+/-! An `asWritten` field disqualifies the constructors that carry it and only
+those, so the walker's exact-spelling shortcut must not fire there. -/
 
 #eval show MetaM Unit from do
   let di ← relationalize (hboth (hold (oleaf 1)) (hold (oleaf 1)))
@@ -130,10 +112,7 @@ exact-spelling shortcut must not fire. -/
   let di ← relationalize (hboth (mkConst ``Holder.stump) (mkConst ``Holder.stump))
   assertEq "aswritten.field.other-arms" (di.atoms.map (·.label)) #["both", "stump"]
 
-/-! ## Derived structural identity: sharing, and the A/B example
-
-`node (leaf 1) (leaf 1)` and `node (leaf 1) (leaf (0+1))` are the same value;
-they draw one picture, with the equal leaves shared. -/
+/-! ## Derived structural identity: sharing, and the A/B example -/
 
 #eval show MetaM Unit from do
   let A := wnode (wleaf 1) (wleaf 1)
@@ -152,10 +131,8 @@ they draw one picture, with the equal leaves shared. -/
     (mkApp3 (mkConst ``Mixed.mk) (toExpr true) (toExpr (-3 : Int))
       (toExpr (some "hi" : Option String)))
 
-/-! ## Encoding twins: every `MetaEncode` instance cross-checks byte-for-byte
-
-The enumeration keeps coverage honest: a twin without a sample here fails the
-build. -/
+/-! ## Encoding twins: every `MetaEncode` instance cross-checks byte-for-byte,
+and one without a sample below fails the build. -/
 
 private meta def checkTwin {α : Type} [ToIdentityKey α] [MetaEncode α]
     (label : String) (e : Expr) (v : α) : MetaM Unit := do
@@ -202,11 +179,7 @@ private meta def sampledHeads : NameSet :=
       unless sampledHeads.contains h do
         throwError "MetaEncode instance for '{h}' has no cross-check sample — add one above"
 
-/-! ## Eval fallback: a meta miss costs an evaluation, never the merge
-
-A hand-written encoding without a twin, and a field whose instance is a user
-classifier: both make the generated twin miss, and the walker falls back to
-the compiled classifier. -/
+/-! ## Eval fallback: a meta miss costs an evaluation, never the merge -/
 
 public structure Coupon where
   code : String
@@ -256,7 +229,6 @@ representative, never the partition -/
 
 #eval show MetaM Unit from do
   let di ← relationalize (trio (mod2 1) (mod2 3) (mod2 2))
-  -- 1 and 3 are one parity group (the first occurrence is drawn); 2 is its own
   assertEq "eqv.labels" (di.atoms.map (·.label)) #["mk", "mk", "1", "mk", "2"]
   let di2 ← relationalize (trio (mod2 3) (mod2 1) (mod2 2))
   assertEq "eqv.perm.labels" (di2.atoms.map (·.label)) #["mk", "mk", "3", "mk", "2"]
@@ -286,21 +258,16 @@ everywhere -/
 #eval show MetaM Unit from do
   let hidden := mkConst ``hiddenTree
   let di ← relationalize (← mkAppM ``Prod.mk #[hidden, hidden])
-  -- two occurrences of the same spelling are one atom …
   assertEq "opaque.merged" (di.atoms.map (·.label)) #["mk", "hiddenTree"]
-  -- … and the spelling never merges with the unfolding it refuses to expose
   let di ← relationalize (← mkAppM ``Prod.mk #[hidden, wnode (wleaf 1) (wleaf 1)])
   assertEq "opaque.vs-literal" (di.atoms.map (·.label))
     #["mk", "hiddenTree", "node", "leaf", "1"]
 
 /-! ## Opacity survives namespacing and composites
 
-Two regressions. The twin must register under the name it actually elaborated
-to — a `namespace` around the type used to kill the meta lane. And
-`viaOf`/`classifier?` must stay whnf-able from module contexts — a composite's
-`via` match used to get stuck and degrade the route to `.eqvRel`. Either way
-the compiled classifier runs, unfolds the irreducible head, and merges it with
-its unfolding. -/
+Two past bugs: a `namespace` around the type left the twin registered under the
+wrong name, and a composite's `via` match got stuck under module contexts and
+degraded the route to `.eqvRel`. -/
 
 namespace NsReg
 public inductive NTree where
@@ -345,8 +312,6 @@ spytial_relationalizer Boxy boxyRel
 #eval show MetaM Unit from do
   let b := mkApp (mkConst ``Boxy.mk) (mkRawNatLit 1)
   let di ← relationalize (← mkAppM ``Prod.mk #[b, b])
-  -- the relationalizer's rendering, not the derived structural one — and the
-  -- repeated occurrence reconciles to the id it actually returned
   assertEq "custom.labels" (di.atoms.map (·.label)) #["mk", "boxy!"]
 
 /-! ## Differential oracle: the fused walker equals the two-pass reference -/
@@ -412,14 +377,12 @@ structure KB where
   checkMetaMatchesRuntime "xcheck.mutual"
     (mkApp2 (mkConst ``MEv.mconsE) (mkRawNatLit 1)
       (mkApp2 (mkConst ``MOd.mconsO) (mkRawNatLit 2) (mkConst ``MEv.mnilE)))
-  -- equal keys, distinct types: the type half of the atom-table key keeps them apart
   let ka := mkApp (mkConst ``KA.mk) (mkRawNatLit 1)
   let kb := mkApp (mkConst ``KB.mk) (mkRawNatLit 1)
   let di ← relationalize (← mkAppM ``Prod.mk #[ka, kb])
   assertEq "typekey.types" (di.atoms.map (·.type)) #["Prod", "KA", "Nat", "KB"]
 
-/-! Shadowing a derived instance: the shadow wins coherently — the route is an
-ordinary classifier, and the twin is never consulted. -/
+/-! Shadowing a derived instance: the shadow wins; the twin is never consulted. -/
 
 structure ShFoo where
   n : Nat
@@ -439,8 +402,6 @@ evaluated value when its type declares `Repr`; `Repr` never feeds identity -/
 
 @[irreducible] public def opaque97 : Nat := 90 + 7
 
-/-- Declares both `SpytialIdentity` and `Repr`; `hiddenCoin` below is the
-    opaque occurrence. Spelling decides identity, `Repr` decides the label. -/
 public inductive Coin where
   | heads | tails
   deriving SpytialIdentity, Repr
@@ -450,15 +411,12 @@ public inductive Coin where
 #eval show MetaM Unit from do
   let di ← relationalize (mkConst ``opaque97)
   assertEq "leaflabel.repr" (di.atoms.map (·.label)) #["97"]
-  -- `Nat` now takes the supplied `ToIdentityKey` default, and the classifier
-  -- route evaluates through an `@[irreducible]` head where the structural route
-  -- would have keyed by spelling. So an opaque primitive merges by its value:
-  -- pinned here because it is a live ruling, not a settled one.
+  -- an opaque primitive merges by its value: the classifier route evaluates
+  -- through the `@[irreducible]` head. A live ruling, not a settled one.
   let di ← relationalize (← mkAppM ``Prod.mk #[mkConst ``opaque97, mkConst ``opaque97])
   assertEq "leaflabel.opaque.evaluated" (di.atoms.map (·.label)) #["mk", "97"]
   let di ← relationalize (← mkAppM ``Prod.mk #[mkConst ``opaque97, mkRawNatLit 97])
   assertEq "leaflabel.opaque.pierced" (di.atoms.map (·.label)) #["mk", "97"]
-  -- spelling merges the occurrences, `Repr` labels the one atom
   let di ← relationalize (← mkAppM ``Prod.mk #[mkConst ``hiddenCoin, mkConst ``hiddenCoin])
   assertEq "leaflabel.opaque.merged" (di.atoms.map (·.label)) #["mk", "Coin.heads"]
   let di ← relationalize (mkConst ``hiddenTree)
@@ -470,11 +428,9 @@ public inductive Coin where
 
 /-! ## Derive-on-demand reaches an applied type's arguments
 
-The generated instance for a parameterized type binds one `[SpytialIdentity _]`
-per parameter, so the arguments need instances of their own or nothing merges.
-`PSub` is the negative control: its inherited field is a function, so the
-generated command fails to elaborate and the derive must restore the
-environment. -/
+The generated instance binds one `[SpytialIdentity _]` per parameter, so the
+arguments need instances of their own. `PSub` is the negative control: its
+inherited field is a function, so the derive must restore the environment. -/
 
 public inductive PTree (α : Type) where
   | leaf (value : α)
@@ -494,20 +450,17 @@ private meta def pTreeOf (α : Name) (v : Expr) : Expr :=
   mkApp3 (mkConst ``PTree.node) (mkConst α) leaf leaf
 
 #eval show MetaM Unit from do
-  -- an argument whose identity comes from its encoding
   let di ← relationalize (pTreeOf ``Nat (mkRawNatLit 1))
   assertEq "param.encoded" (di.atoms.map (·.label)) #["node", "leaf", "1"]
-  -- an argument that has to be derived structurally
   let di ← relationalize (pTreeOf ``PBox (mkApp (mkConst ``PBox.mk) (mkRawNatLit 1)))
   assertEq "param.structural" (di.atoms.map (·.label)) #["node", "leaf", "mk", "1"]
-  -- the argument is itself applied
   let inner := mkApp (mkConst ``PTree) (mkConst ``Nat)
   let v := mkApp2 (mkConst ``PTree.leaf) inner
     (mkApp2 (mkConst ``PTree.leaf) (mkConst ``Nat) (mkRawNatLit 1))
   let di ← relationalize (mkApp3 (mkConst ``PTree.node) inner v v)
   assertEq "param.nested" (di.atoms.map (·.label)) #["node", "leaf", "leaf", "1"]
 
--- a failed derive leaves a sorryAx instance via error recovery
+-- regression: a failed derive used to leave a sorryAx instance via error recovery
 #eval show MetaM Unit from do
   let ty := mkApp2 (mkConst ``PSub) (mkConst ``Bool) (mkConst ``Bool)
   assert "param.refused" ((← deriveIdentity ty) matches .refused _)

@@ -10,15 +10,14 @@ open Lean Meta
 
 /-! # MetaEncode — meta twins of the `ToIdentityKey` encodings
 
-The walker holds `Expr`s, and `toKey` cannot see one, so each encoding has a
-meta twin computing the same key from a closed value's `Expr` without
-evaluation. The twins mirror `Identity.lean`'s instances one-to-one, in
-order; agreement is pinned byte-for-byte by the enumerating cross-check in
-`tests/IdentityWalkTest.lean`, and the walker falls back to evaluating the
-compiled classifier where a twin is missing or stuck — slower, never wrong. -/
+The walker holds `Expr`s and `toKey` cannot see one, so each encoding has a meta
+twin computing the same key from a closed value's `Expr` without evaluation.
+Agreement is pinned byte-for-byte by the cross-check in
+`SpytialTests/IdentityWalkTest.lean`; where a twin is missing or stuck, the
+walker falls back to evaluating the compiled classifier. -/
 
-/-- `some n` for a value of type `Nat`, without evaluating through opacity
-    barriers (default-transparency `whnf` only). -/
+/-- Default-transparency `whnf` only, so it never evaluates through an opacity
+    barrier. -/
 public meta partial def natValue? (v : Expr) : MetaM (Option Nat) := do
   if let some n ← getNatValue? v then return some n
   let w ← whnf v
@@ -28,10 +27,9 @@ public meta partial def natValue? (v : Expr) : MetaM (Option Nat) := do
     if let some n ← natValue? w.appArg! then return some (n + 1)
   return none
 
-/-- Drill a numeric wrapper's whnf normal form — nested single-data-field
-    constructors (`Char.mk`/`UInt8.ofBitVec`/`BitVec.ofFin`/`Fin.mk`, …) —
-    down to the underlying `Nat` literal: exactly the `.toNat` the
-    corresponding encodings write. -/
+/-- Drills nested single-data-field constructors
+    (`Char.mk`/`UInt8.ofBitVec`/`BitVec.ofFin`/`Fin.mk`, …) down to the
+    underlying literal: exactly the `.toNat` the encodings write. -/
 public meta partial def drillNatValue? (v : Expr) (fuel : Nat := 8) : MetaM (Option Nat) := do
   match fuel with
   | 0 => return none
@@ -49,7 +47,6 @@ public meta partial def drillNatValue? (v : Expr) (fuel : Nat := 8) : MetaM (Opt
     let some f := dataField? | return none
     drillNatValue? f fuel
 
-/-- Collect the element expressions of a literal `List` value. -/
 public meta partial def listElems? (v : Expr) (acc : Array Expr := #[]) :
     MetaM (Option (Array Expr)) := do
   let w ← whnf v
@@ -59,11 +56,9 @@ public meta partial def listElems? (v : Expr) (acc : Array Expr := #[]) :
     return ← listElems? args[2]! (acc.push args[1]!)
   return none
 
-/-- Key a value whose head is `@[irreducible]` or `opaque` by its printed
-    form, without unfolding it. Safe because `ofSpelling` is a separate
-    constructor (a spelling key cannot collide with a real key) and the
-    printer is `dbgToString` (distinct terms never print alike). Only the
-    default machinery stops at these barriers — an explicit `.identity` or
+/-- Keys by printed form without unfolding. Safe because `ofSpelling` is a
+    separate constructor, so a spelling key cannot collide with a real one. Only
+    the default machinery stops at these barriers; an explicit `.identity` or
     `.eqv` instance still runs the user's own function. -/
 public meta def opacityKey? (v : Expr) : MetaM (Option IdentityKey) := do
   let w ← whnf v
@@ -72,25 +67,21 @@ public meta def opacityKey? (v : Expr) : MetaM (Option IdentityKey) := do
   if (← getConstInfo c) matches .opaqueInfo _ then return some (.ofSpelling (toString w))
   return none
 
-/-- Meta twin of `ToIdentityKey α`: the key `toKey` computes from the value,
-    computed from a closed value's `Expr` instead, without evaluation; `none`
-    when the value is stuck. Resolve through `MetaEncode.keyOf?`, which adds
-    the opacity gate. -/
+/-- `none` when the value is stuck. Resolve through `MetaEncode.keyOf?`, which
+    adds the opacity gate. -/
 public meta class MetaEncode (α : Type u) where
   metaKey : Expr → MetaM (Option IdentityKey)
 
-/-- `metaKey` under the opacity gate: a stuck value with a deliberately opaque
-    head keys by its spelling. The form the container twins use for their
-    elements and generated code uses at encoded fields. -/
+/-- The form container twins use for their elements and generated code uses at
+    encoded fields. -/
 public meta def MetaEncode.keyOf? (α : Type u) [MetaEncode α] (v : Expr) :
     MetaM (Option IdentityKey) := do
   match ← MetaEncode.metaKey (α := α) v with
   | some k => return some k
   | none => opacityKey? v
 
-/-- Pin a hand-written twin byte-for-byte against its encoding, e.g.
-    `#eval MetaEncode.check "mytype" (v : MyType)`. Fails when the twin
-    cannot key the literal or disagrees with `toKey`. -/
+/-- Pins a hand-written twin against its encoding:
+    `#eval MetaEncode.check "mytype" (v : MyType)`. -/
 public meta def MetaEncode.check {α : Type} [ToIdentityKey α] [MetaEncode α] [ToExpr α]
     (label : String) (v : α) : MetaM Unit := do
   let some mkKey ← MetaEncode.keyOf? α (toExpr v)

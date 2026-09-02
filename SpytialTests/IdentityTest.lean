@@ -10,10 +10,7 @@ open SpytialLean Lean Meta
 private meta def assert (label : String) (b : Bool) : MetaM Unit := do
   unless b do throwError "{label}: assertion failed"
 
-/-! ## IdentityKey: injective tupling
-
-A composite can never encode the same token as any leaf, and leaves of
-different sorts never collide. -/
+/-! ## IdentityKey: injective tupling -/
 
 #guard IdentityKey.ofString "leaf1" != IdentityKey.ofList [.ofString "leaf", .ofNat 1]
 #guard IdentityKey.ofNat 1 != IdentityKey.ofString "1"
@@ -21,10 +18,7 @@ different sorts never collide. -/
 #guard IdentityKey.ofList [.ofString "leaf", .ofNat 1]
          == IdentityKey.ofList [.ofString "leaf", .ofNat 1]
 
-/-! ## ToIdentityKey: encoding without merging
-
-Primitive encodings are pinned exactly where the walker will have to reproduce
-them meta-side; lifts are pinned on the injectivity the field rule relies on. -/
+/-! ## ToIdentityKey: encoding without merging -/
 
 open ToIdentityKey (toKey)
 
@@ -32,7 +26,6 @@ open ToIdentityKey (toKey)
 #guard toKey "leaf" == IdentityKey.ofString "leaf"
 #guard toKey true != toKey false
 #guard toKey 'a' != toKey 'b'
--- Int keeps its signs apart: `-1` is `negSucc 0`, distinct from `0` and `1`
 #guard toKey (1 : Int) != toKey (-1 : Int)
 #guard toKey (0 : Int) != toKey (-1 : Int)
 #guard toKey (5 : UInt8) != toKey (6 : UInt8)
@@ -53,7 +46,6 @@ inductive ITree where
   | node (l r : ITree)
   deriving SpytialIdentity
 
-/-- The classifier of `α`'s instance, when it has one. -/
 private def keyOf {α : Type} [SpytialIdentity α] (a : α) : Option IdentityKey :=
   (SpytialIdentity.viaOf α).classifier? |>.map (· a)
 
@@ -65,22 +57,17 @@ private def isEqvArm {α : Type u} (s : SpytialIdentity α) : Bool :=
   | .eqv _ => true
   | .identity _ | .asWritten => false
 
--- same value, different spelling — one identity
 #guard keyOf (ITree.node (.leaf 1) (.leaf 1)) == keyOf (ITree.node (.leaf 1) (.leaf (0 + 1)))
--- different values differ
 #guard keyOf (ITree.node (.leaf 1) (.leaf 1)) != keyOf (ITree.node (.leaf 1) (.leaf 2))
 #guard keyOf (ITree.leaf 1) != keyOf (ITree.leaf 2)
 -- exact key structure: the walker's meta-side computation must reproduce this
--- (the `Nat` field is encoded via `ToIdentityKey`, not merged via an instance)
 #guard keyOf (ITree.leaf 1) == some (.ofList [.ofString "leaf", .ofNat 1])
 #guard keyOf (ITree.node (.leaf 1) (.leaf 2))
          == some (.ofList [.ofString "node",
                            .ofList [.ofString "leaf", .ofNat 1],
                            .ofList [.ofString "leaf", .ofNat 2]])
--- the derived decider agrees
 #guard eqvOf (ITree.node (.leaf 1) (.leaf 1)) (ITree.node (.leaf 1) (.leaf (0 + 1)))
 #guard !eqvOf (ITree.leaf 1) (ITree.node (.leaf 1) (.leaf 1))
--- encoded dependencies are total classifiers: no degradation
 #guard !isEqvArm (inferInstance : SpytialIdentity ITree)
 
 /-! ## Structures, enums, and proof fields -/
@@ -101,8 +88,7 @@ inductive Color where
 #guard keyOf Color.red == some (.ofList [.ofString "red"])
 #guard keyOf Color.red != keyOf Color.green
 
--- proof-like fields are erased from identity, matching the walker's
--- `isProofLikeType` field filtering
+-- erased from identity, matching the walker's `isProofLikeType` field filtering
 structure Bounded where
   n : Nat
   ok : n = n
@@ -114,8 +100,6 @@ structure Bounded where
 
 deriving instance SpytialIdentity for List
 
--- `List α` requires element *identity*: no `SpytialIdentity Nat`, no
--- `SpytialIdentity (List Nat)` (probed below).
 #guard keyOf ([ITree.leaf 1] : List ITree)
          == some (.ofList [.ofString "cons",
                            .ofList [.ofString "leaf", .ofNat 1],
@@ -124,11 +108,8 @@ deriving instance SpytialIdentity for List
          != keyOf ([ITree.leaf 2, ITree.leaf 1] : List ITree)
 -- `keyOf ([] : List ITree) == keyOf ([] : List Color)`: identities are
 -- intra-type tokens — the atom table's `(type, identity)` key separates them
--- `List α` is classifier-presented when `α` is …
 #guard !isEqvArm (inferInstance : SpytialIdentity (List ITree))
 
--- … and decider-presented when `α` is: an element type with an `.eqv`
--- presentation (parity) degrades the container to `.eqv`.
 structure ModTwo where
   val : Nat
 
@@ -141,12 +122,7 @@ private instance : SpytialIdentity ModTwo := .ofBEq
 #guard !eqvOf [ModTwo.mk 1] [ModTwo.mk 2]
 #guard !eqvOf [ModTwo.mk 1] [ModTwo.mk 1, ModTwo.mk 3]
 
-/-! ## Encoded fields: the decisive case
-
-A type with a `List Nat` field derives — encoding lifts through `List` — while
-`SpytialIdentity (List Nat)` stays unsynthesizable (probed below) even though
-the parametric `List` instance above is in scope, so `List Nat` atoms never
-merge undeclared. Key composition and atom merging are decoupled. -/
+/-! ## Encoded fields: key composition and atom merging are decoupled -/
 
 structure Sample where
   xs : List Nat
@@ -159,10 +135,7 @@ structure Sample where
 #guard keyOf (Sample.mk [1, 2]) != keyOf (Sample.mk [2, 1])
 #guard !isEqvArm (inferInstance : SpytialIdentity Sample)
 
-/-! ## Mixed dependencies: identity for parameters, encoding for the rest
-
-`tag : String` routes through `ToIdentityKey` (no `SpytialIdentity String`
-exists); `val : α` routes through the `[SpytialIdentity α]` binder. -/
+/-! ## Mixed dependencies: identity for parameters, encoding for the rest -/
 
 structure Tagged (α : Type) where
   tag : String
@@ -173,10 +146,10 @@ structure Tagged (α : Type) where
          == some (.ofList [.ofString "mk", .ofString "a",
                            .ofList [.ofString "leaf", .ofNat 1]])
 #guard !isEqvArm (inferInstance : SpytialIdentity (Tagged ITree))
--- a decider-presented parameter degrades the whole to `.eqv` …
+-- a decider-presented dependency degrades the whole to `.eqv`, in which the
+-- encoded fields still discriminate, by key equality
 #guard isEqvArm (inferInstance : SpytialIdentity (Tagged ModTwo))
 #guard eqvOf (Tagged.mk "x" (ModTwo.mk 1)) (Tagged.mk "x" (ModTwo.mk 3))
--- … in which the encoded field still discriminates, by key equality
 #guard !eqvOf (Tagged.mk "x" (ModTwo.mk 1)) (Tagged.mk "y" (ModTwo.mk 1))
 
 /-! ## Mutual inductives -/
@@ -203,10 +176,8 @@ deriving instance SpytialIdentity for EvenL, OddL
 #guard modThree.via.classifier?.map (· 4) == modThree.via.classifier?.map (· 1)
 #guard modThree.via.classifier?.map (· 1) != modThree.via.classifier?.map (· 2)
 #guard modThree.norm?.isSome
--- an `.eqv` base stays decider-presented under `ofNorm`
 #guard isEqvArm (SpytialIdentity.ofNorm (· % 3) (.eqv (fun (a b : Nat) => a == b)))
 
--- `ofNorm n (SpytialIdentity.viaOf T)` on a derived type: identity up to leaf values
 private def zeroLeaves : ITree → ITree
   | .leaf _ => .leaf 0
   | .node l r => .node (zeroLeaves l) (zeroLeaves r)
@@ -221,10 +192,8 @@ private def zeroLeaves : ITree → ITree
 
 /-! ## Instance resolution: the encoding/identity split at search level
 
-`synthInstance?` probes pin the ruled default: primitives encode
-(`ToIdentityKey`) but never merge (no `SpytialIdentity`), and the parametric
-`List` instance derived above requires element *identity*, so
-`SpytialIdentity (List Nat)` fails while `ToIdentityKey (List Nat)` lifts. -/
+The ruled default: primitives encode (`ToIdentityKey`) but never merge (no
+`SpytialIdentity`); the parametric `List` instance requires element identity. -/
 
 structure NoInst where
   n : Nat
@@ -242,7 +211,6 @@ private meta def hasInst (cls : Name) (ty : Expr) : MetaM Bool := do
   assert "enc.list-list-nat" (← hasInst ``ToIdentityKey (← mkAppM ``List #[listNat]))
   assert "id.itree" (← hasInst ``SpytialIdentity (mkConst ``ITree))
   assert "id.list-itree" (← hasInst ``SpytialIdentity (← mkAppM ``List #[mkConst ``ITree]))
-  -- the parametric binder rule: `Tagged Nat` needs `SpytialIdentity Nat`
   assert "id.tagged-nat.not"
     (!(← hasInst ``SpytialIdentity (← mkAppM ``Tagged #[mkConst ``Nat])))
   assert "id.no-inst.not" (!(← hasInst ``SpytialIdentity (mkConst ``NoInst)))
@@ -255,10 +223,7 @@ private meta def hasInst (cls : Name) (ty : Expr) : MetaM Bool := do
 /-! ## Raw and Viewed: instance-search invisibility (the `OrderDual` device)
 
 Both wrappers are semireducible `def`s, so typeclass search — which runs at
-reducible transparency — must not see through them: instances on the carrier
-must not leak to the wrapper, in either class. Instances declared directly on
-the wrapped type must be found. Their mode-shift semantics (quasiquote /
-unquote) live in the walker. -/
+reducible transparency — must not see through them in either direction. -/
 
 private instance : SpytialIdentity (Raw Bool) where
   via := .identity fun _ => .ofString "rawBool"
@@ -267,22 +232,19 @@ private instance : SpytialIdentity (Viewed Bool) where
   via := .identity fun _ => .ofString "viewedBool"
 
 #eval show MetaM Unit from do
-  -- `SpytialIdentity ITree` exists; the wrappers must not inherit it
+  -- both carriers do have instances; the wrappers must not inherit them
   assert "raw.invisible" (!(← hasInst ``SpytialIdentity (← mkAppM ``Raw #[mkConst ``ITree])))
   assert "viewed.invisible"
     (!(← hasInst ``SpytialIdentity (← mkAppM ``Viewed #[mkConst ``ITree])))
-  -- `ToIdentityKey Nat` exists; same invisibility for the encoding class
   assert "raw.enc-invisible" (!(← hasInst ``ToIdentityKey (← mkAppM ``Raw #[mkConst ``Nat])))
   assert "viewed.enc-invisible"
     (!(← hasInst ``ToIdentityKey (← mkAppM ``Viewed #[mkConst ``Nat])))
-  -- instances directly on the wrapper are found, and do not leak back
   assert "raw.direct-instance" (← hasInst ``SpytialIdentity (← mkAppM ``Raw #[mkConst ``Bool]))
   assert "viewed.direct-instance"
     (← hasInst ``SpytialIdentity (← mkAppM ``Viewed #[mkConst ``Bool]))
   assert "raw.no-leak-back" (!(← hasInst ``SpytialIdentity (mkConst ``Bool)))
 
--- the carrier is defeq underneath (a structure would fail this): the wrappers
--- hide from reducible-transparency instance search only
+-- defeq underneath (a structure would fail this): the hiding is search-only
 example : Raw Nat = Nat := rfl
 example : Viewed Nat = Nat := rfl
 
@@ -298,8 +260,6 @@ example : Viewed Nat = Nat := rfl
   assert "ext.tagged" (isSpytialStructural env ``Tagged)
   assert "ext.evenl" (isSpytialStructural env ``EvenL)
   assert "ext.oddl" (isSpytialStructural env ``OddL)
-  -- neither hand-written instances (ModTwo) nor instance-less primitives are
-  -- "derived structural"
   assert "ext.nat.not" (!isSpytialStructural env ``Nat)
   assert "ext.string.not" (!isSpytialStructural env ``String)
   assert "ext.modtwo.not" (!isSpytialStructural env ``ModTwo)

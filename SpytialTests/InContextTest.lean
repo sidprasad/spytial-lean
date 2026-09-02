@@ -1,7 +1,7 @@
 module
 
 meta import SpytialLean.InContext
-meta import WalkCanon
+meta import SpytialTests.WalkCanon
 
 open SpytialLean Lean Meta
 

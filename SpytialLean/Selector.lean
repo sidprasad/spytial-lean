@@ -1,373 +1,323 @@
 module
 
 public import Lean
+public meta import SpytialLean.Sgq
+public meta import SpytialLean.TypeShape
 
 namespace SpytialLean
 
 open Lean
 
-/-! # Selector — the reified SGQ expression language
+/-! # Selector — SGQ expressions as data
 
-This module reifies the Forge expression fragment Spytial specs use, plus the
-SGQ label projections (`@:`, `@str:`, `@bool:`, `@num:`): relational
-expressions (`Sel`), integer expressions (`SelInt`), label/literal values
-(`SelVal`), and formulas (`SelForm`). Specs store this AST in the environment,
-so nodes carry no `Syntax` and must pickle into `.olean`s. The elaborator
-(`SpytialLean.SelectorElab`) resolves and checks names. `Sel.toSGQ` lowers to
-the concrete string spytial-core evaluates.
--/
-
-/-- `@num:` is int-typed and lives in `SelInt.proj`. -/
-public meta inductive LabelProj where
-  | plain | str | bool
-  deriving Repr, BEq, Inhabited
-
-/-- Parsed for Forge grammar parity; the engine rejects multiplicity
-    annotations in expression position at render. -/
-public meta inductive ArrowMult where
-  | lone | one | some | set
-  deriving Repr, BEq, Inhabited
-
-public meta inductive IntBuiltin where
-  | add | subtract | multiply | divide | remainder | abs | sign
-  deriving Repr, BEq, Inhabited
-
-public meta inductive IntAgg where
-  | sum | min | max
-  deriving Repr, BEq, Inhabited
-
-/-- The checker shares `=`/`!=` with the relational and value layers. -/
-public meta inductive IntCmp where
-  | eq | ne | lt | gt | le | ge
-  deriving Repr, BEq, Inhabited
-
-public meta inductive Quant where
-  | all | no | some | lone | one
-  deriving Repr, BEq, Inhabited
+"The engine", here and in the modules below, is simple-graph-query. Nothing here
+names a construct: a node carries the manifest's construct id, the operator
+written, and its production's pieces in template order, so a construct added
+upstream reaches the lowering by rebuilding. Specs store this AST in the
+environment, so nodes must pickle into `.olean`s and carry no `Syntax`. -/
 
 mutual
 
-/-- `sig` keeps the resolved Lean name next to the sig string, so a stored
-    spec still says which type it meant. -/
+/-- One filled position of a production, in `template` order. Positions with a
+    fixed spelling carry nothing and are absent. -/
+public meta inductive Arg where
+  | expr (e : Sel)
+  | exprs (es : Array Sel)
+  /-- One entry per name, not per group. -/
+  | binders (bs : Array (Name × Sel))
+  | name (s : String)
+  | atom (spelling : Option String)
+  deriving Repr, BEq
+
 public meta inductive Sel where
+  /-- `op` is absent for a construct that has none (a comprehension, a bracket). -/
+  | node (construct : Sgq.ConstructId) (op : Option Sgq.OpId) (args : Array Arg)
+  /-- The Lean name rides along so a stored spec still says which type it meant. -/
   | sig (typeName : Name) (sig : String)
   | rel (name : String)
+  /-- Its own vocabulary: `sum` is a reserved word `quoteIfNeeded` would
+      backquote, but the grammar admits it bare in exactly this position. -/
+  | builtin (name : String)
   | var (x : Name)
-  | univ
-  | iden
-  | none_
-  | atomLit (name : String)
-  | union (a b : Sel)
-  | diff (a b : Sel)
-  | inter (a b : Sel)
-  | prod (a b : Sel)
-  | prodMult (a : Sel) (lm rm : Option ArrowMult) (b : Sel)
-  | join (a b : Sel)
-  | override (a b : Sel)
-  | restrictDom (a b : Sel)
-  | restrictRan (a b : Sel)
-  | trans (a : Sel)
-  | reflTrans (a : Sel)
-  | transpose (a : Sel)
-  | compr (binders : Array (Name × Sel)) (body : SelForm)
-  /-- Escape hatch: an unchecked SGQ string, lowered verbatim. The body is
-      arbitrary SGQ, so it binds loosest and composition parenthesizes it. -/
-  | raw (sgq : String)
-  /-- A raw Lean function over the values the relationalizer walked, read as a
-      relation: its argument types are the columns it ranges over and its
-      codomain fixes the arity (`SpytialLean.classifyLeanRel`). Resolved against
-      the represented datum by `resolveLeanSelectors` — which rewrites it to the
-      union of the tuples it selects — before anything lowers to SGQ. -/
-  | leanRel (fn : Expr)
-  deriving Repr, BEq
-
-/-- Kept apart from `Sel` to reject SGQ's silent scalar/tuple confusion
-    (`some #e`) at compile time. -/
-public meta inductive SelInt where
-  | lit (n : Int)
-  | card (e : Sel)                                   -- `#e`
-  | proj (e : Sel)                                   -- `@num:e`
-  | builtin (op : IntBuiltin) (args : Array SelInt)  -- `add[a, b]`
-  | agg (op : IntAgg) (e : Sel)                      -- `sum[e]`, `min[e]`, `max[e]`
-  /-- Single binder, per Forge's expander. -/
-  | sumQuant (x : Name) (dom : Sel) (body : SelInt)  -- `sum x : A | ie`
-  deriving Repr, BEq
-
-/-- A constructor literal (`@:x = tt`) lowers to the short-name label
-    the relationalizer gives its atoms. -/
-public meta inductive SelVal where
-  | label (proj : LabelProj) (e : Sel)
-  | ctorLit (ctor : Name) (label : String)
-  | strLit (s : String)
+  | num (n : Int)
+  | str (s : String)
+  | ctorLit (ctor : Name)
   | boolLit (b : Bool)
-  deriving Repr, BEq
-
-public meta inductive SelForm where
-  | subset (a b : Sel)
-  | notSubset (a b : Sel)
-  /-- `a ni b` (reverse containment). -/
-  | ni (a b : Sel)
-  | notNi (a b : Sel)
-  | eq (a b : Sel)
-  | neq (a b : Sel)
-  | veq (a b : SelVal)
-  | vneq (a b : SelVal)
-  | icmp (op : IntCmp) (a b : SelInt)
-  | and (a b : SelForm)
-  | or (a b : SelForm)
-  | xor (a b : SelForm)
-  | iff (a b : SelForm)
-  | implies (a b : SelForm)
-  | ite (c t e : SelForm)  -- `a => b else c`
-  | not (a : SelForm)
-  | some_ (a : Sel)
-  | no (a : Sel)
-  | lone (a : Sel)
-  | one (a : Sel)
-  | quant (q : Quant) (disj : Bool) (binders : Array (Name × Sel)) (body : SelForm)
+  /-- A raw Lean function read as a relation: its argument types are the columns,
+      its codomain the arity (`classifyLeanRel`). `resolveLeanSelectors` rewrites
+      it to the tuples it selects before anything lowers to SGQ. -/
+  | leanRel (fn : Expr)
   deriving Repr, BEq
 
 end
 
-public meta instance : Inhabited Sel := ⟨.univ⟩
-public meta instance : Inhabited SelInt := ⟨.lit 0⟩
-public meta instance : Inhabited SelVal := ⟨.strLit ""⟩
-public meta instance : Inhabited SelForm := ⟨.some_ .univ⟩
+public meta instance : Inhabited Sel := ⟨.num 0⟩
+public meta instance : Inhabited Arg := ⟨.atom none⟩
 
-namespace Sel
+public meta def Arg.mapExprsM [Monad m] (f : Sel → m Sel) : Arg → m Arg
+  | .expr e => return .expr (← f e)
+  | .exprs es => return .exprs (← es.mapM f)
+  | .binders bs => return .binders (← bs.mapM fun (x, d) => return (x, ← f d))
+  | a@(.name _) | a@(.atom _) => return a
 
-/-- Forge's tight-end cascade (Expr8–Expr18), re-scaled. -/
-public meta def prec : Sel → Nat
-  | raw .. => 0
-  | union .. | diff .. => 30
-  | override .. => 36
-  | inter .. => 40
-  | prod .. | prodMult .. => 50
-  | restrictDom .. | restrictRan .. => 55
-  | join .. => 60
-  | trans .. | reflTrans .. | transpose .. => 70
-  | _ => 100
+public meta def Arg.subExprs : Arg → Array Sel
+  | .expr e => #[e]
+  | .exprs es => es
+  | .binders bs => bs.map (·.2)
+  | .name _ | .atom _ => #[]
 
-end Sel
+/-- Fills only operand and optional positions; a production with a name, a list,
+    binders or a body gets a node with no lowering rather than a guessed one. -/
+public meta def Sel.op (o : Sgq.OpId) (operands : Array Sel) : Sel :=
+  let cd := Sgq.Construct.of (Sgq.Op.of o).construct
+  let (args, _) := cd.template.foldl (init := (#[], 0)) fun (acc, n) item =>
+    match item with
+    | .operand _ => (match operands[n]? with | some e => acc.push (Arg.expr e) | none => acc,
+        n + 1)
+    | .part _ true | .«optional» _ => (acc.push (Arg.atom none), n)
+    | _ => (acc, n)
+  .node cd.id (some o) args
+
+public meta def Sel.atomLit (id : String) : Sel :=
+  .node .«atomLiteral» (some .«atomLiteral») #[.name id]
+
+public meta def Sel.empty : Sel := Sel.op .«emptySet» #[]
+
+/-! ## Names and literals -/
+
+public meta def sgqBareName (s : String) : Bool :=
+  match s.toList with
+  | c :: cs => Sgq.bareHead c && cs.all Sgq.bareRest
+  | [] => false
+
+/-- FIXME: the empty name has no spelling at all (`Sgq.quoteMinLength` is 1),
+    and this still emits the invalid `` `` `` for it. Nothing produces one
+    today: sigs and relations come from resolved Lean names and binders from
+    binder names. Fixing it properly means an error path through every caller. -/
+public meta def quoteIfNeeded (s : String) : String :=
+  if sgqBareName s && s.length ≥ Sgq.bareMinLength && !Sgq.reserved.contains s then s
+  else
+    let esc := s.foldl (init := "") fun acc c =>
+      if Sgq.quoteMustEscape.contains c then (acc.push Sgq.quoteEscape).push c else acc.push c
+    s!"{Sgq.quoteDelimiter}{esc}{Sgq.quoteDelimiter}"
+
+/-- `none` = no spelling at all (C0/DEL without a readable escape, which the
+    JSON hop mangles). -/
+private meta def sgqStringChar? (c : Char) : Option String :=
+  if let some spelled := Sgq.stringEscapeSpelling c then
+    some s!"{Sgq.stringEscape}{spelled}"
+  else if Sgq.stringMustEscape.contains c then
+    some s!"{Sgq.stringEscape}{c}"
+  else if c.val < 0x20 || c.val == 0x7f then none
+  else some c.toString
+
+public meta def sgqUnspellableChar? (s : String) : Option Char :=
+  s.toList.find? fun c => (sgqStringChar? c).isNone
+
+/-- An unspellable character rides raw; the elaborator rejects that first. -/
+public meta def sgqStringLit (s : String) : String :=
+  let body := s.toList.map fun c => (sgqStringChar? c).getD c.toString
+  s!"{Sgq.stringDelimiter}{String.join body}{Sgq.stringDelimiter}"
+
+/-! ## Whitespace -/
+
+/-- The engine's lexer skips whitespace between every token, so every spacing
+    below is this package's choice, not a language fact. -/
+public meta structure Air where
+  left : Bool := false
+  right : Bool := false
+  /-- Suppress the next chunk's own `left`: `!` binds onto its comparison, so
+      `a !in b` rather than `a ! in b`. -/
+  glueRight : Bool := false
+
+private meta def tightInfix : List Sgq.OpId := [.«join», .«product»]
+
+private meta def roleAir : Sgq.Role → Air
+  | .«negation» => { left := true, glueRight := true }
+  | .«colon» | .«bar» | .«bind» | .«else» | .«disjoint» | .«domainMultiplicity»
+  | .«multiplicity» => { left := true, right := true }
+  | .«separator» => { right := true }
+  | .«open» | .«close» | .«blockOpen» | .«blockClose» => {}
+
+/-- `beside` says some optional part is written beside the operator, which
+    unglues even a tight infix: `a->b`, but `a one -> lone b`. -/
+private meta def opAir (o : Sgq.Op) (beside : Bool) : Air :=
+  if (Sgq.Construct.of o.construct).fixity == .«infix» &&
+      (beside || !tightInfix.contains o.id) then
+    { left := true, right := true }
+  else { left := Sgq.bareHead o.text.front, right := Sgq.bareRest o.text.back }
+
+/-- Whether `l` and `r` written adjacently would lex differently from apart.
+    Over-approximates, so it is a safe floor under the spacing tables above. -/
+private meta def glues (l r : String) : Bool :=
+  if l.isEmpty || r.isEmpty then false
+  else if Sgq.bareRest l.back && Sgq.bareRest r.front then true
+  else Sgq.lexemes.any fun t =>
+    1 < t.length && (List.range (min (t.length - 1) l.length)).any fun k =>
+      t.startsWith (l.takeEnd (k + 1)) && r.startsWith (t.drop (k + 1))
+
+private meta def assemble (chunks : Array (String × Air)) : String := Id.run do
+  let mut out := ""
+  let mut prev : Air := {}
+  for (t, air) in chunks do
+    if t.isEmpty then continue
+    if !out.isEmpty then
+      if prev.right || (air.left && !prev.glueRight) || glues out t then
+        out := out ++ " "
+    out := out ++ t
+    prev := air
+  return out
+
+/-- A node is built against the same template that renders it, so a missing or
+    wrong-kind argument is a bug in one of the two; the node then has no
+    lowering at all, rather than one with the position silently dropped. -/
+private meta def argAt (cd : Sgq.Construct) (args : Array Arg) (i : Nat) :
+    Except String Arg :=
+  match args[i]? with
+  | some a => .ok a
+  | none => .error s!"{Sgq.constructName cd.id}: template position {i} has no \
+      argument ({args.size} given)"
+
+private meta def Arg.what : Arg → String
+  | .expr _ => "an expression"
+  | .exprs _ => "an expression list"
+  | .binders _ => "binder groups"
+  | .name _ => "a name"
+  | .atom _ => "an optional part"
+
+private meta def wrongArg {α : Type} (cd : Sgq.Construct) (i : Nat) (want : String)
+    (got : Arg) : Except String α :=
+  .error s!"{Sgq.constructName cd.id}: template position {i} takes {want}, \
+    got {got.what}"
 
 private meta def parenIf (needed : Bool) (s : String) : String :=
   if needed then s!"({s})" else s
 
-/-- Mirrors `RESERVED_KEYWORDS` in simple-graph-query. -/
-private meta def sgqReserved : List String :=
-  ["open", "as", "var", "abstract", "sig", "extends", "in",
-   "lone", "some", "one", "two", "set", "func", "pfunc", "disj",
-   "wheat", "pred", "fun", "assert", "run", "check", "for", "but",
-   "exactly", "none", "univ", "iden", "is", "sat", "unsat", "theorem",
-   "forge_error", "checked", "test", "expect", "suite", "all",
-   "sufficient", "necessary", "consistent", "inconsistent", "with",
-   "let", "bind", "or", "xor", "iff", "implies", "else", "and",
-   "until", "release", "since", "triggered", "not", "always",
-   "eventually", "after", "before", "once", "historically", "this",
-   "sexpr", "inst", "eval", "example", "ni", "no", "sum", "Int", "option"]
-
-/-- SGQ's bare-identifier rule is `[a-zA-Z_$/][a-zA-Z_0-9$/]*` (ForgeLexer.g4);
-    outside it the lexer fails open — `s₁` silently evaluates the prefix `s`,
-    `x'` becomes a temporal prime, `σ` is a lexer error. Backtick-quoted
-    identifiers accept any character, with `\`-escapes for `` ` `` and `\`. -/
-private meta def quoteIfNeeded (s : String) : String :=
-  let bareHead (c : Char) := c.isAlpha || c == '_' || c == '$' || c == '/'
-  let bare := match s.toList with
-    | c :: cs => bareHead c && cs.all fun c => bareHead c || c.isDigit
-    | [] => false
-  if bare && !sgqReserved.contains s then s
-  else
-    let esc := s.foldl (init := "") fun acc c =>
-      if c == '`' || c == '\\' then (acc.push '\\').push c else acc.push c
-    s!"`{esc}`"
-
-/-- How SGQ spells `c` inside a double-quoted literal: these six escapes are
-    the whole alphabet (any other backslash is dropped), everything else rides
-    raw. `none` = no spelling at all (C0/DEL, which the JSON hop mangles). -/
-private meta def sgqStringChar? : Char → Option String
-  | '\\' => some "\\\\"
-  | '"' => some "\\\""
-  | '\n' => some "\\n"
-  | '\t' => some "\\t"
-  | '\r' => some "\\r"
-  | '\x00' => some "\\0"
-  | c => if c.val < 0x20 || c.val == 0x7f then none else some c.toString
-
-/-- The first character of `s` that SGQ's string syntax cannot spell, for the
-    elaborator to reject before it reaches a lowering. -/
-public meta def sgqUnspellableChar? (s : String) : Option Char :=
-  s.toList.find? fun c => (sgqStringChar? c).isNone
-
-/-- Render `s` as an SGQ double-quoted string literal. An unspellable character
-    rides raw — the elaborator has already rejected that case. -/
-public meta def sgqStringLit (s : String) : String :=
-  let body := s.toList.map fun c => (sgqStringChar? c).getD c.toString
-  s!"\"{String.join body}\""
-
-private meta def ArrowMult.toSGQ : ArrowMult → String
-  | .lone => "lone" | .one => "one" | .some => "some" | .set => "set"
-
-private meta def IntBuiltin.toSGQ : IntBuiltin → String
-  | .add => "add" | .subtract => "subtract" | .multiply => "multiply"
-  | .divide => "divide" | .remainder => "remainder" | .abs => "abs" | .sign => "sign"
-
-private meta def IntAgg.toSGQ : IntAgg → String
-  | .sum => "sum" | .min => "min" | .max => "max"
-
-private meta def IntCmp.toSGQ : IntCmp → String
-  | .eq => "=" | .ne => "!=" | .lt => "<" | .gt => ">" | .le => "<=" | .ge => ">="
-
-private meta def Quant.toSGQ : Quant → String
-  | .all => "all" | .no => "no" | .some => "some" | .lone => "lone" | .one => "one"
-
-private meta def bindersToSGQ (binders : Array (Name × Sel)) (domToSGQ : Sel → String) :
-    String :=
-  let groups := binders.foldl (init := #[]) fun (gs : Array (Array Name × Sel)) (x, dom) =>
-    match gs.back? with
-    | some (xs, dom') =>
-      if dom' == dom then gs.set! (gs.size - 1) (xs.push x, dom') else gs.push (#[x], dom)
-    | none => gs.push (#[x], dom)
-  ", ".intercalate <| groups.toList.map fun (xs, dom) =>
-    let names := ", ".intercalate (xs.toList.map (quoteIfNeeded <| toString ·))
-    s!"{names} : {domToSGQ dom}"
+/-! ## Lowering -/
 
 mutual
 
-/-- `ctx` is the binding strength of the enclosing position. -/
-public meta partial def Sel.toSGQCtx (ctx : Nat) : Sel → String
-  | .sig _ s => quoteIfNeeded s
-  | .rel r => quoteIfNeeded r
-  | .var x => quoteIfNeeded (toString x)
-  | .univ => "univ"
-  | .iden => "iden"
-  | .none_ => "none"
-  | .atomLit a => s!"`{a}"
-  -- Unreachable in a rendered spec: `resolveLeanSelectors` runs first on every
-  -- path that renders. Lowering as `none` keeps this total.
-  | .leanRel .. => "none"
-  | e@(.union a b) => parenIf (e.prec < ctx) s!"{a.toSGQCtx 30} + {b.toSGQCtx 31}"
-  | e@(.diff a b) => parenIf (e.prec < ctx) s!"{a.toSGQCtx 30} - {b.toSGQCtx 31}"
-  | e@(.override a b) => parenIf (e.prec < ctx) s!"{a.toSGQCtx 36} ++ {b.toSGQCtx 37}"
-  | e@(.inter a b) => parenIf (e.prec < ctx) s!"{a.toSGQCtx 40} & {b.toSGQCtx 41}"
-  | e@(.prod a b) => parenIf (e.prec < ctx) s!"{a.toSGQCtx 50}->{b.toSGQCtx 51}"
-  | e@(.prodMult a lm rm b) =>
-    let mul (m : Option ArrowMult) := match m with | some m => s!"{m.toSGQ} " | none => ""
-    parenIf (e.prec < ctx) s!"{a.toSGQCtx 50} {mul lm}-> {mul rm}{b.toSGQCtx 51}"
-  | e@(.restrictDom a b) => parenIf (e.prec < ctx) s!"{a.toSGQCtx 55} <: {b.toSGQCtx 56}"
-  | e@(.restrictRan a b) => parenIf (e.prec < ctx) s!"{a.toSGQCtx 55} :> {b.toSGQCtx 56}"
-  | e@(.join a b) => parenIf (e.prec < ctx) s!"{a.toSGQCtx 60}.{b.toSGQCtx 61}"
-  | .trans a => s!"^{a.toSGQCtx 71}"
-  | .reflTrans a => s!"*{a.toSGQCtx 71}"
-  | .transpose a => s!"~{a.toSGQCtx 71}"
-  | .compr binders body =>
-    s!"\{{bindersToSGQ binders (·.toSGQCtx 0)} | {body.toSGQ}}"
-  | e@(.raw s) => parenIf (e.prec < ctx) s
-
-public meta partial def SelInt.toSGQ : SelInt → String
-  | .lit n => toString n
-  -- 34: tighter than union/difference, looser than the rest (`#(a + b)`, bare `#a.b`)
-  | .card e => s!"#{e.toSGQCtx 34}"
-  | .proj e => s!"@num:{e.toSGQCtx 100}"
-  | .builtin op args => s!"{op.toSGQ}[{", ".intercalate (args.toList.map SelInt.toSGQ)}]"
-  -- Aggregators read numeric values; walker atom ids are opaque (`atom_N`),
-  -- the value is the label — decode via the engine's numeric projection.
-  | .agg op e => s!"{op.toSGQ}[@num:({e.toSGQCtx 0})]"
-  -- the body extends maximally right; always wrap (`(sum …) > 2`)
-  | .sumQuant x dom body =>
-    s!"(sum {quoteIfNeeded (toString x)} : {dom.toSGQCtx 0} | {body.toSGQ})"
-
-public meta partial def SelVal.toSGQ : SelVal → String
-  | .label proj e =>
-    let tok := match proj with | .plain => "@:" | .str => "@str:" | .bool => "@bool:"
-    s!"{tok}{e.toSGQCtx 100}"
-  | .ctorLit _ label => sgqStringLit label
+/-- `ctx` is the level the enclosing position accepts. -/
+public meta partial def Sel.toSGQCtx (ctx : Nat) : Sel → Except String String
+  | .sig _ s => .ok (quoteIfNeeded s)
+  | .builtin b => .ok b
+  | .rel r => .ok (quoteIfNeeded r)
+  | .var x => .ok (quoteIfNeeded (toString x))
+  | .num n => .ok (toString n)
   -- The relationalizer labels a `String` atom with its Lean spelling, quotes
-  -- included (`Relationalizer.lean`), so matching one takes a literal whose
-  -- content carries those quotes too.
-  | .strLit s => sgqStringLit s!"\"{s}\""
-  | .boolLit b => toString b
+  -- included, so matching one takes a literal that carries those quotes too.
+  | .str s => .ok (sgqStringLit s!"\"{s}\"")
+  | .ctorLit c => .ok (sgqStringLit (shortName c))
+  | .boolLit b => .ok (toString b)
+  | .leanRel _ => .error "a `lean (…)` selector reached the lowering unresolved"
+  | .node c op args => do
+    let cd := Sgq.Construct.of c
+    return parenIf (cd.prec < ctx) (assemble (← renderItems cd op cd.template args 0).1)
 
-/-- Forge's loose-end cascade (`or` < `xor` < `iff` < `implies` < `and` <
-    `not`); `implies` is right-associative. -/
-public meta partial def SelForm.toSGQCtx (ctx : Nat) : SelForm → String
-  | .subset a b => s!"{a.toSGQCtx 0} in {b.toSGQCtx 0}"
-  | .notSubset a b => s!"{a.toSGQCtx 0} !in {b.toSGQCtx 0}"
-  | .ni a b => s!"{a.toSGQCtx 0} ni {b.toSGQCtx 0}"
-  | .notNi a b => s!"{a.toSGQCtx 0} !ni {b.toSGQCtx 0}"
-  | .eq a b => s!"{a.toSGQCtx 0} = {b.toSGQCtx 0}"
-  | .neq a b => s!"{a.toSGQCtx 0} != {b.toSGQCtx 0}"
-  | .veq a b => s!"{a.toSGQ} = {b.toSGQ}"
-  | .vneq a b => s!"{a.toSGQ} != {b.toSGQ}"
-  | .icmp op a b => s!"{a.toSGQ} {op.toSGQ} {b.toSGQ}"
-  | .or a b => parenIf (10 < ctx) s!"{a.toSGQCtx 10} or {b.toSGQCtx 11}"
-  | .xor a b => parenIf (13 < ctx) s!"{a.toSGQCtx 13} xor {b.toSGQCtx 14}"
-  | .iff a b => parenIf (16 < ctx) s!"{a.toSGQCtx 16} iff {b.toSGQCtx 17}"
-  | .implies a b => parenIf (20 < ctx) s!"{a.toSGQCtx 21} implies {b.toSGQCtx 20}"
-  | .ite c t e =>
-    parenIf (20 < ctx) s!"{c.toSGQCtx 21} implies {t.toSGQCtx 21} else {e.toSGQCtx 20}"
-  | .and a b => parenIf (30 < ctx) s!"{a.toSGQCtx 30} and {b.toSGQCtx 31}"
-  | .not a => s!"not {a.toSGQCtx 40}"
-  | .some_ a => s!"some {a.toSGQCtx 0}"
-  | .no a => s!"no {a.toSGQCtx 0}"
-  | .lone a => s!"lone {a.toSGQCtx 0}"
-  | .one a => s!"one {a.toSGQCtx 0}"
-  -- body extends maximally right; parenthesize under any connective
-  | .quant q disj binders body =>
-    let d := if disj then "disj " else ""
-    parenIf (5 < ctx) s!"{q.toSGQ} {d}{bindersToSGQ binders (·.toSGQCtx 0)} | {body.toSGQ}"
+private meta partial def renderItems (cd : Sgq.Construct) (op : Option Sgq.OpId)
+    (items : List Sgq.Item) (args : Array Arg) (start : Nat) :
+    Except String (Array (String × Air) × Nat) := do
+  let mut out : Array (String × Air) := #[]
+  let mut i := start
+  let beside := args.any fun a => match a with | .atom (some _) => true | _ => false
+  let expr (pos : Nat) (a : Arg) (level : Nat) : Except String String :=
+    match a with | .expr e => e.toSGQCtx level | _ => wrongArg cd pos "an expression" a
+  for item in items do
+    match item with
+    | .operand level =>
+      out := out.push (← expr i (← argAt cd args i) level, {})
+      i := i + 1
+    | .body level =>
+      out := out.push (cd.part .«bar» |>.text, roleAir .«bar»)
+      out := out.push (← expr i (← argAt cd args i) level, {})
+      i := i + 1
+    | .«repeat» level =>
+      let a ← argAt cd args i
+      let .exprs es := a | wrongArg cd i "an expression list" a
+      for e in es do out := out.push (← e.toSGQCtx level, { left := true, right := true })
+      i := i + 1
+    | .list level role =>
+      let a ← argAt cd args i
+      let .exprs es := a | wrongArg cd i "an expression list" a
+      for (e, n) in es.zipIdx do
+        if n != 0 then out := out.push (cd.part role |>.text, roleAir role)
+        out := out.push (← e.toSGQCtx level, {})
+      i := i + 1
+    | .binders typed level =>
+      let a ← argAt cd args i
+      let .binders bs := a | wrongArg cd i "binder groups" a
+      out := out ++ (← renderBinders cd typed level bs)
+      i := i + 1
+    | .name _ =>
+      let a ← argAt cd args i
+      let .name s := a | wrongArg cd i "a name" a
+      out := out.push (quoteIfNeeded s, {})
+      i := i + 1
+    | .operator | .constant =>
+      if let some o := op then
+        let od := Sgq.Op.of o
+        out := out.push (od.text, opAir od beside)
+    | .part role optional =>
+      if optional then
+        let a ← argAt cd args i
+        let .atom spelling := a | wrongArg cd i "an optional part" a
+        if let some s := spelling then
+          let part := cd.part role
+          out := out.push (if part.alternatives then s else part.text, roleAir role)
+        i := i + 1
+      else
+        out := out.push (cd.part role |>.text, roleAir role)
+    | .«optional» inner =>
+      let a ← argAt cd args i
+      let .atom spelling := a | wrongArg cd i "an optional part" a
+      let present := spelling.isSome
+      i := i + 1
+      if present then
+        let (chunks, next) ← renderItems cd op inner args i
+        out := out ++ chunks
+        i := next
+  return (out, i)
 
-public meta partial def SelForm.toSGQ (f : SelForm) : String := f.toSGQCtx 0
+/-- Adjacent binders over the same domain regroup, for round-trip fidelity. -/
+private meta partial def renderBinders (cd : Sgq.Construct) (typed : Bool) (level : Nat)
+    (bs : Array (Name × Sel)) : Except String (Array (String × Air)) := do
+  let sep := (cd.part .«separator», roleAir .«separator»)
+  let groups := (bs.toList.splitBy fun a b => typed && a.2 == b.2).map fun g =>
+    (g.map (·.1), g.head!.2)
+  let mut out : Array (String × Air) := #[]
+  for ((xs, dom), n) in groups.zipIdx do
+    if n != 0 then out := out.push (sep.1.text, sep.2)
+    for (x, m) in xs.zipIdx do
+      if m != 0 then out := out.push (sep.1.text, sep.2)
+      out := out.push (quoteIfNeeded (toString x), {})
+    let role := if typed then Sgq.Role.«colon» else .«bind»
+    out := out.push (cd.part role |>.text, roleAir role)
+    out := out.push (← dom.toSGQCtx level, {})
+  return out
 
 end
 
-mutual
+public meta def Sel.toSGQ (s : Sel) : Except String String := s.toSGQCtx Sgq.loosest
 
-/-- Binders subtract positionally: a later binder's domain may reference an
-    earlier binder. Lowering is name-based, so the elaborator uses this to
-    reject a `let` substitution an inner binder would capture. -/
+/-- Binders subtract positionally: template order puts the binder positions
+    before the body, so one left-to-right pass is the whole rule. -/
 public meta partial def Sel.freeVars : Sel → Array Name
   | .var x => #[x]
-  | .union a b | .diff a b | .inter a b | .prod a b | .join a b
-  | .override a b | .restrictDom a b | .restrictRan a b => a.freeVars ++ b.freeVars
-  | .prodMult a _ _ b => a.freeVars ++ b.freeVars
-  | .trans a | .reflTrans a | .transpose a => a.freeVars
-  | .compr binders body => bindersFreeVars binders body.freeVars
-  | .sig .. | .rel .. | .univ | .iden | .none_ | .atomLit .. | .raw ..
+  | .sig .. | .rel .. | .builtin .. | .num .. | .str .. | .ctorLit .. | .boolLit ..
   | .leanRel .. => #[]
-
-public meta partial def SelVal.freeVars : SelVal → Array Name
-  | .label _ e => e.freeVars
-  | .ctorLit .. | .strLit .. | .boolLit .. => #[]
-
-public meta partial def SelInt.freeVars : SelInt → Array Name
-  | .lit .. => #[]
-  | .card e | .proj e | .agg _ e => e.freeVars
-  | .builtin _ args => args.foldl (· ++ ·.freeVars) #[]
-  | .sumQuant x dom body => dom.freeVars ++ body.freeVars.filter (· != x)
-
-public meta partial def SelForm.freeVars : SelForm → Array Name
-  | .subset a b | .notSubset a b | .ni a b | .notNi a b | .eq a b | .neq a b =>
-    a.freeVars ++ b.freeVars
-  | .veq a b | .vneq a b => a.freeVars ++ b.freeVars
-  | .icmp _ a b => a.freeVars ++ b.freeVars
-  | .and a b | .or a b | .xor a b | .iff a b | .implies a b =>
-    a.freeVars ++ b.freeVars
-  | .ite c t e => c.freeVars ++ t.freeVars ++ e.freeVars
-  | .not a => a.freeVars
-  | .some_ a | .no a | .lone a | .one a => a.freeVars
-  | .quant _ _ binders body => bindersFreeVars binders body.freeVars
-
-private meta partial def bindersFreeVars (binders : Array (Name × Sel))
-    (bodyFrees : Array Name) : Array Name := Id.run do
-  let mut bound : Array Name := #[]
-  let mut out : Array Name := #[]
-  for (x, dom) in binders do
-    out := out ++ dom.freeVars.filter (!bound.contains ·)
-    bound := bound.push x
-  return out ++ bodyFrees.filter (!bound.contains ·)
-
-end
-
-public meta def Sel.toSGQ (s : Sel) : String := s.toSGQCtx 0
+  | .node _ _ args => Id.run do
+    let mut bound : Array Name := #[]
+    let mut out : Array Name := #[]
+    let free (e : Sel) (bound : Array Name) := e.freeVars.filter (!bound.contains ·)
+    for a in args do
+      match a with
+      | .expr e => out := out ++ free e bound
+      | .exprs es => for e in es do out := out ++ free e bound
+      | .binders bs =>
+        for (x, dom) in bs do
+          out := out ++ free dom bound
+          bound := bound.push x
+      | .name _ | .atom _ => pure ()
+    return out
 
 end SpytialLean
