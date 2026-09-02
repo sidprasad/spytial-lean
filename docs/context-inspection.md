@@ -88,20 +88,21 @@ height(right, HR)
 ```
 
 The observer is evaluated before its result is added. Known child heights can
-therefore compute the parent's height. However, computing an observation does
-not implicitly request the relations used by its implementation:
+therefore compute the parent's height. With
+`observing [height] dependencies`, named operations in a symbolic simplified
+result connect the recursive observations:
 
 ```text
 max(HL, HR, M)
 add(1, M, H)
 ```
 
-Those `max` and `add` tuples are not emitted merely because `height` uses them.
-An independently retained fact such as `height r + 1 < height l` does introduce
-an `add` relationship, along with the observed heights and the comparison.
-An equation being provable by unfolding a definition does not, by itself,
-request its expansion in the diagram. See [Observations](observations.md) for
-the evaluation and result-representation contract.
+These `max` and `add` tuples relate the symbolic parent and child heights. They
+are the residual dependency graph, not a trace of every reduction. An
+independently retained fact such as `height r + 1 < height l` can introduce
+additional `add` and comparison relationships. See
+[Observations](observations.md) for the evaluation and result-representation
+contract.
 
 In particular, neither retaining branch inequalities nor observing heights
 proves that an arbitrary result is balanced. That requires appropriate

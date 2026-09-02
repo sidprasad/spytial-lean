@@ -1,8 +1,30 @@
 # What `observing` means
 
 `observing [f]` asks for the value of `f t` for each applicable value `t`
-already represented in the inspection. It does not ask for a trace of how
-`f` computes that value.
+already represented in the inspection. Adding the `dependencies` modifier
+retains named operations in a symbolic simplified result that connect recursive
+observations. This is a dependency graph, not a trace of every reduction the
+evaluator performed:
+
+```lean
+spytial tree observing [height] dependencies
+```
+
+## Three stages
+
+Observation has three separate stages:
+
+1. **Domain selection.** Spytial snapshots the represented values to which each
+   requested unary function applies.
+2. **Evaluation.** It simplifies each application using definitions and, in
+   tactic mode, retained proof-backed facts. The result is accompanied by a
+   kernel-checked equality.
+3. **Representation.** Plain `observing` connects each input to its result.
+   `dependencies` additionally represents the named operations in a symbolic
+   residual that connect recursive applications of the observer.
+
+The third stage changes only the relational datum. It does not perform more
+proof search or change which values are observed.
 
 ## Relational contract
 
@@ -19,11 +41,16 @@ For every requested unary function `f : A → B` and every represented `t : A`:
    If no computation is possible, `r` can simply be `f t` itself.
 3. Represent the result in the same datum and add the tuple
    `f(t, result)`, using the existing atom for `t`.
+4. With `dependencies`, if `r` is still symbolic and contains recursive
+   applications of the requested observer, represent the named operations
+   connecting those applications to the result. Fully evaluated results remain
+   ordinary values without a trace.
 
 Concrete results are ordinary values, such as the number `2`. A result known
 to equal a local value uses that value. Known result constructors retain their
 ordinary fields, including symbolic fields. An unresolved computation has a
-symbolic result atom (`?₁`, `?₂`, …), not an automatically expanded computation graph.
+symbolic result atom (`?₁`, `?₂`, …). Named residual dependencies can connect
+that atom to other symbolic observation results.
 Occurrences of a named application share its result, so a context comparison
 and an observation refer to the same value.
 
@@ -36,22 +63,44 @@ values share atoms. Observing does not override an occurrence-based policy.
 The domain is fixed before observation results are introduced: observing
 `bump : Nat → Nat` at `1` adds `bump(1, 2)`, not an infinite chain of observations.
 
-## Evaluation is not an extra observation
+## Dependencies are not a reduction trace
 
 For `height (node l key r)`, evaluation can use
-`1 + max (height l) (height r)` internally. That does not request `add` or `max`
-relations, any more than it requests the internal constructors of `Nat`.
+`1 + max (height l) (height r)`. When the child heights are unresolved, this
+residual expression produces the following graph under `dependencies`:
+
+```text
+height(l, HL)
+height(r, HR)
+max(HL, HR, M)
+add(1, M, H)
+height(node l key r, H)
+```
+
+These are the named operations remaining in the checked simplified result.
+Spytial does not expose the evaluator's intermediate rewrites or `Nat`'s
+implementation constructors. If the whole height evaluates to `2`, the result
+is simply the ordinary value `2`; no historical trace is reconstructed.
 
 Other relations can come from explicit inspected expressions and retained
 proof-backed facts. For example, a branch fact
 `height r + 1 < height l` connects the height results through `add` and `lt`.
-That relationship is present in the context being inspected; it is not an
-automatic expansion of the observer's defining equation.
+That relationship is present in the context being inspected independently of
+the observer's residual dependency graph.
 
-Merely being able to prove a defining equation does not select it for display.
-General automatic discovery/selection of further relations is not part of
-`observing`. The current syntax accepts named unary data-returning functions;
-it does not yet accept binary `add` as an observer over pairs of domain values.
+Spytial does not perform general theorem discovery to find further equations.
+The current syntax accepts named unary data-returning functions; it does not
+accept binary `add` as a separate observer over pairs of domain values. An
+`add` relation can nevertheless occur when it is part of a retained residual.
+
+Writing `observing [height, max, HAdd.hAdd]` would have different semantics.
+`max` and `HAdd.hAdd` are binary functions, while observers currently map one
+unary function over a fixed domain. Treating them as observers would require a
+Cartesian product of represented numbers, producing many combinations that
+were never used by `height`; allowing their results back into that domain could
+also make the process unbounded. `dependencies` instead follows only the
+particular `max` and addition applications present in `height`'s checked
+symbolic residual.
 
 ## Examples with height
 
@@ -62,7 +111,7 @@ Here `singleton key := node leaf key leaf` is an ordinary helper definition.
 | `leaf` | `0` |
 | `singleton key`, with unknown `key` | `1` |
 | `node (singleton key) x leaf` | `2` |
-| `node l key r`, with arbitrary `l` and `r` | Symbolic |
+| `node l key r`, arbitrary `l` and `r` | Symbolic; `dependencies` connects it via `max` and `add` |
 | Same tree, with `height l = 2`, `height r = 1` | `3` |
 | Same tree, with only `height r + 1 < height l` | Generally still symbolic |
 
@@ -93,9 +142,15 @@ inputs can have before/after heights `3 → 2` and `4 → 3` respectively.
   unresolved universe metavariables currently skip preparation.
 - The existing finite context-fact selection still applies. Observation does
   not rerun IYKYK to discover new facts about its newly produced values.
+- Dependency expansion follows only named operations in the simplified result
+  that still contain the requested observer. Unrelated helper implementations
+  remain symbolic boundaries.
 - `with [attribute height]` controls presentation, not evaluation. A symbolic
-  height may still display as `?₁`; pretty-printing its residual formula as an
-  attribute would be a separate presentation feature.
+  height may still display as `?₁`; its dependencies are separate relations in
+  the datum rather than text embedded in the attribute.
+
+Programmatic callers select the same behavior with
+`{ observationDetail := .dependencies }` in their `WalkConfig`.
 
 This behavior belongs to Spytial's Lean relationalizer. IYKYK supplies checked
 context facts; it does not need a new inference mechanism to evaluate a

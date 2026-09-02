@@ -198,6 +198,17 @@ public meta def WalkState.toDataInstance (s : WalkState) : JsonDataInstance :=
     { id := name, name := name, types := types, tuples := tuples : JsonRelation }
   { atoms := s.atoms, relations := relations }
 
+/-- How much of a requested observation's evaluation is represented.
+
+`value` keeps an unresolved result as one symbolic atom. `dependencies` also
+represents the residual named applications that relate that atom to other
+observed values. This is a dependency graph of the simplified result, not a
+trace of every reduction performed by the simplifier. -/
+public meta inductive ObservationDetail where
+  | value
+  | dependencies
+  deriving BEq, Inhabited
+
 /-- Configuration for the expression walker. -/
 public meta structure WalkConfig where
   /-- When true, skip Prop-typed fields (data mode). When false, show them (proof mode). -/
@@ -214,10 +225,13 @@ public meta structure WalkConfig where
   observations : Array Expr := #[]
   /-- Checked evaluation/simplification results prepared before the final walk. -/
   observationResults : ExprStructMap Simp.Result := {}
-  /-- Unresolved computations inside observation results are value boundaries,
-      not requests to draw their implementation. Independently prepared source
-      applications (from observations or context facts) still have graphs. -/
+  /-- Named applications kept as atomic boundaries inside observation results.
+      Dependency mode omits graph applications that still contain the requested
+      observer, allowing the walker to relate their symbolic results instead. -/
   observationResiduals : Std.HashSet ExprStructEq := {}
+  /-- Whether unresolved observation results stay atomic or expose the named
+      applications in their simplified dependency expression. -/
+  observationDetail : ObservationDetail := .value
   /-- The represented domain before observation-derived structure is added. -/
   observationDomain : Option (Array Expr) := none
   /-- Bound on simplification of each observation or dependent computation. -/
@@ -948,19 +962,22 @@ private meta partial def observationValue? (e : Expr) : MetaM (Option Expr) :=
     args := args.map fun arg => if arg.equal argument then value else arg
   return some (mkAppN reduced.getAppFn args)
 
-/-- Locate computations that must remain symbolic values rather than exposing
-    an observer's implementation. Constructor and literal values include
-    non-`Nat` numerals such as negative `Int`s. -/
-private meta partial def residualApplications (e : Expr) :
+/-- Locate computations that must remain symbolic values. In dependency mode,
+    named applications remain graph boundaries but are walked instead of being
+    collapsed into one atom. Constructor and literal values include non-`Nat`
+    numerals such as negative `Int`s. -/
+private meta partial def residualApplications (cfg : WalkConfig) (e : Expr) :
     StateT (Std.HashSet ExprStructEq) MetaM Unit := do
   if (← observationValue? e).isSome then return
   if (← graphSide? e).isSome then
-    modify (·.insert ⟨e⟩)
-    -- Its arguments are not separately requested results. In particular,
-    -- do not mark a helper inside an input tree as an opaque computation.
+    if cfg.observationDetail == .value || !(← dependsOnObservation cfg e) then
+      modify (·.insert ⟨e⟩)
+    else
+      for argument in ← dataArgsOf e do
+        residualApplications cfg argument
     return
   for argument in ← dataArgsOf e do
-    residualApplications argument
+    residualApplications cfg argument
 
 private meta def observationMethods (cfg : WalkConfig) (simprocs : Simp.SimprocsArray) :
     Simp.Methods :=
@@ -1029,7 +1046,7 @@ public meta def prepareObservations (cfg : WalkConfig) (values : Array Expr)
           | .error exception => throwError "{exception.toMessageData (← getOptions)}"
           | .ok _ => pure { result with expr := expression, proof? := some proof }
         results := results.insert ⟨application⟩ result
-        let (_, next) ← (residualApplications result.expr).run residuals
+        let (_, next) ← (residualApplications cfg result.expr).run residuals
         residuals := next
       catch error =>
         let detail ← error.toMessageData.toString

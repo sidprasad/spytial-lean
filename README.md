@@ -378,6 +378,7 @@ both command and tactic mode:
 ```lean
 #spytial tree observing [height]
 spytial tree observing [height]
+spytial tree observing [height] dependencies
 ```
 
 For each represented value `t` of the appropriate input type, `observing [height]`
@@ -392,10 +393,15 @@ does not modify the proof state or run a general proof search.
 A computed height is an ordinary number. If the context establishes
 `height l = 2` and `height r = 1`, the parent's result is `3`. Otherwise its
 height can remain a symbolic value, connected by the same `height` relation.
-Computing with `add` and `max` internally does **not** request those relations:
-`observing [height]` observes heights, not the implementation of `height`.
+With the optional `dependencies` modifier, Spytial also represents named
+residual dependencies when a symbolic simplified result still contains
+recursive height applications. For a node with two unknown child heights,
+`max(HL, HR, M)` and `add(1, M, H)` connect the child results to the parent's
+result. This is a dependency graph, not a trace of every evaluator rewrite or
+an expansion of `Nat`'s implementation.
 Structured results still have their ordinary fields; unresolved computations
-inside them stay symbolic. There is no separate symbolic-result view.
+inside them that do not retain the requested observer stay symbolic. There is
+no separate symbolic-result view.
 The represented domain is fixed before these results are added, so observations
 do not recursively observe their own newly introduced outputs.
 
@@ -404,7 +410,8 @@ application and the enclosing named computations that depend on it are
 represented before WHNF. For example, with `observing [height]`, a fact
 `height r + 1 < height l` produces `height`, `add`, and `lt` relations rather
 than exposing `Nat.succ` and its constructor field. Here `add` comes from an
-explicit retained fact, not from expanding the definition of `height`.
+explicit retained fact; residual `add` and `max` relationships can also come
+from a symbolic recursive height computation when `dependencies` is requested.
 
 `#spytial` uses the same observation-aware relationalizer with no proof
 context, so it observes all values represented by the selected datum. Tactic

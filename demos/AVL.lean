@@ -118,9 +118,11 @@ def rotateRight (t : Tree) : Tree := by
   spytial t observing [height] with [.., attribute height] -- At entry
   exact match t with
     | before@(.node (.node ll lx lr) x r) => by
-        spytial before observing [height] with [.., attribute height] -- Before rotation
+        spytial before observing [height] dependencies
+          with [.., attribute height] -- Before rotation
         let after := Tree.node ll lx (.node lr x r)
-        spytial after observing [height] with [.., attribute height] -- After rotation
+        spytial after observing [height] dependencies
+          with [.., attribute height] -- After rotation
         exact after
     | other => other
 

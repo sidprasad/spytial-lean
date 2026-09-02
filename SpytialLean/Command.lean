@@ -597,14 +597,23 @@ private meta def optionalOps (stx : Syntax) : Option (Array (TSyntax `spytial_op
 private meta def optionalTerms (stx : Syntax) : Array Syntax :=
   if stx.getNumArgs == 0 then #[] else stx[2].getSepArgs
 
+private meta def withObservationDetail (cfg : WalkConfig) (observing detail : Syntax) :
+    TermElabM WalkConfig := do
+  if detail.getNumArgs == 0 then return cfg
+  if observing.getNumArgs == 0 then
+    throwErrorAt detail "'dependencies' requires an 'observing [...]' clause"
+  return { cfg with observationDetail := .dependencies }
+
 /-! ## #spytial command -/
 
 /-- `#spytial <term>` displays a spatial relational diagram in the Lean infoview.
 
     `observing [f₁, ...]` parameterizes the relationalizer with the named
     functions and adds each function's graph over every compatible value in
-    the represented datum. Command mode has no proof context; tactic mode uses
-    the same observation input while also translating context facts.
+    the represented datum. An optional `dependencies` modifier also represents
+    the named operations in a symbolic recursive result. Command mode has no
+    proof context; tactic mode uses the same observation input while also
+    translating context facts.
 
     Use `#spytial <term> with [<ops>]` to specify layout operations inline:
     ```
@@ -621,12 +630,14 @@ private meta def optionalTerms (stx : Syntax) : Array Syntax :=
     #spytial myTree with [.., hideAtom Nat]
     ``` -/
 syntax (name := spytialCmd) "#spytial " term (" observing " "[" term,* "]")?
+  (" dependencies")?
   (" with " "[" spytial_op,*,? "]")? : command
 
 @[command_elab spytialCmd]
 meta def elabSpytialCmd : CommandElab := fun stx => do
-  let props ← liftTermElabM <|
-    spytialPayloadProps stx[1] (optionalOps stx[3]) {} (optionalTerms stx[2])
+  let props ← liftTermElabM do
+    let cfg ← withObservationDetail {} stx[2] stx[3]
+    spytialPayloadProps stx[1] (optionalOps stx[4]) cfg (optionalTerms stx[2])
   liftCoreM <| savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
 
 /-! ## spytial_spec command -/
@@ -742,11 +753,13 @@ meta def elabSpytialSpecDebug : CommandElab := fun
     It shows the atoms and relations produced before any visualization and
     accepts the same observations as `#spytial`. -/
 syntax (name := spytialDatumDebug) "#spytial.datum " term
-  (" observing " "[" term,* "]")? : command
+  (" observing " "[" term,* "]")? (" dependencies")? : command
 
 @[command_elab spytialDatumDebug]
 meta def elabSpytialDatumDebug : CommandElab := fun stx => do
-  let (_, _, di, _, _) ← liftTermElabM <| elabRelationalized stx[1] {} (optionalTerms stx[2])
+  let (_, _, di, _, _) ← liftTermElabM do
+    let cfg ← withObservationDetail {} stx[2] stx[3]
+    elabRelationalized stx[1] cfg (optionalTerms stx[2])
   logInfo m!"{(toJson di).pretty}"
 
 /-! ## Proof visualization -/
@@ -834,11 +847,12 @@ public meta def spytialInContextProps (subject : Expr)
 
 open Tactic in
 private meta def spytialInContextTac (term : Syntax)
-    (observingSyntax fyiSyntax : Syntax)
+    (observingSyntax dependencySyntax fyiSyntax : Syntax)
     (ops? : Option (Array (TSyntax `spytial_op))) (invocation : Syntax) : TacticM Unit := do
   let (props?, status) ← withMainContext do
     let subject ← elabTermInstantiated term
-    spytialInContextProps? subject ops? {} (← resolveFyi fyiSyntax)
+    let cfg ← withObservationDetail {} observingSyntax dependencySyntax
+    spytialInContextProps? subject ops? cfg (← resolveFyi fyiSyntax)
       (← resolveObservations observingSyntax)
   if status.inconsistent then
     logWarning "spytial: IYKYK found an inconsistent context; no diagram rendered"
@@ -852,17 +866,19 @@ open Tactic in
 /-- `spytial term` asks IYKYK what the current context establishes about
     `term`, translates that knowledge into relational data, and displays it.
     `observing [f₁, ...]` parameterizes that translation and displays each
-    function over every compatible represented value; `fyi [h₁, ...]`
-    supplies proved hypotheses or forward rules to IYKYK;
+    function over every compatible represented value; `dependencies` also
+    displays a symbolic recursive result's named dependency operations;
+    `fyi [h₁, ...]` supplies proved hypotheses or forward rules to IYKYK;
     `with [...]` supplies Spytial layout operations. -/
 syntax (name := spytialTactic) "spytial " term (" observing " "[" term,* "]")?
+  (" dependencies")?
   (" fyi " "[" term,* "]")?
   (" with " "[" spytial_op,*,? "]")? : tactic
 
 open Tactic in
 @[tactic spytialTactic]
 meta def elabSpytialTactic : Tactic := fun stx =>
-  spytialInContextTac stx[1] stx[2] stx[3] (optionalOps stx[4]) stx
+  spytialInContextTac stx[1] stx[2] stx[3] stx[4] (optionalOps stx[5]) stx
 
 meta def spytialDatumKw : Lean.Parser.Parser :=
   Lean.Parser.nonReservedSymbol "spytial.datum" (includeIdent := true)
@@ -873,6 +889,7 @@ open Tactic in
     `spytial`. -/
 syntax (name := spytialDatumTactic) spytialDatumKw term
   (" observing " "[" term,* "]")?
+  (" dependencies")?
   (" fyi " "[" term,* "]")? : tactic
 
 open Tactic in
@@ -880,8 +897,9 @@ open Tactic in
 meta def elabSpytialDatumTactic : Tactic := fun stx => withMainContext do
   let subject ← elabTermInstantiated stx[1]
   let observations ← resolveObservations stx[2]
-  let (status, view?) ← wdykInContext subject {}
-    (contextConfig (← resolveFyi stx[3])) observations
+  let cfg ← withObservationDetail {} stx[2] stx[3]
+  let (status, view?) ← wdykInContext subject cfg
+    (contextConfig (← resolveFyi stx[4])) observations
   if status.inconsistent then
     logWarning "spytial: IYKYK found an inconsistent context; no datum produced"
   else if let some view := view? then

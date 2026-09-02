@@ -24,8 +24,10 @@ private meta def node (l : Expr) (key : Nat) (r : Expr) : Expr :=
 
 private meta def height (t : Expr) : Expr := mkApp (mkConst ``Tree.height) t
 
-private meta def view (root : Expr) (rootOnly := true) : MetaM ContextView := do
-  let (status, result) ← wdykInContext root {} { rootOnly, mechanisms := #[.simp] } #[height root]
+private meta def view (root : Expr) (rootOnly := true)
+    (observationDetail : ObservationDetail := .value) : MetaM ContextView := do
+  let (status, result) ← wdykInContext root { observationDetail }
+    { rootOnly, mechanisms := #[.simp] } #[height root]
   if status.inconsistent || status.truncated then throwError "unexpected extraction status"
   let some result := result | throwError "missing context view"
   return result
@@ -37,6 +39,40 @@ private meta def assertCount (label : String) (data : JsonDataInstance)
     (relation : String) (count : Nat) : MetaM Unit := do
   unless (tuples data relation).size == count do
     throwError "{label}: expected {count} {relation} tuples\n{canonInstance data}"
+
+private meta def graphResult? (data : JsonDataInstance) (relation input : String) :
+    Option String := do
+  let tuple ← (tuples data relation).find? (fun tuple => tuple.atoms[0]? == some input)
+  tuple.atoms.back?
+
+private meta def graphResult (label : String) (data : JsonDataInstance)
+    (relation input : String) : MetaM String := do
+  match graphResult? data relation input with
+  | some result => return result
+  | none => throwError "{label}: missing {relation} result\n{canonInstance data}"
+
+private meta def assertHeightDependencies (label : String) (data : JsonDataInstance)
+    (root : String) : MetaM Unit := do
+  assertCount label data "max" 1
+  assertCount label data "hAdd" 1
+  let left ← graphResult label data "left" root
+  let right ← graphResult label data "right" root
+  let leftHeight ← graphResult label data "height" left
+  let rightHeight ← graphResult label data "height" right
+  let rootHeight ← graphResult label data "height" root
+  let maximum ← match (tuples data "max").find? (fun tuple =>
+      tuple.atoms[0]? == some leftHeight && tuple.atoms[1]? == some rightHeight) with
+    | some tuple => pure tuple
+    | none => throwError "{label}: child heights do not feed max\n{canonInstance data}"
+  let some maximumResult := maximum.atoms[2]?
+    | throwError "{label}: max has no result\n{canonInstance data}"
+  let one ← match data.atoms.find? (·.label == "1") with
+    | some atom => pure atom
+    | none => throwError "{label}: missing the node-height increment\n{canonInstance data}"
+  unless (tuples data "hAdd").any fun tuple =>
+      tuple.atoms[0]? == some one.id && tuple.atoms[1]? == some maximumResult &&
+        tuple.atoms[2]? == some rootHeight do
+    throwError "{label}: max does not feed the root height through 1 + max\n{canonInstance data}"
 
 private meta def assertTrees (label : String) (data : JsonDataInstance) (count : Nat) :
     MetaM Unit := do
@@ -264,16 +300,18 @@ local instance : SpytialIdentity Tree := ⟨.eqv (fun _ _ => false), none⟩
 
 end
 
-/- Observing height requests its values, not its implementation's call graph.
-   Unknown subtrees do not determine heights or an ordering between them. -/
+/- A symbolic recursive observation exposes the residual dependencies relating
+   the result atoms. It still does not invent an ordering between them. -/
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `l tree fun l => do
   withLocalDeclD `r tree fun r => do
-    let result ← view (node l 1 r)
+    let result ← view (node l 1 r) true .dependencies
     assertCount "symbolic heights" result.data "height" 3
-    assertCount "no implicit maximum observation" result.data "max" 0
-    assertCount "no implicit addition observation" result.data "hAdd" 0
+    assertHeightDependencies "symbolic height dependencies" result.data result.inspection.root
     assertCount "no invented ordering" result.data "le" 0
+    let atomic ← relationalize (node l 1 r) {} #[height (node l 1 r)]
+    assertCount "atomic observation omits maximum" atomic "max" 0
+    assertCount "atomic observation omits addition" atomic "hAdd" 0
 
 /- Facts about the children compute the parent's height before any context
    expression can allocate a separate unknown for it. -/
@@ -307,8 +345,8 @@ end
     assertInspectionMetadata result
     assertCount "scalar retains comparison" result.data "lt" 1
 
-/- Known symbolic heights remain shared values. Arithmetic used internally to
-   calculate the parent does not become an additional observation. -/
+/- If supplied facts eliminate every recursive height application, remaining
+   arithmetic stays an atomic result rather than leaking an unrelated graph. -/
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `l tree fun l => do
   withLocalDeclD `r tree fun r => do
@@ -398,15 +436,15 @@ private meta def assertRootObservation (data : JsonDataInstance) (relation label
           (fun a => some a.id == bound.atoms[0]? && a.label == "1") do
         throwError "a fact's helper application did not use its computed height"
 
-/- Partial evaluation still computes the known child, without drawing the
-   addition/maximum used to calculate the unresolved parent's height. -/
+/- Partial evaluation computes the known child and connects the unresolved
+   parent's height to the remaining child through max and addition. -/
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `r tree fun r => do
     let root := node (mkApp (mkConst ``Tree.singleton) (mkRawNatLit 4)) 7 r
-    let data ← relationalize root {} #[height root]
+    let data ← relationalize root { observationDetail := .dependencies } #[height root]
     assertCount "partially known tree heights" data "height" 4
-    assertCount "no implementation addition" data "hAdd" 0
-    assertCount "no implementation maximum" data "max" 0
+    let some rootId := data.atoms[0]?.map (·.id) | throwError "missing root"
+    assertHeightDependencies "partial height dependencies" data rootId
     let some child := (tuples data "left").find?
         (·.atoms[0]? == data.atoms[0]?.map (·.id)) | throwError "missing child"
     let some observed := (tuples data "height").find? (·.atoms[0]? == child.atoms[1]?)
