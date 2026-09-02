@@ -703,7 +703,11 @@ private meta def optionalTerms (stx : Syntax) : Array Syntax :=
 /-- `#spytial <term>` displays a spatial relational diagram in the Lean infoview.
     `observing [f₁, …]` adds each named function's graph over every compatible
     value in the datum. A `with [<ops>]` list overrides the type's attached
-    `spytial_spec`. -/
+    `spytial_spec`; `..` in the list splices it back in:
+    ```
+    #spytial myTree with [orientation left left below, atomStyle Tree (borderStyle "#0066ff")]
+    #spytial myTree with [.., hideAtom Nat]
+    ``` -/
 syntax (name := spytialCmd) "#spytial " term (" observing " "[" term,* "]")?
   (" with " "[" spytial_op,*,? "]")? : command
 
@@ -713,7 +717,10 @@ meta def elabSpytialCmd : CommandElab := fun stx => do
     spytialPayloadProps stx[1] (optionalOps stx[3]) {} (optionalTerms stx[2])
   liftCoreM <| savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
 
-/-- `spytial_spec <Type> [<ops>]` attaches the spec used by default for that type. -/
+/-- `spytial_spec <Type> [<ops>]` attaches the spec used by default for that type:
+    ```
+    spytial_spec Tree [orientation left left below, hideAtom Nat]
+    ``` -/
 syntax (name := spytialSpecCmd) "spytial_spec " ident " [" spytial_op,*,? "]" : command
 
 @[command_elab spytialSpecCmd]
@@ -728,7 +735,11 @@ meta def elabSpytialSpecCmd : CommandElab := fun
 
 /-- `spytial_ops <name> : <Type> [<ops>]` binds a reusable op list, elaborated
     against `<Type>` as root. The name is declared as an `SpytialOps` constant,
-    so it namespaces and is reached through `open` and `export` like any other. -/
+    so it namespaces and is reached through `open` and `export` like any other.
+    ```
+    spytial_ops quiet : Tree [hideAtom Nat]
+    #spytial t with [..quiet, orientation left below]
+    ``` -/
 syntax (name := spytialOpsCmd) "spytial_ops " ident " : " ident " [" spytial_op,*,? "]" : command
 
 @[command_elab spytialOpsCmd]
