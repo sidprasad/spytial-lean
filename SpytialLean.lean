@@ -19,3 +19,5 @@ public meta import SpytialLean.Attr
 public meta import SpytialLean.Command
 public meta import SpytialLean.Snapshot
 public meta import SpytialLean.Coverage
+public meta import SpytialLean.MetaViz
+public meta import SpytialLean.ExprView

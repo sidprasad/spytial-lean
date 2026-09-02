@@ -19,6 +19,15 @@ public meta def canonInstance (di : JsonDataInstance) : String := Id.run do
     s!"{r.name}[{String.intercalate "," r.types.toList}]:{String.intercalate ";" ts.toList}"
   return String.intercalate "\n" (atomsS ++ relsS).toList
 
+/-- `Foo.lean:12` → `Foo.lean:N`: the stamp's line moves whenever the lines
+    above it do, so the goldens pin the file, never the line. -/
+public meta def maskLines (s : String) : String :=
+  match s.splitOn ".lean:" with
+  | [] => s
+  | first :: rest =>
+    first ++ String.join (rest.map fun part =>
+      ".lean:N" ++ (part.dropWhile Char.isDigit).toString)
+
 public meta def assertCanon (label : String) (di : JsonDataInstance) (expected : String) :
     MetaM Unit := do
   let got := canonInstance di

@@ -6,6 +6,7 @@ public import SpytialLean.Sel
 public import SpytialLean.Identity
 public meta import SpytialLean.Attr
 public meta import SpytialLean.Command
+public meta import SpytialTests.WalkCanon
 
 open SpytialLean Lean Elab Command
 
@@ -52,15 +53,6 @@ public def lSmall : LRB := .node .black 1 .nil .nil
     `isBlack` selector must pick an interior atom. Atoms: 0 node, 1 red,
     2 key, 3 node, 4 black, 5 key, 6 nil (every leaf holds it). -/
 public def lBig : LRB := .node .red 1 (.node .black 2 .nil .nil) .nil
-
-/-- `Foo.lean:12` → `Foo.lean:N`: the stamp's line moves whenever the lines
-    above it do, so the goldens pin the file, never the line. -/
-private meta def maskLines (s : String) : String :=
-  match s.splitOn ".lean:" with
-  | [] => s
-  | first :: rest =>
-    first ++ String.join (rest.map fun part =>
-      ".lean:N" ++ (part.dropWhile Char.isDigit).toString)
 
 public section
 
