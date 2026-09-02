@@ -364,6 +364,103 @@ example {α : Type} (edge : α → α → Prop) (Reach : α → Prop) (next : α
   spytial.datum s
   trivial
 
+structure ArgumentGraph (V : Type u) where
+  Adj : V → V → Prop
+
+inductive ArgumentWalk {V : Type u} (G : ArgumentGraph V) : V → V → Type u where
+  | nil (v : V) : ArgumentWalk G v v
+
+opaque ArgumentWalk.bypass {V : Type u} {G : ArgumentGraph V} {u v : V}
+    (p : ArgumentWalk G u v) : ArgumentWalk G u v := p
+
+inductive ArgumentWalk.IsPath {V : Type u} {G : ArgumentGraph V} {u v : V} :
+    ArgumentWalk G u v → Prop where
+  | intro (p : ArgumentWalk G u v) : p.IsPath
+
+/- Parameters determined by the explicit walk's type are elaboration plumbing,
+   not separate columns of either the function graph or its result predicate. -/
+set_option linter.unusedVariables false in
+/--
+info: {"relations":
+ [{"types": ["ArgumentWalk"],
+   "tuples": [{"types": ["ArgumentWalk"], "atoms": ["atom_1"]}],
+   "name": "IsPath",
+   "id": "IsPath"},
+  {"types": ["ArgumentWalk", "ArgumentWalk"],
+   "tuples":
+   [{"types": ["ArgumentWalk", "ArgumentWalk"], "atoms": ["atom_0", "atom_1"]}],
+   "name": "bypass",
+   "id": "bypass"}],
+ "atoms":
+ [{"type": "ArgumentWalk", "label": "p", "id": "atom_0"},
+  {"type": "ArgumentWalk", "label": "?₁", "id": "atom_1"}]}
+-/
+#guard_msgs in
+example {V : Type u} {G : ArgumentGraph V} {u v : V} (p : ArgumentWalk G u v)
+    (h : (ArgumentWalk.bypass p).IsPath) : True := by
+  spytial.datum p
+  trivial
+
+/- A projection's structure argument is semantic ownership, not elaboration
+   plumbing: dropping `G` would merge edges belonging to distinct graphs. -/
+set_option linter.unusedVariables false in
+/--
+info: {"relations":
+ [{"types": ["ArgumentGraph", "V", "V"],
+   "tuples":
+   [{"types": ["ArgumentGraph", "V", "V"],
+     "atoms": ["atom_1", "atom_0", "atom_2"]}],
+   "name": "Adj",
+   "id": "Adj"}],
+ "atoms":
+ [{"type": "V", "label": "u", "id": "atom_0"},
+  {"type": "ArgumentGraph", "label": "G", "id": "atom_1"},
+  {"type": "V", "label": "v", "id": "atom_2"}]}
+-/
+#guard_msgs in
+example {V : Type u} (G : ArgumentGraph V) (u v : V) (h : G.Adj u v) : True := by
+  spytial.datum u
+  trivial
+
+inductive ImplicitTagged {tag : Nat} : Nat → Prop where
+  | intro (value : Nat) : ImplicitTagged (tag := tag) value
+
+/- An independent implicit value still distinguishes applications and remains
+   a column. -/
+set_option linter.unusedVariables false in
+/--
+info: {"relations":
+ [{"types": ["Nat", "Nat"],
+   "tuples": [{"types": ["Nat", "Nat"], "atoms": ["atom_1", "atom_0"]}],
+   "name": "ImplicitTagged",
+   "id": "ImplicitTagged"}],
+ "atoms":
+ [{"type": "Nat", "label": "value", "id": "atom_0"},
+  {"type": "Nat", "label": "tag", "id": "atom_1"}]}
+-/
+#guard_msgs in
+example (tag value : Nat) (h : ImplicitTagged (tag := tag) value) : True := by
+  spytial.datum value
+  trivial
+
+inductive FamilyTagged {α : Type u} (β : α → Type v) : Nat → Prop where
+  | intro (value : Nat) : FamilyTagged β value
+
+/- Type families are elaboration-level arguments even when explicitly bound. -/
+set_option linter.unusedVariables false in
+/--
+info: {"relations":
+ [{"types": ["Nat"],
+   "tuples": [{"types": ["Nat"], "atoms": ["atom_0"]}],
+   "name": "FamilyTagged",
+   "id": "FamilyTagged"}],
+ "atoms": [{"type": "Nat", "label": "value", "id": "atom_0"}]}
+-/
+#guard_msgs in
+example {α : Type u} (β : α → Type v) (value : Nat) (h : FamilyTagged β value) : True := by
+  spytial.datum value
+  trivial
+
 -- two predicates sharing a short name cannot corrupt one relation: the
 -- colliding arity warns and stays undrawn
 namespace ArityFoo
