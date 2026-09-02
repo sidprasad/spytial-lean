@@ -6,11 +6,17 @@ meta import SpytialLean.Command
 
 open SpytialLean Lean Elab Command
 
--- off so the goldens need not restate the stamp on every op; `## The source
--- stamp` in LeanSelectorTest covers it
+-- These goldens pin the SGQ lowering, not the source stamp, so they leave the
+-- stamp out rather than restate it on every op. It has its own tests, under
+-- `## The source stamp` in LeanSelectorTest.
 set_option spytial.source false
 
-/-! # Tests for the embedded selector DSL -/
+/-! # Tests for the embedded selector DSL
+
+Golden `#guard_msgs` pin the SGQ lowering; negative tests pin one diagnostic
+per checker error class. -/
+
+/-! ## Fixtures -/
 
 /-- Monomorphic, so its scope is strict: unknown names are errors. -/
 public inductive SBDD where
@@ -20,6 +26,7 @@ public inductive SBDD where
 
 public def sExample : SBDD := .node "x" .tt .ff
 
+/-- Color + keyed nodes, for ctor-label comparisons through a field. -/
 public inductive SColor where
   | red | black
 
@@ -39,6 +46,7 @@ public def sTree : STree Nat := .node (.leaf 1) (.leaf 2)
 
 public section
 
+/-- Dump the stored spec of a type (tests attach + storage + lowering). -/
 syntax (name := storedSpecCmd) "#stored_spec " ident : command
 
 end
@@ -146,6 +154,7 @@ info: {"directives":
 
 /-! ## Use-site composition — `..` splices the attached spec -/
 
+-- A bare splice reproduces the attached spec.
 /--
 info: {"directives":
  [{"atomStyle":
@@ -164,8 +173,8 @@ info: {"directives":
 #guard_msgs in
 #spytial.spec sRB with [..]
 
--- inline ops land before or after the spliced ops per list position, within
--- each partition
+-- Inline ops land before or after the spliced ops per their list position
+-- (within each partition).
 /--
 info: {"directives":
  [{"flag": "hideDisconnected"},
@@ -200,6 +209,7 @@ end SOps
 #guard_msgs in
 #spytial.spec sRB with [..SOps.quiet]
 
+-- `open` reaches one like any other declaration...
 /--
 info: {"directives": [{"flag": "hideDisconnected"}],
  "constraints": [{"hideAtom": {"selector": "SColor + Nat"}}]}
@@ -208,6 +218,7 @@ info: {"directives": [{"flag": "hideDisconnected"}],
 open SOps in
 #spytial.spec sRB with [..quiet, flag hideDisconnected]
 
+-- ...and both spellings name the same declaration.
 /-- error: duplicate `..SOps.quiet` -/
 #guard_msgs in
 open SOps in
@@ -219,6 +230,7 @@ namespace SOps
 spytial_ops quiet : SRB [hideAtom Nat]
 end SOps
 
+-- A named op list only splices into the root it was bound against.
 /--
 error: 'SOps.quiet' is bound against 'SRB', but this op list is elaborated against 'SBDD'
 -/
@@ -233,6 +245,7 @@ error: 'SOps.quiet' is bound against 'SRB', but this op list is elaborated again
 #guard_msgs in
 #spytial.spec sRB with [..loud]
 
+-- A named op list also splices into an attached spec, not just a use-site list.
 public inductive SBun where
   | leaf
   | node (kid : SBun) (tag : Nat)
@@ -256,7 +269,7 @@ public def sDAG : SDAG := .node .tip .tip
 
 spytial_spec SDAG [inferredEdge short lo.hi]
 
--- the splice brings the attached spec's introduced names into scope
+-- The splice brings the attached spec's introduced names into scope.
 /--
 info: {"directives":
  [{"inferredEdge": {"selector": "lo.hi", "name": "short"}},
@@ -265,10 +278,12 @@ info: {"directives":
 #guard_msgs in
 #spytial.spec sDAG with [.., edgeStyle short (lineStyle "red")]
 
+-- Without the splice the introduced name is out of scope.
 /-- error: unknown relation 'short'; vocabulary of 'SDAG': SDAG, hi, lo, scrutinee -/
 #guard_msgs in
 #spytial.spec sDAG with [edgeStyle short (lineStyle "red")]
 
+-- A specless type warns, then composes with nothing.
 /--
 warning: `..` splices the attached spec, but SBDD has none
 ---
@@ -302,7 +317,8 @@ info: {"constraints":
   hideAtom SBDD . lo
 ]
 
-/-! ## Lenient scope: unresolvable names warn and pass through -/
+/-! ## Lenient (polymorphic) scope: resolved element types pass silently,
+    unresolvable names warn and pass through -/
 
 /--
 info: {"constraints":
@@ -325,8 +341,10 @@ info: {"constraints": [{"orientation": {"selector": "lft", "directions": ["below
   orientation lft below
 ]
 
-/-! ## Scalar closures: `Int`/`Char`/`UInt*` decompose into constructor
-chains, so their relations are selectable -/
+/-! ## Scalar closures stay in the vocabulary
+
+The walker decomposes `Int`/`Char`/`UInt*` into constructor chains, so their
+relations and types are selectable. -/
 
 public inductive SScalar where
   | mk (i : Int) (c : Char)
@@ -343,8 +361,10 @@ info: {"directives": [{"hideField": {"field": "val"}}],
   hideField val
 ]
 
-/-! ## Stuck-match vocabulary: one ternary `scrutinee` whatever the
-discriminant count -/
+/-! ## Stuck-match vocabulary
+
+The walker emits one ternary `scrutinee` whatever the discriminant count, so
+strict scopes accept it — in selector and field positions. -/
 
 /--
 warning: arity-3 selector: this position uses only the first and last columns of each tuple
@@ -376,8 +396,8 @@ info: {"directives":
 #guard_msgs in
 #spytial.spec sExample with [atomStyle {x : SBDD | @:x = ttt} (borderStyle "red")]
 
--- the walker writes a constructor's short name into `label` whether or not it
--- takes arguments
+-- A constructor with fields is an atom label like any other: the walker writes
+-- the constructor's short name into `label` whether or not it takes arguments.
 /--
 info: {"directives":
  [{"atomStyle":
@@ -387,7 +407,8 @@ info: {"directives":
 #guard_msgs in
 #spytial.spec sExample with [atomStyle {x : SBDD | @:x = node} (borderStyle "red")]
 
--- … so it shadows a same-named relation in expression position
+-- ...but its short name now shadows a same-named relation in expression
+-- position, where a label value is not what is wanted.
 /--
 error: this position expects a relational expression, but the selector is a label/literal value
 -/
@@ -485,9 +506,11 @@ error: join of arity 1 and arity 1 has no columns left
 
 /-! ## Selector references to graph-side names warn
 
-Groups and inferred edges join the drawn graph, not the data instance the engine
-evaluates selectors against. A field-name position warns unless the manifest
-lists it in that name's `referencedBy`. -/
+Groups and inferred edges join the drawn graph, not the data instance the
+engine evaluates selectors against — a constraint or directive selector
+naming one selects nothing at render. A field-name position warns unless the
+manifest lists it in that name's `referencedBy`: `edgeStyle hop` above
+resolves the edge, and the positions below do not. -/
 
 /--
 warning: spec-introduced 'hop' exists only in the drawn graph — the engine evaluates selectors against the data instance, so this reference selects nothing at render
@@ -592,6 +615,8 @@ info: {"directives":
 
 /-! ## Sort-typed field: dropped from vocabulary, scope stays strict -/
 
+/-- A `Type`-valued field is proof-like — the walker drops it, so it is neither
+    vocabulary nor a reason to open the scope. -/
 public structure SCarrier where
   carrier : Type
   tag : Nat
@@ -602,8 +627,10 @@ public def sCarrier : SCarrier := { carrier := Nat, tag := 0 }
 #guard_msgs in
 #spytial.spec sCarrier with [hideAtom carrier]
 
-/-! ## Relation arity — tabulated fields and `scrutinee`. The scope reads widths
-and column vocabulary from the same `tabulationPlan?` the walker emits from. -/
+/-! ## Relation arity — tabulated fields and `scrutinee`
+
+The scope reads widths and column vocabulary from the same `tabulationPlan?`
+the walker emits from. -/
 
 public inductive SQ where | q0 | q1 | q2
   deriving DecidableEq
@@ -624,7 +651,8 @@ public structure SProc where
 
 public def sProc : SProc := { handler := String.length }
 
-/-- A function field over the type's own parameters fixes no arity. -/
+/-- A function field over the type's own parameters fixes no arity: the
+    checker predicts none. -/
 public structure SPoly (State Label : Type) where
   tr : State → Label → State
 
@@ -648,7 +676,7 @@ info: {"constraints":
 #guard_msgs in
 #spytial.spec sLTS with [hideAtom {x : SLTS | step in SLTS->SQ->SQ}]
 
--- a join off the table drops the owner column
+-- A join off the table drops the owner column.
 /-- error: this position accepts a selector of arity 1, but this one has arity 3 -/
 #guard_msgs in
 #spytial.spec sDA with [hideAtom SDA.tr]
@@ -684,7 +712,7 @@ error: this position accepts a selector of arity 2 or wider, but this one has ar
 #guard_msgs in
 #spytial.spec sDA with [inferredEdge e SQ]
 
--- … and with `draw`, the unary form the manifest states: the atom feeds both ends
+-- … and with `draw`, the unary form the manifest states: the atom feeds both ends.
 /--
 info: {"directives":
  [{"inferredEdge": {"selector": "SQ", "name": "e", "draw": "_ -> g"}}],
@@ -763,9 +791,10 @@ info: {"constraints": [{"orientation": {"selector": "tr", "directions": ["below"
     unless t.atoms.size == 4 do
       throwError "SPoly: expected 4-ary 'tr' at SQ×Bool, got {t.atoms.size}"
 
-/-! ## Precedence battery — the Forge re-tier. `implies` binds tighter than
-`or`/`iff` and is the only right-associative connective; multiplicity applies to
-a whole union; difference is left-associative. -/
+/-! ## Precedence battery — the Forge re-tier
+
+`implies` binds tighter than `or`/`iff` and is the only right-associative
+connective; multiplicity applies to a whole union; difference is left-associative. -/
 
 /--
 info: {"constraints":
@@ -830,7 +859,7 @@ info: {"constraints":
   hideAtom {x : SBDD | no y : SBDD, w : String | @:y = tt}
 ]
 
--- `let` desugars by substitution; a later binder shadows it
+-- `let` desugars by substitution; a later binder shadows it.
 /--
 info: {"constraints":
  [{"hideAtom": {"selector": "{x : SBDD | some x.lo and no x.hi}"}},
@@ -842,6 +871,8 @@ info: {"constraints":
   hideAtom {x : SBDD | let a = lo | all a : SBDD | some a}
 ]
 
+-- A join tail resolves through the same ladder as a head: `let`-bindings and
+-- type sigs included.
 /--
 info: {"constraints":
  [{"hideAtom": {"selector": "{x : SBDD | some x.^(lo + hi)}"}},
@@ -858,7 +889,8 @@ info: {"constraints":
 ]
 
 -- `.(` and `.{` are Lean tokens, so a token-level `.` would lose both to
--- maximal munch; the selector's own table holds neither
+-- maximal munch; the selector's own token table holds neither, so the join
+-- operator lexes as a bare `.`.
 /--
 info: {"constraints":
  [{"hideAtom": {"selector": "{x : SBDD | some x.(lo + hi)}"}},
@@ -888,8 +920,8 @@ info: {"constraints":
 #guard_msgs in
 #spytial.spec sExample with [hideAtom (lo.tt)]
 
--- a unary operator binds tighter than the dot: `^lo.hi` is `(^lo).hi`, which is
--- how SGQ reads the same text
+-- The dot is always the join operator and a unary operator binds tighter —
+-- `^lo.hi` is `(^lo).hi`, which is how SGQ reads the same text.
 /--
 info: {"constraints":
  [{"orientation": {"selector": "^lo.hi", "directions": ["directlyBelow"]}},
@@ -947,8 +979,8 @@ info: {"directives":
   atomStyle {x : SRB | min[SRB.key] <= 3} (borderStyle "red")
 ]
 
--- the box join (`a[b] ≡ b.a`) is kept as written, not desugared: the engine
--- takes both forms
+-- Counting idiom and relational box join (`a[b] ≡ b.a`), which is kept as
+-- written rather than desugared: the engine takes both forms.
 /--
 info: {"constraints":
  [{"hideAtom": {"selector": "{x : SBDD | #{y : SBDD | some y.lo} = 2}"}},
@@ -960,9 +992,10 @@ info: {"constraints":
   hideAtom lo[SBDD]
 ]
 
-/-! ## `sum x : A | ie` integer aggregation quantifier. Lowering parenthesizes
-it: SGQ extends the body maximally right, so `(sum …) > 2` needs parens the
-surface omits. -/
+/-! ## `sum x : A | ie` integer aggregation quantifier
+
+Lowering parenthesizes it — SGQ extends the body maximally right, so
+`(sum …) > 2` needs the parens the surface omits. -/
 
 /--
 info: {"directives":
@@ -1108,7 +1141,7 @@ info: {"directives":
 #spytial.spec sExample with [hideAtom lo[]]
 
 -- `@bool:` compares against SGQ's boolean literal; `@:x = true` below stays a
--- constructor-label reading, rejected because Bool cannot occur in SBDD
+-- constructor-label reading, rejected because Bool cannot occur in SBDD.
 /--
 info: {"directives":
  [{"atomStyle":
@@ -1126,8 +1159,8 @@ info: {"directives":
 #guard_msgs in
 #spytial.spec sExample with [hideAtom {x : SBDD | @:x = 5}]
 
--- a `String` atom's label carries its Lean quotes, so a matching literal lowers
--- doubly-quoted
+-- A `String` atom's label carries its Lean quotes, so a matching literal
+-- lowers doubly-quoted, escaped per SGQ's string grammar.
 /--
 info: {"directives":
  [{"atomStyle":
@@ -1147,9 +1180,10 @@ info: {"directives":
 
 /-! ## A relation literally named `some` stays usable
 
-`.both` on the formula category keeps the multiplicity keyword and the bare
-relation distinguishable by longest-match, and the lowering backtick-quotes the
-name so the engine's lexer reads it as an identifier. -/
+`SWeird.mk` has fields `some` and `one`; `.both` on the formula category keeps
+the multiplicity keyword and the bare relation distinguishable by longest-match,
+and the lowering backtick-quotes the names so the engine's lexer reads them as
+identifiers, not keywords. -/
 
 public inductive SWeird where
   | mk (some one : SWeird)
@@ -1165,11 +1199,12 @@ public def sWeird : SWeird := .leaf
 
 /-! ## Vocabulary shadowing — fields literally named `sum` / `univ` / `add`
 
-Bare `sum` falls through the quantifier rule to the ident, so a field named
-`sum` needs nothing. `univ`/`iden`/`none` are read off the ident's source text,
-so a field named `univ` takes the escape (`«univ»`); spacing is not an escape. A
-box join's callee is read the same way, so `«add»[x]` reaches a field named
-after a builtin and `add[x]` is the call. -/
+Bare `sum` fails the quantifier rule and falls to the ident, so a field named
+`sum` needs nothing. `univ`/`iden`/`none` are read off the ident's source
+text, so a field named `univ` takes the escape (`«univ»`); spacing is not an
+escape — the dot is the join operator either way. A box join's callee is read
+the same way, so a field named after one of the engine's builtins is reachable
+as `«add»[x]` and `add[x]` is the call. -/
 
 public inductive SVocab where
   | mk (sum univ add : SVocab)
@@ -1197,10 +1232,10 @@ public def sVocab : SVocab := .leaf
 
 /-! ## Identifiers outside SGQ's bare lexer rule
 
-SGQ bare identifiers are ASCII (`[a-zA-Z_$/][a-zA-Z_0-9$/]*`) and the lexer
-fails open outside it — `s₁` silently evaluates the prefix `s`, `x'` becomes a
+SGQ bare identifiers are ASCII (`[a-zA-Z_$/][a-zA-Z_0-9$/]*`). Outside it the
+lexer fails open — `s₁` silently evaluates the prefix `s`, `x'` becomes a
 temporal prime, `σ` is a lexer error — so the lowering backtick-quotes every
-such name. -/
+such name: fields, sigs, and binders alike. -/
 
 public inductive SUnicode where
   | node (t₁ σ x' : SUnicode)
@@ -1272,7 +1307,8 @@ info: {"constraints":
 #guard_msgs in
 #spytial.spec sExample with [orientation (SBDD one -> lone SBDD) below]
 
--- reaching the kind checker is what says the parse got past the block form
+-- Not products, and formulas rather than selectors: reaching the kind checker
+-- is what says the parse got past the block form.
 /-- error: a selector picks out atoms or tuples, but this is a formula -/
 #guard_msgs in
 #spytial.spec sExample with [orientation (SBDD not in SBDD) below]
@@ -1296,8 +1332,9 @@ info: {"constraints":
 
 /-! ## Token-table hygiene — the DSL must not reserve words or steal prefixes
 
-Selector rules add nothing to the global token table. Everything below fails to
-*compile* if that stops holding. -/
+Selector rules add nothing to the global token table: a word spelling is read
+off the identifier, and a symbol spelling is an atom of the category-local
+table. Everything below fails to *compile* if either stops holding. -/
 
 def hygieneNi : Nat := 5
 def hygieneNotIn (input : Bool) : Bool := !input
@@ -1324,8 +1361,11 @@ run_cmd do
   if (tbl.find? "+").isNone then
     throwError "the lookup found nothing for '+', so it proves nothing"
 
-/-! ## Lean's keywords are ordinary relation names, needing no escape. The
-engine's own reserved words still get backquoted on the way out. -/
+/-! ## Lean's keywords are ordinary relation names
+
+Nothing of Lean's token table reaches a selector, so a field whose name is a
+Lean keyword needs no escape. The engine's own reserved words still get
+backquoted on the way out. -/
 
 public structure SKeyword where
   «fun» : Nat
@@ -1340,9 +1380,11 @@ info: {"constraints":
 #guard_msgs in
 #spytial.spec sKeyword with [hideAtom {x : SKeyword | some x.fun and some x.where}]
 
-/-! ## Negated comparisons: the engine spells a negation as a part of the
-comparison rather than an operator of its own, so every spelling below is one
-rule with one slot filled. -/
+/-! ## Negated comparisons
+
+The engine spells a negation as a part of the comparison rather than an
+operator of its own, so `!=`, `!in`, `!ni`, the integer comparisons, and their
+`not` spellings are one rule with one slot filled. -/
 
 /--
 info: {"constraints":
@@ -1369,17 +1411,18 @@ info: {"constraints":
 
 /-! ## The region edge
 
-`ParserCache.tokenCache` survives `adaptUncacheableContextFn`, so an op argument
-whose first token lexes differently under the two tables would be served the
-outer reading: `spytialOpArg` tries `num` first, and `@:` is `@` under Lean's
-table. The error below is about types, which is the point — it parsed. -/
+`ParserCache.tokenCache` survives `adaptUncacheableContextFn`, so an op
+argument whose first token lexes differently under the two tables would be
+served the outer reading: `spytialOpArg` tries `num` first, and `@:` is `@`
+under Lean's table. The error below is about types, which is the point — the
+selector parsed. -/
 
 /-- error: a selector picks out atoms or tuples, but this is a label/literal value -/
 #guard_msgs in
 #spytial.spec sExample with [hideAtom @:SBDD]
 
--- the node records which multiplicity spelling was written, and the encoder
--- writes that one back
+-- Every spelling the engine lists for an arrow's multiplicity round-trips: the
+-- node records which one was written, and the encoder writes it back.
 /--
 info: {"constraints":
  [{"orientation": {"selector": "SBDD two -> SBDD", "directions": ["below"]}}]}
@@ -1387,9 +1430,10 @@ info: {"constraints":
 #guard_msgs in
 #spytial.spec sExample with [orientation SBDD two -> SBDD below]
 
-/-! ## Grammar tripwire — a rule added, removed, or reshaped in the selector
-categories changes a kind name here; update `docs/selectors.md`'s EBNF alongside
-this golden. -/
+/-! ## Grammar tripwire — `docs/selectors.md` pins the surface grammar
+
+A rule added, removed, or reshaped in the selector categories changes a kind
+name here; update the EBNF alongside this golden. -/
 
 /--
 info: spytial_sel:
@@ -1429,6 +1473,9 @@ run_cmd do
   let some c := cats.find? `spytial_sel | throwError "no category spytial_sel"
   let kinds := (c.kinds.toList.map (toString ·.1)).toArray.qsort (· < ·)
   Lean.logInfo (m!"spytial_sel:\n" ++ m!"{"\n".intercalate kinds.toList}")
+
+/-! A relation name outside SGQ's bare-identifier rule: resolved unescaped,
+lowered backtick-quoted. -/
 
 public structure SMem where
   «∈» : Nat

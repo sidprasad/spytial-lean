@@ -28,13 +28,15 @@ json_union DeclaredArity where
 
 deriving instance DecidableEq for DeclaredArity
 
+/-- A numeric bound, from the manifest's (exclusive)minimum/maximum. -/
 public meta structure Bound where
   value : JsonNumber
   exclusive : Bool
   deriving Repr, Inhabited
 
-/-- `atMostOneOf` forbids two values from the same set; choosing a key of
-    `narrows` restricts the whole list to the named values. -/
+/-- Validity rules for an enum-list: `atMostOneOf` forbids two values from
+    the same set; choosing a key of `narrows` restricts the whole list to
+    the named values. -/
 public meta structure EnumListRules where
   atMostOneOf : List (List String)
   narrows : List (String × List String)
@@ -162,13 +164,18 @@ json_record JManifest ignoring "items" "language" "languageVersion"
 /-! ## Choices the manifest leaves open
 
 The manifest describes core's YAML surface; how its fields lay out as Lean
-arguments is this package's own choice. -/
+arguments is this package's own choice. Each table is keyed by manifest ids,
+and `parseManifest` rejects an entry naming an id the manifest no longer
+has. -/
 
 /-- Items where an optional selector may lead the argument list even though the
-    manifest does not list it first: `size (lo) 30 20` reads better than
-    `size 30 20 (lo)`. -/
+    manifest does not list it first. Without an entry a selector leads only
+    when it is the item's first field (`atomStyle`); `size` lists it last, but
+    `size (lo) 30 20` reads better than `size 30 20 (lo)`. -/
 private meta def leadingSelectorOverride : List String := ["size"]
 
+/-- Bare words that set a boolean field, where a `(showLabel false)` keyword
+    would be noise. -/
 private meta def boolSugarTable : List (String × String × Bool) :=
   [("labels", "showLabel", true), ("noLabels", "showLabel", false)]
 
@@ -216,6 +223,7 @@ private meta structure RawSelForm where
   min : Nat
   max : Option Nat
   requires : Option String
+  /-- The form admits a third column and the engine discards it. -/
   middlesIgnored : Bool
 
 private meta inductive RawFieldType where
@@ -464,6 +472,8 @@ private meta def blockOf (b : JBlock) : Except String RawBlock := do
       .error s!"{b.name}.{f.name}: a block leaf introduces no graph-side name"
   return { name := b.name, fields }
 
+/-- Every id a field contributes: its own, plus the enum and block fields its
+    alternative form spells. -/
 private meta def RawField.ids (f : RawField) : List String :=
   f.name :: match f.alt with
     | some a => a.enumField :: a.blocks.map (·.1)
@@ -506,6 +516,7 @@ private meta def parseManifest : Except String RawManifest := do
           .error s!"{i.id}.{intro.field}: introduces.referencedBy names \
             {path.quote}, which is not a field"
 
+  -- Verify this package's own tables still name live manifest entries.
   for id in leadingSelectorOverride do
     unless items.any (·.id == id) do
       .error s!"leadingSelectorOverride names {id.quote}, which is not a live item"
@@ -534,9 +545,9 @@ private meta def parseManifest : Except String RawManifest := do
       .error s!"boolSugar {word.quote} names the field {fname.quote}, \
         which no live item has"
 
-  -- Hold support is stated twice, per item and as one list, so each side checks
-  -- the other. `supportedBy` may also name a deprecated item, which this loop
-  -- does not see.
+  -- Hold support is stated twice, per item and as one list, so each side
+  -- checks the other. `supportedBy` may also name a deprecated item, which the
+  -- liveness check above allows and this loop does not see.
   for i in items do
     let listed := m.hold.supportedBy.contains i.id
     unless i.supportsHold == listed do
@@ -588,26 +599,32 @@ public meta structure AltForm where
   blocks : List (FieldId × BlockId)
   deriving Repr, Inhabited
 
-/-- One shape a selector position accepts. `requires` is a sibling field that
-    has to be set alongside for the form to apply at all (`inferredEdge`'s unary
-    form needs `draw`); `max` absent is no upper bound. -/
+/-- One shape a selector position accepts: the tuple widths it takes, and a
+    sibling field that has to be set alongside for the form to apply at all
+    (`inferredEdge`'s unary form needs `draw`). `max` absent is no upper
+    bound. -/
 public meta structure SelForm where
   min : Nat
   max : Option Nat
   requires : Option FieldId
-  /-- The engine keeps only the first and last column of a tuple this wide;
-      `inferredEdge` and `tag` are the positions that instead show them. -/
+  /-- The engine keeps only the first and last column of a tuple this wide
+      (`middleColumns`); `inferredEdge` and `tag` are the positions that
+      instead show them. -/
   middlesIgnored : Bool
   deriving Repr, Inhabited
 
-/-- `referencedBy` are the `item.field` positions where the engine resolves such
-    a name; a reference from anywhere else is never looked up. -/
+/-- A graph-side name an op introduces: the string field that spells it, how
+    many columns the thing it names has, and the `item.field` positions where
+    the engine resolves such a name. A reference from anywhere else is never
+    looked up — selectors evaluate against the data instance, and the field
+    positions that are not listed match before the name exists. -/
 public meta structure Introduces where
   field : FieldId
   arity : Nat
   referencedBy : List String
   deriving Repr, Inhabited
 
+/-- What a field holds. Drives parsing, checking, and lowering alike. -/
 public meta inductive FieldType where
   | selector (forms : List SelForm)
   /-- A relation name from the walker's vocabulary. -/
@@ -620,6 +637,7 @@ public meta inductive FieldType where
   | block (id : BlockId)
   /-- A bundled icon name, icon-pack reference, URL, or path. -/
   | iconPath
+  /-- Any CSS color. -/
   | color
   deriving Repr, Inhabited
 
@@ -648,16 +666,21 @@ public meta structure ItemSpec where
   scalar : Bool
   supportsHold : Bool
   fields : List FieldSpec
-  /-- Required fields in surface order; a trailing enum-list is variadic. -/
+  /-- Required fields, in surface order: these are the positional
+      arguments. A trailing enum-list is variadic. -/
   positional : List FieldId
   /-- An optional selector that may fill the leading positional slot. -/
   leadingSelector : Option FieldId
+  /-- The graph-side name this op introduces, for later ops in the same spec
+      to reference. -/
   introduces : Option Introduces
-  /-- The fields that are this item's entire effect: an instance setting none of
-      them parses and does nothing, which elaboration rejects. -/
+  /-- The fields that are this item's entire effect (`inertWhenBare`): an
+      instance setting none of them parses and does nothing, which elaboration
+      rejects. Empty for an item that is not inert when bare. -/
   effectFields : List FieldId
   /-- Core reads this op's `source` stamp back out, so carrying one buys a
-      conflict report that quotes the author. Elsewhere the stamp is left off. -/
+      conflict report that quotes the author. Elsewhere it parses and is
+      ignored, and the stamp is left off. -/
   displaysSource : Bool
   deriving Repr, Inhabited
 
@@ -668,8 +691,15 @@ public meta structure BlockSpec where
 
 /-! ## The tables
 
+One command declares them all. `items` and `blocks` are the language itself.
 `holdField`/`holdValues`/`holdDefault` are `hold: never`, which negates a
-constraint; `sourceField` is the key the provenance stamp rides under. -/
+constraint — item-level rather than a field, so which items take it is
+`ItemSpec.supportsHold`, cross-checked above against the manifest's own
+`hold.supportedBy`. `sourceField` is the key the provenance stamp rides under,
+likewise item-level as `ItemSpec.displaysSource`. `boolSugar` is the bare words
+above, resolved to field ids. `deprecatedItems` and `deprecatedFields` are the
+account of the surface we decline, so a coverage test can insist nothing is
+dropped silently. -/
 
 private meta instance : Quote Int := ⟨fun
   | .ofNat n => Syntax.mkCApp ``Int.ofNat #[quote n]

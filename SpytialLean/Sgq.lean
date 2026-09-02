@@ -68,6 +68,7 @@ json_union ArityRule on "rule" where
   | boxJoin
   | binders
 
+/-- The static analyzer's rule; the evaluator re-checks it only for `++`. -/
 json_union Requires where
   | equal
 
@@ -97,14 +98,18 @@ public meta def CharClass.contains (cc : CharClass) (c : Char) : Bool :=
   cc.ranges.any (fun r => r.from ≤ c && c ≤ r.to) || cc.chars.contains c
 
 public meta structure Part where
-  /-- One of `spellings`; this package's choice. -/
+  /-- The spelling this package writes. One of `spellings`; its choice. -/
   text : String
+  /-- Every spelling the engine accepts, in grammar order. -/
   spellings : List String
-  /-- Alternatives at each use, not aliases: an encoder writes `text` for an
-      alias and the source's own spelling for an alternative. -/
+  /-- Whether the spellings are alternatives to choose between at each use
+      (an arrow's multiplicity) rather than aliases for one thing (`!` and
+      `not`). An encoder writes `text` for an alias and what the source
+      wrote for an alternative. -/
   alternatives : Bool
   deriving Repr, Inhabited
 
+/-- The level of the loosest expression: what a delimiter accepts inside it. -/
 public meta def loosest : Nat := 0
 
 /-! ## The manifest as records
@@ -127,7 +132,9 @@ json_union JItem on "item" where
   | part (role : String) («optional» : Bool)
   | «optional» (items : List JItem)
 
-/-- A binder group and a body carry no role of their own. -/
+/-- The parts an item is written with. A binder group and a body carry no role
+    of their own, so the two readers of a template (`SelectorElab`'s rules and
+    `Selector`'s lowering) reach for theirs by name. -/
 private meta partial def JItem.roles : JItem → List String
   | .list _ r => [r]
   | .part r _ => [r]
@@ -255,9 +262,10 @@ private meta def escapePairs (o : JsonObject) : Except String (List (Char × Cha
       s!"string.escapeDecodes: {e}"
     return (decoded, spelling)
 
-/-- Lean's lexer claims a numeric literal before any token table does, so
-    `constant` has no generated rule and `SelectorElab.sgqNegNumRule` writes the
-    sign itself. -/
+/-- Parts reached by construct and role rather than off a template item, which
+    is the one way a template walk cannot see them. Lean's lexer claims a
+    numeric literal before any token table does, so `constant` has no generated
+    rule and `SelectorElab.sgqNegNumRule` writes the sign itself. -/
 private meta def namedParts : List (String × String) := [("constant", "negation")]
 
 private meta def parseManifest : Except String RawManifest := do

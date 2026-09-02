@@ -2,11 +2,15 @@ import SpytialLean
 
 open SpytialLean
 
-/-! # Showcase -/
+/-! # Showcase
+
+Examples of using `#spytial` to visualize Lean data structures.
+-/
 
 /-! ## Red-Black Tree
 
-Matches the Rust (caraspace) and Python (spytial-py) demos. -/
+The canonical Spytial example — matches the Rust (caraspace) and Python (spytial-py) demos.
+-/
 
 inductive Color where
   | red | black
@@ -37,7 +41,10 @@ def exampleRBTree : RBNode :=
       (.node .black 12 .nil .nil)
       (.node .black 20 .nil .nil))
 
+-- Uses the spec attached to RBNode
 #spytial exampleRBTree
+
+/-! ## Binary Tree -/
 
 inductive Tree (α : Type) where
   | leaf (value : α) : Tree α
@@ -54,12 +61,15 @@ def myTree : Tree Nat :=
 
 #spytial myTree
 
+-- Override with inline spec
 #spytial myTree with [
   orientation left above,
   orientation right above,
   atomStyle Tree (borderStyle "#0066ff"),
   hideAtom Nat
 ]
+
+/-! ## Structures -/
 
 structure Person where
   name : String
@@ -75,7 +85,9 @@ def alice : Person := { name := "Alice", age := 30 }
 
 /-! ## Spec Inheritance (Structure extends)
 
-Parent ops come first; child ops extend or override them. -/
+Specs compose across the structure parent chain.
+Parent ops come first; child ops extend or override them.
+-/
 
 structure Vehicle where
   make : String
@@ -91,6 +103,7 @@ spytial_spec Vehicle [
 structure Car extends Vehicle where
   doors : Nat
 
+-- Car inherits Vehicle's spec automatically (no spytial_spec needed)
 def myCar : Car := { make := "Sedan", year := 2024, doors := 4 }
 
 #spytial myCar
@@ -104,9 +117,12 @@ spytial_spec ElectricCar [
   atomStyle ElectricCar (borderStyle "#2196F3")
 ]
 
+-- ElectricCar's effective spec = Vehicle's ops ++ ElectricCar's ops
 def myEV : ElectricCar := { make := "Volt", year := 2025, doors := 4, range := 300 }
 
 #spytial myEV
+
+/-! ## Lists -/
 
 def myList : List Nat := [1, 2, 3, 4]
 
@@ -139,6 +155,7 @@ example (t : RBNode) : True := by
   spytial t
   trivial
 
+-- Inline expression with spec override
 example : True := by
   spytial exampleRBTree
   trivial

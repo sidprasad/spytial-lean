@@ -10,11 +10,14 @@ open Lean Meta Elab Command Term
 /-! # Listing a finite type
 
 A function becomes a relation by evaluating it at every point of its domain, so
-a domain is drawable exactly when it can be listed. A class rather than a match
-on the type head, so the walker asks the type instead of knowing about it and
-`enumElems?` can derive a missing instance on demand. -/
+a domain is drawable exactly when it can be listed. Making that a class
+rather than a match on the type head lets the walker ask the type instead of
+knowing about it, and lets `enumElems?` derive a missing instance on demand —
+so no `deriving` clause is needed to be drawable. -/
 
-/-- Element order is draw order, so it is part of the diagram; a derived
+/-- Every element of a finite type, each exactly once.
+
+    Element order is draw order, so it is part of the diagram; a derived
     instance lists in constructor-declaration order. -/
 public class SpytialEnum (α : Type u) where
   elems : List α
@@ -40,9 +43,13 @@ end SpytialEnum
 
 Only a monomorphic, non-indexed inductive derives: a parameter or a universe
 variable would need an instance-implicit binder the handler does not emit,
-which is why `Prod`, `Sum` and `Option` are written out above. Refusing a field
-that mentions the type itself is what stops `Nat` from producing an `elems`
-defined in terms of itself. -/
+which is why `Prod`, `Sum` and `Option` are written out above. Within a
+constructor, a dependent field (its type is not fixed until the earlier fields
+are chosen), a `Prop` field, and any field mentioning the type itself are each
+refused rather than derived wrong — the last is what stops `Nat` from producing
+an `elems` defined in terms of itself. A field whose own type has no instance
+is refused later still, when the generated command fails to elaborate; that is
+what keeps `String` out. -/
 
 private meta def ctorElemsTerm (declName : Name) (ctorName : Name) : MetaM (Option Term) := do
   let some (.ctorInfo ci) := (← getEnv).find? ctorName | return none
@@ -82,10 +89,11 @@ meta initialize
 
 /-! ## Listing on demand -/
 
-/-- So a wide `Fin` or a large product declines rather than spending the whole
-    walk on one domain. -/
+/-- Unrolling bound, so a wide `Fin` or a large product declines rather than
+    spending the walk on one domain. -/
 private meta def enumFuel : Nat := 512
 
+/-- Elements of a `List α` expression whose spine reduces to literals. -/
 private meta partial def listElems? (e : Expr) (fuel : Nat) : MetaM (Option (Array Expr)) := do
   if fuel == 0 then return none
   match (← Meta.whnf e).getAppFnArgs with
@@ -102,8 +110,10 @@ private meta def isEnumCandidate (ty : Expr) : MetaM Bool := do
   return !u.isZero
 
 /-- The arguments matter as much as the head: `Par × St` fails to synthesize
-    even though `Prod` has an instance, because neither side does. A failed
-    derivation leaves a `sorryAx`-bodied instance behind, hence the `setEnv`. -/
+    even though `Prod` has an instance, because neither side does.
+
+    A failed derivation leaves a `sorryAx`-bodied instance in the
+    environment. -/
 private meta partial def deriveEnum (ty : Expr) : MetaM Unit := do
   let ty ← Meta.whnf ty
   for a in ty.getAppArgs do
@@ -123,9 +133,13 @@ private meta def synthEnum? (ty : Expr) : MetaM (Option Expr) := do
   deriveEnum ty
   Meta.synthInstance? (← mkAppM ``SpytialEnum #[ty])
 
-/-- Derives on demand, so it mutates the environment, which the signature does
-    not suggest. For wide types `whnf` hits `maxRecDepth` before `enumFuel`
-    counts an element, and `Core.tryCatch` rethrows that exception, so declining
+/-- Every element of `ty`, deriving `SpytialEnum` on demand as `#eval` does for
+    a missing `Repr` (`eval.derive.repr`). Derivation mutates the environment,
+    which the signature does not suggest. `none` covers "cannot be listed",
+    "longer than `enumFuel`", and "does not reduce within `maxRecDepth`".
+
+    For wide types, `whnf` hits `maxRecDepth` before `enumFuel` counts an
+    element. `Core.tryCatch` rethrows that exception, so catching it to decline
     takes `tryCatchRuntimeEx`. -/
 public meta def enumElems? (ty : Expr) : MetaM (Option (Array Expr)) := do
   let ty ← Meta.whnf ty

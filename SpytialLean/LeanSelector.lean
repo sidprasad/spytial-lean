@@ -50,9 +50,13 @@ private meta partial def splitProds (α : Expr) : MetaM (Array Expr) := do
   else
     return #[α]
 
-/-- Shared by the elaborator, which needs the arity to check the op position,
-    and by resolution, so the two cannot drift. -/
+/-- Read the selector term's type as a relation. Shared by the elaborator
+    (which needs the arity to check the op position) and by resolution, so the
+    two cannot drift. Throws the user-facing rejections. -/
 meta def classifyLeanRel (fn : Expr) : MetaM LeanRelKind := do
+  -- The canonical form is marked by its type's head; `Sel` is a structure, so
+  -- inference keeps the head visible, and reducible normalization sees through
+  -- an `abbrev` standing for one.
   let ty ← whnfR (← instantiateMVars (← inferType fn))
   if ty.getAppFn.isConstOf ``Spytial.Sel then
     if let #[T, α] := ty.getAppArgs then
@@ -63,6 +67,7 @@ meta def classifyLeanRel (fn : Expr) : MetaM LeanRelKind := do
       return { domains := cols, shape := .sel T }
   let mut domains := #[]
   let mut ty ← whnf ty
+  -- Peel non-dependent arrows; a dependent one ends the argument list.
   while ty matches .forallE .. do
     let .forallE _ dom body _ := ty | unreachable!
     if body.hasLooseBVars then break
@@ -89,6 +94,8 @@ meta def classifyLeanRel (fn : Expr) : MetaM LeanRelKind := do
     throwError "a raw Lean selector returns `Bool` or `Prop` — the walked \
       tuples it accepts; to select computed values, write a `Spytial.Sel`"
 
+/-- The `Bool` form of a `Prop`-valued predicate: `fun x₁ … xₙ => decide (p x₁ … xₙ)`.
+    Fails loudly when the proposition has no `Decidable` instance. -/
 meta def boolifyPred (fn : Expr) (doms : Array Expr) : MetaM Expr := do
   let rec go (i : Nat) (xs : Array Expr) : MetaM Expr := do
     if h : i < doms.size then
@@ -144,12 +151,16 @@ private meta unsafe def evalIdxTuplesUnsafe (e : Expr) : MetaM (List (List Nat))
 @[implemented_by evalIdxTuplesUnsafe]
 private meta opaque evalIdxTuplesCore (e : Expr) : MetaM (List (List Nat))
 
+/-- Run the built term through the compiled evaluator. Errors pass through —
+    Lean's own message for a missing `meta import` names the fix. -/
 private meta def evalIdxTuples (e : Expr) : MetaM (List (List Nat)) := do
   try evalIdxTuplesCore e
   catch ex => throwError "the raw Lean selector failed to run: {ex.toMessageData}"
 
-/-- An inherited spec composes into a child render, so a parent's `Sel` must
-    apply to the child's parent part. -/
+/-- The datum coerced to `T`, when `T` is a parent structure of its type.
+    An inherited spec composes into a child render (`lookupTypeSpec` walks the
+    parent chain), so a parent's `Sel` must apply to the child's parent part —
+    reached through the projection chain Lean already generates. -/
 private meta def coerceToParent? (datum datumTy T : Expr) : MetaM (Option Expr) := do
   let .const dn _ := (← whnfR datumTy).getAppFn | return none
   let .const tn _ := (← whnfR T).getAppFn | return none
@@ -398,9 +409,11 @@ private meta partial def FieldVal.resolveLean (ctx : LeanSelCtx) (evidence : Pre
   | v@(.rel ..) | v@(.str ..) | v@(.«enum» ..) | v@(.enums ..) | v@(.num ..)
   | v@(.bool ..) => return v
 
-/-! Callers check these before walking the datum: the walk also asks each type
-for a `SpytialIdentity`, which reports when it cannot derive one, and a spec
-with no raw Lean selector should not pay for that. -/
+/-! ## Detecting raw Lean selectors
+
+Resolution needs the walked datum, and walking it is not free — it also asks
+each type for a `SpytialIdentity`, which reports when it cannot derive one. A
+spec with no raw Lean selector needs none of that, so callers check first. -/
 
 meta partial def Sel.hasLeanRel : Sel → Bool
   | .leanRel _ => true

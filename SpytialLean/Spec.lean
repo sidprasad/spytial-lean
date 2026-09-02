@@ -9,52 +9,79 @@ namespace SpytialLean
 open Lean (Json ToJson toJson JsonNumber)
 open SpecLang
 
-/-! ## The op AST -/
+/-! ## The op AST
 
-/-- Which constructor a field carries is a function of its `FieldType`; the
-    elaborator establishes it and the lowering relies on it. -/
+One node type: a manifest item plus the fields that were set, each parsed to
+the shape its `FieldType` declares. Nothing here names an item, so an item or
+field added upstream needs no new constructor — the same ruling as the
+selector AST, where a generated typed inductive would buy exhaustiveness only
+for consumers that do not exist and every `match` over it would be an edit. -/
+
+/-- A field's elaborated value. Which constructor a field carries is a
+    function of its `FieldType`; the elaborator establishes it and the
+    lowering relies on it. -/
 public meta inductive FieldVal where
+  /-- A checked selector (`selector`, `filter`, `toTag`, `value`). -/
   | sel (s : Sel)
+  /-- A relation name from the walker's vocabulary (`field`). -/
   | rel (name : String)
   | str (s : String)
+  /-- A validated member of the field's enum. -/
   | «enum» (value : String)
+  /-- A validated enum-list (`orientation.directions`). -/
   | enums (values : List String)
   | num (n : JsonNumber)
   | bool (b : Bool)
-  /-- The set fields of the field's `BlockSpec`, or — on an enum field with an
-      `AltForm` — of the block alternative. -/
+  /-- A block instance: the set fields of its `BlockSpec` — or, on an enum
+      field with an `AltForm`, the block alternative (`group.addEdge`'s
+      `{points, lineStyle, textStyle}`). -/
   | block (fields : List (FieldId × FieldVal))
   deriving Repr, Inhabited
 
-/-- The Lean an op was written as, which core cites in conflict reports and
-    warnings in place of its own rendering of the rule. -/
+/-- Where an op was written. Spytial is a *generator* of specs, so the
+    serialized op carries the Lean the user actually wrote: core cites this in conflict
+    reports and warnings in place of its own rendering of the rule, which for a
+    resolved Lean selector would otherwise be a list of atom ids. -/
 public meta structure OpSource where
+  /-- The op exactly as written, e.g. `hideAtom lean (RBNode.isLeaf)`. -/
   text : String
   /-- `File.lean:12`, appended to the displayed text. -/
   location : Option String := none
   deriving Repr, Inhabited
 
+/-- Stamp each layout constraint with the Lean it was written as. On by
+    default: it is what makes a conflict report cite the user's own line
+    instead of the engine's rendering. Turn it off to keep the emitted spec
+    free of source text — the goldens that pin lowering do, rather than
+    restate a stamp on every op. -/
 public meta register_option spytial.source : Bool := {
   defValue := true
   descr := "carry each layout constraint's own source text in the emitted \
             spec, for conflict reports"
 }
 
-/-- Unset optional fields are absent, not defaulted: the serialized spec
-    carries what the source said and core supplies its own defaults. -/
+/-- One Spytial operation: a manifest item with its set fields. Unset
+    optional fields are absent, not defaulted — the serialized spec carries
+    what the source said and core supplies its own defaults. -/
 public meta structure SpytialOp where
   item : ItemId
   fields : List (FieldId × FieldVal)
-  /-- `hold: never`; only `ItemSpec.supportsHold` items carry it. -/
+  /-- `hold: never` negates a constraint; only items with
+      `ItemSpec.supportsHold` carry it. -/
   hold : Option String := none
+  /-- Where it was written. An attached spec keeps the stamp it was declared
+      with, so re-running it against another value still points there. -/
   source : Option OpSource := none
   deriving Repr, Inhabited
 
+/-- A list of Spytial operations forming a complete layout specification. -/
 public meta abbrev SpytialSpec := List SpytialOp
 
 public meta def SpytialOp.field? (op : SpytialOp) (f : FieldId) : Option FieldVal :=
   op.fields.lookup f
 
+/-- The graph-side name an op introduces, with the manifest's account of it:
+    which field spells it, how wide it is, and where it can be referenced. -/
 public meta def SpytialOp.introduces? (op : SpytialOp) : Option (String × Introduces) := do
   let i ← (ItemSpec.of op.item).introduces
   match op.field? i.field with
@@ -74,6 +101,34 @@ private meta def FieldVal.fits : FieldVal → FieldType → Bool
   | .enums vs, .enumList all _ => vs.all all.contains
   | _, _ => false
 
+private meta def checkNumberBounds (path : String) (n : JsonNumber)
+    (min max : Option Bound) : Except String Unit := do
+  if let some b := min then
+    if (if b.exclusive then !(b.value.lt n) else n.lt b.value) then
+      .error s!"{path} must be \
+        {if b.exclusive then "greater than" else "at least"} {toString b.value}"
+  if let some b := max then
+    if (if b.exclusive then !(n.lt b.value) else b.value.lt n) then
+      .error s!"{path} must be \
+        {if b.exclusive then "less than" else "at most"} {toString b.value}"
+
+private meta def checkEnumList (path : String) (rules : EnumListRules)
+    (chosen : List String) : Except String Unit := do
+  for value in chosen do
+    if 1 < (chosen.filter (· == value)).length then
+      .error s!"{path} contains duplicate '{value}'"
+  for group in rules.atMostOneOf do
+    let hits := chosen.filter group.contains
+    if 2 ≤ hits.length then
+      .error s!"{path} allows at most one of {"|".intercalate group}, \
+        got {", ".intercalate hits}"
+  for (key, allowed) in rules.narrows do
+    if chosen.contains key then
+      for value in chosen do
+        unless allowed.contains value do
+          .error s!"'{key}' restricts {path} to {"|".intercalate allowed}; \
+            '{value}' cannot join it"
+
 mutual
 
 private meta partial def FieldVal.check (path : String) (f : FieldSpec) :
@@ -87,6 +142,17 @@ private meta partial def FieldVal.check (path : String) (f : FieldSpec) :
         ++ [{ id := alt.enumField, type := .«enum» vs none, required := true, alt := none }]
       checkFields path specs [alt.enumField] fs
     | _, _ => .error s!"{path} is not a block field"
+  | .num n =>
+    match f.type with
+    | .number min max => checkNumberBounds path n min max
+    | _ => .error s!"{path} holds a value of the wrong shape"
+  | .enums values =>
+    match f.type with
+    | .enumList allowed rules => do
+      unless values.all allowed.contains do
+        .error s!"{path} holds a value of the wrong shape"
+      checkEnumList path rules values
+    | _ => .error s!"{path} holds a value of the wrong shape"
   | v => unless v.fits f.type do .error s!"{path} holds a value of the wrong shape"
 
 private meta partial def checkFields (path : String) (specs : List FieldSpec)
@@ -112,8 +178,23 @@ public meta def SpytialOp.check (op : SpytialOp) : Except String Unit := do
 
 /-! ## Spec serialization
 
-`parseLayoutSpec` in spytial-core is js-yaml's `yaml.load` and JSON is valid
-YAML, so the spec is emitted as `Lean.Json`, escape-safe. -/
+`parseLayoutSpec` in spytial-core is js-yaml's `yaml.load`, and JSON is valid
+YAML, so we emit the spec as `Lean.Json`, escape-safe.
+The shape has two optional top-level keys:
+```json
+{"constraints": [{"orientation": {"selector": "…", "directions": ["above"]}}],
+ "directives":  [{"atomStyle": {"selector": "…", "borderStyle": {"color": "#ff0000"}}}]}
+```
+Which section an item lowers into is the table's `constraint`; each op lowers
+to a single `{yamlKey: …}` object over its set fields (a `scalar` item's one
+field is the payload itself). Selectors lower through `Sel.toSGQ` here — the
+environment stores the structured spec, and the serialized string exists
+only in the widget payload.
+
+Serialization is fallible for that reason: a selector node whose arguments do
+not fill its template — too few, or one of the wrong kind at a position — has no
+lowering (`Selector.argAt`), and the spec it sits in has none either.
+-/
 
 public meta partial def FieldVal.toJson : FieldVal → Except String Json
   | .sel s => Json.str <$> s.toSGQ
@@ -133,7 +214,9 @@ public meta def SpytialOp.toJson (op : SpytialOp) : Except String Json := do
   op.check
   let i := ItemSpec.of op.item
   let fields ← op.fields.mapM fun (f, v) => do return (fieldName f, ← v.toJson)
-  -- A scalar payload has nowhere to put these.
+  -- The stamp rides beside `hold`, and only where core reads it back: a
+  -- scalar payload has nowhere to put it, and elsewhere it is bytes core
+  -- parses and ignores.
   let extras :=
     (op.hold.map fun h => (holdField, Json.str h)).toList ++
     (if i.displaysSource then (op.source.map (sourceField, Lean.toJson ·)).toList else [])

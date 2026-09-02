@@ -24,7 +24,10 @@ open Lean Elab Command Term Meta Widget
 
 public section
 
-/-! ## The op DSL -/
+/-! ## The op DSL
+
+The head ident dispatches interpretation, so op keywords need no token-table
+entries. -/
 
 declare_syntax_cat spytial_op
 declare_syntax_cat spytial_block_arg
@@ -114,6 +117,8 @@ private meta def fieldUsage (i : ItemSpec) (f : FieldSpec) : String :=
     | _ => s!"[{fieldName f.id}: …]"
 
 open SpecLang in
+/-- The op's usage line, synthesized from its table entry: the name, the
+    positionals in table order, then every other field in its surface form. -/
 private meta def itemUsage (i : ItemSpec) : String :=
   let lead := i.leadingSelector.toList.map fun f => s!"[<{fieldName f}>]"
   let positional := i.positional.filterMap fun fid => (i.field? fid).map (fieldUsage i)
@@ -154,6 +159,8 @@ private meta def checkBounds (ref : Syntax) (what : String) (f : FieldSpec)
         {if b.exclusive then "less than" else "at most"} {toString b.value}"
 
 open SpecLang in
+/-- The manifest's list rules: `atMostOneOf` forbids two values from one set;
+    choosing a key of `narrows` restricts the whole list to its values. -/
 private meta def checkEnumList (ref : Syntax) (what : String)
     (rules : EnumListRules) (chosen : List String) : TermElabM Unit := do
   for grp in rules.atMostOneOf do
@@ -168,19 +175,27 @@ private meta def checkEnumList (ref : Syntax) (what : String)
           throwErrorAt ref m!"'{k}' restricts {what} to {orVals allowed}; \
             '{c}' cannot join it"
 
+/-! ### Scalar values
+
+One reader serves the three places a scalar can sit — a nested block keyword,
+a `name: value`, a positional argument — which differ only in how the syntax
+carries the word/string/number, abstracted by `ArgView`. -/
+
 private meta structure ArgView where
   ref : Syntax
   word? : Option String := none
   str? : Option String := none
   num? : Option JsonNumber := none
 
+/-- A bare token, as blocks carry them. Only a string literal is a string. -/
 private meta def ArgView.ofToken (stx : Syntax) : ArgView :=
   { ref := stx
     word? := if stx.isIdent then some stx.getId.toString else none
     str? := stx.isStrLit?
     num? := jsonNumOf? stx }
 
-/-- A word also reads as a string, so a color can be written unquoted. -/
+/-- A selector-expression leaf, as keyword values and positionals carry them.
+    A word also reads as a string, so a color can be written unquoted. -/
 private meta def ArgView.ofSel (stx : Syntax) : ArgView :=
   let word? := if stx.isOfKind selIdentKind
     then some (stx[0].getId.toString (escape := false)) else none
@@ -204,6 +219,9 @@ private meta def enumWord (what : String) (vs : List String) (v : ArgView)
   return w
 
 open SpecLang in
+/-- One scalar against a field's table entry. Callers dispatch the non-scalar
+    types (selector, relation, block, enum-list) themselves: what those mean
+    differs by position. -/
 private meta def elabScalar (what : String) (f : FieldSpec) (v : ArgView)
     (usage? : Option String := none) : TermElabM FieldVal := do
   match f.type with
@@ -224,7 +242,10 @@ private meta def elabScalar (what : String) (f : FieldSpec) (v : ArgView)
     | _ => throwErrorAt v.ref m!"{what} expects true|false{usageSuffix usage?}"
   | _ => throwErrorAt v.ref m!"{what} does not take a scalar value"
 
+/-! ### Style blocks -/
+
 open SpecLang in
+/-- The single scalar of a nested `(fieldName value)` keyword in a block. -/
 private meta def elabBlockScalar (b : BlockSpec) (f : FieldSpec)
     (stx : Syntax) : TermElabM FieldVal := do
   match f.type with
@@ -332,6 +353,7 @@ private meta def elabBlockArg (item : ItemSpec) (usage : String) (inner : Syntax
       throwErrorAt inner m!"'{kw}' is written {kw}: <value>; usage: {usage}"
 
 open SpecLang in
+/-- `name: value` for everything a keyword can carry. -/
 private meta def elabKwValue (usage : String)
     (sel : Syntax → List SelForm → TermElabM Sel)
     (rel : Syntax → FieldSpec → TermElabM String) (f : FieldSpec) (v : Syntax) :
@@ -347,6 +369,8 @@ private meta def elabKwValue (usage : String)
   | _ => elabScalar (fieldName f.id) f (.ofSel v)
 
 open SpecLang in
+/-- A bare word past the positionals: bool sugar, else the unique optional
+    enum field that lists the word. -/
 private meta def trailingWordField? (item : ItemSpec) (w : String) :
     Option (FieldId × FieldVal) :=
   let sugar := boolSugar.find? fun (word, bf, _) =>
@@ -362,6 +386,8 @@ private meta def trailingWordField? (item : ItemSpec) (w : String) :
     | _ => none
 
 open SpecLang in
+/-- A field's accepted widths in one op: a form whose `requires` names a field
+    the op does not write is unavailable there. -/
 private meta def arityForms (written : List String) (forms : List SelForm) :
     List ArityForm :=
   forms.map fun f =>
@@ -386,8 +412,9 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
           {", ".intercalate ((allItems.map itemName).mergeSort (· < ·))}"
     let item := ItemSpec.of itemId
     let usage := itemUsage item
-    -- a width can be conditional on a sibling field written after the selector,
-    -- so the keywords are read off the argument list before any of it elaborates
+    -- A form can make a width conditional on a sibling field, which may be
+    -- written after the selector, so the keywords are read off the argument
+    -- list before any of it elaborates.
     let written := argStxs.toList.filterMap fun a =>
       let inner := argInner a
       if inner.isOfKind ``spytialKwArg then some inner[0].getId.toString
@@ -491,7 +518,9 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
       (fields.find? (·.1 == f.id)).map fun (_, v) => (f.id, v)
     return { item := itemId, fields := ordered, hold }
 
-/-- Read back from the file, not reprinted, so a conflict report cites the line. -/
+/-- The op as the user wrote it, with where they wrote it. Read back from the
+    file rather than reprinted from syntax, so what core cites in a conflict
+    report is the text on the line. -/
 private meta def opSource? (op : TSyntax `spytial_op) : TermElabM (Option OpSource) := do
   unless spytial.source.get (← getOptions) do return none
   let some startPos := op.raw.getPos? | return none
@@ -503,6 +532,11 @@ private meta def opSource? (op : TSyntax `spytial_op) : TermElabM (Option OpSour
   let base := (System.FilePath.mk path).fileName.getD path
   return some { text, location := s!"{base}:{(fileMap.toPosition startPos).line}" }
 
+/-- Elaborate an op list, bringing each op's introduced names (groups, inferred
+    edges) into scope for the ops after it. A `..` element splices `attached?`
+    at that position; `none` means the context has no attached spec to splice.
+    A `..name` element splices the op list bound by `spytial_ops name`, which
+    must share this list's root type. -/
 meta def elabSpytialOps (scope : SelScope) (ops : Array (TSyntax `spytial_op))
     (attached? : Option SpytialSpec := none) : TermElabM SpytialSpec := do
   let introduce (scope : SelScope) (op : SpytialOp) : SelScope :=
@@ -544,6 +578,7 @@ meta def elabSpytialOps (scope : SelScope) (ops : Array (TSyntax `spytial_op))
       scope := introduce scope o
   return spec.toList
 
+/-- A term whose type has no head constant gets a fully lenient scope. -/
 meta def scopeForExpr (e : Expr) : MetaM SelScope := do
   let ty ← inferType e
   match ← typeHead? ty with
@@ -553,8 +588,14 @@ meta def scopeForExpr (e : Expr) : MetaM SelScope := do
     SelScope.ofType n seeds
   | none => return { root := `_anonymous, lenient := true }
 
-/-! ## Widget payload -/
+/-! ## Widget payload
 
+The commands and tactics below differ only in whether Prop-typed fields are
+filtered; `spytialPayloadProps` is the single place that decides what the widget
+receives. -/
+
+/-- Try to find a Spytial spec attached to the head type of an expression.
+    For structures, walks the parent chain and composes specs (parent-first). -/
 private meta def lookupTypeSpec (e : Expr) : MetaM (Option SpytialSpec) := do
   let ty ← inferType e
   let tyHead := (← whnf ty).getAppFn
@@ -747,7 +788,7 @@ meta def elabSpytialOpsCmd : CommandElab := fun
   | `(spytial_ops $name:ident : $ty:ident [$ops,*]) => do
     let root ← liftCoreM <| realizeGlobalConstNoOverloadWithInfo ty
     -- a `module` file makes declarations private by default, and a list nobody
-    -- downstream can splice is useless
+    -- downstream can splice is useless; the syntax has no visibility modifier
     let (declName, _) ← mkDeclName (← getCurrNamespace) { visibility := .public } name.getId
     let spec ← liftTermElabM do
       let scope ← SelScope.ofType root
@@ -757,7 +798,18 @@ meta def elabSpytialOpsCmd : CommandElab := fun
     liftCoreM <| setSpytialOps declName { root, ops := spec }
   | stx => throwError "Unexpected syntax {stx}."
 
-/-- Registers a `CustomRelationalizer` def as the relationalizer for a type. -/
+/-! ## spytial_relationalizer command -/
+
+/-- `spytial_relationalizer <TypeName> <defName>` registers a custom relationalizer
+    for a type. The def must have type `CustomRelationalizer`, and — to be usable
+    from importing modules — should be `public meta def`.
+
+    ```
+    public meta def myRelationalizer : CustomRelationalizer := fun e walkExpr => do ...
+
+    spytial_relationalizer MyType myRelationalizer
+    ```
+-/
 syntax (name := spytialRelationalizerCmd) "spytial_relationalizer " ident ident : command
 
 @[command_elab spytialRelationalizerCmd]
@@ -777,7 +829,10 @@ meta def elabSpytialRelationalizerCmd : CommandElab := fun
     liftCoreM <| setSpytialRelationalizer typeName defName
   | stx => throwError "Unexpected syntax {stx}."
 
-/-- `#spytial.spec <term> with [<ops>]` prints the spec string handed to core. -/
+/-! ## Debugging commands -/
+
+/-- `#spytial.spec <term> with [<ops>]` prints the spec string handed to
+    spytial-core. Useful for debugging whether the spec is what you expect. -/
 syntax (name := spytialSpecDebug) "#spytial.spec " term " with " "[" spytial_op,*,? "]" : command
 
 @[command_elab spytialSpecDebug]

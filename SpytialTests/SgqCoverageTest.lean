@@ -7,23 +7,36 @@ open SpytialLean Lean
 
 /-! # Coverage — what of simple-graph-query's language this package models
 
-The parser rules, the elaborator and the lowering all read
-`Sgq.Construct.template`, so every construct and operator is covered by
-construction. What can fall behind is the handful of constructs that get *no*
-generated rule; this file accounts for exactly those, and fails when a construct
-upstream lands in none of them or in more than one. -/
+Operators used to be modelled one Lean constructor at a time, and this file
+was the ledger that kept the account. They are not any more: the parser rules,
+the elaborator and the lowering all read `Sgq.Construct.template`, so every
+construct and every operator is covered by construction and an operator added
+upstream needs no code.
+
+What can still fall behind is the handful of constructs that get *no* generated
+rule. Each is excluded for a reason that has nothing to do with the construct
+itself — the engine refuses to run it, or Lean's own lexer claims its spelling,
+or it is an atom whose spelling is an identifier and so is read off the
+identifier instead. This file accounts for exactly those, and fails when a
+construct upstream lands in none of them or in more than one.
+-/
 
 private meta inductive Why where
+  /-- Gets a rule from `derive_sgq_rules`. -/
   | generated
   /-- The engine parses it and refuses to evaluate it. -/
   | declined (reason : String)
   /-- Its spelling is an identifier, so an atom-keyed rule would never fire on
       an unspaced `univ.lo`; `resolveIdent` reads it off the identifier. -/
   | wordAtom
-  /-- Lean's lexer reads its spelling before any token table sees it. -/
+  /-- Lean's lexer reads its spelling structurally before any token table sees
+      it, so it has a rule written by hand. -/
   | hostLexed (rule : Name)
   deriving Inhabited
 
+/-- Why each construct is or is not in the generated grammar. Every id in
+    `Sgq.allConstructs` needs a row, so a construct added upstream fails here
+    rather than passing unnoticed. -/
 private meta def account : List (Sgq.ConstructId × Why) :=
   [ (.«let», .hostLexed ``sgqLetRule),
     (.«bind», .declined "Alloy's `bind`; nothing has asked for it"),
@@ -46,8 +59,10 @@ private meta def account : List (Sgq.ConstructId × Why) :=
     (.«block», .generated),
     (.«sexpr», .declined "reserved for the engine's internal use") ]
 
-/-- `let` parses in the engine and is refused there; we desugar it by
-    substitution, so its `hostLexed` row understates the reason. -/
+/-- `let` is the one construct we implement past the engine: it parses there and
+    is refused, and we desugar it by substitution. It is listed as `hostLexed`
+    above because that is the shape of its entry — a rule of our own — and this
+    records why the reason differs. -/
 private meta def implementedPastTheEngine : List Sgq.ConstructId := [.«let»]
 
 private meta def report : Lean.Elab.Command.CommandElabM Unit := do
@@ -56,6 +71,7 @@ private meta def report : Lean.Elab.Command.CommandElabM Unit := do
   let some cat := cats.find? `spytial_sel | throwError "no category spytial_sel"
   let mut problems : Array String := #[]
 
+  -- every construct accounted for, exactly once
   for c in Sgq.allConstructs do
     let rows := (account.filter (·.1 == c)).length
     unless rows == 1 do

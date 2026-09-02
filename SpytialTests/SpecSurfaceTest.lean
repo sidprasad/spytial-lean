@@ -5,20 +5,28 @@ meta import SpytialLean.Command
 
 open SpytialLean Lean Elab Command
 
--- off so the goldens need not restate the stamp on every op; `## The source
--- stamp` in LeanSelectorTest covers it
+-- These goldens pin the op surface, not the source stamp, so they leave the
+-- stamp out rather than restate it on every op. It has its own tests, under
+-- `## The source stamp` in LeanSelectorTest.
 set_option spytial.source false
 
 /-! # Tests for the manifest-driven op surface
 
-`SelectorTest.lean` pins the op battery; this file covers what only the tables
-carry. -/
+`SelectorTest.lean` pins the pre-rewrite battery byte-for-byte; this file
+covers what only the tables carry — hold, textStyle at every site, directive
+scoping (`selector:`/`filter:`), `draw`, `hidden`, opacity, nested block
+keywords, and the manifest's own validity rules (list rules, numeric bounds,
+enum membership). Each negative test is a detector's positive control. -/
+
+/-! ## Fixture -/
 
 public inductive SG where
   | leaf
   | node (tag : String) (lo hi : SG)
 
 public def sG : SG := .node "r" .leaf .leaf
+
+/-! ## Hold -/
 
 /--
 info: {"constraints":
@@ -28,7 +36,8 @@ info: {"constraints":
 #guard_msgs in
 #spytial.spec sG with [orientation lo below hold: never]
 
--- `always` is inert upstream: the serialized spec carries what the source said
+-- `always` is inert upstream but written is emitted: the serialized spec
+-- carries what the source said.
 /-- info: {"constraints": [{"cyclic": {"selector": "lo", "hold": "always"}}]} -/
 #guard_msgs in
 #spytial.spec sG with [cyclic lo hold: always]
@@ -41,7 +50,7 @@ info: {"constraints":
 #guard_msgs in
 #spytial.spec sG with [orientation lo below hold: sometimes]
 
-/-! ## textStyle at every site -/
+/-! ## textStyle, at sites the old surface lacked -/
 
 /--
 info: {"directives":
@@ -88,6 +97,8 @@ info: {"directives":
 #guard_msgs in
 #spytial.spec sG with [hideField lo filter: lo]
 
+/-! ## inferredEdge draw -/
+
 /--
 info: {"directives":
  [{"inferredEdge":
@@ -118,8 +129,8 @@ info: {"directives":
 #guard_msgs in
 #spytial.spec sG with [tag SG "n" #lo]
 
--- a tag's value shows its middle columns as key segments, so a wide one throws
--- nothing away and must not warn
+-- A tag's value shows its middle columns as key segments, so a wide one is not
+-- throwing anything away and must not warn.
 /-- info: {"directives": [{"tag": {"value": "lo->hi", "toTag": "SG", "name": "kids"}}]} -/
 #guard_msgs in
 #spytial.spec sG with [tag SG "kids" (lo->hi)]
@@ -221,6 +232,41 @@ info: {"constraints":
 /-- error: duplicate directions 'above' -/
 #guard_msgs in
 #spytial.spec sG with [orientation lo above above]
+
+/-! ## The public serialization boundary -/
+
+private meta def jsonNumber! (s : String) : JsonNumber :=
+  match Json.parse s with
+  | .ok (.num n) => n
+  | _ => panic! s!"test fixture is not a JSON number: {s}"
+
+private meta def expectRenderError (expected : String) (op : SpytialOp) : CommandElabM Unit :=
+  match op.toJson with
+  | .error actual => unless actual == expected do
+      throwError "expected error {expected.quote}, got {actual.quote}"
+  | .ok json => throwError "expected error {expected.quote}, got {json.pretty}"
+
+open SpecLang in
+run_cmd do
+  expectRenderError "atomStyle.iconStyle.opacity must be at most 1" {
+    item := .atomStyle
+    fields := [(.iconStyle, .block [(.opacity, .num (jsonNumber! "1.5"))])]
+  }
+  expectRenderError "orientation.directions contains duplicate 'above'" {
+    item := .orientation
+    fields := [(.selector, .sel .empty), (.directions, .enums ["above", "above"])]
+  }
+  expectRenderError
+    "orientation.directions allows at most one of above|below, got above, below" {
+      item := .orientation
+      fields := [(.selector, .sel .empty), (.directions, .enums ["above", "below"])]
+    }
+  expectRenderError
+    "'directlyAbove' restricts orientation.directions to above|directlyAbove; 'left' cannot join it" {
+      item := .orientation
+      fields := [(.selector, .sel .empty),
+        (.directions, .enums ["directlyAbove", "left"])]
+    }
 
 /-! ## Vocabulary errors -/
 

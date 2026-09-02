@@ -11,22 +11,37 @@ open Lean Elab Command Meta
 
 /-! # Build-time coverage checking
 
-Checks that every `Type`-valued inductive and structure of a namespace has a
-spec, a custom relationalizer, or an explicit opt-out. `Prop`-valued inductives
-are excluded — their elements are proofs, a separate `#spytial.proof` concern —
-and so are type classes. -/
+Enumerates the visualizable *data* types of a namespace — `Type`-valued inductives
+and structures — and checks that each either has an attached Spytial spec
+(`spytial_spec`), a registered custom relationalizer (`spytial_relationalizer`), or
+an explicit opt-out (`spytial_opt_out`). Run from a module that is part of
+`lake build`, so that as the upstream library evolves any newly added type without
+a spec surfaces as a build-time warning — or, in strict mode, an error that fails
+the build.
+
+`Prop`-valued inductives (judgments/relations) are excluded: their elements are
+proofs, which are a separate `#spytial.proof` concern, not data diagrams. Type
+classes are likewise excluded — interfaces to implement, not data to diagram.
+
+Registration names resolve like ordinary identifiers (relative to the current
+namespace and any `open`s), and entries are keyed by the resolved fully-qualified
+name — the same form the enumeration produces. -/
 
 public section
 
-/-- Data, meaning `Type`-valued rather than `Prop`-valued. -/
+/-- Whether an inductive's elements are data (`Type`-valued) rather than proofs
+    (`Prop`-valued). -/
 meta def isDataType (ii : InductiveVal) : MetaM Bool :=
   forallTelescopeReducing ii.type fun _ body => return !body.isProp
 
-/-- Module-private types are name-mangled to `_private.…`, both an internal
-    detail and outside `root`'s prefix, so they are never enumerated. -/
+/-- The coverage candidates in `root`, each paired with whether it is covered (has an
+    attached spec, a custom relationalizer, or an explicit opt-out).
+
+    Non-public (module-private) types are name-mangled to `_private.…` — both an
+    internal detail and outside `root`'s prefix — so they are not enumerated. -/
 meta def coverageReport (root : Name) : MetaM (Array (Name × Bool)) := do
   let env ← getEnv
-  -- Pure name filter first; the MetaM refinement runs only on survivors.
+  -- cheap pure name filter first; the MetaM refinement below runs only on survivors
   let candidates : Array (Name × InductiveVal) := env.constants.fold (init := #[])
     fun acc n ci =>
       match ci with
@@ -41,8 +56,8 @@ meta def coverageReport (root : Name) : MetaM (Array (Name × Bool)) := do
     unless (← isDataType ii) do continue
     let directlyCovered := (getSpytialSpec? env n).isSome || (getSpytialOptOut? env n).isSome
       || (getSpytialRelationalizerName? env n).isSome
-    -- Mirrors `lookupTypeSpec`'s parent walk. Specs inherit; relationalizers
-    -- and opt-outs do not.
+    -- mirrors `lookupTypeSpec`'s parent walk; spec inheritance only —
+    -- relationalizers and opt-outs do not inherit
     let covered ← do
       if directlyCovered || !isStructure env n then
         pure directlyCovered
@@ -52,8 +67,10 @@ meta def coverageReport (root : Name) : MetaM (Array (Name × Bool)) := do
     out := out.push (n, covered)
   return out
 
-/-- `spytial_opt_out <Decl> ["reason"]` waives a type from the coverage check,
-    so it counts as covered despite having no spec. -/
+/-! ## spytial_opt_out command -/
+
+/-- `spytial_opt_out <Decl> ["reason"]` waives a type from the Spytial coverage
+    check, so it counts as covered despite having no spec. -/
 syntax (name := spytialOptOutCmd) "spytial_opt_out " ident (str)? : command
 
 @[command_elab spytialOptOutCmd]
@@ -64,7 +81,16 @@ meta def elabSpytialOptOutCmd : CommandElab := fun
     liftCoreM <| setSpytialOptOut declName reason
   | stx => throwError "Unexpected syntax {stx}."
 
-/-- Only the `!` form gates a build by itself; the plain form warns, which fails
+/-! ## #spytial.coverage command -/
+
+/-- `#spytial.coverage <Namespace>` reports Spytial spec coverage over the
+    `Type`-valued inductives/structures in `<Namespace>`, warning on any gaps.
+
+    `#spytial.coverage! <Namespace>` is strict: it errors on gaps, failing the
+    build. Place such a command in a module imported by the build target, after all
+    `spytial_spec`/`spytial_opt_out` declarations.
+
+    Only the `!` form gates a build by itself; the plain form warns, which fails
     a build only under `warningAsError`. -/
 syntax (name := spytialCoverageCmd) "#spytial.coverage" "!"? ident : command
 
@@ -78,7 +104,7 @@ meta def elabSpytialCoverageCmd : CommandElab := fun stx => do
   let uncovered := (report.filterMap fun (n, c) => if c then none else some n)
     |>.qsort (fun a b => decide (toString a < toString b))
   if total == 0 then
-    -- 0/0 must not pass as covered: the root may be mistyped or unimported.
+    -- 0/0 must not pass as covered: the root may be mistyped or unimported
     let msg := m!"no Spytial coverage data types found under '{root}' — check the \
       spelling and that the namespace is imported"
     if strict then throwError msg else logWarning msg

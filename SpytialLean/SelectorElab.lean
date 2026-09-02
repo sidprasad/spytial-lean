@@ -15,34 +15,50 @@ public section
 
 /-! # SelectorElab — checked selector syntax
 
-The grammar and the checks are read off the `Sgq` tables. Nothing below names a
+Selectors are Lean syntax (category `spytial_sel`), elaborated against a
+`SelScope`: the sigs, relations, and constructor labels the relationalizer can
+emit for the target type. The grammar and the checks are the engine's, read
+off the `Sgq` tables: one parser rule per construct from its `template`,
+operand kinds from `kinds`, widths from `arity`. Nothing below names a
 construct.
 
+Written here because no manifest can carry it: the scope itself (it depends on
+the target type) and its hover information, the constructor-label literal a
+spytial spec compares against, `let` (which the engine parses and refuses, and
+which we desugar), `lean (…)` (which is not the engine's language at all), and
+the leaves Lean's own lexer claims before any token table sees them.
+
 A scope is strict when the vocabulary is closed: a monomorphic type built from
-monomorphic fields. A type parameter, a function field that does not tabulate, a
-custom relationalizer, or a non-inductive in the closure makes it lenient, and
-the walker can then emit names no static analysis predicts — so unknown names
-warn and pass through.
+monomorphic fields. A type parameter, a function field that does not tabulate,
+a custom relationalizer, or a non-inductive in the closure makes it lenient. The
+walker can then emit names no static analysis predicts, so unknown names warn
+and pass through.
 -/
 
-/-- A name an earlier op put into the drawn graph. `referencedBy` is the
-    `item.field` positions where the engine resolves it; a reference from
-    anywhere else parses and is never looked up. -/
+/-! ## Scope -/
+
+/-- A name an earlier op put into the drawn graph: how many columns it has, and
+    the `item.field` positions where the engine resolves it (the manifest's
+    `introduces.referencedBy`). A reference from anywhere else parses and is
+    never looked up. -/
 meta structure Introduced where
   arity : Nat
   referencedBy : List String
   deriving Inhabited
 
-/-- Everything the relationalizer can emit for values of the target type. -/
+/-- Everything the relationalizer can emit for values of the target type, per
+    `TypeShape`. -/
 meta structure SelScope where
   root : Name
   /-- Lean type name → sig string, over the reachable field-type closure. -/
   types : Std.HashMap Name String := {}
-  /-- Relation name → emitting type and walker arity; `none` leaves the width
-      unchecked. -/
+  /-- Relation name → the emitting type and the walker's arity; `none`
+      (`FieldShape.arity?`) leaves the name known and its width unchecked. -/
   rels : Std.HashMap String (Name × Option Nat) := {}
   /-- Constructor label → constructor, for `@:x = tt` literals. -/
   ctorLabels : Std.HashMap String Name := {}
+  /-- Names introduced by earlier ops in the same spec: group names and
+      inferred edges. -/
   introduced : Std.HashMap String Introduced := {}
   /-- Open-world marker (see module docstring): unknown names become warnings. -/
   lenient : Bool := false
@@ -54,9 +70,10 @@ meta structure SelScope where
 private meta def scalarTypes : List Name :=
   [``Nat, ``String, ``Float]
 
-/-- `seeds` are types the head constant alone cannot predict: `DA.FinAcc Seen2
-    Letter` emits `Seen2`'s fields, but `tr` is a function over `DA.FinAcc`'s
-    own parameters and fixes no head to follow. -/
+/-- `seeds` are extra types the value is known to contain — a container's type
+    arguments, which the head constant alone cannot predict: `DA.FinAcc Seen2
+    Letter` emits `Seen2`'s fields, but `DA.FinAcc`'s `tr` is a function over
+    its own parameters and fixes no head to follow. -/
 meta def SelScope.ofType (root : Name) (seeds : Array Name := #[]) : MetaM SelScope := do
   let env ← getEnv
   let mut scope : SelScope := { root }
@@ -134,9 +151,12 @@ private meta def suggest (scope : SelScope) (unknown : String) : String :=
   else
     ""
 
+/-- `U+XXXX` spelling, for a character with no printable form. -/
 private meta def codepoint (c : Char) : String :=
   s!"U+{String.ofList ((Nat.toDigits 16 c.val.toNat).leftpad 4 '0') |>.toUpper}"
 
+/-- Error in strict scopes, warning in lenient ones (the walker may emit names
+    we cannot predict). Returns `recovery` when lenient. -/
 private meta def unknownName {α} (scope : SelScope) (ref : Syntax) (what : String)
     (recovery : α) : TermElabM α := do
   let msg := m!"unknown {what}{suggest scope ref.getId.toString}"
@@ -148,11 +168,18 @@ private meta def unknownName {α} (scope : SelScope) (ref : Syntax) (what : Stri
   else
     throwErrorAt ref msg
 
+/-- Selector positions only: the engine evaluates a selector against the data
+    instance, which the drawn graph's own names never enter. Field-name
+    positions are the manifest's business — see `warnUnresolvedName`. -/
 private meta def warnGraphSideName (ref : Syntax) (name : String) : TermElabM Unit :=
   logWarningAt ref s!"spec-introduced '{name}' exists only in the drawn graph — \
     the engine evaluates selectors against the data instance, so this reference \
     selects nothing at render"
 
+/-- A field-name position the manifest does not list among the introducing
+    field's `referencedBy`: `edgeStyle` resolves an introduced name, while
+    `hideField` and `attribute` match against the data instance's relations,
+    before groups and inferred edges join the graph. -/
 private meta def warnUnresolvedName (ref : Syntax) (position name : String) :
     TermElabM Unit :=
   logWarningAt ref s!"spec-introduced '{name}' is not resolved at {position} — \
@@ -165,32 +192,44 @@ open Lean Parser
 
 /-! ### The category-local token table -/
 
-/-- Exactly when a relation could be written with that name here, and so when a
-    rule must not reserve it. Not the engine's `sgqBareName` class, which is the
-    *output* alphabet: `a/b` is bare there and no identifier here, `α` here and
-    not bare there. -/
+/-- Whether Lean's identifier lexer spells `s`, which is exactly when a relation
+    could be written with that name here and so exactly when a rule must not
+    reserve it. The engine's own bare-name rule (`sgqBareName`) answers a
+    different question — what the lowering quotes on the way out — and the two
+    classes are not the same: `a/b` is bare to the engine and not an identifier
+    here, `α` is an identifier here and not bare to the engine. -/
 private meta def lexesAsIdent (s : String) : Bool :=
   match s.toList with
   | c :: cs => isIdFirst c && cs.all isIdRest
   | [] => false
 
+/-- The symbols the grammar lexes. A spelling Lean would read as an identifier
+    is deliberately absent: it could be an ordinary field name, so the rules
+    match it off the identifier instead of reserving it. -/
 private meta def sgqSymbols : List String := Sgq.lexemes.filter (!lexesAsIdent ·)
 
-/-- What Lean's quotation machinery lexes inside a selector, read off
-    `mkAntiquot`, `mkAntiquotSplice` and `sepByElemParser` at v4.32.2. The
-    `$xs,*` splice suffix is the separator plus `*`, lexed as one token. -/
+/-- What Lean's quotation machinery lexes inside a selector: `$x`, `$x:ident`,
+    `$_`, `$(e)`, `%$tk`, and the `$xs,*` splice suffix, which spells as the
+    separator followed by `*` and lexes as one token. Read off `mkAntiquot`,
+    `mkAntiquotSplice` and `sepByElemParser` (`Lean/Parser/Basic.lean`,
+    v4.32.2). The colon, comma and parentheses are already the grammar's own. -/
 private meta def antiquotSymbols : List String :=
   ["$", "_", "%", (Sgq.Construct.of .«quantifier» |>.part .«separator»).text ++ "*"]
 
-/-- Nothing here reaches the global table and none of Lean's tokens reach a
-    selector, so a relation named `fun` needs no escape. Cost: a `$(term)`
-    antiquotation lexes under this table too. Nothing in the package writes one. -/
+/-- The table a selector lexes under: the engine's symbols and nothing else.
+    Nothing here reaches the global table, and none of Lean's tokens reach a
+    selector, so a relation named `fun` needs no escape.
+
+    Cost: a `$(term)` antiquotation inside a selector is lexed under this table
+    too, so a term spelled with other tokens will not parse there. Nothing in
+    the package writes one. -/
 private meta def selTokens : TokenTable :=
   (sgqSymbols ++ antiquotSymbols).foldl (fun t tk => t.insert tk tk) .empty
 
 /-- `ParserCache.tokenCache` is not part of what `adaptUncacheableContextFn`
-    resets, so at a region boundary the one-entry cache can replay a token
-    lexed under the other table. -/
+    resets. Without clearing it, the one-entry cache can replay a token lexed
+    under the other table at the region boundary, and the parse then sees a
+    token its own table cannot produce. -/
 private meta def clearTokenCache (c : ParserContext) (s : ParserState) : ParserState :=
   { s with cache.tokenCache := { startPos := c.inputString.rawEndPos + ' ' } }
 
@@ -214,14 +253,18 @@ meta def withHostTokens (p : Parser) : Parser := withTokens (fun c => getTokenTa
 
 /-! ### The category
 
+One category, as the engine has one grammar: formulas and relational
+expressions sit in the same cascade, and the elaborator checks kinds.
+
 `behavior := both` also indexes an identifier-spelled leading rule under the
-identifier's own text, so a keyword-led rule and a relation of the same name are
-both candidates and longest-match decides — which keeps a field named `some`
-writable without an escape. -/
+identifier's own text, so a keyword-led rule and a relation of the same name
+are both candidates and longest-match decides. That is what keeps a field
+named `some` writable without an escape. -/
 
 declare_syntax_cat spytial_sel (behavior := both)
 
-/-- Naming the category directly would parse it under Lean's token table. -/
+/-- Entry from Lean syntax, and the label a quotation of the language carries.
+    Naming the category directly would parse it under Lean's token table. -/
 meta def selExpr : Parser := withSelTokens (categoryParser `spytial_sel Sgq.loosest)
 
 @[combinator_formatter selExpr] meta def selExpr.formatter :=
@@ -229,10 +272,23 @@ meta def selExpr : Parser := withSelTokens (categoryParser `spytial_sel Sgq.loos
 @[combinator_parenthesizer selExpr] meta def selExpr.parenthesizer :=
   PrettyPrinter.Parenthesizer.categoryParser.parenthesizer `spytial_sel Sgq.loosest
 
-/-- `trailingLoop` looks an identifier up under `identKind` only, so a trailing
-    rule has to index itself there as well; a leading rule must not, because
-    `both` already finds it under the word and running it twice yields a
-    `choice` node. -/
+/-! ### Spellings
+
+A *spelling* is one concrete source text of a token — the manifest's own word
+for it (`Op.spellings`, `Part.spellings`); `or` and `||` are two spellings of
+one operator. -/
+
+/-- One spelling, classified by `lexesAsIdent` rather than by a list. A symbol
+    is an atom of the category-local table and so contributes nothing to the
+    global one; a word is read off the identifier, which is what keeps it
+    unreserved — and is the only reading that can ever match, since a word is
+    not in the table for `symbolFn` to find.
+
+    `trailing` says this spelling can be a trailing rule's first token.
+    `trailingLoop` looks an identifier up under `identKind` only, so such a rule
+    has to index itself there as well; a leading rule must not, because the
+    category's `both` behaviour already finds it under the word and running it
+    twice yields a `choice` node. -/
 meta def spelledAs (s : String) (trailing : Bool := false) : Parser :=
   if lexesAsIdent s then nonReservedSymbol s (includeIdent := trailing)
   else { info := mkAtomicInfo s, fn := symbolFn s }
@@ -242,12 +298,15 @@ meta def spelledAs (s : String) (trailing : Bool := false) : Parser :=
 @[combinator_parenthesizer spelledAs] meta def spelledAs.parenthesizer (s : String) (_trailing := false) :=
   PrettyPrinter.Parenthesizer.symbolNoAntiquot.parenthesizer s
 
-/-- The manifest gives every operator at least one spelling, so `[]` is dead. -/
+/-- Any spelling of an operator or a part: the engine accepts `or` and `||`
+    alike, and an arrow's multiplicity is any of five words. The manifest gives
+    every operator at least one, so the empty case is dead. -/
 meta def anySpelling (trailing : Bool := false) : List String → Parser
   | [] => { fn := fun _ s => s.mkError "no spelling" }
   | s :: ss => ss.foldl (fun p s => p <|> spelledAs s trailing) (spelledAs s trailing)
 
-/-- Which spelling was written is on the node, so read it back off the atom. -/
+/-- Which spelling was written is on the node, so the printers read it back off
+    the atom rather than committing to one. -/
 @[combinator_formatter anySpelling] meta def anySpelling.formatter (_trailing : Bool)
     (ss : List String) : PrettyPrinter.Formatter := do
   let stx ← Syntax.MonadTraverser.getCur
@@ -259,10 +318,23 @@ meta def anySpelling (trailing : Bool := false) : List String → Parser
   PrettyPrinter.Parenthesizer.symbolNoAntiquot.parenthesizer
     ((ss.find? (stx.isToken ·)).getD (ss.headD ""))
 
-/-- `identFnAux` without the `isIdCont` recursion, which would merge `a.b` into
-    one dotted name where the dot is the join operator. An escape keeps a
-    keyword-named field reachable (`«univ»`) — `nonReservedSymbol` compares raw
-    source text, which the escape changes. -/
+/-! ### Identifiers
+
+Names in a selector are Lean names — fields, types, binders — resolved against
+the scope, so they lex as Lean identifiers, «»-escapes included, not as the
+manifest's bare-name class: that class is the *output* alphabet, and
+`quoteIfNeeded` backquotes whatever falls outside it on the way out.
+
+Lean's stock `ident` parser cannot be used as-is: its `isIdCont` recursion
+merges `a.b` into one dotted name, and within a selector the dot is the join
+operator. -/
+
+/-- `identFnAux` without the `isIdCont` recursion.
+
+    An escaped component still holds dots, which is how a qualified Lean name is
+    written (`«Untyped.Term»`), and how a field whose name collides with a
+    keyword stays reachable (`«univ»`) — `nonReservedSymbol` compares raw source
+    text, which the escape changes. -/
 meta def identComponentFn : ParserFn := fun c s =>
   let startPos := s.pos
   if h : c.atEnd startPos then s.mkEOIError
@@ -296,9 +368,11 @@ meta def identComponent : Parser :=
 
 /-! ### Rules from the template
 
-Each template item contributes exactly one syntax child, which is what lets the
-elaborator walk the same template over the parsed node. -/
+`Sgq.Construct.template` gives a production in source order, so one builder
+serves every construct. Each item contributes exactly one syntax child, which
+is what lets the elaborator walk the same template over the parsed node. -/
 
+/-- The node kind a construct's rule produces. -/
 meta def nodeKind (c : Sgq.ConstructId) : SyntaxNodeKind :=
   `sgq ++ Name.mkSimple (Sgq.constructName c)
 
@@ -306,16 +380,21 @@ meta def binderGroupKind : SyntaxNodeKind := `sgqBinderGroup
 meta def bindKind : SyntaxNodeKind := `sgqBind
 meta def bodyKind : SyntaxNodeKind := `sgqBody
 
+/-- `x, y : dom`, shared by comprehensions and quantifiers. -/
 meta def binderGroup (cd : Sgq.Construct) (level : Nat) : Parser :=
   let sep := (cd.part .«separator»).text
   withAntiquot (mkAntiquot "sgqBinderGroup" binderGroupKind) <| node binderGroupKind
     (sepBy1 identComponent sep (psep := spelledAs sep) >>
       spelledAs (cd.part .«colon»).text >> categoryParser `spytial_sel level)
 
+/-- `x = e`, a `let`'s binding. -/
 meta def bindGroup (cd : Sgq.Construct) (level : Nat) : Parser :=
   node bindKind
     (identComponent >> spelledAs (cd.part .«bind»).text >> categoryParser `spytial_sel level)
 
+/-- The parser for a run of template items. `trailing` is true while the next
+    token could still be the rule's first, which decides whether a word spelling
+    also indexes itself under `identKind`. -/
 private meta partial def itemsParser (cd : Sgq.Construct) (trailing : Bool) :
     List Sgq.Item → Parser
   | [] => skip
@@ -339,35 +418,45 @@ private meta partial def itemsParser (cd : Sgq.Construct) (trailing : Bool) :
     | .part role opt =>
       let p := anySpelling trailing (cd.part role).spellings
       if !opt then sub p
-      -- `A -> one` writes a relation named `one`, not a multiplicity missing its
-      -- right operand; `elabNode` reads the atom off the position, so push a null
+      -- A present-but-wrong reading has to be undone: `A -> one` writes a
+      -- relation named `one`, not a multiplicity with no right operand.
+      -- `elabNode` reads the atom off the position, so the absent case pushes a
+      -- null node rather than wrapping the present one in it.
       else
         let restP := itemsParser cd false rest
         Lean.Parser.atomic (p >> restP) <|> (pushNone >> restP)
     | Sgq.Item.«optional» inner =>
       sub (Lean.Parser.optional (Lean.Parser.atomic (itemsParser cd false inner)))
 
-/-- `tokenFnAux` reads name, string, char and number literals structurally,
-    before any token table sees them, so a rule keyed on one could never fire. -/
+/-- Spellings Lean's own lexer claims before any token table sees them:
+    `tokenFnAux` reads name, string, char and number literals structurally, so a
+    rule keyed on one could never fire. The constructs they belong to are
+    written out by hand below. -/
 private meta def lexedByHost (s : String) : Bool :=
   if s.isEmpty then false
   else s.front == '`' || s.front == '"' || s.front == '\'' || s.front.isDigit
 
-/-- An all-identifier atom is excluded because an atom-keyed rule would never
-    see it on an unspaced `univ.lo`; `resolveIdent` reads it off the identifier
-    instead. `SpytialTests/SgqCoverageTest.lean` keeps the account. -/
+/-- Which constructs get a generated rule. Excluded: what the engine parses and
+    refuses to run; an atom whose every spelling is an identifier, which an
+    atom-keyed rule would never see on an unspaced `univ.lo` and which
+    `resolveIdent` reads off the identifier instead; and a spelling Lean's lexer
+    claims. `SpytialTests/SgqCoverageTest.lean` keeps the account. -/
 meta def hasRule (cd : Sgq.Construct) : Bool :=
   cd.evaluates && !cd.template.isEmpty
     && !(cd.fixity == .atom && cd.spellings.all lexesAsIdent)
     && !cd.spellings.any lexedByHost
     && !(cd.template.any fun i => match i with | .constant => true | _ => false)
 
+/-- A construct's rule. Trailing exactly when its production opens with an
+    operand, which is what a left-recursive alternative looks like. -/
 meta def ruleFor (c : Sgq.ConstructId) : Parser :=
   let cd := Sgq.Construct.of c
   match cd.template with
   | .operand lhs :: rest =>
-    -- the engine accepts `f [x]` as a box join; requiring adjacency is the one
-    -- place we narrow it, and keeps `hideAtom SBDD [a]` two op arguments
+    -- A box join must open its bracket with no space (`f[x]`). The engine
+    -- accepts `f [x]` too; requiring adjacency is the one place this package
+    -- narrows it, and it is what keeps `hideAtom SBDD [a]` two op arguments
+    -- rather than one box join.
     let body := itemsParser cd true rest
     let body := match rest with
       | .part .«open» _ :: _ => checkNoWsBefore >> body
@@ -375,18 +464,26 @@ meta def ruleFor (c : Sgq.ConstructId) : Parser :=
     trailingNode (nodeKind c) cd.prec lhs body
   | items => leadingNode (nodeKind c) cd.prec (itemsParser cd false items)
 
-/-- Selector syntax is never printed back. The parser attribute demands a
-    formatter per rule and cannot synthesise one for a template-driven `match`,
-    and mirroring `itemsParser` twice more only convention could keep in step. -/
+/-- Selector syntax is elaborated and lowered, never printed back — nothing in
+    the package pretty-prints a `spytial_sel`, and there are no selector
+    quotations. The parser attribute synthesises a formatter for every rule and
+    cannot synthesise one for a template-driven `match`, so these say so rather
+    than mirroring `itemsParser` in two further walks that only convention
+    could keep in step. -/
 @[combinator_formatter ruleFor] meta def ruleFor.formatter (_c : Sgq.ConstructId) :
     PrettyPrinter.Formatter := throwError "selector syntax is not pretty-printed"
 @[combinator_parenthesizer ruleFor] meta def ruleFor.parenthesizer (_c : Sgq.ConstructId) :
     PrettyPrinter.Parenthesizer := throwError "selector syntax is not pretty-printed"
 
-/-- The parser attribute keys the category on this name, so a test can ask it. -/
+/-- The declaration `derive_sgq_rules` gives a construct's rule. The parser
+    attribute keys the category on this name, so it is also how a test asks
+    whether the rule was registered. -/
 meta def ruleDeclName (c : Sgq.ConstructId) : Name :=
   `SpytialLean ++ Name.mkSimple s!"sgqRule_{Sgq.constructName c}"
 
+/-- Declares one `@[spytial_sel_parser]` rule per construct that has one. The
+    loop is over the manifest, so this is the whole grammar and it needs no
+    edit when the cascade grows. -/
 elab "derive_sgq_rules" : command => do
   for c in Sgq.allConstructs do
     let cd := Sgq.Construct.of c
@@ -398,6 +495,14 @@ elab "derive_sgq_rules" : command => do
         @[spytial_sel_parser] meta def $(mkIdent name) : $(mkIdent ty) := ruleFor $ctor)
 
 derive_sgq_rules
+
+/-! ### Leaves
+
+Four literal forms and two constructs that the generated rules cannot carry.
+Numbers, strings and the backquoted atom literal are lexical rather than
+constructs, and Lean's lexer reads them structurally. `let` the engine parses
+and refuses; we desugar it by substitution, so it keeps a rule of its own. And
+`lean (…)` is not the engine's at all. -/
 
 meta def selIdentKind : SyntaxNodeKind := `selIdent
 meta def selStrKind : SyntaxNodeKind := `selStr
@@ -417,12 +522,19 @@ private meta def atomPrec : Nat := (Sgq.Construct.of .«name»).prec
 @[spytial_sel_parser] meta def sgqNegNumRule : Parser :=
   leadingNode selNegNumKind atomPrec
     (spelledAs (Sgq.Construct.of .«constant» |>.part .«negation»).text >> checkNoWsBefore >> numLit)
+/-- `` `a0 ``, spelled with Lean's name literal: `tokenFnAux` reads one
+    structurally, before it ever consults a token table, so the backquote never
+    reaches `symbolFn`. -/
 @[spytial_sel_parser] meta def sgqAtomLitRule : Parser :=
   leadingNode selAtomLitKind (Sgq.Construct.of .«atomLiteral»).prec nameLit
+/-- Desugared by substitution in the elaborator; the engine has no `let`. -/
 @[spytial_sel_parser] meta def sgqLetRule : Parser := ruleFor .«let»
-/-- `lean (…)`: an ordinary Lean function read as a relation. The term needs
-    Lean's own token table back, and the brackets are the grammar's own, which
-    is what puts them in `selTokens`. -/
+/-- `lean (…)`: an ordinary Lean function read as a relation. Outside the
+    engine's grammar entirely, so it is written rather than generated, and it
+    knows two implementation details it has to: the term needs Lean's own
+    token table back, and it is bracketed by the grammar's own delimiters,
+    which is what puts them in `selTokens`. The word is not reserved, so a
+    relation named `lean` still reads as an identifier. -/
 @[spytial_sel_parser] meta def sgqLeanRule : Parser :=
   let g := Sgq.Construct.of .«grouping»
   leadingNode selLeanKind atomPrec
@@ -431,33 +543,40 @@ private meta def atomPrec : Nat := (Sgq.Construct.of .«name»).prec
 
 /-! ## Elaboration -/
 
-/-- `arity` is `none` when statically unknown, which disables width checks
-    downstream. -/
+/-- The typed result of elaborating a `spytial_sel`. Compile-time only; never
+    stored. `arity` is `none` when statically unknown (a lenient pass-through,
+    or a relation whose width the walker does not fix), which disables
+    downstream width checks. -/
 meta structure EExpr where
   sel : Sel
   kind : Sgq.Kind
   arity : Option Nat := none
   deriving Inhabited
 
+/-- A local binding introduced by a binder or a `let`. -/
 meta inductive LocalBind where
-  | binder
-  | letE (e : EExpr)
+  | binder                 -- ranges over a domain (arity 1)
+  | letE (e : EExpr)       -- `let`-bound: substituted at use
 
-/-- Most-recent first; a later binder shadows an earlier `let` and vice versa. -/
+/-- Ordered local environment (most-recent first); a later binder shadows an
+    earlier `let` of the same name and vice versa. -/
 meta abbrev LEnv := List (Name × LocalBind)
 
+/-- Every construct that has a rule, by the node kind that rule produces. -/
 private meta def constructOfKind : Std.HashMap Name Sgq.ConstructId :=
   Sgq.allConstructs.foldl (init := {}) fun m c => m.insert (nodeKind c) c
 
-/-- Atom constructs read off an identifier rather than a rule of their own. -/
+/-- Atom constructs read off an identifier rather than a rule of their own.
+    `resolveIdent` returns the operator the word spells without re-checking
+    `evaluates`; the command below is what keeps that sound. -/
 private meta def wordConstructs : List Sgq.ConstructId :=
   Sgq.allConstructs.filter fun c =>
     let cd := Sgq.Construct.of c
     cd.evaluates && cd.fixity == .atom && !cd.operators.isEmpty
 
--- `resolveIdent` resolves a word to an operator without re-checking `evaluates`,
--- and constructs and operators carry their own: a bump that makes them disagree
--- here is the build's to catch, not an audit's.
+-- Constructs and operators each carry their own `evaluates`, and `comparison`
+-- already disagrees with its `is`. Nothing on the bare-word path does today; a
+-- bump that changes that is the build's to catch, not an audit's.
 open Command in
 run_cmd
   for c in wordConstructs do
@@ -474,16 +593,22 @@ private meta def kindName : Sgq.Kind → String
   | .boolean => "a formula" | .«string» => "a label/literal value"
   | .operand => "an expression" | .any => "an expression"
 
+/-- Whether a result of kind `got` fills a slot declared `want`. `operand` and
+    `any` accept anything: the first hands its operand back, the second takes
+    either side of a comparison. -/
 private meta def kindAccepts (want : Option Sgq.Kind) (got : Sgq.Kind) : Bool :=
   match want with
   | none | some .any | some .operand => true
   | some k => k == got
 
+/-- What a construct yields, given what its operands turned out to be. -/
 private meta def yieldKind (declared : Option Sgq.Kind) (operands : Array Sgq.Kind) : Sgq.Kind :=
   match declared with
   | some .operand => operands[0]?.getD .relation
   | some k => k
   | none => .relation
+
+/-! ### Widths -/
 
 private meta def applyArity (ref : Syntax) (what : String) (a : Sgq.Arity)
     (slots : Array (Option Nat)) (extra : Array (Option Nat)) (binders : Nat) :
@@ -530,7 +655,9 @@ private meta def resolveGlobal? (stx : Syntax) : TermElabM (Option Name) := do
   catch _ =>
     pure none
 
-/-- Aim at the owner type for a non-structure field: it has no projection. -/
+/-- Hover/go-to-def for a relation name, which is not a Lean identifier. Aim at
+    the projection when the owner is a structure, else at the owner type — a
+    non-structure field is written in its constructors. -/
 private meta def addRelInfo (stx : Syntax) (owner : Name) (relName : String) :
     TermElabM Unit := do
   let env ← getEnv
@@ -539,6 +666,7 @@ private meta def addRelInfo (stx : Syntax) (owner : Name) (relName : String) :
   if env.contains target then
     addConstInfo stx target
 
+/-- The constructor label a bare ident denotes, with hover info. -/
 private meta def resolveCtorLit? (scope : SelScope) (stx : Syntax) : TermElabM (Option Sel) := do
   if let some ctorName := scope.ctorLabels.get? (stx.getId.toString (escape := false)) then
     if let some e ← try pure (some (← mkConstWithLevelParams ctorName)) catch _ => pure none then
@@ -546,15 +674,22 @@ private meta def resolveCtorLit? (scope : SelScope) (stx : Syntax) : TermElabM (
     return some (.ctorLit ctorName)
   return none
 
+/-- Builtins are named, not spelled: the engine's own lists are the vocabulary,
+    and the list a name is in gives its arity. -/
 private meta def builtinArity? (s : String) : Option Nat :=
   if Sgq.binaryBuiltins.contains s then some 2
   else if Sgq.unaryBuiltins.contains s then some 1
   else none
 
-/-- Spellings are unique within a construct, so the `.operator` atom decides. -/
+/-- Which operator a node was written with. Spellings are unique within a
+    construct, so the atom the `.operator` item took decides. -/
 private meta def opWritten? (cd : Sgq.Construct) (stx : Syntax) : Option Sgq.OpId := do
   cd.operatorSpelled (stx[← cd.template.findIdx? (· matches .operator)].getAtomVal)
 
+/-- What a subexpression yields, read off its node without elaborating it.
+    Needed where a slot accepts `any` and the operands have to agree: a bare
+    identifier opposite a label is a constructor label, not a relation, and
+    resolving it as a relation first would report the wrong error. -/
 private meta def declaredKind? (stx : Syntax) : Option Sgq.Kind :=
   let k := stx.getKind
   if k == selStrKind then some .«string»
@@ -567,9 +702,11 @@ private meta def declaredKind? (stx : Syntax) : Option Sgq.Kind :=
       | none => cd.kinds.yields
     | none => none
 
-/-- A bare ident opposite a label projection (`@:x = tt`) is a constructor
-    label, not a relation. The opposite operand's `declaredKind?` chooses this
-    reading before this side elaborates, so the error names the right vocabulary. -/
+/-- A bare ident opposite a label projection (`@:x = tt`): the engine compares
+    label strings, so the ident is read as a constructor label — resolved
+    against the scope, lowered to its label literal — not as a relation.
+    `declaredKind?` of the opposite operand chooses this reading before this
+    side elaborates, so the error names the right vocabulary. -/
 private meta def coerceVal (scope : SelScope) (stx : Syntax) (wantBool : Bool) :
     TermElabM EExpr := do
   unless stx.isOfKind selIdentKind do
@@ -597,10 +734,19 @@ private meta def coerceVal (scope : SelScope) (stx : Syntax) (wantBool : Bool) :
     throwErrorAt x m!"'{constName}' is not a constructor; label comparisons \
       expect a constructor or a literal"
 
+/-! ### Raw Lean selectors
+
+`lean (…)` steps outside the relational vocabulary: the term is an ordinary
+Lean function, checked by Lean's own elaborator. Its type fixes the columns it
+selects and their arity (`classifyLeanRel`); `SpytialLean.LeanSelector`
+resolves it against a datum. -/
+
 private meta def elabLeanRel (scope : SelScope) (stx : TSyntax `term) :
     TermElabM EExpr := do
   let fn ← instantiateMVars (← Term.withSynthesize <| Term.elabTerm stx none)
-  -- a written `sorry` reports nothing of its own, so name the consequence
+  -- Lean has reported an elaboration failure of its own, and a written `sorry`
+  -- reports nothing at all, so what the op then does is worth its own line:
+  -- the spec still renders, with this op selecting nothing.
   if fn.hasSorry then
     logWarningAt stx "this term carries a sorry, so the op selects nothing at \
       render"
@@ -650,13 +796,19 @@ private meta partial def elabExpr (scope : SelScope) (env : LEnv) (stx : Syntax)
     | some c => elabNode scope env stx c
     | none => throwErrorAt stx "unexpected selector syntax"
 
+/-- Elaborates one construct by walking its template against the parsed node:
+    each item takes exactly one child, in order. -/
 private meta partial def elabNode (scope : SelScope) (env : LEnv) (stx : Syntax)
     (c : Sgq.ConstructId) : TermElabM EExpr := do
   let cd := Sgq.Construct.of c
-  -- the renderer re-derives parentheses from the cascade
+  -- A bracket that only changes precedence yields its operand unchanged, so it
+  -- is not kept: the renderer re-derives parentheses from the cascade.
   if cd.kinds.yields == some .operand && cd.kinds.operands == [Option.some .operand] then
     if let some i := cd.template.findIdx? (· matches .operand _) then
       return ← elabExpr scope env stx[i]
+  -- A construct that does not settle its own kind may be a builtin call rather
+  -- than what its operands make of it: `add[1, 2]` is a call and `f[a]` a join,
+  -- and only the callee says which.
   if cd.kinds.yields.isNone then
     if let some e ← elabBuiltinCall? scope env stx c then return e
   let op? := opWritten? cd stx
@@ -714,6 +866,8 @@ private meta partial def elabNode (scope : SelScope) (env : LEnv) (stx : Syntax)
             slots := slots.push e.arity
             opKinds := opKinds.push e.kind
     | .operator | .constant => pure ()
+  -- Slots that accept either side have to agree with each other: the engine
+  -- compares like with like, so `#a = b` is a mistake rather than a coercion.
   if kinds.operands.any (· == Option.some .any) then
     for k in opKinds do
       unless k == opKinds[0]! do
@@ -723,7 +877,9 @@ private meta partial def elabNode (scope : SelScope) (env : LEnv) (stx : Syntax)
   let width ← applyArity stx what arity slots extra binders
   return { sel := .node c op? args, kind := yieldKind kinds.yields opKinds, arity := width }
 
-/-- In an `any` slot, what the *other* slot yields decides how a bare ident reads. -/
+/-- One operand slot. A slot declared `any` takes either side of a comparison,
+    so what the *other* slot yields decides how a bare identifier here reads: a
+    label or a boolean opposite it makes this one a constructor label. -/
 private meta partial def elabOperand (scope : SelScope) (env : LEnv) (stx : Syntax)
     (cd : Sgq.Construct) (want : Option Sgq.Kind) (slot i : Nat) : TermElabM EExpr := do
   if want == some .any && stx[i].isOfKind selIdentKind then
@@ -738,7 +894,9 @@ private meta partial def elabOperand (scope : SelScope) (env : LEnv) (stx : Synt
       return ← coerceVal scope stx[i] (k == .boolean)
   elabAt scope env stx[i] want
 
-/-- A bracket whose callee names a builtin is a call, not a box join. -/
+/-- `add[1, 2]`, `abs[x]`, `sum[e]`: a bracket whose callee names one of the
+    engine's builtins is a call, not a box join. The lists are the engine's and
+    the list a name is in gives its arity, so nothing here enumerates them. -/
 private meta partial def elabBuiltinCall? (scope : SelScope) (env : LEnv) (stx : Syntax)
     (c : Sgq.ConstructId) : TermElabM (Option EExpr) := do
   let cd := Sgq.Construct.of c
@@ -747,6 +905,8 @@ private meta partial def elabBuiltinCall? (scope : SelScope) (env : LEnv) (stx :
   unless stx[ci].isOfKind selIdentKind do return none
   let callee := stx[ci][0]
   if (env.lookup callee.getId).isSome then return none
+  -- Source text, not the name, decides, as it does in `resolveIdent`: `«add»`
+  -- is a field spelled differently that parses to the same `Name`.
   let .ident _ raw _ _ := callee | return none
   let name := raw.toString
   let args := stx[li].getSepArgs
@@ -763,15 +923,17 @@ private meta partial def elabBuiltinCall? (scope : SelScope) (env : LEnv) (stx :
     if let some a := e.arity then
       unless a == 1 do
         throwErrorAt args[0]! m!"the argument of {name}[e] must have arity 1, got {a}"
-    -- aggregators read numeric values, but walker atom ids are opaque (`atom_N`)
-    -- and the value is the label, so decode via the engine's own projection
+    -- Aggregators read numeric values; walker atom ids are opaque (`atom_N`),
+    -- and the value is the label — so decode via the engine's own projection.
     let proj := Sgq.Op.of .«labelNumber»
     let inner : Sel := .node proj.construct (some proj.id) #[.expr e.sel]
     return some { sel := .node c none #[.expr (.builtin name), .exprs #[inner]],
                   kind := .number }
   return none
 
-/-- An `any` slot passes `none`: `elabNode` reconciles the operands instead. -/
+/-- Elaborates `stx` and checks it against the kind its slot accepts. An `any`
+    slot passes `none`: `elabNode` reconciles the operands against each other
+    instead. -/
 private meta partial def elabAt (scope : SelScope) (env : LEnv) (stx : Syntax)
     (want : Option Sgq.Kind) : TermElabM EExpr := do
   let e ← elabExpr scope env stx
@@ -787,8 +949,8 @@ private meta partial def elabBinders (scope : SelScope) (env : LEnv) (typed : Bo
   for group in groups do
     if typed then
       let dom ← elabAt scope env group[2] (some .relation)
-      -- ours, not the engine's: it ranges a binder over the *atoms* of a wider
-      -- domain, which is never what the source meant
+      -- Not the engine's rule, ours: it ranges a binder over the *atoms* of a
+      -- wider domain, which is never what the source meant.
       if let some a := dom.arity then
         unless a == 1 do
           throwErrorAt group[2] m!"a {what} binder domain must have arity 1, got {a}"
@@ -796,22 +958,26 @@ private meta partial def elabBinders (scope : SelScope) (env : LEnv) (typed : Bo
         binders := binders.push (x.getId, dom.sel)
         env := (x.getId, .binder) :: env
     else
+      -- a `let` binding is substituted at use, so it never becomes a binder
       let e ← elabExpr scope env group[2]
       env := (group[0].getId, .letE e) :: env
       binders := binders.push (group[0].getId, e.sel)
   if binders.isEmpty then throwError s!"a {what} needs at least one binder"
   return (binders, env)
 
-/-- SGQ has no `let`; it desugars by substitution at use. -/
+/-- `let` desugars by substitution — SGQ has no `let`. A later binder shadows
+    the `let`. -/
 private meta partial def elabLet (scope : SelScope) (env : LEnv) (stx : Syntax) :
     TermElabM EExpr := do
   let (_, env') ← elabBinders scope env false "let" stx[1].getSepArgs
   elabExpr scope env' stx[2][1]
 
+/-- Resolution order: the engine's own word constants, a local binding, a
+    constructor label, then the vocabulary. -/
 private meta partial def resolveIdent (scope : SelScope) (env : LEnv)
     (stx : TSyntax `ident) : TermElabM EExpr := do
-  -- source text, not the name, decides: `«univ»` is a field spelled differently
-  -- that parses to the same `Name`
+  -- Source text, not the name, decides: `«univ»` is a field spelled differently
+  -- that parses to the same `Name`.
   if let .ident _ raw _ _ := stx.raw then
     for c in wordConstructs do
       for o in (Sgq.Construct.of c).operators do
@@ -825,6 +991,8 @@ private meta partial def resolveIdent (scope : SelScope) (env : LEnv)
     match bind with
     | .binder => return { sel := .var name, kind := .relation, arity := some 1 }
     | .letE e =>
+      -- Lowering is name-based, so a binder introduced after the `let` would
+      -- silently capture the substituted expression's free variables.
       let fvs := e.sel.freeVars
       for (n, b) in env do
         if n == name then break
@@ -865,9 +1033,10 @@ end
 
 /-! ## Entry points -/
 
-/-- `blockedBy` names a field the form needs and the op did not write: the form
-    is unavailable, and only the diagnostic reads it, to say what unlocks the
-    width. -/
+/-- One shape a selector position accepts: the tuple widths it takes, with
+    `max` absent meaning no upper bound. `blockedBy` names a field the form
+    needs and the op did not write — the form is then unavailable, and only
+    the diagnostic still reads it, to say what would unlock the width. -/
 meta structure ArityForm where
   min : Nat
   max : Option Nat
@@ -879,6 +1048,8 @@ meta structure ArityForm where
 meta def ArityForm.holds (f : ArityForm) (a : Nat) : Bool :=
   f.min ≤ a && f.max.all (a ≤ ·)
 
+/-- Adjacent and overlapping ranges merge, so a position taking two columns
+    and three-or-more reads as one span rather than two. -/
 private meta def mergeRanges (forms : List ArityForm) : Array (Nat × Option Nat) :=
   (forms.toArray.qsort (·.min < ·.min)).foldl (init := #[]) fun acc f =>
     match acc.back? with
@@ -908,15 +1079,15 @@ meta def elabSelector (scope : SelScope) (accepts : List ArityForm)
         {widthPhrase available}, but this one has arity {a}\
         {if unlock.isEmpty then m!"" else
           m!"; arity {a} needs {" or ".intercalate (unlock.map (s!"'{·}'"))}"}"
-    -- only where every form that takes this width discards the middles: a
-    -- position that shows them (`inferredEdge`, `tag`) is not losing anything
+    -- Only where every form that takes this width discards the middles: a
+    -- position that shows them (`inferredEdge`, `tag`) is not losing anything.
     else if 2 < a && matching.all (·.middlesIgnored) then
       logWarningAt stx m!"arity-{a} selector: this position uses only the first \
         and last columns of each tuple"
   return e.sel
 
-/-- `position` is the `<item>.<field>` the name sits in: a spec-introduced name
-    is resolved only where the manifest says it is. -/
+/-- A relation name, in the `<item>.<field>` position named by `position`. A
+    spec-introduced name is resolved only where the manifest says it is. -/
 meta def elabFieldName (scope : SelScope) (position : String) (stx : TSyntax `ident) :
     TermElabM String := do
   let s := stx.getId.toString (escape := false)

@@ -29,15 +29,17 @@ public class Widget (α : Type) where
 
 end CoverageFixture
 
--- non-public on purpose: registration must resolve the private-mangled name
+-- deliberately non-public: registration must resolve the private-mangled name
 meta def ropeRel : CustomRelationalizer := fun _ _ => do
   modify fun s : WalkState => s.addAtom { id := "rope", type := "Rope", label := "rope" }
   return "rope"
 
--- relative names on purpose: registration must resolve them to FQNs
+-- deliberately relative names: registration must resolve them to the FQNs
+-- the enumeration produces
 namespace CoverageFixture
 
 spytial_spec Graph [hideAtom Nat]
+-- `ropeRel` is deliberately non-`public`, pinning the registration warning.
 /--
 warning: '_private.SpytialTests.CoverageTest.0.ropeRel' is not `public`, so a `#spytial` on this type from an importing module fails at render with `Unknown constant` — declare it `public meta def`
 -/
@@ -79,19 +81,23 @@ spytial_opt_out CoverageFixture.DoesNotExist "x"
 
 /-! ## Strict gate + empty-namespace guard -/
 
--- the clean strict pass, so the empty-root guard below cannot regress it
+-- Strict `!` on a fully-covered namespace succeeds — pinning the clean pass so
+-- the empty-root guard below cannot regress it into a false failure.
 /--
 info: Spytial coverage: 4/4 data types in 'CoverageFixture' covered.
 -/
 #guard_msgs in
 #spytial.coverage! CoverageFixture
 
+-- A namespace matching nothing fails strict mode instead of reporting a hollow
+-- 0/0 pass …
 /--
 error: no Spytial coverage data types found under 'NoSuchNamespace' — check the spelling and that the namespace is imported
 -/
 #guard_msgs in
 #spytial.coverage! NoSuchNamespace
 
+-- … and warns (never the success line) in the plain form.
 /--
 warning: no Spytial coverage data types found under 'NoSuchNamespace' — check the spelling and that the namespace is imported
 -/
@@ -112,13 +118,19 @@ spytial_spec Parent [hideAtom Nat]
 
 end CovInherit
 
+-- Child has no own spec but renders via Parent's inherited spec — strict passes.
 /--
 info: Spytial coverage: 2/2 data types in 'CovInherit' covered.
 -/
 #guard_msgs in
 #spytial.coverage! CovInherit
 
-/-! ## Custom-relationalizer referential integrity -/
+/-! ## Custom-relationalizer referential integrity
+
+A value whose type has a custom relationalizer, appearing twice, must not leave a
+tuple pointing at the pre-allocated id the relationalizer discards. `boxedRel`
+returns its own fresh id (like the demo's SimpleGraph), and the second occurrence
+of `boxedTwice`'s components hits the seen-cache. -/
 
 public structure Boxed where
   n : Nat
@@ -134,8 +146,9 @@ spytial_relationalizer Boxed boxedRel
 
 public def boxedTwice : Boxed × Boxed := (⟨5⟩, ⟨5⟩)
 
--- Regression: without the seen-entry reconcile the second occurrence resolves
--- to the pre-allocated id `boxedRel` discarded, which is never emitted.
+-- Referential integrity: every tuple endpoint is a real atom. Fails (throws)
+-- without the seen-entry reconcile, since the repeated occurrence resolves to
+-- the never-emitted pre-allocated id.
 open Lean in
 #eval show MetaM Unit from do
   let di ← relationalize (mkConst ``boxedTwice)

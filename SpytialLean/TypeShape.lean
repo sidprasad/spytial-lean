@@ -102,6 +102,7 @@ private meta def elemLabel (e : Expr) : MetaM String := do
     if (← getEnv).find? n matches some (.ctorInfo _) then return shortName n else ppLabel e
   | _ => ppLabel e
 
+/-- Every element of `ty` with its label; `none` where `enumElems?` declines. -/
 public meta def tryEnumerateDomain (ty : Expr) : MetaM (Option (Array (String × Expr))) := do
   let some elems ← enumElems? ty | return none
   elems.mapM fun e => return ((← elemLabel e), e)
@@ -115,18 +116,18 @@ public meta structure TabulationBinder where
   domain : Expr
   elems : Array (String × Expr)
 
-/-- One column per binder, then the codomain. -/
+/-- How a function type tabulates: one column per binder, then the codomain. -/
 public meta structure TabulationPlan where
   binders : Array TabulationBinder
   codomain : Expr
   kind : CodomainKind
 
-/-- The tuple count of the emitted table. -/
+/-- Points in the domain product — the tuple count of the emitted table. -/
 public meta def TabulationPlan.size (p : TabulationPlan) : Nat :=
   p.binders.foldl (fun n b => n * b.elems.size) 1
 
-/-- The columns after the owner. A proposition's extension has no result
-    column. -/
+/-- The columns after the owner: the binders, then a data codomain's result
+    (a proposition's extension has none). -/
 public meta def TabulationPlan.tailTypes (p : TabulationPlan) : Array Expr :=
   let domains := p.binders.map (·.domain)
   match p.kind with
@@ -156,9 +157,11 @@ private meta partial def peelBinders (ty : Expr) (acc : Array TabulationBinder) 
       | _ => .data
     return some { binders := acc, codomain := cod, kind }
 
+/-- The table a function type tabulates into, or `none` when it does not. -/
 public meta def tabulationPlan? (ty : Expr) : MetaM (Option TabulationPlan) :=
   peelBinders ty #[]
 
+/-- What a tabulating field's type emits, as a static checker needs it. -/
 public meta structure FieldTable where
   arity : Nat
   columnHeads : Array Name
@@ -171,14 +174,17 @@ public meta def FieldTable.of? (ty : Expr) : MetaM (Option FieldTable) := do
 public meta structure FieldShape where
   relName : String
   typeSig : Option String
-  /-- `none` for a type parameter or function type: unpredictable vocabulary. -/
+  /-- Head constant of the field type, when it has one; `none` for a type
+      parameter or function type (unpredictable vocabulary). -/
   typeHead : Option Name := none
+  /-- The walker drops this field: it is `Prop`- or `Sort`-typed. -/
   isProofLike : Bool
-  /-- When set, its columns rather than the type head are the vocabulary the
-      field's values contribute. -/
+  /-- Set when the field's type tabulates: its columns, not its type head, are
+      the vocabulary its values contribute. -/
   table : Option FieldTable := none
-  /-- `none` where the declaration fixes no arity: a function type over the
-      inductive's own parameters leaves leaf-or-table to the instantiation. -/
+  /-- The emitted relation's arity, when the declaration fixes it. A function
+      type over the inductive's own parameters fixes nothing: only the
+      instantiation decides leaf or table. -/
   arity? : Option Nat := some 2
   deriving Repr, Inhabited
 

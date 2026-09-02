@@ -37,11 +37,11 @@ public inductive Tree (α : Type) where
   | node (left right : Tree α)
 
 public inductive Pos where
-  | mk : Nat → Nat → Pos
+  | mk : Nat → Nat → Pos          -- positional (anonymous) fields → fallback names
 
 public structure Demo where
   val : Nat
-  ok : val = val
+  ok : val = val                  -- a Prop field, filtered from data relations
 
 #eval show MetaM Unit from do
   let some ts ← TypeShape.ofInductive ``Tree | throwError "Tree: no shape"
@@ -65,7 +65,7 @@ public structure Demo where
   assertEq "Demo.dataRelNames" ts.dataRelNames #["val"]
 
 public structure Bundle where
-  carrier : Type
+  carrier : Type                  -- a Sort-typed field: proof-like, dropped by the walker
   size : Nat
 
 #eval show MetaM Unit from do
@@ -118,7 +118,9 @@ public structure Bundle where
   let di ← relationalize (mkApp3 (mkConst ``Tree.node) (mkConst ``Nat) hole hole)
   assertEq "shared-hole.labels" (di.atoms.map (·.label)) #["node", "?"]
 
-/-! ## Walker: stuck match -/
+/-! ## Walker: stuck match
+
+Elaborated here exactly as a synthesized term containing `match` would be. -/
 
 #eval show Lean.Elab.TermElabM Unit from do
   let treeNat := mkApp (mkConst ``Tree) (mkConst ``Nat)
@@ -147,7 +149,11 @@ public structure Bundle where
     assertEq "match2.labels" (di.atoms.map (·.label)) #["match", "0", "t", "1", "u"]
     assertEq "match2.rels"   (di.relations.map (·.name)) #["scrutinee"]
 
-/-! ## `SpytialEnum` domains, derived on demand — no `deriving` clause below -/
+/-! ## A domain is enumerated by `SpytialEnum`, derived on demand
+
+No `deriving SpytialEnum` is written below, and none is needed. `Rec` and
+`Tagged` are the negative controls: `Rec`'s own field makes it infinite, and
+`Tagged`'s `String` field has no `SpytialEnum` instance. -/
 
 public structure Win where
   prev : Bool

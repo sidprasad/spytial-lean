@@ -89,9 +89,17 @@ target widgetJsAll pkg : Unit := do
     |>.mix (← widgetTsconfig.fetch)
   pkg.afterBuildCacheAsync do
   inputs.mapM fun _ => do
+    let sgqManifest := pkg.dir / "node_modules" / "simple-graph-query" /
+      "docs" / "sgq-language.json"
+    let spytialManifest := pkg.widgetDir / "node_modules" / "spytial-core" /
+      "docs" / "spytial-language.json"
+    let depsMissing := !(← sgqManifest.pathExists) || !(← spytialManifest.pathExists)
+    if depsMissing then
+      pkg.runPnpmCommand #["install", "--frozen-lockfile"]
     let traceFile := pkg.buildDir / "js" / "lake.trace"
     buildUnlessUpToDate traceFile (← getTrace) traceFile do
-      pkg.runPnpmCommand #["install", "--frozen-lockfile"]
+      unless depsMissing do
+        pkg.runPnpmCommand #["install", "--frozen-lockfile"]
       pkg.runPnpmCommand #["-C", widgetDir.toString, "run", "build"]
     -- the job's trace is the built JS itself, so out-of-band rebuilds re-embed
     setTrace (← computeTrace (pkg.buildDir / "js" / "spytialWidget.js"))

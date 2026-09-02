@@ -13,9 +13,9 @@ public section
 
 /-! # Reading a language manifest
 
-`deriving FromJson` composes error paths already, so nothing here threads one by
-hand. What it does not cover is the tagged-union convention and which element of
-an array failed. -/
+`deriving FromJson` composes error paths already, so nothing here threads one
+by hand. What it does not cover is the manifests' tagged-union convention and
+which element of an array failed. -/
 
 -- v4.32.2 doesn't include FromJson Char
 meta instance : FromJson Char where
@@ -26,6 +26,8 @@ meta instance : FromJson Char where
 
 meta instance : Repr JsonObject := ⟨fun o _ => Std.Format.text (Json.obj o).compress⟩
 
+/-- Decodes an array, naming each element by its own `key` member rather than
+    by position. -/
 meta def eachKeyedBy (α) [FromJson α] (key : String) (js : Array Json) :
     Except String (Array α) :=
   js.mapM fun j => (fromJson? j).mapError fun e =>
@@ -33,8 +35,8 @@ meta def eachKeyedBy (α) [FromJson α] (key : String) (js : Array Json) :
     | .ok name => s!"{name}: {e}"
     | .error _ => e
 
-/-- An absent member decodes as `null`, which is what makes an `Option` field
-    optional and every other field name itself. -/
+/-- One member of an object. An absent member decodes as `null`, which is what
+    makes an `Option` field optional and every other field name itself. -/
 meta def member (α) [FromJson α] (j : Json) (key : String) : Except String α := do
   match (← (fromJson? j : Except String JsonObject)).getJson? key with
   | some v => (fromJson? v).mapError fun e => s!"{key}: {e}"
