@@ -67,6 +67,16 @@ private meta def definitionalRefinements : MetaM (Array (FVarId × Expr)) := do
         refinements := refinements.push (declaration.fvarId, value)
   return refinements
 
+/-- Primitive values keep their informative value labels (`3`, `true`, ...)
+    when a refinement determines them. Names instead label structured values,
+    whose constructor label describes shape rather than contextual identity. -/
+private meta def primitiveLabelTypes : List Name :=
+  [``Nat, ``String, ``Bool, ``Char, ``Int, ``Float, ``UInt8, ``UInt16,
+    ``UInt32, ``UInt64, ``USize]
+
+private meta def isPrimitiveLabelType (ty : Expr) : MetaM Bool := do
+  return (← typeHead? ty).any primitiveLabelTypes.contains
+
 /-- Substitute known variable refinements through a compound relation
     endpoint, allowing projections such as `t.left` to reach the atom already
     used for the corresponding constructor field. -/
@@ -94,6 +104,47 @@ private meta partial def substituteKnown (refinements : Std.HashMap FVarId Expr)
   if replaced.equal expression || fuel == 0 then replaced
   else substituteKnown refinements (fuel - 1) replaced
 
+/-- Find the atom reached by a refined local even when IYKYK substituted the
+    local before the relational walk saw it. -/
+private meta def atomForRefinedLocal? (fvarId : FVarId)
+    (refinements : Std.HashMap FVarId Expr) (state : WalkState) : MetaM (Option String) := do
+  if let some atomId := state.fvarAtoms[fvarId]? then return some atomId
+  let some value := refinements[fvarId]? | return none
+  let value ← whnf (substituteKnown refinements 8 value)
+  for (term, atomId) in state.selectorTerms do
+    let term ← whnf (substituteKnown refinements 8 term)
+    if term.equal value then return some atomId
+  for (atomId, representative) in state.provenance do
+    let representative ← whnf (substituteKnown refinements 8 representative)
+    if representative.equal value then return some atomId
+  return none
+
+/-- Prefer user-written local names for represented structured values refined
+    by the context. Later declarations are nearer the inspection site and win
+    when several aliases denote one atom; the explicitly inspected root wins
+    over every other alias. Atom ids, relations, and provenance are unchanged. -/
+private meta def labelRefinedLocals (selected : Expr) (rootId : String)
+    (refinements : Std.HashMap FVarId Expr) (state : WalkState) : MetaM WalkState := do
+  let mut labels : Std.HashMap String String := {}
+  for declaration in ← getLCtx do
+    if declaration.isImplementationDetail || !refinements.contains declaration.fvarId then
+      continue
+    if ← isPrimitiveLabelType declaration.type then continue
+    let userName := declaration.userName
+    if userName.isAnonymous || userName.hasMacroScopes then continue
+    if let some atomId ← atomForRefinedLocal? declaration.fvarId refinements state then
+      labels := labels.insert atomId (toString userName)
+  if let .fvar fvarId := selected then
+    let declaration ← fvarId.getDecl
+    if !declaration.isImplementationDetail && !(← isPrimitiveLabelType declaration.type) then
+      let userName := declaration.userName
+      if !userName.isAnonymous && !userName.hasMacroScopes then
+        labels := labels.insert rootId (toString userName)
+  return { state with atoms := state.atoms.map fun atom =>
+    match labels[atom.id]? with
+    | some label => { atom with label }
+    | none => atom }
+
 private meta def contextArgument (cfg : WalkConfig) (argument : Expr) :
     MetaM Expr :=
   if argument.isFVar || argument.isMVar then pure argument
@@ -109,7 +160,7 @@ private meta def displayedProposition (fact : Iykyk.KnownFact) : MetaM Expr :=
 /-- Allocate the shared unknowns before anything else walks. Registering each
     choice term in `applicationAtoms` makes all of its occurrences reuse the
     same short-labelled atom rather than displaying `Classical.choose`, and the
-    labels come from the walk's one `?ₙ` counter so no other generated atom can
+    labels come from the walk's one generated-name counter so no other atom can
     repeat them. -/
 private meta def addWitnesses (afaik : Iykyk.Afaik) (recordObservationTerms : Bool) :
     StateT WalkState MetaM (Array (Expr × String)) := do
@@ -270,7 +321,8 @@ private meta def prepareContextObservations (afaik : Iykyk.Afaik) (config : Walk
     `Spytial.Sel` form receives — the root with its known refinements
     substituted, closed exactly when the context determines the value. -/
 private meta def relationalizeAfaikInspection (afaik : Iykyk.Afaik)
-    (baseConfig : WalkConfig := {}) (observations : Array Expr := #[]) :
+    (baseConfig : WalkConfig := {}) (observations : Array Expr := #[])
+    (selectedRoot? : Option Expr := none) :
     MetaM (JsonDataInstance × Provenance × Expr × InspectedValue × SelectorEvidence) :=
   withoutModifyingEnv do
     let mut config ← contextWalkConfig afaik
@@ -314,6 +366,7 @@ private meta def relationalizeAfaikInspection (afaik : Iykyk.Afaik)
         anchors ← walkFact config fact anchors
       addActiveDomainObservations config observations
       return rootId
+    let state ← labelRefinedLocals (selectedRoot?.getD afaik.root) rootId refinements state
     let facts ← afaik.facts.mapM fun fact => do
       return (← ppExpr (← displayedProposition fact)).pretty
     let inspection : InspectedValue := {
@@ -435,7 +488,7 @@ public meta def wdykInContext (subject : Expr) (walkConfig : WalkConfig := {})
         projectToRepresentation afaik walkConfig observations
       else pure afaik
       let (data, prov, datum, inspection, evidence) ←
-        relationalizeAfaikInspection afaik walkConfig observations
+        relationalizeAfaikInspection afaik walkConfig observations (some subject)
       let inspection := { inspection with term := (← ppExpr subject).pretty }
       return ({ truncated := afaik.truncated }, some { afaik, data, prov, datum, inspection, evidence })
 

@@ -116,7 +116,7 @@ example (edge : Nat → Nat → Prop) (x y : Nat) (h : edge x y) : True := by
       let body ← mkAppM ``And #[mkApp2 edge source middle, mkApp2 edge middle target]
       mkAppM ``Exists #[← mkLambdaFVars #[middle] body]
     withLocalDeclD `route route fun _ => do
-      assertSelection (← viewOf source) edge #[#["?₁", "target"], #["source", "?₁"]]
+      assertSelection (← viewOf source) edge #[#["xˀ", "target"], #["source", "xˀ"]]
 
 -- Refining x changes its picture but does not lose the term used by h : P x.
 #eval show TermElabM Unit from do
@@ -126,7 +126,7 @@ example (edge : Nat → Nat → Prop) (x y : Nat) (h : edge x y) : True := by
   withLocalDeclD `value (← mkEq x (mkConst ``KnowledgeTree.leaf)) fun _ => do
   withLocalDeclD `h (mkApp P x) fun _ => do
   withLocalDeclD `also (mkApp P (mkConst ``KnowledgeTree.leaf)) fun _ => do
-    assertSelection (← viewOf x) P #[#["leaf"]]
+    assertSelection (← viewOf x) P #[#["x"]]
 
 -- Bounded simplification can combine independently established predicates.
 #eval show TermElabM Unit from do

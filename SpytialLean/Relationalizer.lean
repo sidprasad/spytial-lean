@@ -79,7 +79,7 @@ public meta structure WalkState where
       from closed-value identity and never merges different symbolic terms. -/
   symbolicAtoms : ExprStructMap String := {}
   /-- Counter for short display names of determined but otherwise unnamed
-      application results (`?₁`, `?₂`, ...). -/
+      application results (`xˀ`, `yˀ`, ...). -/
   nextApplicationLabel : Nat := 0
   /-- Refinements currently being expanded — the cycle guard for mutual
       equations (`h₁ : x = y`, `h₂ : y = x`): a variable re-entered during its
@@ -133,24 +133,14 @@ public meta def WalkState.freshId (s : WalkState) : String × WalkState :=
   let id := s!"atom_{s.nextId}"
   (id, { s with nextId := s.nextId + 1 })
 
-private meta def subscriptDigit : Char → String
-  | '0' => "₀"
-  | '1' => "₁"
-  | '2' => "₂"
-  | '3' => "₃"
-  | '4' => "₄"
-  | '5' => "₅"
-  | '6' => "₆"
-  | '7' => "₇"
-  | '8' => "₈"
-  | '9' => "₉"
-  | c => c.toString
-
 /-- A generated display label for an unnamed value, not a Lean metavariable. -/
 private meta def applicationLabel (index : Nat) : String :=
-  "?" ++ String.join ((toString (index + 1)).toList.map subscriptDigit)
+  let stem := #["x", "y", "z"][index % 3]!
+  let generation := index / 3
+  let identifier := if generation == 0 then stem else stem ++ toString generation
+  identifier ++ "ˀ"
 
-/-- Allocate the next generated `?ₙ` display name. Every generated label in a
+/-- Allocate the next generated `xˀ`, `yˀ`, ... display name. Every generated label in a
     walk draws from this one counter, so two distinct atoms never share one. -/
 public meta def WalkState.freshApplicationLabel (s : WalkState) : String × WalkState :=
   (applicationLabel s.nextApplicationLabel,

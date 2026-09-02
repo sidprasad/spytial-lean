@@ -61,7 +61,7 @@ private meta def node (left right : Expr) : Expr :=
   withLocalDeclD `shape (← mkAppM ``Eq #[t, node (leaf 1) (leaf 2)]) fun _ => do
     let view ← viewOf "consumer.refinement" t
     assertCanon "consumer.refinement" view.data
-      "Tree|node\nTree|leaf\nNat|1\nTree|leaf\nNat|2\n\
+      "Tree|t\nTree|leaf\nNat|1\nTree|leaf\nNat|2\n\
        left[Tree,Tree]:0,1\nright[Tree,Tree]:0,3\nvalue[Tree,Nat]:1,2;3,4"
 
 /- A fact whose endpoint is a constructor subterm reuses the atom reached by
@@ -90,7 +90,7 @@ private meta def node (left right : Expr) : Expr :=
     withLocalDeclD `route routeType fun _ => do
       let view ← viewOf "consumer.witness" source
       assertCanon "consumer.witness" view.data
-        "α|?₁\nα|source\nα|target\nedge[α,α]:1,0;0,2"
+        "α|xˀ\nα|source\nα|target\nedge[α,α]:1,0;0,2"
 
 /-! ## Explicit IYKYK rules add derived relations -/
 
@@ -130,7 +130,7 @@ private meta def node (left right : Expr) : Expr :=
     withLocalDeclD `h₁ (mkApp Reach nextStart) fun _ => do
       let view ← viewOf "consumer.functionGraph" start
       assertCanon "consumer.functionGraph" view.data
-        "α|start\nα|?₁\nReach[α]:0;1\nnext[α,α]:0,1"
+        "α|start\nα|xˀ\nReach[α]:0;1\nnext[α,α]:0,1"
 
 /-! ## Requested observations become graph points -/
 
@@ -139,7 +139,7 @@ private meta def node (left right : Expr) : Expr :=
   withLocalDeclD `x (mkConst ``Nat) fun x => do
     let view ← viewOf "consumer.observation" x {} #[mkApp measure x]
     assertCanon "consumer.observation" view.data
-      "Nat|x\nNat|?₁\nmeasure[Nat,Nat]:0,1"
+      "Nat|x\nNat|xˀ\nmeasure[Nat,Nat]:0,1"
 
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `measure (← mkArrow (mkConst ``Nat) (mkConst ``Nat)) fun measure => do
@@ -147,7 +147,7 @@ private meta def node (left right : Expr) : Expr :=
   withLocalDeclD `known (← mkAppM ``Eq #[mkApp measure x, mkRawNatLit 3]) fun _ => do
     let view ← viewOf "consumer.knownObservation" x {} #[mkApp measure x]
     assertCanon "consumer.knownObservation" view.data
-      "Nat|x\nNat|3\nNat|?₁\nmeasure[Nat,Nat]:0,1;1,2"
+      "Nat|x\nNat|3\nNat|xˀ\nmeasure[Nat,Nat]:0,1;1,2"
 
 private def Tree.height : Tree → Nat
   | .leaf _ => 0
@@ -162,7 +162,8 @@ private def Tree.height : Tree → Nat
     let observation := mkApp (mkConst ``Tree.height) root
     assertCanon "consumer.activeDomainObservation"
       (← relationalize root {} #[observation])
-      "Tree|node\nTree|left\nTree|right\nNat|?₁\nNat|?₂\nNat|(max ?₁ ?₂) + 1\n\
+      "Tree|node\nTree|left\nTree|right\nNat|xˀ\nNat|yˀ\n\
+       Nat|(max xˀ yˀ) + 1\n\
        height[Tree,Nat]:0,5;1,3;2,4\nleft[Tree,Tree]:0,1\nright[Tree,Tree]:0,2"
 
 /- Values introduced by proof-backed context facts join the same active
@@ -175,7 +176,7 @@ private def Tree.height : Tree → Nat
     let leftHeight := mkApp (mkConst ``Tree.height) left
     let view ← viewOf "consumer.contextActiveDomainObservation" left {} #[leftHeight]
     assertCanon "consumer.contextActiveDomainObservation" view.data
-      "Tree|left\nNat|?₁\nTree|right\nNat|?₂\n\
+      "Tree|left\nNat|xˀ\nTree|right\nNat|yˀ\n\
        edge[Tree,Tree]:0,2\nheight[Tree,Nat]:0,1;2,3"
 
 /- Observations parameterize fact relationalization. The source computation
@@ -191,7 +192,8 @@ private def Tree.height : Tree → Nat
     withLocalDeclD `branch (← mkAppM ``LT.lt #[oneMore, leftHeight]) fun _ => do
       let view ← viewOf "consumer.observationContext" left {} #[leftHeight]
       assertCanon "consumer.observationContext" view.data
-        "Tree|left\nNat|?₁\nNat|?₂\nNat|?₃\nNat|2\nNat|?₄\nTree|right\nNat|1\n\
+        "Tree|left\nNat|xˀ\nNat|yˀ\nNat|zˀ\nNat|2\nNat|x1ˀ\n\
+         Tree|right\nNat|1\n\
          hAdd[Nat,Nat,Nat]:3,7,2\nhMul[Nat,Nat,Nat]:4,5,3\n\
          height[Tree,Nat]:0,1;6,5\nlt[Nat,Nat]:2,1"
       assertMatchesReference "consumer.observationContext.reference" oneMore

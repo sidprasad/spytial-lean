@@ -33,6 +33,15 @@ spytial before observing [height]
 spytial (Tree.node (.node ll lx lr) x r) observing [height]
 ```
 
+Both spellings retain the same facts and relational identity. For display,
+however, a user-written name is more informative than a constructor name:
+`before` labels the first inspection's root, while the inline inspection falls
+back to `node`. Refined structured locals used below the root likewise label
+their atoms. If several in-scope aliases denote one atom, the nearest local
+declaration wins, except that the explicitly inspected name always wins at the
+root. Primitive values keep their value labels (`3`, `true`, `"text"`, and so
+on) instead of being renamed by refinements.
+
 After a rotation, facts about unchanged subtrees remain relevant even if no
 hypothesis mentions the new whole tree. A fact about an old parent still refers
 to that old parent, not to the new root. The resulting datum can therefore
@@ -82,9 +91,9 @@ deliberately distinguish occurrences. There is no new observation option.
 For a known node with unknown children, `observing [height]` records:
 
 ```text
-height(left, ?₁)
-height(right, ?₂)
-height(parent, (max ?₁ ?₂) + 1)
+height(left, xˀ)
+height(right, yˀ)
+height(parent, (max xˀ yˀ) + 1)
 ```
 
 The observer is residualized before its result is added. Known child heights
