@@ -145,6 +145,37 @@ private meta def rememberObservationTerm (enabled : Bool) (term : Expr) (atomId 
       else { state with observationTerms := state.observationTerms.push (term, atomId) }
   else pure ()
 
+/-- `addTuple`, but the relation's declared signature is the join of its
+    tuples': a column that mixes atom types declares `univ`, core's
+    `inferRelationSignatures` rule. -/
+public meta def WalkState.addTupleJoined (s : WalkState) (relName : String)
+    (types : Array String) (tuple : JsonTuple) : WalkState :=
+  let (declared, tuples) := s.relations.getD relName (types, #[])
+  let declared :=
+    if declared.size == types.size then
+      declared.zipWith (fun a b => if a == b then a else "univ") types
+    else declared
+  { s with relations := s.relations.insert relName (declared, tuples.push tuple) }
+
+public meta def WalkState.atomType (s : WalkState) (id : String) : String :=
+  ((s.atoms.find? (·.id == id)).map (·.type)).getD "univ"
+
+/-! ### Emission for custom relationalizers
+
+A relationalizer says which atom and which tuple; the walker owns ids and
+relation signatures. -/
+
+public meta def emitAtom (type label : String) : StateT WalkState MetaM String :=
+  modifyGet fun s =>
+    let (id, s) := s.freshId
+    (id, s.addAtom { id, type, label })
+
+/-- A tuple over emitted atoms; each column carries its atom's type. -/
+public meta def emitTuple (relName : String) (atoms : Array String) : StateT WalkState MetaM Unit :=
+  modify fun s =>
+    let types := atoms.map s.atomType
+    s.addTupleJoined relName types { atoms, types }
+
 public meta def WalkState.addTuple (s : WalkState) (relName : String) (types : Array String)
     (tuple : JsonTuple) : WalkState :=
   let existing := s.relations.getD relName (types, #[])
@@ -244,9 +275,11 @@ public meta def isProofArg (e : Expr) : MetaM Bool := do
   Expr → (Expr → StateT WalkState MetaM String) → StateT WalkState MetaM String
 
 /-- Stores the def's *name*, not its value: that is what keeps the entries
-    serializable into the `.olean`. -/
+    serializable into the `.olean`. The optional shape is an inductive naming
+    what the relationalizer emits; the selector scope reads it. -/
 public meta initialize spytialRelationalizerExt :
-    SimplePersistentEnvExtension (Name × Name) (Std.HashMap Name Name) ←
+    SimplePersistentEnvExtension (Name × Name × Option Name)
+      (Std.HashMap Name (Name × Option Name)) ←
   registerSimplePersistentEnvExtension {
     addEntryFn := fun m (t, d) => m.insert t d
     addImportedFn := fun arrays =>
@@ -254,11 +287,17 @@ public meta initialize spytialRelationalizerExt :
   }
 
 public meta def getSpytialRelationalizerName? (env : Environment) (typeName : Name) : Option Name :=
-  spytialRelationalizerExt.getState env |>.get? typeName
+  spytialRelationalizerExt.getState env |>.get? typeName |>.map (·.1)
+
+/-- The inductive a custom relationalizer declared as its emitted shape. -/
+public meta def getSpytialRelationalizerShape? (env : Environment) (typeName : Name) :
+    Option Name :=
+  spytialRelationalizerExt.getState env |>.get? typeName |>.bind (·.2)
 
 /-- `declName` must have type `CustomRelationalizer`. -/
-public meta def setSpytialRelationalizer (typeName declName : Name) : CoreM Unit :=
-  modifyEnv fun env => spytialRelationalizerExt.addEntry env (typeName, declName)
+public meta def setSpytialRelationalizer (typeName declName : Name) (shape? : Option Name := none) :
+    CoreM Unit :=
+  modifyEnv fun env => spytialRelationalizerExt.addEntry env (typeName, declName, shape?)
 
 /-- Keyed by def name + body hash, so an interactive body edit recompiles
     instead of serving the stale closure. -/
@@ -1041,7 +1080,7 @@ private meta def getReprInst? (tyKey : Expr) : StateT WalkState MetaM (Option Ex
 /-- Compiling such a constant yields its type's default instead of failing, so
     `0` would be reported for an `opaque n : Nat` as confidently as for a real
     zero. `@[irreducible]` is not this: it has a body. -/
-private meta def hasValuelessConst (e : Expr) : MetaM Bool := do
+public meta def hasValuelessConst (e : Expr) : MetaM Bool := do
   let env ← getEnv
   return e.getUsedConstants.any fun n =>
     match env.find? n with

@@ -46,6 +46,10 @@ meta structure SelScope where
   rels : Std.HashMap String (Name × Option Nat) := {}
   /-- Constructor label → constructor, for `@:x = tt` literals. -/
   ctorLabels : Std.HashMap String Name := {}
+  /-- Constructor short name → constructor, for a relationalizer's declared
+      shape: its atoms are typed by constructor, so these resolve as type
+      sigs, not label literals. -/
+  ctorSigs : Std.HashMap String Name := {}
   introduced : Std.HashMap String Introduced := {}
   /-- Open-world marker (see module docstring): unknown names become warnings. -/
   lenient : Bool := false
@@ -56,6 +60,36 @@ meta structure SelScope where
     closures must stay in the vocabulary until it treats them as scalars. -/
 private meta def scalarTypes : List Name :=
   [``Nat, ``String, ``Float]
+
+/-- The vocabulary a relationalizer's declared shape spells: each constructor
+    is an atom type, each field a relation owned by it. A function field
+    `f : A → B` declares the table `f[Ctor, A, B]` whatever its domain; the
+    shape is never instantiated, so nothing tabulates. -/
+private meta def SelScope.addShape (scope : SelScope) (shape : Name) :
+    MetaM (SelScope × Array Name) := do
+  let some ts ← TypeShape.ofInductive shape | return ({ scope with lenient := true }, #[])
+  let env ← getEnv
+  let mut scope := scope
+  let mut heads := #[]
+  for c in ts.ctors do
+    scope := { scope with
+      types := scope.types.insert c.ctorName c.ctorShort
+      ctorSigs := scope.ctorSigs.insert c.ctorShort c.ctorName }
+    let some (.ctorInfo ci) := env.find? c.ctorName | continue
+    let arities ← Meta.forallTelescopeReducing ci.type fun xs _ => do
+      let dataXs := xs.extract ci.numParams xs.size
+      dataXs.mapM fun x => do
+        Meta.forallTelescopeReducing (← Meta.inferType x) fun ys body => do
+          let mut hs := #[]
+          for y in ys do
+            if let some h ← typeHead? (← Meta.inferType y) then hs := hs.push h
+          if let some h ← typeHead? body then hs := hs.push h
+          return (ys.size + 2, hs)
+    for f in c.fields, (arity, hs) in arities do
+      unless f.isProofLike do
+        scope := { scope with rels := scope.rels.insert f.relName (c.ctorName, some arity) }
+        heads := heads ++ hs
+  return (scope, heads)
 
 /-- `seeds` are types the head constant alone cannot predict: `DA.FinAcc Seen2
     Letter` emits `Seen2`'s fields, but `tr` is a function over `DA.FinAcc`'s
@@ -73,9 +107,15 @@ meta def SelScope.ofType (root : Name) (seeds : Array Name := #[]) : MetaM SelSc
     if seen.contains t then continue
     seen := seen.insert t
     scope := { scope with types := scope.types.insert t (shortName t) }
-    -- a custom relationalizer's emissions are its own: the world is open past it
+    -- a custom relationalizer's emissions are its own: the world is open past
+    -- it, unless it declared its shape
     if (getSpytialRelationalizerName? env t).isSome then
-      scope := { scope with lenient := true }
+      match getSpytialRelationalizerShape? env t with
+      | some shape =>
+        let (scope', heads) ← scope.addShape shape
+        scope := scope'
+        queue := queue ++ heads.filter (· != shape)
+      | none => scope := { scope with lenient := true }
       continue
     if scalarTypes.contains t then
       continue
@@ -869,6 +909,9 @@ private meta partial def resolveIdent (scope : SelScope) (env : LEnv)
     addIntroducedInfo stx s i.kind i.referencedBy i.decl
     warnGraphSideName stx s
     return { sel := .rel s, kind := .relation, arity := some i.arity }
+  -- a declared shape's constructor is an atom type: a sig, not a label
+  if let some ctorName := scope.ctorSigs.get? s then
+    return { sel := .sig ctorName s, kind := .relation, arity := some 1 }
   if let some e ← resolveTypeRef? then return e
   unknownName scope stx s!"name '{s}'" { sel := Sel.rel s, kind := .relation }
 where
