@@ -19,7 +19,7 @@ spytial_spec Tree [
   orientation right - Tree->{t : Tree | @:t = leaf} right below,
   align {x, y : Tree | @:x != leaf and @:y != leaf and (x.~(left + right) = y.~(left+right))} horizontal,
   attribute key,
-  flag hideDisconnectedBuiltIns,
+  --flag hideDisconnectedBuiltIns,
   hideAtom {x : Tree | @:x = leaf}
 ]
 
@@ -124,13 +124,15 @@ def rotateRight (t : Tree) : Tree := by
         exact after
     | other => other
 
+
+
 def rotateLeft (t : Tree) : Tree := by
   spytial t observing [height] with [.., attribute height] -- At entry
   exact match t with
     | before@(.node l x (.node rl rx rr)) => by
         spytial before observing [height] with [.., attribute height] -- Before rotation
         let after := Tree.node (.node l x rl) rx rr
-        spytial after observing [height] with [.., attribute height] -- After rotation
+        spytial after observing [height]  -- After rotation
         exact after
     | other => other
 
