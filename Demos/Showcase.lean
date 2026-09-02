@@ -123,7 +123,11 @@ def myList : List Nat := [1, 2, 3, 4]
 
 #spytial.datum myTree
 
-#spytial myTree
+/-! ## Extending an attached spec
+
+`..` splices the type's `spytial_spec` at that position. -/
+
+#spytial myTree with [.., atomStyle Tree (borderStyle "#0066ff")]
 
 /-! ## Tactic mode -/
 

@@ -29,19 +29,34 @@ public section
 declare_syntax_cat spytial_op
 declare_syntax_cat spytial_block_arg
 declare_syntax_cat spytial_op_block
+declare_syntax_cat spytial_field_form
 
 syntax str : spytial_block_arg
 syntax num : spytial_block_arg
 syntax scientific : spytial_block_arg
 syntax ident : spytial_block_arg
 syntax spytial_op_block : spytial_block_arg
+syntax spytial_field_form : spytial_block_arg
 
-/-- `atomic` over the whole form, so a parenthesized selector backtracks out to
-    `spytial_sel`. A shorter window cannot decide it: a selector opens
-    `( ident ident` too, and only the close says which was written. A form
-    complete as both reads as a block; write `(some (lo))` for the selector. -/
-syntax (name := spytialBlockStx)
-  atomic("(" ident spytial_block_arg spytial_block_arg* ")") : spytial_op_block
+-- A parenthesized form is headed by a name the manifest declares, so `(some lo)`
+-- never reads as one and falls through to `selExpr`; `atomic` lets any other head
+-- backtrack past the `(`. A block heads an op argument, a block's field heads a
+-- form nested inside it, and the two name sets are disjoint.
+run_cmd do
+  let declare (kind cat : Name) (heads : List String) : CommandElabM Unit := do
+    let alts ← heads.eraseDups.mapM fun h => `(stx| &$(Syntax.mkStrLit h):str)
+    let head ← match alts with
+      | [] => throwError "the manifest declares no head for {kind}"
+      | a :: rest => rest.foldlM (fun acc b => `(stx| $acc <|> $b)) a
+    elabCommand (← `(syntax (name := $(mkIdent kind):ident)
+      atomic("(" ($head) spytial_block_arg spytial_block_arg* ")") : $(mkIdent cat):ident))
+  let altFields := SpecLang.allItems.flatMap fun i =>
+    (SpecLang.ItemSpec.of i).fields.filter (·.alt.isSome)
+  declare `spytialBlockStx `spytial_op_block
+    (SpecLang.allBlocks.map SpecLang.blockName ++ altFields.map (SpecLang.fieldName ·.id))
+  declare `spytialFieldStx `spytial_field_form
+    (SpecLang.allBlocks.flatMap fun b =>
+      (SpecLang.BlockSpec.of b).fields.map (SpecLang.fieldName ·.id))
 
 syntax spytialKwArg := atomic(ident noWs ":" ) selExpr
 
@@ -69,9 +84,12 @@ run_cmd do
 
 private meta def argInner (arg : TSyntax `spytialOpArg) : Syntax := arg.raw[0]
 
-/-- `spytialBlockStx`'s arguments, each stripped of its `spytial_block_arg` wrapper. -/
+/-- A block or field form's arguments, each stripped of its `spytial_block_arg` wrapper. -/
 private meta def blockArgs (stx : Syntax) : Array Syntax :=
   (#[stx[2]] ++ stx[3].getArgs).map (·[0])
+
+/-- `&"name"` wraps the token it matched in a `token.name` node. -/
+private meta def blockHead (stx : Syntax) : String := stx[1][0].getAtomVal
 
 private meta def orVals (vs : List String) : String := "|".intercalate vs
 
@@ -105,10 +123,6 @@ private meta def itemUsage (i : ItemSpec) : String :=
   let hold := if i.supportsHold then [s!"[hold: {orVals holdValues}]"] else []
   " ".intercalate ([itemName i.id] ++ lead ++ positional ++ rest ++ hold)
 
-private meta def isStringy : SpecLang.FieldType → Bool
-  | .color | .iconPath | .str => true
-  | _ => false
-
 open SpecLang in
 private meta def bareWordVocab (i : ItemSpec) : List String :=
   i.fields.flatMap fun f =>
@@ -117,10 +131,6 @@ private meta def bareWordVocab (i : ItemSpec) : List String :=
       | .«enum» vs _ => if f.alt.isSome then [] else vs
       | .boolean _ => (boolSugar.filter (fun (_, bf, _) => bf == f.id)).map (·.1)
       | _ => []
-
-private meta def isNumeric : SpecLang.FieldType → Bool
-  | .number .. => true
-  | _ => false
 
 private meta def jsonNumOf? (stx : Syntax) : Option JsonNumber :=
   if let some n := stx.isNatLit? then
@@ -232,12 +242,12 @@ private meta def elabBlock (usage : String) (b : BlockSpec) (stx : Syntax) :
       throwErrorAt ref m!"duplicate {fieldName f} in ({blockName b.id} …)"
   for inner in blockArgs stx do
     if let some s := inner.isStrLit? then
-      let some f := b.fields.find? (isStringy ·.type)
+      let some f := b.fields.find? (·.type.isStringy)
         | throwErrorAt inner m!"({blockName b.id} …) takes no string; usage: {usage}"
       dup inner f.id set
       set := set.push (f.id, .str s)
     else if let some n := jsonNumOf? inner then
-      let some f := b.fields.find? (isNumeric ·.type)
+      let some f := b.fields.find? (·.type.isNumeric)
         | throwErrorAt inner m!"({blockName b.id} …) takes no number; usage: {usage}"
       dup inner f.id set
       checkBounds inner s!"{fieldName f.id} of ({blockName b.id} …)" f n
@@ -255,8 +265,8 @@ private meta def elabBlock (usage : String) (b : BlockSpec) (stx : Syntax) :
           match f.type with | .«enum» vs _ => vs | _ => []
         throwErrorAt inner m!"unknown word '{w}' in ({blockName b.id} …)\
           {if vocab.isEmpty then m!"" else m!" (expected {orVals vocab})"}"
-    else if inner.isOfKind ``spytialBlockStx then
-      let kw := inner[1].getId.toString
+    else if inner.isOfKind ``spytialFieldStx then
+      let kw := blockHead inner
       let some f := b.fields.find? (fun f => fieldName f.id == kw)
         | throwErrorAt inner m!"({blockName b.id} …) has no field '{kw}'; \
             fields: {", ".intercalate (b.fields.map (fieldName ·.id))}"
@@ -284,7 +294,7 @@ private meta def elabAltForm (usage : String) (f : FieldSpec) (alt : AltForm)
         throwErrorAt inner m!"duplicate direction in ({fieldName f.id} …)"
       dir := some w
     else if inner.isOfKind ``spytialBlockStx then
-      let bname := inner[1].getId.toString
+      let bname := blockHead inner
       let some (bf, bid) := alt.blocks.find? (fun (bf, _) => fieldName bf == bname)
         | throwErrorAt inner m!"({fieldName f.id} …) nests only \
             {", ".intercalate (alt.blocks.map fun (bf, _) => s!"({fieldName bf} …)")}"
@@ -303,7 +313,7 @@ private meta def elabAltForm (usage : String) (f : FieldSpec) (alt : AltForm)
 open SpecLang in
 private meta def elabBlockArg (item : ItemSpec) (usage : String) (inner : Syntax) :
     TermElabM (FieldId × FieldVal) := do
-  let kw := inner[1].getId.toString
+  let kw := blockHead inner
   match item.fields.find? (fun f => fieldName f.id == kw) with
   | none =>
     let blocks := item.fields.filterMap fun f =>
@@ -381,7 +391,7 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
     let written := argStxs.toList.filterMap fun a =>
       let inner := argInner a
       if inner.isOfKind ``spytialKwArg then some inner[0].getId.toString
-      else if inner.isOfKind ``spytialBlockStx then some inner[1].getId.toString
+      else if inner.isOfKind ``spytialBlockStx then some (blockHead inner)
       else none
     let isNumber (stx : Syntax) : Bool :=
       stx.isOfKind numLitKind || stx.isOfKind scientificLitKind
@@ -436,7 +446,7 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
         tail := some (f, chosen.push w, inner)
       else if i == 0 && item.leadingSelector.isSome
           && (match pending.head?.bind item.field? with
-              | some f => isNumeric f.type
+              | some f => f.type.isNumeric
               | none => true)
           && !isNumber inner && !isTrailingWord inner then
         let some lf := item.leadingSelector | unreachable!
@@ -705,7 +715,11 @@ private meta def optionalTerms (stx : Syntax) : Array Syntax :=
 /-- `#spytial <term>` displays a spatial relational diagram in the Lean infoview.
     `observing [f₁, …]` adds each named function's graph over every compatible
     value in the datum. A `with [<ops>]` list overrides the type's attached
-    `spytial_spec`. -/
+    `spytial_spec`; `..` in the list splices it back in:
+    ```
+    #spytial myTree with [orientation left left below, atomStyle Tree (borderStyle "#0066ff")]
+    #spytial myTree with [.., hideAtom Nat]
+    ``` -/
 syntax (name := spytialCmd) "#spytial " term (" observing " "[" term,* "]")?
   (" with " "[" spytial_op,*,? "]")? : command
 
@@ -715,7 +729,10 @@ meta def elabSpytialCmd : CommandElab := fun stx => do
     spytialPayloadProps stx[1] (optionalOps stx[3]) {} (optionalTerms stx[2])
   liftCoreM <| savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
 
-/-- `spytial_spec <Type> [<ops>]` attaches the spec used by default for that type. -/
+/-- `spytial_spec <Type> [<ops>]` attaches the spec used by default for that type:
+    ```
+    spytial_spec Tree [orientation left left below, hideAtom Nat]
+    ``` -/
 syntax (name := spytialSpecCmd) "spytial_spec " ident " [" spytial_op,*,? "]" : command
 
 @[command_elab spytialSpecCmd]
@@ -730,7 +747,11 @@ meta def elabSpytialSpecCmd : CommandElab := fun
 
 /-- `spytial_ops <name> : <Type> [<ops>]` binds a reusable op list, elaborated
     against `<Type>` as root. The name is declared as an `SpytialOps` constant,
-    so it namespaces and is reached through `open` and `export` like any other. -/
+    so it namespaces and is reached through `open` and `export` like any other.
+    ```
+    spytial_ops quiet : Tree [hideAtom Nat]
+    #spytial t with [..quiet, orientation left below]
+    ``` -/
 syntax (name := spytialOpsCmd) "spytial_ops " ident " : " ident " [" spytial_op,*,? "]" : command
 
 @[command_elab spytialOpsCmd]

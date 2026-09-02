@@ -431,6 +431,12 @@ private meta def itemOf (kinds : IntroducedKinds) (displayedBy : List String)
   for f in fields do
     if f.required && f.type.isBlock then
       .error s!"{id}.{f.name}: a required block has no positional surface"
+    if f.required && f.type matches RawFieldType.boolean _ then
+      .error s!"{id}.{f.name}: a required boolean has no positional surface; \
+        booleans are trailing bare words"
+    if !f.required && f.type matches RawFieldType.enumList .. then
+      .error s!"{id}.{f.name}: an optional enum-list has no surface; enum-lists \
+        are positional"
   for f in fields do
     if let .selector forms := f.type then
       for r in forms.filterMap (·.requires) do
@@ -637,6 +643,15 @@ public meta inductive FieldType where
   | color
   deriving Repr, Inhabited
 
+/-- What a bare string or number inside a `(block …)` may fill. -/
+public meta def FieldType.isStringy : FieldType → Bool
+  | .color | .iconPath | .str => true
+  | _ => false
+
+public meta def FieldType.isNumeric : FieldType → Bool
+  | .number .. => true
+  | _ => false
+
 public meta structure FieldSpec where
   id : FieldId
   type : FieldType
@@ -734,8 +749,9 @@ private meta def quoteBlock (b : RawBlock) : Term :=
 
 elab "derive_spec_tables" : command => do
   let m ← manifest!
-  declareDef `items (← `(Array ItemSpec)) (← `(#[$((m.items.map quoteItem).toArray),*]))
-  declareDef `blocks (← `(Array BlockSpec)) (← `(#[$((m.blocks.map quoteBlock).toArray),*]))
+  declareTable `ItemSpec.of `ItemId (← `(ItemSpec)) (m.items.map fun i => (i.id, quoteItem i))
+  declareTable `BlockSpec.of `BlockId (← `(BlockSpec))
+    (m.blocks.map fun b => (b.name, quoteBlock b))
   declareDef `holdField (← `(String)) (quote m.lexical.hold.field)
   declareDef `holdValues (← `(List String)) (quote m.lexical.hold.values)
   declareDef `holdDefault (← `(String)) (quote m.lexical.hold.default)
@@ -750,16 +766,6 @@ elab "derive_spec_tables" : command => do
 derive_spec_tables
 
 /-! ## Reading the tables -/
-
-private meta def itemTable : Std.HashMap ItemId ItemSpec :=
-  items.foldl (init := {}) fun m i => m.insert i.id i
-
-private meta def blockTable : Std.HashMap BlockId BlockSpec :=
-  blocks.foldl (init := {}) fun m b => m.insert b.id b
-
-public meta def ItemSpec.of (i : ItemId) : ItemSpec := itemTable.getD i default
-
-public meta def BlockSpec.of (b : BlockId) : BlockSpec := blockTable.getD b default
 
 public meta def ItemSpec.field? (i : ItemSpec) (f : FieldId) : Option FieldSpec :=
   i.fields.find? (·.id == f)

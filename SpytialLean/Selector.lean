@@ -209,7 +209,7 @@ public meta partial def Sel.toSGQCtx (ctx : Nat) : Sel → Except String String
   | .str s => .ok (sgqStringLit s!"\"{s}\"")
   | .ctorLit c => .ok (sgqStringLit (shortName c))
   | .boolLit b => .ok (toString b)
-  | .leanRel _ => Sel.empty.toSGQCtx ctx
+  | .leanRel _ => .error "a `lean (…)` selector reached the lowering unresolved"
   | .node c op args => do
     let cd := Sgq.Construct.of c
     return parenIf (cd.prec < ctx) (assemble (← renderItems cd op cd.template args 0).1)

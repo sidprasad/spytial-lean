@@ -60,7 +60,10 @@ which spelling to emit where the engine accepts several
 lay out as Lean arguments (`SpecLang.lean`'s leading-selector override and
 bare-word bool sugar). Every table entry is keyed by manifest ids and
 checked against the live manifest, so an entry that stops matching upstream
-fails the build by name.
+fails the build by name. Positional order is the manifest's field order, and a
+bare scalar in a block fills the first field of its class; core states
+neither as stable, so `SpecSurfaceTest.lean` pins both and fails when they
+move.
 
 Three more facts were hand tables here and are core's own members now.
 `introduces` gives the string field that names a group or an inferred edge,

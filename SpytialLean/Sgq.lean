@@ -282,6 +282,11 @@ private meta def parseManifest : Except String RawManifest := do
       unless parts.any (·.1 == role) do
         .error s!"{c.id}: the template is written with the part {role.quote}, \
           which it has no spelling for"
+    for item in c.template do
+      if let .«optional» inner := item then
+        unless inner.all (fun i => i matches .operand _ | .part ..) do
+          .error s!"{c.id}: an optional template group may hold only operands \
+            and parts; the elaborator reads nothing else inside one"
     return { id := c.id, prec := c.precedence, fixity := c.fixity,
              evaluates := c.evaluates, kinds := c.kinds, arity := c.arity,
              template := c.template, parts,
@@ -458,9 +463,9 @@ private meta def declareDef (name : Name) (ty val : Term) : CommandElabM Unit :=
 
 elab "derive_sgq_tables" : command => do
   let m ← manifest!
-  declareDef `ops (← `(Array Op)) (← `(#[$((m.ops.map quoteOp).toArray),*]))
-  declareDef `constructs (← `(Array Construct))
-    (← `(#[$((m.constructs.map quoteConstruct).toArray),*]))
+  declareTable `Op.of `OpId (← `(Op)) (m.ops.map fun o => (o.id, quoteOp o))
+  declareTable `Construct.of `ConstructId (← `(Construct))
+    (m.constructs.map fun c => (c.id, quoteConstruct c))
   declareDef `lexemes (← `(List String)) (quote m.lexemes)
   declareDef `reserved (← `(List String)) (quote m.lexical.identifier.reserved)
   declareDef `bareHeadClass (← `(CharClass)) (quote m.lexical.identifier.bare.head)
@@ -479,16 +484,6 @@ elab "derive_sgq_tables" : command => do
   declareDef `setBuiltins (← `(List String)) (quote m.lexical.builtins.set)
 
 derive_sgq_tables
-
-private meta def opTable : Std.HashMap OpId Op :=
-  ops.foldl (init := {}) fun m o => m.insert o.id o
-
-private meta def constructTable : Std.HashMap ConstructId Construct :=
-  constructs.foldl (init := {}) fun m c => m.insert c.id c
-
-public meta def Op.of (o : OpId) : Op := opTable.getD o default
-
-public meta def Construct.of (c : ConstructId) : Construct := constructTable.getD c default
 
 /-- Total for the roles this package reads: the derive command checks that every
     part a template or `namedParts` names has a spelling. -/

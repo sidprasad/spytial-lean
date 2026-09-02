@@ -409,3 +409,17 @@ info: "{\"constraints\":\n [{\"orientation\":\n   {\"source\":\n    {\"text\": \
 -/
 #guard_msgs in
 #payload_spec lKw
+
+/-! ## The arity ladder stops exactly at `maxSelArity`
+
+`Sel.lean` spells `selIdx1..4` and `locate1..4` by hand and `LeanSelector.lean`
+bounds the arity separately, so a bump to one without the other misroutes. -/
+
+run_cmd do
+  let env ← getEnv
+  for stem in [`Spytial.Sel.selIdx, `Spytial.Sel.locate] do
+    unless env.contains (stem.appendAfter (toString maxSelArity)) do
+      throwError "{stem}{maxSelArity} is missing: the ladder in Sel.lean stops \
+        below maxSelArity"
+    if env.contains (stem.appendAfter (toString (maxSelArity + 1))) then
+      throwError "{stem}{maxSelArity + 1} exists: raise maxSelArity in LeanSelector.lean"
