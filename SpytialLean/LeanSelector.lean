@@ -14,48 +14,35 @@ open Lean Meta
 
 /-! # Resolving embedded Lean selectors
 
-Both selector styles range over the relationalized datum. A Lean predicate
-uses the terms and certified evidence interpreting its atoms, not JSON labels.
-Closed predicates on closed values retain the compiled evaluation path.
-Symbolic applications use direct evidence and bounded simplification; a
-missing proof is not a proof of negation.
-
-Whole-value `Spytial.Sel` programs still execute on a closed root and locate
-returned values by `BEq`. Atoms without a Lean interpretation cannot be
-selected by a Lean predicate. Identity remains the relationalizer's decision.
--/
+Each selector becomes one term over arrays of the walked values, run through
+Lean's compiled evaluator. The term reports index tuples, and an index into a
+column array *is* an atom. A predicate over symbolic values instead runs
+through the retained evidence: direct proof matching, then bounded
+simplification; a missing proof is not a proof of the negation. -/
 
 public section
 
-/-! ## Classifying the selector term -/
-
-/-- The largest tuple a selector may select. -/
 meta def maxSelArity : Nat := 4
 
-/-- How the selector term produces its tuples. -/
 meta inductive LeanRelShape where
-  /-- `… → Bool` / `… → Prop`; every column is enumerated. -/
   | pred (isProp : Bool)
-  /-- The canonical form: the term's type is `Spytial.Sel T α`. -/
   | sel (T : Expr)
   deriving Inhabited
 
-/-- The selector term read as a relation: which types its columns range over,
-    and how its tuples are produced. -/
+/-- For `.sel` the columns of the selected tuple, for `.pred` the arguments. -/
 meta structure LeanRelKind where
-  /-- For `.sel`, the columns of `α`; for a predicate, the argument types. -/
   domains : Array Expr
   shape : LeanRelShape
   deriving Inhabited
 
-/-- One column per domain, for either shape. -/
 meta def LeanRelKind.arity (k : LeanRelKind) : Nat := k.domains.size
 
-/-- The column types of a tuple type: `σ₁ × σ₂ × σ₃` splits right-nested.
-    Each level is normalized at reducible transparency first, so an `abbrev`
-    standing for a product (`abbrev Edge := Node × Node`) contributes its own
-    columns rather than reading as one. A column type is normalized for the
-    same reason: the walk knows it under its real name. -/
+/-- `Sel.lean` spells `selIdx1..maxSelArity` and `locate1..maxSelArity` by hand;
+    the arity checks below keep `n` inside that range. -/
+private meta def rung (stem : Name) (n : Nat) : Name := stem.appendAfter (toString n)
+
+/-- Reducible normalization at each level, so an `abbrev` standing for a
+    product contributes its own columns rather than reading as one. -/
 private meta partial def splitProds (α : Expr) : MetaM (Array Expr) := do
   let α ← whnfR α
   if α.isAppOfArity ``Prod 2 then
@@ -116,41 +103,31 @@ meta def boolifyPred (fn : Expr) (doms : Array Expr) : MetaM Expr := do
         go (i + 1) (xs.push x)
     else
       let prop := (mkAppN fn xs).headBeta
-      -- `decide`'s instance argument trails the proposition, so `mkAppM`
-      -- would leave it unapplied; synthesize it directly.
-      -- Typeclass search does not unfold an ordinary named predicate on its
-      -- own. Expose its proposition before asking for the decision procedure.
+      -- `decide`'s instance argument trails the proposition, so `mkAppM` would
+      -- leave it unapplied. Instance search does not unfold a named predicate,
+      -- so expose the proposition first.
       let inst ← try synthInstance (← mkAppM ``Decidable #[← whnf prop])
         catch _ => throwError "the proposition{indentExpr prop}\nneeds a \
           `Decidable` instance to run as a selector"
       mkLambdaFVars xs (mkApp2 (mkConst ``decide) prop inst)
   go 0 #[]
 
-/-! ## Resolution context -/
-
-/-- The number of selected tuples past which the diagram stops being one. -/
 private meta def maxSelectedTuples : Nat := 4096
 
-/-- The number of points a predicate may be decided at: the product of its
-    column sizes, bounded *before* evaluation, because the enumeration runs
-    even when nothing is selected. -/
+/-- Bounded before evaluation: the enumeration runs even when nothing is
+    selected. -/
 private meta def maxEnumeratedPoints : Nat := 1000000
 
-/-- What a raw Lean selector resolves against: the datum, the walked instance,
-    and the subterm behind each atom. -/
 meta structure LeanSelCtx where
   datum : Expr
   di : JsonDataInstance
   prov : Provenance
   evidence : SelectorEvidence := {}
 
-/-- One column: the walked atoms of type `σ`, with the value behind each, in
-    atom order. The evaluated term reports indexes into this array, so an
-    index *is* an atom. The walker's sig is a short name; the definitional
-    type check keeps a same-named type's atoms out of the array, which would
-    otherwise make the evaluated term ill-typed. An open subterm (one the
-    context leaves symbolic) has no value to run on and stays out too — the
-    compiled evaluator could not quote it. -/
+/-- The walker's sig is a short name, so the definitional check is what keeps a
+    same-named type's atoms out of the array, which would otherwise make the
+    evaluated term ill-typed. An open subterm has no value to run on and stays
+    out too. -/
 meta def LeanSelCtx.columnFor (ctx : LeanSelCtx) (σ : Expr) :
     MetaM (Array String × Array Expr) := do
   let sig ← sigOfType σ
@@ -164,8 +141,6 @@ meta def LeanSelCtx.columnFor (ctx : LeanSelCtx) (σ : Expr) :
             ids := ids.push a.id
             es := es.push e
   return (ids, es)
-
-/-! ## The one evaluation -/
 
 private meta def listListNatTy : Expr :=
   mkApp (mkConst ``List [.zero]) (mkApp (mkConst ``List [.zero]) (mkConst ``Nat))
@@ -197,9 +172,7 @@ private meta def coerceToParent? (datum datumTy T : Expr) : MetaM (Option Expr) 
     return none
   catch _ => return none
 
-/-! ## Evaluating one selector -/
-
-/-- The tuples the selector term selects on this datum, as arrays of atom ids. -/
+/-- The selected tuples, as arrays of atom ids. -/
 private meta def evalCompiledRel (ctx : LeanSelCtx) (fn : Expr)
     (columns? : Option (Array (Array String × Array Expr)) := none) :
     MetaM (Array (Array String)) := do
@@ -215,12 +188,7 @@ private meta def evalCompiledRel (ctx : LeanSelCtx) (fn : Expr)
           {maxEnumeratedPoints}; write a `Spytial.Sel` that computes its \
           tuples instead"
       let p ← if isProp then boolifyPred fn kind.domains else pure fn
-      let helper := match kind.domains.size with
-        | 1 => ``Spytial.Sel.selIdx1
-        | 2 => ``Spytial.Sel.selIdx2
-        | 3 => ``Spytial.Sel.selIdx3
-        | _ => ``Spytial.Sel.selIdx4
-      mkAppM helper (us.push p)
+      mkAppM (rung `Spytial.Sel.selIdx kind.domains.size) (us.push p)
     | .sel T =>
       unless isClosedValue ctx.datum do
         throwError "a `Spytial.Sel` runs on the whole value being drawn, but \
@@ -233,35 +201,21 @@ private meta def evalCompiledRel (ctx : LeanSelCtx) (fn : Expr)
         else throwError "this selector expects a value of type {T}, but the \
           value being drawn has type {datumTy}"
       let body ← mkAppM ``Spytial.Sel.select #[fn, datum]
-      let helper := match kind.domains.size with
-        | 1 => ``Spytial.Sel.locate1
-        | 2 => ``Spytial.Sel.locate2
-        | 3 => ``Spytial.Sel.locate3
-        | _ => ``Spytial.Sel.locate4
-      -- The half of the contract that needs an instance: a returned value is
-      -- located by `==`, so every column type must have `BEq`.
-      try mkAppM helper (us.push body)
+      try mkAppM (rung `Spytial.Sel.locate kind.domains.size) (us.push body)
       catch ex => throwError "{ex.toMessageData}\n\nthis selector returns \
         values, and a returned value is located by `==` — add `deriving BEq` \
         to the returned type"
   let tuples ← evalIdxTuples term
-  -- Indexes are minted in walk order, so sorting the index tuples sorts the
-  -- rendered selector into walk order; the dedup reads the list as a set.
-  let lexLt (a b : List Nat) : Bool := Id.run do
-    for (x, y) in a.zip b do
-      if x < y then return true
-      if x > y then return false
-    return a.length < b.length
+  -- Indexes are minted in walk order, so sorting them sorts the rendered
+  -- selector into walk order; the dedup reads the list as a set.
   let mut out : Array (Array String) := #[]
   let mut prev? : Option (List Nat) := none
-  for t in tuples.toArray.qsort lexLt do
+  for t in tuples.toArray.qsort (·.lex ·) do
     if prev? == some t then continue
     prev? := some t
     let ids := (t.toArray.zip cols).filterMap fun (i, (colIds, _)) => colIds[i]?
     if ids.size == t.length then
       out := out.push ids
-  -- The cap counts the *set*: `Tuples` ignores duplicates, so a selector that
-  -- returns one tuple many times is small, however long its list.
   if out.size > maxSelectedTuples then
     throwError "raw Lean selector selects {out.size} tuples, over the \
       limit of {maxSelectedTuples}; a diagram op over that many tuples would \
@@ -423,170 +377,68 @@ meta def evalLeanRel (ctx : LeanSelCtx) (fn : Expr) : MetaM (Array (Array String
     withoutModifyingState <| withNewMCtxDepth do
   evalLeanRelPrepared ctx (← preparePredicateEvidence ctx.evidence) fn
 
-/-- Tuples as a selector: `` `a1->`a2 + `a3->`a4 ``, or `none` when empty. The
-    products bind tighter than the union, so neither side needs parentheses. -/
-private meta def tupleUnion (tuples : Array (Array String)) : Sel :=
-  tuples.foldl (init := .none_) fun acc ids =>
-    let tuple := ids.foldl (init := none) fun t id =>
-      some <| match t with | none => .atomLit id | some t => .prod t (.atomLit id)
-    match tuple, acc with
-    | none, _ => acc
-    | some t, .none_ => t
-    | some t, a => .union a t
-
-/-! ## Resolution
-
-A congruence over the four selector layers, replacing every embedded Lean leaf with
-the tuples it selects and leaving everything else alone. It mirrors
-`Sel.freeVars`, which walks the same shape. -/
-
-mutual
+/-- Tuples as `` `a1->`a2 + `a3->`a4 ``; product binds tighter than union, so
+    neither side needs parentheses. -/
+private meta def tupleUnion (tuples : Array (Array String)) : Sel := Id.run do
+  let mut out : Option Sel := none
+  for ids in tuples do
+    let mut tuple : Option Sel := none
+    for id in ids do
+      let a := Sel.atomLit id
+      tuple := some <| match tuple with
+        | none => a
+        | some t => Sel.op .«product» #[t, a]
+    if let some t := tuple then
+      out := some <| match out with
+        | none => t
+        | some o => Sel.op .«union» #[o, t]
+  return out.getD .empty
 
 meta partial def Sel.resolveLean (ctx : LeanSelCtx) (evidence : PredicateEvidence) :
     Sel → MetaM Sel
   | .leanRel fn => return tupleUnion (← evalLeanRelPrepared ctx evidence fn)
-  | .union a b => return .union (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
-  | .diff a b => return .diff (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
-  | .inter a b => return .inter (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
-  | .prod a b => return .prod (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
-  | .prodMult a lm rm b => return .prodMult (← a.resolveLean ctx evidence) lm rm (← b.resolveLean ctx evidence)
-  | .join a b => return .join (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
-  | .override a b => return .override (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
-  | .restrictDom a b => return .restrictDom (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
-  | .restrictRan a b => return .restrictRan (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
-  | .trans a => return .trans (← a.resolveLean ctx evidence)
-  | .reflTrans a => return .reflTrans (← a.resolveLean ctx evidence)
-  | .transpose a => return .transpose (← a.resolveLean ctx evidence)
-  | .compr binders body => do
-    let binders ← binders.mapM fun (x, dom) => return (x, ← dom.resolveLean ctx evidence)
-    return .compr binders (← body.resolveLean ctx evidence)
-  | e@(.sig ..) | e@(.rel ..) | e@(.var ..) | e@.univ | e@.iden | e@.none_
-  | e@(.atomLit ..) | e@(.raw ..) => return e
+  | .node c op args =>
+    return .node c op (← args.mapM (·.mapExprsM (·.resolveLean ctx evidence)))
+  | e@(.sig ..) | e@(.rel ..) | e@(.builtin ..) | e@(.var ..) | e@(.num ..)
+  | e@(.str ..) | e@(.ctorLit ..) | e@(.boolLit ..) => return e
 
-meta partial def SelInt.resolveLean (ctx : LeanSelCtx) (evidence : PredicateEvidence) :
-    SelInt → MetaM SelInt
-  | .card e => return .card (← e.resolveLean ctx evidence)
-  | .proj e => return .proj (← e.resolveLean ctx evidence)
-  | .agg op e => return .agg op (← e.resolveLean ctx evidence)
-  | .builtin op args => return .builtin op (← args.mapM (·.resolveLean ctx evidence))
-  | .sumQuant x dom body =>
-    return .sumQuant x (← dom.resolveLean ctx evidence) (← body.resolveLean ctx evidence)
-  | e@(.lit ..) => return e
+private meta partial def FieldVal.resolveLean (ctx : LeanSelCtx) (evidence : PredicateEvidence) :
+    FieldVal → MetaM FieldVal
+  | .sel s => return .sel (← s.resolveLean ctx evidence)
+  | .block fs => return .block (← fs.mapM fun (f, v) => return (f, ← v.resolveLean ctx evidence))
+  | v@(.rel ..) | v@(.str ..) | v@(.«enum» ..) | v@(.enums ..) | v@(.num ..)
+  | v@(.bool ..) => return v
 
-meta partial def SelVal.resolveLean (ctx : LeanSelCtx) (evidence : PredicateEvidence) :
-    SelVal → MetaM SelVal
-  | .label proj e => return .label proj (← e.resolveLean ctx evidence)
-  | e@(.ctorLit ..) | e@(.strLit ..) | e@(.boolLit ..) => return e
-
-meta partial def SelForm.resolveLean (ctx : LeanSelCtx) (evidence : PredicateEvidence) :
-    SelForm → MetaM SelForm
-  | .subset a b => return .subset (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
-  | .notSubset a b => return .notSubset (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
-  | .ni a b => return .ni (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
-  | .notNi a b => return .notNi (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
-  | .eq a b => return .eq (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
-  | .neq a b => return .neq (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
-  | .veq a b => return .veq (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
-  | .vneq a b => return .vneq (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
-  | .icmp op a b => return .icmp op (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
-  | .and a b => return .and (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
-  | .or a b => return .or (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
-  | .xor a b => return .xor (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
-  | .iff a b => return .iff (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
-  | .implies a b => return .implies (← a.resolveLean ctx evidence) (← b.resolveLean ctx evidence)
-  | .ite c t e =>
-    return .ite (← c.resolveLean ctx evidence) (← t.resolveLean ctx evidence)
-      (← e.resolveLean ctx evidence)
-  | .not a => return .not (← a.resolveLean ctx evidence)
-  | .some_ a => return .some_ (← a.resolveLean ctx evidence)
-  | .no a => return .no (← a.resolveLean ctx evidence)
-  | .lone a => return .lone (← a.resolveLean ctx evidence)
-  | .one a => return .one (← a.resolveLean ctx evidence)
-  | .quant q disj binders body => do
-    let binders ← binders.mapM fun (x, dom) => return (x, ← dom.resolveLean ctx evidence)
-    return .quant q disj binders (← body.resolveLean ctx evidence)
-
-end
-
-/-! ## Detecting embedded Lean selectors
+/-! ## Detecting raw Lean selectors
 
 Resolution needs the walked datum, and walking it is not free — it also asks
 each type for a `SpytialIdentity`, which reports when it cannot derive one. A
-spec with no embedded Lean selector needs none of that, so callers check first. -/
-
-mutual
+spec with no raw Lean selector needs none of that, so callers check first. -/
 
 meta partial def Sel.hasLeanRel : Sel → Bool
   | .leanRel _ => true
-  | .union a b | .diff a b | .inter a b | .prod a b | .join a b
-  | .override a b | .restrictDom a b | .restrictRan a b => a.hasLeanRel || b.hasLeanRel
-  | .prodMult a _ _ b => a.hasLeanRel || b.hasLeanRel
-  | .trans a | .reflTrans a | .transpose a => a.hasLeanRel
-  | .compr binders body =>
-    binders.any (fun (_, d) => d.hasLeanRel) || body.hasLeanRel
-  | .sig .. | .rel .. | .var .. | .univ | .iden | .none_ | .atomLit .. | .raw .. => false
+  | .node _ _ args => args.any fun a => a.subExprs.any Sel.hasLeanRel
+  | .sig .. | .rel .. | .builtin .. | .var .. | .num .. | .str .. | .ctorLit ..
+  | .boolLit .. => false
 
-meta partial def SelInt.hasLeanRel : SelInt → Bool
-  | .card e | .proj e | .agg _ e => e.hasLeanRel
-  | .builtin _ args => args.any SelInt.hasLeanRel
-  | .sumQuant _ dom body => dom.hasLeanRel || body.hasLeanRel
-  | .lit .. => false
+meta partial def FieldVal.hasLeanRel : FieldVal → Bool
+  | .sel s => s.hasLeanRel
+  | .block fs => fs.any fun (_, v) => v.hasLeanRel
+  | .rel .. | .str .. | .«enum» .. | .enums .. | .num .. | .bool .. => false
 
-meta partial def SelVal.hasLeanRel : SelVal → Bool
-  | .label _ e => e.hasLeanRel
-  | .ctorLit .. | .strLit .. | .boolLit .. => false
-
-meta partial def SelForm.hasLeanRel : SelForm → Bool
-  | .subset a b | .notSubset a b | .ni a b | .notNi a b | .eq a b | .neq a b =>
-    a.hasLeanRel || b.hasLeanRel
-  | .veq a b | .vneq a b => a.hasLeanRel || b.hasLeanRel
-  | .icmp _ a b => a.hasLeanRel || b.hasLeanRel
-  | .and a b | .or a b | .xor a b | .iff a b | .implies a b =>
-    a.hasLeanRel || b.hasLeanRel
-  | .ite c t e => c.hasLeanRel || t.hasLeanRel || e.hasLeanRel
-  | .not a => a.hasLeanRel
-  | .some_ a | .no a | .lone a | .one a => a.hasLeanRel
-  | .quant _ _ binders body =>
-    binders.any (fun (_, d) => d.hasLeanRel) || body.hasLeanRel
-
-end
-
-/-- Whether any op in `spec` carries an embedded Lean selector. -/
 meta def SpytialSpec.hasLeanRel (spec : SpytialSpec) : Bool :=
-  spec.any fun stamped => match stamped.op with
-    | .orientation s _ | .align s _ | .cyclic s _ | .group s _ _ | .hideAtom s
-    | .size s _ _ | .atomStyle s _ _ _ _ | .tag s _ _ | .inferredEdge _ s _ =>
-      s.hasLeanRel
-    | .edgeStyle .. | .hideField .. | .attribute .. | .flag .. => false
+  spec.any fun op => op.fields.any fun (_, v) => v.hasLeanRel
 
-/-- One op's selectors, resolved against the datum. -/
-private meta def resolveOp (ctx : LeanSelCtx) (evidence : PredicateEvidence) :
-    SpytialOp → MetaM SpytialOp
-  | .orientation s ds => return .orientation (← s.resolveLean ctx evidence) ds
-  | .align s d => return .align (← s.resolveLean ctx evidence) d
-  | .cyclic s d => return .cyclic (← s.resolveLean ctx evidence) d
-  | .group s n e => return .group (← s.resolveLean ctx evidence) n e
-  | .hideAtom s => return .hideAtom (← s.resolveLean ctx evidence)
-  | .size s w h => return .size (← s.resolveLean ctx evidence) w h
-  | .atomStyle s b f i l => return .atomStyle (← s.resolveLean ctx evidence) b f i l
-  | .tag s n v => return .tag (← s.resolveLean ctx evidence) n v
-  | .inferredEdge n s l => return .inferredEdge n (← s.resolveLean ctx evidence) l
-  | op@(.edgeStyle ..) | op@(.hideField ..) | op@(.attribute ..) | op@(.flag ..) =>
-    return op
-
-/-- Rewrite every embedded Lean selector in `spec` into the tuples it selects on
-    this datum. Runs before any lowering to SGQ; identity on specs with none.
-    The stamp is the user's own text, so resolution leaves it alone: a conflict
-    report cites what they wrote, not the atom ids it resolved to. -/
+/-- Only the fields are rewritten: an op's stamp stays the user's own text, so
+    a conflict report cites what they wrote, not the atom ids it resolved to. -/
 meta def resolveLeanSelectors (datum : Expr) (di : JsonDataInstance)
-    (prov : Provenance) (spec : SpytialSpec)
-    (evidence : SelectorEvidence := {}) : MetaM SpytialSpec :=
-    withoutModifyingState <| withNewMCtxDepth do
+    (prov : Provenance) (spec : SpytialSpec) (evidence : SelectorEvidence := {}) :
+    MetaM SpytialSpec := withoutModifyingState <| withNewMCtxDepth do
   unless spec.hasLeanRel do return spec
   let ctx : LeanSelCtx := { datum, di, prov, evidence }
   let prepared ← preparePredicateEvidence evidence
-  spec.mapM fun stamped =>
-    return { stamped with op := ← resolveOp ctx prepared stamped.op }
+  spec.mapM fun op => return { op with
+    fields := ← op.fields.mapM fun (f, v) => return (f, ← v.resolveLean ctx prepared) }
 
 end
 

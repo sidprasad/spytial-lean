@@ -3,7 +3,7 @@ module
 public import SpytialLean.Identity
 public meta import SpytialLean.MetaEncode
 meta import SpytialLean.InContext
-meta import WalkCanon
+meta import SpytialTests.WalkCanon
 
 open SpytialLean Lean Meta
 

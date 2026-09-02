@@ -8,6 +8,7 @@ public import Lean.Elab.Tactic
 public import Lean.Widget.UserWidget
 public meta import SpytialLean.Types
 public meta import SpytialLean.Spec
+public meta import SpytialLean.SpecLang
 public meta import SpytialLean.Selector
 public meta import SpytialLean.SelectorElab
 public meta import SpytialLean.Relationalizer
@@ -31,225 +32,370 @@ entries. -/
 declare_syntax_cat spytial_op
 declare_syntax_cat spytial_block_arg
 declare_syntax_cat spytial_op_block
+declare_syntax_cat spytial_field_form
 
 syntax str : spytial_block_arg
 syntax num : spytial_block_arg
+syntax scientific : spytial_block_arg
 syntax ident : spytial_block_arg
 syntax spytial_op_block : spytial_block_arg
+syntax spytial_field_form : spytial_block_arg
 
-/-- `(blockName arg…)`: `atomic` through the first argument, so a
-    parenthesized selector (`(lo)`, `(a + b)`) backtracks out to `spytial_sel`. -/
-syntax (name := spytialBlockStx)
-  atomic("(" ident spytial_block_arg) spytial_block_arg* ")" : spytial_op_block
+-- A parenthesized form is headed by a name the manifest declares, so `(some lo)`
+-- never reads as one and falls through to `selExpr`; `atomic` lets any other head
+-- backtrack past the `(`. A block heads an op argument, a block's field heads a
+-- form nested inside it, and the two name sets are disjoint.
+run_cmd do
+  let declare (kind cat : Name) (heads : List String) : CommandElabM Unit := do
+    let alts ← heads.eraseDups.mapM fun h => `(stx| &$(Syntax.mkStrLit h):str)
+    let head ← match alts with
+      | [] => throwError "the manifest declares no head for {kind}"
+      | a :: rest => rest.foldlM (fun acc b => `(stx| $acc <|> $b)) a
+    elabCommand (← `(syntax (name := $(mkIdent kind):ident)
+      atomic("(" ($head) spytial_block_arg spytial_block_arg* ")") : $(mkIdent cat):ident))
+  let altFields := SpecLang.allItems.flatMap fun i =>
+    (SpecLang.ItemSpec.of i).fields.filter (·.alt.isSome)
+  declare `spytialBlockStx `spytial_op_block
+    (SpecLang.allBlocks.map SpecLang.blockName ++ altFields.map (SpecLang.fieldName ·.id))
+  declare `spytialFieldStx `spytial_field_form
+    (SpecLang.allBlocks.flatMap fun b =>
+      (SpecLang.BlockSpec.of b).fields.map (SpecLang.fieldName ·.id))
 
-syntax spytialOpArg := num <|> spytial_op_block <|> spytial_sel
+syntax spytialKwArg := atomic(ident noWs ":" ) selExpr
+
+syntax spytialOpArg := num <|> scientific <|> spytial_op_block <|> spytialKwArg <|> selExpr
 
 syntax (name := spytialOpStx) ident spytialOpArg* : spytial_op
 /-- `attribute` is a Lean keyword, so it gets its own rule with the keyword as the atom. -/
 syntax (name := spytialAttrOp) "attribute " spytialOpArg* : spytial_op
 /-- In a use-site `with [...]`, `..` splices the type's attached spec at that position. -/
 syntax (name := spytialSpliceStx) ".." : spytial_op
-/-- `..name` splices the op list bound by `spytial_ops name` at that position,
-    which must have been bound against the same root type. -/
+/-- `..name` splices the list bound by `spytial_ops name`, whose root must match. -/
 syntax (name := spytialSpliceNamedStx) ".." noWs ident : spytial_op
+
+run_cmd do
+  unless (SpecLang.itemOfKey? "attribute").isSome do
+    throwError "spytialAttrOp spells the item id \"attribute\", which is not a live item"
+  let tokens := Lean.Parser.getTokenTable (← getEnv)
+  for i in SpecLang.allItems do
+    let key := SpecLang.itemName i
+    if key != "attribute" && (tokens.find? key).isSome then
+      throwError "the op '{key}' lexes as a Lean token, so the ident-headed \
+        rule cannot parse it; give it its own rule the way spytialAttrOp has one"
 
 /-! ### Argument interpretation -/
 
-private meta structure OpArgs where
-  opName : Syntax
-  usage : String
-  args : Array (TSyntax `spytialOpArg)
-
-/-- Unwraps the `spytialOpArg` node to whichever of `num`/`spytial_sel` parsed. -/
 private meta def argInner (arg : TSyntax `spytialOpArg) : Syntax := arg.raw[0]
 
-private meta def OpArgs.get (a : OpArgs) (i : Nat) : TermElabM Syntax := do
-  if h : i < a.args.size then
-    return argInner a.args[i]
-  else
-    throwErrorAt a.opName m!"missing argument {i + 1}; usage: {a.usage}"
+/-- A block or field form's arguments, each stripped of its `spytial_block_arg` wrapper. -/
+private meta def blockArgs (stx : Syntax) : Array Syntax :=
+  (#[stx[2]] ++ stx[3].getArgs).map (·[0])
 
-private meta def OpArgs.get? (a : OpArgs) (i : Nat) : Option Syntax :=
-  a.args[i]?.map argInner
+/-- `&"name"` wraps the token it matched in a `token.name` node. -/
+private meta def blockHead (stx : Syntax) : String := stx[1][0].getAtomVal
 
-private meta def OpArgs.checkNoExtra (a : OpArgs) (n : Nat) : TermElabM Unit := do
-  if h : n < a.args.size then
-    throwErrorAt a.args[n] m!"unexpected extra argument; usage: {a.usage}"
+private meta def orVals (vs : List String) : String := "|".intercalate vs
 
-private meta def OpArgs.sel (a : OpArgs) (i : Nat) : TermElabM (TSyntax `spytial_sel) := do
-  let inner ← a.get i
-  if inner.isOfKind numLitKind then
-    throwErrorAt inner m!"expected a selector; usage: {a.usage}"
-  return ⟨inner⟩
+open SpecLang in
+private meta def fieldUsage (i : ItemSpec) (f : FieldSpec) : String :=
+  if i.positional.contains f.id then
+    match f.type with
+    | .«enum» vs _ => orVals vs
+    | .enumList _ _ => s!"<{fieldName f.id}>+"
+    | _ => s!"<{fieldName f.id}>"
+  else match f.type with
+    | .block _ => s!"[({fieldName f.id} …)]"
+    | .«enum» vs _ =>
+      if f.alt.isSome then s!"[({fieldName f.id} {orVals vs} …)]"
+      else s!"[{orVals vs}]"
+    | .boolean _ =>
+      match boolSugar.filter (fun (_, bf, _) => bf == f.id) with
+      | [] => s!"[{fieldName f.id}: true|false]"
+      | sugars => s!"[{orVals (sugars.map (·.1))}]"
+    | .selector _ => s!"[{fieldName f.id}: <selector>]"
+    | .str => s!"[{fieldName f.id}: \"…\"]"
+    | _ => s!"[{fieldName f.id}: …]"
 
-private meta def OpArgs.ident? (a : OpArgs) (i : Nat) : Option Ident :=
-  match a.get? i with
-  | some inner => if inner.isOfKind ``selIdent then some ⟨inner[0]⟩ else none
-  | none => none
+open SpecLang in
+/-- The op's usage line, synthesized from its table entry: the name, the
+    positionals in table order, then every other field in its surface form. -/
+private meta def itemUsage (i : ItemSpec) : String :=
+  let lead := i.leadingSelector.toList.map fun f => s!"[<{fieldName f}>]"
+  let positional := i.positional.filterMap fun fid => (i.field? fid).map (fieldUsage i)
+  let rest := i.fields.filterMap fun f =>
+    if i.positional.contains f.id || i.leadingSelector == some f.id then none
+    else some (fieldUsage i f)
+  let hold := if i.supportsHold then [s!"[hold: {orVals holdValues}]"] else []
+  " ".intercalate ([itemName i.id] ++ lead ++ positional ++ rest ++ hold)
 
-private meta def OpArgs.ident (a : OpArgs) (i : Nat) (what : String) :
-    TermElabM Ident := do
-  match a.ident? i with
-  | some x => return x
-  | none => throwErrorAt (← a.get i) m!"expected {what}; usage: {a.usage}"
+open SpecLang in
+private meta def bareWordVocab (i : ItemSpec) : List String :=
+  i.fields.flatMap fun f =>
+    if i.positional.contains f.id then []
+    else match f.type with
+      | .«enum» vs _ => if f.alt.isSome then [] else vs
+      | .boolean _ => (boolSugar.filter (fun (_, bf, _) => bf == f.id)).map (·.1)
+      | _ => []
 
-private meta def OpArgs.str? (a : OpArgs) (i : Nat) : Option String :=
-  match a.get? i with
-  | some inner =>
-    if inner.isOfKind ``selStr then inner[0].isStrLit? else none
-  | none => none
+private meta def jsonNumOf? (stx : Syntax) : Option JsonNumber :=
+  if let some n := stx.isNatLit? then
+    some (JsonNumber.fromNat n)
+  else if let some (m, sign, e) := stx.isScientificLit? then
+    some (OfScientific.ofScientific m sign e)
+  else none
 
-private meta def OpArgs.str (a : OpArgs) (i : Nat) (what : String) :
-    TermElabM String := do
-  match a.str? i with
-  | some s => return s
-  | none => throwErrorAt (← a.get i) m!"expected {what} (a string literal); usage: {a.usage}"
+open SpecLang in
+private meta def checkBounds (ref : Syntax) (what : String) (f : FieldSpec)
+    (n : JsonNumber) : TermElabM Unit := do
+  let .number min max := f.type | return
+  -- exact: a `Float` rounds `1.0000000000000000000000001` onto the bound
+  if let some b := min then
+    if (if b.exclusive then !(b.value.lt n) else n.lt b.value) then
+      throwErrorAt ref m!"{what} must be \
+        {if b.exclusive then "greater than" else "at least"} {toString b.value}"
+  if let some b := max then
+    if (if b.exclusive then !(n.lt b.value) else b.value.lt n) then
+      throwErrorAt ref m!"{what} must be \
+        {if b.exclusive then "less than" else "at most"} {toString b.value}"
 
-private meta def OpArgs.nat (a : OpArgs) (i : Nat) (what : String) : TermElabM Nat := do
-  let inner ← a.get i
-  match inner.isNatLit? with
-  | some n => return n
-  | none => throwErrorAt inner m!"expected {what} (a numeral); usage: {a.usage}"
+open SpecLang in
+/-- The manifest's list rules: `atMostOneOf` forbids two values from one set;
+    choosing a key of `narrows` restricts the whole list to its values. -/
+private meta def checkEnumList (ref : Syntax) (what : String)
+    (rules : EnumListRules) (chosen : List String) : TermElabM Unit := do
+  for grp in rules.atMostOneOf do
+    let hits := chosen.filter grp.contains
+    if 2 ≤ hits.length then
+      throwErrorAt ref m!"{what} allows at most one of {orVals grp}, \
+        got {", ".intercalate hits}"
+  for (k, allowed) in rules.narrows do
+    if chosen.contains k then
+      for c in chosen do
+        unless allowed.contains c do
+          throwErrorAt ref m!"'{k}' restricts {what} to {orVals allowed}; \
+            '{c}' cannot join it"
 
-private meta def enumValues (typeName : Name) : TermElabM String := do
-  return ", ".intercalate ((← getConstInfoInduct typeName).ctors.map (·.getString!))
+/-! ### Scalar values
 
-private meta def parseEnum {α} [FromJson α] (what : String) (typeName : Name)
-    (x : Ident) : TermElabM α := do
-  match fromJson? (Json.str x.getId.toString) with
-  | .ok v => return v
-  | .error _ =>
-    throwErrorAt x m!"unknown {what} '{x.getId}' (expected {← enumValues typeName})"
+One reader serves the three places a scalar can sit — a nested block keyword,
+a `name: value`, a positional argument — which differ only in how the syntax
+carries the word/string/number, abstracted by `ArgView`. -/
+
+private meta structure ArgView where
+  ref : Syntax
+  word? : Option String := none
+  str? : Option String := none
+  num? : Option JsonNumber := none
+
+/-- A bare token, as blocks carry them. Only a string literal is a string. -/
+private meta def ArgView.ofToken (stx : Syntax) : ArgView :=
+  { ref := stx
+    word? := if stx.isIdent then some stx.getId.toString else none
+    str? := stx.isStrLit?
+    num? := jsonNumOf? stx }
+
+/-- A selector-expression leaf, as keyword values and positionals carry them.
+    A word also reads as a string, so a color can be written unquoted. -/
+private meta def ArgView.ofSel (stx : Syntax) : ArgView :=
+  let word? := if stx.isOfKind selIdentKind
+    then some (stx[0].getId.toString (escape := false)) else none
+  { ref := stx
+    word?
+    str? := if stx.isOfKind selStrKind then stx[0].isStrLit? else word?
+    num? := if stx.isOfKind selNumKind then stx[0].isNatLit?.map JsonNumber.fromNat
+            else jsonNumOf? stx }
+
+private meta def usageSuffix : Option String → MessageData
+  | some u => m!"; usage: {u}"
+  | none => m!""
+
+open SpecLang in
+private meta def enumWord (what : String) (vs : List String) (v : ArgView)
+    (usage? : Option String := none) : TermElabM String := do
+  let some w := v.word?
+    | throwErrorAt v.ref m!"{what} expects {orVals vs}{usageSuffix usage?}"
+  unless vs.contains w do
+    throwErrorAt v.ref m!"unknown {what} '{w}' (expected {", ".intercalate vs})"
+  return w
+
+open SpecLang in
+/-- One scalar against a field's table entry. Callers dispatch the non-scalar
+    types (selector, relation, block, enum-list) themselves: what those mean
+    differs by position. -/
+private meta def elabScalar (what : String) (f : FieldSpec) (v : ArgView)
+    (usage? : Option String := none) : TermElabM FieldVal := do
+  match f.type with
+  | .color | .iconPath | .str =>
+    let some s := v.str?
+      | throwErrorAt v.ref m!"{what} expects a string{usageSuffix usage?}"
+    return .str s
+  | .number .. =>
+    let some n := v.num?
+      | throwErrorAt v.ref m!"{what} expects a number{usageSuffix usage?}"
+    checkBounds v.ref what f n
+    return .num n
+  | .«enum» vs _ => return .«enum» (← enumWord what vs v usage?)
+  | .boolean _ =>
+    match v.word? with
+    | some "true" => return .bool true
+    | some "false" => return .bool false
+    | _ => throwErrorAt v.ref m!"{what} expects true|false{usageSuffix usage?}"
+  | _ => throwErrorAt v.ref m!"{what} does not take a scalar value"
 
 /-! ### Style blocks -/
 
-/-- One `(name arg…)` block, args classified by kind; block-argument order is
-    free (a color is the string, a pattern the ident, a weight the numeral). -/
-private meta structure BlockArgs where
-  ref : Syntax
-  name : String
-  strs : Array (Syntax × String) := #[]
-  nums : Array (Syntax × Nat) := #[]
-  idents : Array (Syntax × Name) := #[]
-  blocks : Array Syntax := #[]
+open SpecLang in
+/-- The single scalar of a nested `(fieldName value)` keyword in a block. -/
+private meta def elabBlockScalar (b : BlockSpec) (f : FieldSpec)
+    (stx : Syntax) : TermElabM FieldVal := do
+  match f.type with
+  | .color | .iconPath | .str | .number .. | .«enum» .. =>
+    elabScalar (fieldName f.id) f (.ofToken stx)
+  | _ => throwErrorAt stx m!"({blockName b.id} …) cannot nest {fieldName f.id}"
 
-/-- Node shape: `["(", ident, firstArg, args*, ")"]` (see `spytialBlockStx`). -/
-private meta def BlockArgs.ofStx (stx : Syntax) : BlockArgs := Id.run do
-  let mut b : BlockArgs := { ref := stx, name := stx[1].getId.toString }
-  for arg in #[stx[2]] ++ stx[3].getArgs do
-    let inner := arg[0]
-    if let some s := inner.isStrLit? then b := { b with strs := b.strs.push (inner, s) }
-    else if let some n := inner.isNatLit? then b := { b with nums := b.nums.push (inner, n) }
-    else if inner.isIdent then b := { b with idents := b.idents.push (inner, inner.getId) }
-    else b := { b with blocks := b.blocks.push inner }
-  return b
-
-private meta def atMostOne {α} (b : BlockArgs) (what : String)
-    (xs : Array (Syntax × α)) : TermElabM (Option (Syntax × α)) := do
-  if h : 1 < xs.size then
-    throwErrorAt xs[1].1 m!"duplicate {what} in ({b.name} …)"
-  return xs[0]?
-
-private meta def rejectArgs {α} (b : BlockArgs) (kind : String)
-    (xs : Array (Syntax × α)) : TermElabM Unit := do
-  if h : 0 < xs.size then
-    throwErrorAt xs[0].1 m!"({b.name} …) takes no {kind}"
-
-private meta def rejectNested (b : BlockArgs) : TermElabM Unit := do
-  if h : 0 < b.blocks.size then
-    throwErrorAt b.blocks[0] m!"({b.name} …) takes no nested blocks"
-
-private meta def parseBorderStyle (b : BlockArgs) : TermElabM BorderStyle := do
-  rejectArgs b "idents" b.idents; rejectNested b
-  let color ← atMostOne b "color" b.strs
-  let width ← atMostOne b "width" b.nums
-  return { color := color.map (·.2), width := width.map (·.2) }
-
-private meta def parseFillStyle (b : BlockArgs) : TermElabM FillStyle := do
-  rejectArgs b "idents" b.idents; rejectArgs b "numerals" b.nums; rejectNested b
-  let color ← atMostOne b "color" b.strs
-  return { color := color.map (·.2) }
-
-private meta def parseIconStyle (b : BlockArgs) : TermElabM IconStyle := do
-  rejectArgs b "numerals" b.nums; rejectNested b
-  let some path ← atMostOne b "path" b.strs
-    | throwErrorAt b.ref m!"(iconStyle …) needs a path string"
-  let placement ← match ← atMostOne b "placement" b.idents with
-    | some (stx, _) => some <$> parseEnum "icon placement" ``IconPlacement ⟨stx⟩
-    | none => pure none
-  return { path := path.2, placement }
-
-private meta def parseLineStyle (b : BlockArgs) : TermElabM LineStyle := do
-  rejectNested b
-  let color ← atMostOne b "color" b.strs
-  let weight ← atMostOne b "weight" b.nums
-  let pattern ← match ← atMostOne b "pattern" b.idents with
-    | some (stx, _) => some <$> parseEnum "line pattern" ``LinePattern ⟨stx⟩
-    | none => pure none
-  return { color := color.map (·.2), pattern, weight := weight.map (·.2) }
-
-private meta def parseGroupEdge (b : BlockArgs) : TermElabM GroupEdge := do
-  rejectArgs b "strings" b.strs; rejectArgs b "numerals" b.nums
-  let some dir ← atMostOne b "direction" b.idents
-    | throwErrorAt b.ref m!"(addEdge …) needs a direction \
-        ({← enumValues ``GroupEdgeDirection})"
-  let direction ← parseEnum "group-edge direction" ``GroupEdgeDirection ⟨dir.1⟩
-  let lineStyle ← match ← atMostOne b "nested block" (b.blocks.map ((·, ()))) with
-    | some (stx, _) =>
-      let nb := BlockArgs.ofStx stx
-      unless nb.name == "lineStyle" do
-        throwErrorAt stx m!"(addEdge …) nests only (lineStyle …)"
-      some <$> parseLineStyle nb
-    | none => pure none
-  return { direction, lineStyle }
-
-/-- The style pieces an op's trailing arguments can carry. -/
-private meta structure StyleParts where
-  border : Option BorderStyle := none
-  fill : Option FillStyle := none
-  icon : Option IconStyle := none
-  line : Option LineStyle := none
-  addEdge : Option GroupEdge := none
-  showLabel : Option Bool := none
-
-/-- Fold the arguments from `start` on: `(block …)`s from `allowed`, plus the
-    `labels`/`noLabels` flags when `flags` is set. -/
-private meta def collectStyleArgs (a : OpArgs) (start : Nat)
-    (allowed : List String) (flags : Bool := false) : TermElabM StyleParts := do
-  let dup {α} (stx : Syntax) (what : String) : Option α → TermElabM Unit := fun
-    | some _ => throwErrorAt stx m!"duplicate {what}; usage: {a.usage}"
-    | none => pure ()
-  let mut parts : StyleParts := {}
-  for i in [start:a.args.size] do
-    let inner := argInner a.args[i]!
-    if inner.isOfKind ``spytialBlockStx then
-      let b := BlockArgs.ofStx inner
-      unless allowed.contains b.name do
-        throwErrorAt inner m!"unknown block '({b.name} …)'; expected \
-          {", ".intercalate (allowed.map (s!"({·} …)"))}; usage: {a.usage}"
-      match b.name with
-      | "borderStyle" => dup inner "(borderStyle …)" parts.border
-                         parts := { parts with border := some (← parseBorderStyle b) }
-      | "fillStyle"   => dup inner "(fillStyle …)" parts.fill
-                         parts := { parts with fill := some (← parseFillStyle b) }
-      | "iconStyle"   => dup inner "(iconStyle …)" parts.icon
-                         parts := { parts with icon := some (← parseIconStyle b) }
-      | "lineStyle"   => dup inner "(lineStyle …)" parts.line
-                         parts := { parts with line := some (← parseLineStyle b) }
-      | "addEdge"     => dup inner "(addEdge …)" parts.addEdge
-                         parts := { parts with addEdge := some (← parseGroupEdge b) }
-      | _ => throwErrorAt inner "unexpected block"
-    else if flags && inner.isOfKind ``selIdent &&
-        (inner[0].getId.toString == "labels" || inner[0].getId.toString == "noLabels") then
-      dup inner "label flag" parts.showLabel
-      parts := { parts with showLabel := some (inner[0].getId.toString == "labels") }
+open SpecLang in
+private meta def elabBlock (usage : String) (b : BlockSpec) (stx : Syntax) :
+    TermElabM (List (FieldId × FieldVal)) := do
+  let mut set : Array (FieldId × FieldVal) := #[]
+  let dup (ref : Syntax) (f : FieldId) (set : Array (FieldId × FieldVal)) :
+      TermElabM Unit := do
+    if set.any (·.1 == f) then
+      throwErrorAt ref m!"duplicate {fieldName f} in ({blockName b.id} …)"
+  for inner in blockArgs stx do
+    if let some s := inner.isStrLit? then
+      let some f := b.fields.find? (·.type.isStringy)
+        | throwErrorAt inner m!"({blockName b.id} …) takes no string; usage: {usage}"
+      dup inner f.id set
+      set := set.push (f.id, .str s)
+    else if let some n := jsonNumOf? inner then
+      let some f := b.fields.find? (·.type.isNumeric)
+        | throwErrorAt inner m!"({blockName b.id} …) takes no number; usage: {usage}"
+      dup inner f.id set
+      checkBounds inner s!"{fieldName f.id} of ({blockName b.id} …)" f n
+      set := set.push (f.id, .num n)
+    else if inner.isIdent then
+      let w := inner.getId.toString
+      let hits := b.fields.filter fun f =>
+        match f.type with | .«enum» vs _ => vs.contains w | _ => false
+      match hits with
+      | [f] =>
+        dup inner f.id set
+        set := set.push (f.id, .«enum» w)
+      | _ =>
+        let vocab := b.fields.flatMap fun f =>
+          match f.type with | .«enum» vs _ => vs | _ => []
+        throwErrorAt inner m!"unknown word '{w}' in ({blockName b.id} …)\
+          {if vocab.isEmpty then m!"" else m!" (expected {orVals vocab})"}"
+    else if inner.isOfKind ``spytialFieldStx then
+      let kw := blockHead inner
+      let some f := b.fields.find? (fun f => fieldName f.id == kw)
+        | throwErrorAt inner m!"({blockName b.id} …) has no field '{kw}'; \
+            fields: {", ".intercalate (b.fields.map (fieldName ·.id))}"
+      dup inner f.id set
+      let args := blockArgs inner
+      unless args.size == 1 do
+        throwErrorAt inner m!"({kw} …) takes one value"
+      set := set.push (f.id, ← elabBlockScalar b f args[0]!)
     else
-      throwErrorAt inner m!"expected a style block\
-        {if flags then " or labels|noLabels" else ""}; usage: {a.usage}"
-  return parts
+      throwErrorAt inner m!"unexpected argument in ({blockName b.id} …); usage: {usage}"
+  return b.fields.filterMap fun f => (set.find? (·.1 == f.id)).map fun (_, v) => (f.id, v)
 
-/-! ### Op elaboration -/
+open SpecLang in
+private meta def elabAltForm (usage : String) (f : FieldSpec) (alt : AltForm)
+    (vs : List String) (stx : Syntax) : TermElabM FieldVal := do
+  let mut dir : Option String := none
+  let mut blockVals : Array (FieldId × FieldVal) := #[]
+  for inner in blockArgs stx do
+    if inner.isIdent then
+      let w := inner.getId.toString
+      unless vs.contains w do
+        throwErrorAt inner m!"unknown {fieldName f.id} direction '{w}' \
+          (expected {", ".intercalate vs})"
+      if dir.isSome then
+        throwErrorAt inner m!"duplicate direction in ({fieldName f.id} …)"
+      dir := some w
+    else if inner.isOfKind ``spytialBlockStx then
+      let bname := blockHead inner
+      let some (bf, bid) := alt.blocks.find? (fun (bf, _) => fieldName bf == bname)
+        | throwErrorAt inner m!"({fieldName f.id} …) nests only \
+            {", ".intercalate (alt.blocks.map fun (bf, _) => s!"({fieldName bf} …)")}"
+      if blockVals.any (·.1 == bf) then
+        throwErrorAt inner m!"duplicate ({bname} …) in ({fieldName f.id} …)"
+      blockVals := blockVals.push (bf, .block (← elabBlock usage (BlockSpec.of bid) inner))
+    else
+      throwErrorAt inner m!"({fieldName f.id} …) takes a direction and style \
+        blocks; usage: {usage}"
+  let some d := dir
+    | throwErrorAt stx m!"({fieldName f.id} …) needs a direction ({", ".intercalate vs})"
+  if blockVals.isEmpty then
+    return .«enum» d
+  return .block ((alt.enumField, .«enum» d) :: blockVals.toList)
 
+open SpecLang in
+private meta def elabBlockArg (item : ItemSpec) (usage : String) (inner : Syntax) :
+    TermElabM (FieldId × FieldVal) := do
+  let kw := blockHead inner
+  match item.fields.find? (fun f => fieldName f.id == kw) with
+  | none =>
+    let blocks := item.fields.filterMap fun f =>
+      match f.type, f.alt with
+      | .block _, _ => some s!"({fieldName f.id} …)"
+      | .«enum» _ _, some _ => some s!"({fieldName f.id} …)"
+      | _, _ => none
+    throwErrorAt inner m!"unknown block '({kw} …)'\
+      {if blocks.isEmpty then m!"" else m!"; expected {", ".intercalate blocks}"}; \
+      usage: {usage}"
+  | some f =>
+    match f.type, f.alt with
+    | .block bid, _ => return (f.id, .block (← elabBlock usage (BlockSpec.of bid) inner))
+    | .«enum» vs _, some alt => return (f.id, ← elabAltForm usage f alt vs inner)
+    | _, _ =>
+      throwErrorAt inner m!"'{kw}' is written {kw}: <value>; usage: {usage}"
+
+open SpecLang in
+/-- `name: value` for everything a keyword can carry. -/
+private meta def elabKwValue (usage : String)
+    (sel : Syntax → List SelForm → TermElabM Sel)
+    (rel : Syntax → FieldSpec → TermElabM String) (f : FieldSpec) (v : Syntax) :
+    TermElabM FieldVal := do
+  match f.type with
+  | .selector forms => return .sel (← sel v forms)
+  | .relation =>
+    if v.isOfKind selIdentKind then
+      return .rel (← rel v[0] f)
+    throwErrorAt v m!"{fieldName f.id}: expects a relation name"
+  | .block _ => throwErrorAt v m!"write ({fieldName f.id} …) for a style block"
+  | .enumList _ _ => throwErrorAt v m!"'{fieldName f.id}' is positional; usage: {usage}"
+  | _ => elabScalar (fieldName f.id) f (.ofSel v)
+
+open SpecLang in
+/-- A bare word past the positionals: bool sugar, else the unique optional
+    enum field that lists the word. -/
+private meta def trailingWordField? (item : ItemSpec) (w : String) :
+    Option (FieldId × FieldVal) :=
+  let sugar := boolSugar.find? fun (word, bf, _) =>
+    word == w && item.fields.any fun f => f.id == bf && f.type matches .boolean _
+  match sugar with
+  | some (_, bf, v) => some (bf, .bool v)
+  | none =>
+    let hits := item.fields.filter fun f =>
+      !item.positional.contains f.id && f.alt.isNone &&
+        match f.type with | .«enum» vs _ => vs.contains w | _ => false
+    match hits with
+    | [f] => some (f.id, .«enum» w)
+    | _ => none
+
+open SpecLang in
+/-- A field's accepted widths in one op: a form whose `requires` names a field
+    the op does not write is unavailable there. -/
+private meta def arityForms (written : List String) (forms : List SelForm) :
+    List ArityForm :=
+  forms.map fun f =>
+    { min := f.min, max := f.max, middlesIgnored := f.middlesIgnored,
+      blockedBy := f.requires.bind fun r =>
+        if written.contains (fieldName r) then none else some (fieldName r) }
+
+open SpecLang in
 meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
     TermElabM SpytialOp := do
   let (name, head) ←
@@ -261,110 +407,116 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
       throwErrorAt op "unexpected op syntax"
   let argStxs : Array (TSyntax `spytialOpArg) := op.raw[1].getArgs.map (⟨·⟩)
   withRef head do
-    let mkArgs (usage : String) : OpArgs := { opName := head, usage, args := argStxs }
-    let sel (a : OpArgs) (i : Nat) (expect : ArityExpect) : TermElabM Sel := do
-      elabSelector scope expect (← a.sel i)
-    match name with
-    | "orientation" => do
-      let a := mkArgs "orientation <selector> <direction>+"
-      let s ← sel a 0 .pair
-      let mut dirs : List Direction := []
-      if a.args.size < 2 then
-        throwErrorAt head m!"missing direction; usage: {a.usage}"
-      for i in [1:a.args.size] do
-        let x ← a.ident i "a direction"
-        dirs := dirs ++ [← parseEnum "direction" ``Direction x]
-      return .orientation s dirs
-    | "align" => do
-      let a := mkArgs "align <selector> horizontal|vertical"
-      let s ← sel a 0 .pair
-      let x ← a.ident 1 "an alignment direction"
-      let d ← parseEnum "alignment direction" ``AlignDir x
-      a.checkNoExtra 2
-      return .align s d
-    | "cyclic" => do
-      let a := mkArgs "cyclic <selector> [clockwise|counterclockwise]"
-      let s ← sel a 0 .pair
-      let d ← match a.ident? 1 with
-        | some x =>
-          parseEnum "rotation direction" ``RotationDir x
-        | none => do
-          if (a.get? 1).isSome then
-            throwErrorAt (← a.get 1) m!"expected a rotation direction \
-              ({← enumValues ``RotationDir}); usage: {a.usage}"
-          pure RotationDir.clockwise
-      a.checkNoExtra 2
-      return .cyclic s d
-    | "group" => do
-      let a := mkArgs "group <selector> <name> [(addEdge togroup|fromgroup (lineStyle …)?)]"
-      let s ← sel a 0 .unaryOrPair
-      let gname ← match a.ident? 1, a.str? 1 with
-        | some x, _ => pure (x.getId.toString (escape := false))
-        | _, some s => pure s
-        | _, _ => throwErrorAt head m!"missing group name; usage: {a.usage}"
-      let p ← collectStyleArgs a 2 ["addEdge"]
-      return .group s gname p.addEdge
-    | "hideAtom" => do
-      let a := mkArgs "hideAtom <selector>"
-      let s ← sel a 0 .unary
-      a.checkNoExtra 1
-      return .hideAtom s
-    | "size" => do
-      let a := mkArgs "size <selector> <width> <height>"
-      let s ← sel a 0 .unary
-      let w ← a.nat 1 "a width"
-      let h ← a.nat 2 "a height"
-      a.checkNoExtra 3
-      return .size s w h
-    | "atomStyle" => do
-      let a := mkArgs "atomStyle <selector> (borderStyle <color> [<width>])? \
-        (fillStyle <color>)? (iconStyle <path> [full|badge])? [labels|noLabels]"
-      let s ← sel a 0 .unary
-      let p ← collectStyleArgs a 1 ["borderStyle", "fillStyle", "iconStyle"] (flags := true)
-      if p.border.isNone && p.fill.isNone && p.icon.isNone && p.showLabel.isNone then
-        throwErrorAt head m!"atomStyle sets nothing; usage: {a.usage}"
-      return .atomStyle s p.border p.fill p.icon p.showLabel
-    | "edgeStyle" => do
-      let a := mkArgs "edgeStyle <field> (lineStyle <color> [solid|dashed|dotted] \
-        [<weight>])? [labels|noLabels]"
-      let f ← elabFieldName scope (← a.ident 0 "a relation name")
-      let p ← collectStyleArgs a 1 ["lineStyle"] (flags := true)
-      if p.line.isNone && p.showLabel.isNone then
-        throwErrorAt head m!"edgeStyle sets nothing; usage: {a.usage}"
-      return .edgeStyle f p.line p.showLabel
-    | "hideField" => do
-      let a := mkArgs "hideField <field>"
-      let f ← elabFieldName scope (← a.ident 0 "a relation name")
-      a.checkNoExtra 1
-      return .hideField f
-    | "attribute" => do
-      let a := mkArgs "attribute <field>"
-      let f ← elabFieldName scope (← a.ident 0 "a relation name")
-      a.checkNoExtra 1
-      return .attribute f
-    | "tag" => do
-      let a := mkArgs "tag <selector> <name> <value>"
-      let s ← sel a 0 .unary
-      let n ← a.str 1 "a tag name"
-      let v ← a.str 2 "a tag value"
-      a.checkNoExtra 3
-      return .tag s n v
-    | "inferredEdge" => do
-      let a := mkArgs "inferredEdge <name> <selector> (lineStyle <color> \
-        [solid|dashed|dotted] [<weight>])?"
-      let n := (← a.ident 0 "an edge name").getId.toString (escape := false)
-      let s ← sel a 1 .edge
-      let p ← collectStyleArgs a 2 ["lineStyle"]
-      return .inferredEdge n s p.line
-    | "flag" => do
-      let a := mkArgs "flag <name>"
-      let n := (← a.ident 0 "a flag name").getId.toString (escape := false)
-      a.checkNoExtra 1
-      return .flag n
-    | _ =>
-      throwErrorAt head m!"unknown Spytial op '{name}'; known ops: align, atomStyle, \
-        attribute, cyclic, edgeStyle, flag, group, hideAtom, hideField, \
-        inferredEdge, orientation, size, tag"
+    let some itemId := itemOfKey? name
+      | throwErrorAt head m!"unknown Spytial op '{name}'; known ops: \
+          {", ".intercalate ((allItems.map itemName).mergeSort (· < ·))}"
+    let item := ItemSpec.of itemId
+    let usage := itemUsage item
+    -- A form can make a width conditional on a sibling field, which may be
+    -- written after the selector, so the keywords are read off the argument
+    -- list before any of it elaborates.
+    let written := argStxs.toList.filterMap fun a =>
+      let inner := argInner a
+      if inner.isOfKind ``spytialKwArg then some inner[0].getId.toString
+      else if inner.isOfKind ``spytialBlockStx then some (blockHead inner)
+      else none
+    let isNumber (stx : Syntax) : Bool :=
+      stx.isOfKind numLitKind || stx.isOfKind scientificLitKind
+    let sel (stx : Syntax) (forms : List SelForm) : TermElabM Sel := do
+      if isNumber stx then
+        throwErrorAt stx m!"expected a selector; usage: {usage}"
+      elabSelector scope (arityForms written forms) ⟨stx⟩
+    -- a bare sugar word is never a selector, even where a selector may lead
+    let isTrailingWord (stx : Syntax) : Bool :=
+      (ArgView.ofSel stx).word?.any fun w => (trailingWordField? item w).isSome
+    let rel (stx : Syntax) (f : FieldSpec) : TermElabM String :=
+      elabFieldName scope s!"{itemName item.id}.{fieldName f.id}" ⟨stx⟩
+    let setField (fields : Array (FieldId × FieldVal)) (ref : Syntax)
+        (f : FieldId) (v : FieldVal) : TermElabM (Array (FieldId × FieldVal)) := do
+      if fields.any (·.1 == f) then
+        throwErrorAt ref m!"duplicate {fieldName f}; usage: {usage}"
+      return fields.push (f, v)
+    let mut fields : Array (FieldId × FieldVal) := #[]
+    let mut hold : Option String := none
+    let mut pending := item.positional
+    -- an entered variadic enum-list: its field, the words so far, the last ref
+    let mut tail : Option (FieldSpec × Array String × Syntax) := none
+    for i in [0:argStxs.size] do
+      let inner := argInner argStxs[i]!
+      if inner.isOfKind ``spytialBlockStx then
+        let (fid, v) ← elabBlockArg item usage inner
+        fields ← setField fields inner fid v
+      else if inner.isOfKind ``spytialKwArg then
+        let kw := inner[0].getId.toString
+        let vstx := inner[2]
+        if kw == holdField then
+          unless item.supportsHold do
+            throwErrorAt inner m!"{name} does not support hold; usage: {usage}"
+          if hold.isSome then
+            throwErrorAt inner m!"duplicate hold"
+          hold := some (← enumWord holdField holdValues (.ofSel vstx))
+        else
+          match item.fields.find? (fun f => fieldName f.id == kw) with
+          | none => throwErrorAt inner m!"unknown keyword '{kw}:'; usage: {usage}"
+          | some f =>
+            if item.positional.contains f.id then
+              throwErrorAt inner m!"'{kw}' is a positional argument; usage: {usage}"
+            fields ← setField fields inner f.id (← elabKwValue usage sel rel f vstx)
+      else if let some (f, chosen, _) := tail then
+        let .enumList vs _ := f.type | unreachable!
+        let w ← enumWord (fieldName f.id) vs (.ofSel inner) usage
+        if chosen.contains w then
+          throwErrorAt inner m!"duplicate {fieldName f.id} '{w}'"
+        tail := some (f, chosen.push w, inner)
+      else if i == 0 && item.leadingSelector.isSome
+          && (match pending.head?.bind item.field? with
+              | some f => f.type.isNumeric
+              | none => true)
+          && !isNumber inner && !isTrailingWord inner then
+        let some lf := item.leadingSelector | unreachable!
+        let some f := item.field? lf | unreachable!
+        let .selector forms := f.type | unreachable!
+        fields ← setField fields inner lf (.sel (← sel inner forms))
+      else
+        match pending with
+        | fid :: rest =>
+          pending := rest
+          let some f := item.field? fid | unreachable!
+          match f.type with
+          | .enumList vs _ =>
+            tail := some (f, #[← enumWord (fieldName fid) vs (.ofSel inner) usage], inner)
+          | .selector forms =>
+            fields ← setField fields inner fid (.sel (← sel inner forms))
+          | .relation =>
+            unless inner.isOfKind selIdentKind do
+              throwErrorAt inner m!"expected a relation name; usage: {usage}"
+            fields ← setField fields inner fid (.rel (← rel inner[0] f))
+          | .str | .iconPath | .color | .«enum» .. | .number .. =>
+            fields ← setField fields inner fid
+              (← elabScalar (fieldName fid) f (.ofSel inner) usage)
+          | _ =>
+            throwErrorAt inner m!"unexpected argument; usage: {usage}"
+        | [] =>
+          let vocabMsg := match bareWordVocab item with
+            | [] => m!""
+            | vocab => m!" (expected {orVals vocab})"
+          let some w := (ArgView.ofSel inner).word?
+            | throwErrorAt inner m!"unexpected extra argument{vocabMsg}; usage: {usage}"
+          let some (fid, v) := trailingWordField? item w
+            | throwErrorAt inner m!"unexpected argument '{w}'{vocabMsg}; usage: {usage}"
+          fields ← setField fields inner fid v
+    if let some (f, chosen, ref) := tail then
+      if let .enumList _ rules := f.type then
+        checkEnumList ref (fieldName f.id) rules chosen.toList
+      fields ← setField fields ref f.id (.enums chosen.toList)
+    if let some fid := pending.head? then
+      throwErrorAt head m!"missing {fieldName fid}; usage: {usage}"
+    unless item.effectFields.isEmpty || fields.any (item.effectFields.contains ·.1) do
+      throwErrorAt head m!"{name} sets nothing; usage: {usage}"
+    -- table order, so the serialized spec is stable however the source ordered them
+    let ordered := item.fields.filterMap fun f =>
+      (fields.find? (·.1 == f.id)).map fun (_, v) => (f.id, v)
+    return { item := itemId, fields := ordered, hold }
 
 /-- The op as the user wrote it, with where they wrote it. Read back from the
     file rather than reprinted from syntax, so what core cites in a conflict
@@ -374,7 +526,7 @@ private meta def opSource? (op : TSyntax `spytial_op) : TermElabM (Option OpSour
   let some startPos := op.raw.getPos? | return none
   let some endPos := op.raw.getTailPos? | return none
   let fileMap ← getFileMap
-  let text := (Substring.Raw.mk fileMap.source startPos endPos).toString.trim
+  let text := (Substring.Raw.mk fileMap.source startPos endPos).toString.trimAscii.copy
   if text.isEmpty then return none
   let path := (← getFileName)
   let base := (System.FilePath.mk path).fileName.getD path
@@ -387,12 +539,12 @@ private meta def opSource? (op : TSyntax `spytial_op) : TermElabM (Option OpSour
     must share this list's root type. -/
 meta def elabSpytialOps (scope : SelScope) (ops : Array (TSyntax `spytial_op))
     (attached? : Option SpytialSpec := none) : TermElabM SpytialSpec := do
-  let introduce (scope : SelScope) (s : StampedOp) : SelScope :=
-    match s.op.introduces? with
-    | some (n, arity) => scope.introduce n arity
+  let introduce (scope : SelScope) (op : SpytialOp) : SelScope :=
+    match op.introduces? with
+    | some (n, i) => scope.introduce n { arity := i.arity, referencedBy := i.referencedBy }
     | none => scope
   let mut scope := scope
-  let mut spec : Array StampedOp := #[]
+  let mut spec : Array SpytialOp := #[]
   let mut spliced := false
   let mut splicedNames : NameSet := .empty
   for op in ops do
@@ -421,8 +573,8 @@ meta def elabSpytialOps (scope : SelScope) (ops : Array (TSyntax `spytial_op))
       spec := spec ++ bound.ops
       scope := bound.ops.foldl introduce scope
     else
-      let o : StampedOp := { op := ← elabSpytialOp scope op, source := ← opSource? op }
-      spec := spec.push o
+      let o ← elabSpytialOp scope op
+      spec := spec.push { o with source := ← opSource? op }
       scope := introduce scope o
   return spec.toList
 
@@ -505,10 +657,7 @@ private meta def elabRelationalized (t : Syntax) (cfg : WalkConfig := {})
   let (di, prov, evidence) ← relationalizeWithEvidence e cfg observations
   return (e, observations, di, prov, evidence)
 
-/-- Elaborate a use-site `with [...]` for `e`. Without `..` the list replaces
-    `e`'s attached spec; a `..` element splices the attached spec at that
-    position, its introduced names in scope for the ops after it. `scope?`
-    overrides the scope for callers that know more than `e`'s type does. -/
+/-- `scope?` overrides the scope for callers that know more than `e`'s type does. -/
 private meta def elabUseSiteOps (e : Expr) (ops : Array (TSyntax `spytial_op))
     (scope? : Option SelScope := none) : TermElabM SpytialSpec := do
   let attached? ← lookupTypeSpec e
@@ -552,16 +701,12 @@ private meta def scopeWithObservedData (scope : SelScope) (data : JsonDataInstan
         rels := scope.rels.insert relation.name (scope.root, some relation.types.size) }
   return scope
 
-/-- An explicit `with [<ops>]` overrides the type's attached spec, unless a
-    `..` element splices it back in. Raw Lean selectors resolve against this
-    datum, and the spec is rendered to its wire string once, here. -/
 private meta def elabSpytialPayload (t : Syntax) (ops? : Option (Array (TSyntax `spytial_op)))
     (cfg : WalkConfig) (observerSyntaxes : Array Syntax := #[]) :
     TermElabM (JsonDataInstance × Option String) :=
-  -- The command boundary is where `#eval` discards what it derived, and both
-  -- halves below derive: the walk needs `SpytialIdentity`, and building the
-  -- selector scope needs `SpytialEnum`. Wrapping only the walk would leave the
-  -- spec half persisting its instances. Both results are plain data.
+  -- Both halves derive instances — the walk needs `SpytialIdentity`, the selector
+  -- scope needs `SpytialEnum` — so wrapping only the walk would leave the spec
+  -- half persisting its own. Both results are plain data.
   withoutModifyingEnv do
     let (e, observations, di, prov, evidence) ← elabRelationalized t cfg observerSyntaxes
     let spec? ← match ops? with
@@ -571,7 +716,7 @@ private meta def elabSpytialPayload (t : Syntax) (ops? : Option (Array (TSyntax 
         some <$> elabUseSiteOps e ops (some scope)
       | none => lookupTypeSpec e
     let spec? ← spec?.mapM fun s => liftM (resolveLeanSelectors e di prov s evidence)
-    return (di, spec?.map SpytialSpec.render)
+    return (di, ← spec?.mapM fun s => Lean.ofExcept (SpytialSpec.render s))
 
 private meta def spytialProps (di : JsonDataInstance) (cndSpec? : Option String) : Json :=
   Json.mkObj <|
@@ -581,8 +726,7 @@ private meta def spytialProps (di : JsonDataInstance) (cndSpec? : Option String)
     -- absent, not null: the widget reads a missing `cndSpec` as free layout
     | none => []
 
-/-- The payload `#spytial` hands the infoview. Public so out-of-tree frontends
-    render what the infoview does rather than reassembling it. -/
+/-- Public so out-of-tree frontends render what the infoview does. -/
 public meta def spytialPayloadProps (t : Syntax)
     (ops? : Option (Array (TSyntax `spytial_op)) := none) (cfg : WalkConfig := {})
     (observerSyntaxes : Array Syntax := #[]) :
@@ -597,27 +741,12 @@ private meta def optionalOps (stx : Syntax) : Option (Array (TSyntax `spytial_op
 private meta def optionalTerms (stx : Syntax) : Array Syntax :=
   if stx.getNumArgs == 0 then #[] else stx[2].getSepArgs
 
-/-! ## #spytial command -/
-
 /-- `#spytial <term>` displays a spatial relational diagram in the Lean infoview.
-
-    `observing [f₁, ...]` parameterizes the relationalizer with the named
-    functions and adds each function's graph over every compatible value in
-    the represented datum. Command mode has no proof context; tactic mode uses
-    the same observation input while also translating context facts.
-
-    Use `#spytial <term> with [<ops>]` to specify layout operations inline:
+    `observing [f₁, …]` adds each named function's graph over every compatible
+    value in the datum. A `with [<ops>]` list overrides the type's attached
+    `spytial_spec`; `..` in the list splices it back in:
     ```
-    #spytial myTree with [
-      orientation left left below,
-      atomStyle leaf "#0066ff"
-    ]
-    ```
-
-    If the type has an attached spec (via `spytial_spec`), it is used as the
-    default. An explicit `with [...]` overrides it; a `..` element in the list
-    splices the attached spec at that position:
-    ```
+    #spytial myTree with [orientation left left below, atomStyle Tree (borderStyle "#0066ff")]
     #spytial myTree with [.., hideAtom Nat]
     ``` -/
 syntax (name := spytialCmd) "#spytial " term (" observing " "[" term,* "]")?
@@ -629,18 +758,10 @@ meta def elabSpytialCmd : CommandElab := fun stx => do
     spytialPayloadProps stx[1] (optionalOps stx[3]) {} (optionalTerms stx[2])
   liftCoreM <| savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
 
-/-! ## spytial_spec command -/
-
-/-- `spytial_spec <Type> [<ops>]` attaches a Spytial layout spec to a type.
-    The spec is used as the default when visualizing values of that type.
-
+/-- `spytial_spec <Type> [<ops>]` attaches the spec used by default for that type:
     ```
-    spytial_spec Tree [
-      orientation left left below,
-      hideAtom Nat
-    ]
-    ```
--/
+    spytial_spec Tree [orientation left left below, hideAtom Nat]
+    ``` -/
 syntax (name := spytialSpecCmd) "spytial_spec " ident " [" spytial_op,*,? "]" : command
 
 @[command_elab spytialSpecCmd]
@@ -653,20 +774,13 @@ meta def elabSpytialSpecCmd : CommandElab := fun
       setSpytialSpec declName spec
   | stx => throwError "Unexpected syntax {stx}."
 
-/-- `spytial_ops <name> : <Type> [<ops>]` binds a named op list: a reusable
-    spec fragment, elaborated here against `<Type>` as root. A `..<name>`
-    element splices it into any op list with that same root — an attached
-    `spytial_spec` or a use-site `with [...]`.
-
-    The name is declared as an `SpytialOps` constant, so it takes the current
-    namespace and is reached through `open`, `export` and aliases like any
-    other declaration.
-
+/-- `spytial_ops <name> : <Type> [<ops>]` binds a reusable op list, elaborated
+    against `<Type>` as root. The name is declared as an `SpytialOps` constant,
+    so it namespaces and is reached through `open` and `export` like any other.
     ```
     spytial_ops quiet : Tree [hideAtom Nat]
     #spytial t with [..quiet, orientation left below]
-    ```
--/
+    ``` -/
 syntax (name := spytialOpsCmd) "spytial_ops " ident " : " ident " [" spytial_op,*,? "]" : command
 
 @[command_elab spytialOpsCmd]
@@ -727,20 +841,18 @@ meta def elabSpytialSpecDebug : CommandElab := fun
     let specStr ← liftTermElabM do
       let e ← elabTermInstantiated t
       let spec ← elabUseSiteOps e ops.getElems
-      -- The walk is only needed to resolve raw Lean selectors against the
-      -- datum. A spec without one renders identically without it, and skipping
-      -- it also skips asking each walked type for a `SpytialIdentity`.
+      -- the walk only resolves raw Lean selectors; skipping it also skips asking
+      -- each walked type for a `SpytialIdentity`
       if spec.hasLeanRel then
         let (di, prov, evidence) ← relationalizeWithEvidence e
-        return (← resolveLeanSelectors e di prov spec evidence).render
+        Lean.ofExcept (← resolveLeanSelectors e di prov spec evidence).render
       else
-        return spec.render
+        Lean.ofExcept spec.render
     logInfo m!"{specStr}"
   | stx => throwError "Unexpected syntax {stx}."
 
-/-- `#spytial.datum <term>` prints the generated data instance as JSON.
-    It shows the atoms and relations produced before any visualization and
-    accepts the same observations as `#spytial`. -/
+/-- `#spytial.datum <term>` prints the generated JSON data instance; it accepts
+    the same `observing` clause as `#spytial`. -/
 syntax (name := spytialDatumDebug) "#spytial.datum " term
   (" observing " "[" term,* "]")? : command
 
@@ -749,14 +861,7 @@ meta def elabSpytialDatumDebug : CommandElab := fun stx => do
   let (_, _, di, _, _) ← liftTermElabM <| elabRelationalized stx[1] {} (optionalTerms stx[2])
   logInfo m!"{(toJson di).pretty}"
 
-/-! ## Proof visualization -/
-
-/-- `#spytial.proof <term>` visualizes a proof term without filtering Prop-typed fields.
-    Unlike `#spytial` (data mode), this shows the full proof structure — sub-proofs,
-    premises, and witnesses are all included as nodes and edges.
-
-    Use `with [...]` to specify layout operations.
--/
+/-- `#spytial.proof <term>` draws a proof term without filtering Prop-typed fields. -/
 syntax (name := spytialProofCmd) "#spytial.proof " term (" with " "[" spytial_op,*,? "]")? : command
 
 @[command_elab spytialProofCmd]
@@ -779,8 +884,6 @@ meta def elabSpytialProofDatumDebug : CommandElab := fun
     let (_, _, di, _, _) ← liftTermElabM <| elabRelationalized t { filterProofs := false }
     logInfo m!"{(toJson di).pretty}"
   | stx => throwError "Unexpected syntax {stx}."
-
-/-! ## IYKYK-backed tactic mode -/
 
 private meta def resolveFyi (stx : Syntax) : TermElabM (Array Expr) := do
   if stx.getNumArgs == 0 then return #[]
@@ -818,7 +921,8 @@ private meta def spytialInContextProps? (subject : Expr)
   -- represented terms and checked evidence instead of reading display labels.
   let spec? ← spec?.mapM fun s =>
     liftM (resolveLeanSelectors view.datum view.data view.prov s view.evidence)
-  let props := spytialProps view.data (spec?.map SpytialSpec.render)
+  let props := spytialProps view.data
+    (← spec?.mapM fun s => Lean.ofExcept (SpytialSpec.render s))
   return (some (props.setObjVal! "inspection" (toJson view.inspection)), status)
 
 /-- Programmatic entry point for Spytial's IYKYK consumer. -/
@@ -890,28 +994,21 @@ meta def elabSpytialDatumTactic : Tactic := fun stx => withMainContext do
       logWarning "spytial: IYKYK reached an extraction limit; the datum may be incomplete"
 
 
-/-! ## Proof tactic -/
-
-/-- Leading parser for the `spytial.proof` tactic. A dotted atom never enters
-    the token table — the lexer reads `spytial.proof` as one qualified
-    identifier — so an atom-led rule can never fire; match the identifier by
-    value instead. `includeIdent := true` indexes the rule under the parser
-    table's ident bucket; without it the rule is never tried. (`#`-led command
-    atoms take the symbol path and are unaffected.) -/
+/-- A dotted atom never enters the token table — the lexer reads `spytial.proof`
+    as one qualified identifier — so an atom-led rule can never fire. Without
+    `includeIdent` the rule is not indexed under ident and is never tried. -/
 meta def spytialProofKw : Lean.Parser.Parser :=
   Lean.Parser.nonReservedSymbol "spytial.proof" (includeIdent := true)
 
 open Tactic in
-/-- `spytial.proof <term>` visualizes a proof term in tactic mode,
-    showing the full proof structure without filtering Prop-typed fields. -/
+/-- `spytial.proof <term>` is `#spytial.proof` in tactic mode. -/
 syntax (name := spytialProofTactic) spytialProofKw term
   (" with " "[" spytial_op,*,? "]")? : tactic
 
 open Tactic in
 @[tactic spytialProofTactic]
 meta def elabSpytialProofTactic : Tactic := fun stx => do
-  -- A quotation pattern would lex `spytial.proof` as one dotted ident and never
-  -- match; extract positionally.
+  -- a quotation pattern would lex `spytial.proof` as one dotted ident and never match
   let props ← withMainContext do
     spytialPayloadProps stx[1] (optionalOps stx[2]) { filterProofs := false }
   savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx

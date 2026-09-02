@@ -74,7 +74,7 @@ public class ToIdentityKey (α : Type u) where
 
 -- Every encoding has a meta twin in `MetaEncode.lean`, same order — the
 -- walker's no-eval mirror. Adding an instance here means adding its twin
--- there; the enumerating cross-check in `tests/IdentityWalkTest.lean` fails
+-- there; the enumerating cross-check in `SpytialTests/IdentityWalkTest.lean` fails
 -- on a drifted twin or a twin without a sample. A twin left unwritten only
 -- costs the eval fallback.
 

@@ -11,38 +11,21 @@ open Lean Meta
 
 /-! # The relationalizer
 
-Walks an elaborated expression into atoms and relations: give every subterm a
-fresh atom, then merge occurrences with the same identity — declared per type
-by `SpytialIdentity`, the atom table keyed on `(type, identity)` under
-confirmed structural equality, never bare `Expr.hash`. No instance ⇒ the
-walker derives one; `asWritten` declines. The `Raw`/`Viewed` wrappers shift the
-ambient mode for their subtree, recognized on the *pre-whnf* type head because
-`Meta.whnf` melts the semireducible wrappers. Observations are also recognized
+Walks an elaborated expression into atoms and relations: a fresh atom per
+subterm, then merging the occurrences whose `(type, identity)` agree, identity
+being declared per type by `SpytialIdentity`. Keys are compared under confirmed
+structural equality, never bare `Expr.hash`. Observations are recognized
 pre-whnf: their source-level computation slice becomes function-graph
-relations instead of implementation-level constructor structure.
-`referenceRelationalize` is a literal two-pass implementation (fresh atoms,
-then merge); the fused `walkExpr` is
-differentially tested against it. The two agree on the partition; when an
-identity is coarser than structural, the drawn representative may differ —
-the fused walker draws the first-walked occurrence. -/
+relations instead of constructor structure. -/
 
-/-- How subterms of a type decide identity, resolved once per type per walk
-    from its `SpytialIdentity` instance (see `resolveRoute`). -/
+/-- How subterms of a type decide identity, resolved once per type per walk.
+    The routes differ in cost: `structural` keys meta-side during the walk,
+    `classifier` costs one evaluation per closed subterm, `eqvRel` one compiled
+    comparison per existing group. -/
 public meta inductive IdentityRoute where
-  /-- No merging: every occurrence a fresh atom (node-local; children still
-      consult their own types in `declared` mode). Reached by declaring
-      `asWritten`, or when nothing could be derived. -/
   | noInstance
-  /-- The derived structural instance (verified: the instance that resolved
-      is the registered twin's): keys are computed meta-side during the walk,
-      eval only on a miss. -/
   | structural
-  /-- A non-derived classifier `.identity f`: one evaluation of `f e` per
-      closed subterm, memoized per subterm. -/
   | classifier (f : Expr)
-  /-- A decider `.eqv r` (or an instance whose presentation `whnf` cannot
-      expose, wrapped in `IdentityVia.toEqv`): one compiled comparison per
-      existing group of the type. -/
   | eqvRel (r : Expr)
   deriving Inhabited
 
@@ -58,16 +41,13 @@ public meta structure SelectorEvidence where
   proofs : Array Expr := #[]
   deriving Inhabited
 
-/-- State maintained while walking an expression tree. -/
 public meta structure WalkState where
   atoms : Array JsonAtom := #[]
-  /-- Map from relation name to accumulated tuples. -/
   relations : Std.HashMap String (Array String × Array JsonTuple) := {}
   nextId : Nat := 0
-  /-- Hole atoms, one per metavariable: occurrences of one `?m` are one hole
-      under every mode — substitution structure, not identity policy. -/
+  /-- One atom per metavariable, and one per free variable, under every mode:
+      substitution structure, not identity policy. -/
   mvarAtoms : Std.HashMap MVarId String := {}
-  /-- Hypothesis atoms, one per free variable, ditto. -/
   fvarAtoms : Std.HashMap FVarId String := {}
   /-- Exact named applications already emitted as function-graph points. This
       makes the result of `f x` in one graph tuple the same atom as the input
@@ -84,28 +64,17 @@ public meta structure WalkState where
       equations (`h₁ : x = y`, `h₂ : y = x`): a variable re-entered during its
       own refinement renders as the opaque leaf instead. -/
   refining : Std.HashSet FVarId := {}
-  /-- Memo-reconcile for custom relationalizers: a repeated occurrence resolves
-      to the id the relationalizer actually returned, never the discarded
-      pre-allocated one. Confirmed equality, not bare hash. -/
+  /-- A repeated occurrence resolves to the id the relationalizer returned,
+      never the discarded pre-allocated one. -/
   customSeen : ExprStructMap String := {}
-  /-- Identity route per whnf'd type: `synthInstance?` runs once per type per
-      walk. -/
   routeCache : ExprStructMap IdentityRoute := {}
-  /-- Meta-side structural keys per whnf'd subterm (`none` = not computable:
-      stuck non-literal, open child, or a dependency only evaluation could
-      key). -/
+  /-- `none` = no key computable (stuck non-literal, open child, or a
+      dependency only evaluation could key); failures are memoized too. -/
   metaKeyCache : ExprStructMap (Option IdentityKey) := {}
-  /-- `.identity f` results per closed subterm; failures are memoized too. -/
   evalKeyCache : ExprStructMap (Option IdentityKey) := {}
-  /-- The atom table: `(type, identity) → atom id`. -/
   identityAtoms : Std.HashMap (ExprStructEq × IdentityKey) String := {}
-  /-- `.eqv` group representatives per type: each new closed subterm costs one
-      compiled comparison per existing group. -/
   eqvGroups : ExprStructMap (Array (Expr × String)) := {}
-  /-- Exact-occurrence shortcut for `.eqv` types: a structurally identical
-      subterm rejoins its group without re-evaluating the relation. -/
   eqvSeen : ExprStructMap String := {}
-  /-- What each atom was walked from, for raw Lean selectors. -/
   provenance : Provenance := {}
   /-- One observation input per represented atom, including symbolic holes and
       custom roots. The first term for a merged atom is retained. -/
@@ -119,15 +88,12 @@ public meta structure WalkState where
   selectorTermIndex : Std.HashMap String (Array Expr) := {}
   /-- `r w w` per closed subterm on the `.eqv` route — see `identityVerdict`. -/
   eqvRefl : ExprStructMap Bool := {}
-  /-- Per-walk cache: whnf'd type → its `Repr` instance for leaf labels;
-      `none` records that the type declares none. -/
   reprInstCache : ExprStructMap (Option Expr) := {}
   /-- Whether a source expression contains a requested observation head.
       `walkExpr` asks this at nested named applications; caching prevents a
       chain of applications from rescanning every suffix. -/
   observationDependencyCache : ExprStructMap Bool := {}
 
-/-- Generate a fresh atom ID. -/
 public meta def WalkState.freshId (s : WalkState) : String × WalkState :=
   let id := s!"atom_{s.nextId}"
   (id, { s with nextId := s.nextId + 1 })
@@ -155,7 +121,6 @@ public meta def WalkState.freshApplicationLabel (s : WalkState) : String × Walk
   (applicationLabel s.nextApplicationLabel,
     { s with nextApplicationLabel := s.nextApplicationLabel + 1 })
 
-/-- Register an atom in the state. -/
 public meta def WalkState.addAtom (s : WalkState) (atom : JsonAtom) : WalkState :=
   { s with atoms := s.atoms.push atom }
 
@@ -180,25 +145,22 @@ private meta def rememberObservationTerm (enabled : Bool) (term : Expr) (atomId 
       else { state with observationTerms := state.observationTerms.push (term, atomId) }
   else pure ()
 
-/-- Add a tuple to a relation, creating the relation if needed. -/
 public meta def WalkState.addTuple (s : WalkState) (relName : String) (types : Array String)
     (tuple : JsonTuple) : WalkState :=
   let existing := s.relations.getD relName (types, #[])
   { s with relations := s.relations.insert relName (existing.1, existing.2.push tuple) }
 
-/-- Register a relation with no tuples, so an empty extension still appears. -/
+/-- Registered with no tuples, so an empty extension still appears. -/
 public meta def WalkState.addRelation (s : WalkState) (relName : String)
     (types : Array String) : WalkState :=
   if s.relations.contains relName then s
   else { s with relations := s.relations.insert relName (types, #[]) }
 
-/-- Convert accumulated state to ordinary extracted data. -/
 public meta def WalkState.toDataInstance (s : WalkState) : JsonDataInstance :=
   let relations := s.relations.toArray.map fun (name, types, tuples) =>
     { id := name, name := name, types := types, tuples := tuples : JsonRelation }
   { atoms := s.atoms, relations := relations }
 
-/-- Configuration for the expression walker. -/
 public meta structure WalkConfig where
   /-- When true, skip Prop-typed fields (data mode). When false, show them (proof mode). -/
   filterProofs : Bool := true
@@ -230,8 +192,7 @@ public meta structure WalkConfig where
   shareSymbolicValues : Bool := false
   /-- Retain term-to-atom associations for Lean predicate selectors. -/
   recordSelectorTerms : Bool := false
-  /-- Largest domain product a function tabulates into; over it, the function
-      stays a leaf. -/
+  /-- Over this, the function stays a leaf instead of tabulating. -/
   maxTableTuples : Nat := 512
   /-- Equational refinements: a hypothesis variable in this map draws the term
       it is known equal to (`h : x = t` in a proof state) instead of an opaque
@@ -260,41 +221,30 @@ public meta def refinementIsCyclic (refinements : Std.HashMap FVarId Expr)
     (variableId : FVarId) : Bool :=
   refinementReaches refinements variableId variableId
 
-/-- The ambient walk mode. Identity is per-type and declared; the mode is
-    per-subtree — it decides only whether declarations are consulted at all. -/
+/-- Identity is per-type and declared; the mode is per-subtree, and decides
+    only whether declarations are consulted at all. `asWritten` is hereditary
+    until a `Viewed` shifts back. -/
 public meta inductive WalkMode where
-  /-- Resolve `SpytialIdentity τ` for each closed subterm, deriving one where
-      the type declares none. The default. -/
   | declared
-  /-- No instance consultation at all; every occurrence fresh. Hereditary —
-      "as written" is a property of a whole term — until a `Viewed` shifts
-      back. -/
   | asWritten
   deriving BEq, Repr, Inhabited
 
-/-- Per-subtree walk context: threaded as an argument, so subtree scoping of
-    the mode and the pop-on-exit of the unfold guard hold by construction. -/
+/-- Threaded as an argument, so subtree scoping of the mode and the pop-on-exit
+    of the unfold guard hold by construction. -/
 public meta structure WalkCtx where
   mode : WalkMode := .declared
-  /-- The unfold guard: ancestor subterms (post-whnf) with their atom ids —
-      push-on-entry, pop-on-exit — so runaway whnf unfolding of recursive
-      definitions terminates as an explicit cycle edge. Confirmed structural
-      equality only, never bare hash. -/
+  /-- Ancestor subterms with their atom ids, so runaway whnf unfolding of a
+      recursive definition terminates as an explicit cycle edge. -/
   ancestors : Array (Expr × String) := #[]
 
-/-- Whether an argument is erased at runtime — a proof or a type. -/
 public meta def isProofArg (e : Expr) : MetaM Bool := do
   isProofLikeType (← inferType e)
 
-/-- A custom relationalizer function.
-    Receives the expression to decompose and the default walker for recursion. -/
 @[expose] public meta def CustomRelationalizer :=
   Expr → (Expr → StateT WalkState MetaM String) → StateT WalkState MetaM String
 
-/-- Maps a type name to the name of the `CustomRelationalizer` def registered for it.
-    An env extension is serialized into the `.olean`, so registrations made in one
-    module are visible wherever it is imported; storing the def's *name* rather than
-    its value is what keeps the entries serializable. -/
+/-- Stores the def's *name*, not its value: that is what keeps the entries
+    serializable into the `.olean`. -/
 public meta initialize spytialRelationalizerExt :
     SimplePersistentEnvExtension (Name × Name) (Std.HashMap Name Name) ←
   registerSimplePersistentEnvExtension {
@@ -331,28 +281,18 @@ public meta unsafe def getSpytialRelationalizerImpl (typeName : Name) :
   spytialRelationalizerCache.modify (·.insert declName (bodyHash, fn))
   return some fn
 
-/-- Look up the custom relationalizer registered for a type name, if any. Reads the
-    persistent name registry, then evaluates the named def (memoized per process). -/
 @[implemented_by getSpytialRelationalizerImpl]
 public meta opaque getSpytialRelationalizer? (typeName : Name) : MetaM (Option CustomRelationalizer)
 
-/-! ## Identity resolution
+/-! ## Identity resolution -/
 
-Three ways a type's identity is computed, per its instance: a derived type's
-generated meta twin computes it meta-side (no `evalExpr`; a miss falls back
-to one evaluation of the compiled classifier); a non-derived classifier costs
-one evaluation per closed subterm; a decider costs one compiled comparison
-per existing group. Open subterms have no value, hence no identity: fresh
-atoms, node-local. -/
-
-/-- Open subterms have no value, hence no identity — they stay as written. -/
+/-- An open subterm has no value, hence no identity: it stays as written. -/
 public meta def isClosedValue (e : Expr) : Bool :=
   !e.hasFVar && !e.hasMVar && !e.hasLevelParam && !e.hasSorry
 
-/-- Shift the ambient mode for `Raw`/`Viewed` wrappers spelled in `ty`.
-    `whnfR` sees through reducible abbreviations but not the semireducible
-    wrappers themselves; peeling recurses so the innermost wrapper wins
-    (`Raw (Viewed τ)` walks `declared`). -/
+/-- Called on the *pre-whnf* type: `whnf` melts the semireducible wrappers, and
+    `whnfR` sees through reducible abbreviations but not the wrappers
+    themselves. Peeling recurses, so the innermost wrapper wins. -/
 private meta partial def shiftForWrappers (mode : WalkMode) (ty : Expr) : MetaM WalkMode := do
   let ty ← whnfR ty
   if ty.isAppOfArity ``Raw 1 then
@@ -550,14 +490,11 @@ private meta def hasOpaqueBarrier (e : Expr) : MetaM Bool := do
     if env.find? c matches some (.opaqueInfo _) then return true
   return false
 
+/-- `reuse` also means: do not walk the children again. -/
 private meta inductive IdVerdict where
-  /-- Merged into an existing atom: reuse its id, do not walk children. -/
   | reuse (id : String)
-  /-- First occurrence of a keyed identity: allocate, then `registerIdentity`. -/
   | keyed (tyKey : Expr) (k : IdentityKey)
-  /-- First member of a new `.eqv` group: allocate, then `registerIdentity`. -/
   | grouped (tyKey : Expr)
-  /-- No identity participation: fresh atom. -/
   | fresh
 
 /-- Normalize local aliases and natural-literal encodings for contextual
@@ -586,10 +523,9 @@ private meta def symbolicValueKey? (cfg : WalkConfig) (mode : WalkMode) (e tyKey
   | .structural | .classifier _ => return some (← normalizeReferenceTerm e)
   | .noInstance | .eqvRel _ => return none
 
-/-- Decide how a closed, `declared`-mode subterm participates in identity.
-    Pure lookup/eval + memoization; allocation and registration are the
-    caller's (so the fused walker and the reference merge pass share exactly
-    this decision procedure). -/
+/-- Lookup and memoization only; allocation and registration are the caller's,
+    so the fused walker and the reference merge pass can share this one
+    decision procedure. -/
 private meta def identityVerdict (tyKey e : Expr) : StateT WalkState MetaM IdVerdict := do
   match ← resolveRoute tyKey with
   | .noInstance => return .fresh
@@ -682,14 +618,12 @@ private meta def registerIdentity (v : IdVerdict) (e : Expr) (atomId : String) :
 
 /-! ## The walk -/
 
-/-- Hole handling, shared by the fused walker and the reference: an unassigned
-    metavariable or an opaque hypothesis has no structure to decompose, so it
-    renders as a leaf that keeps its structural atom type (a `Tree`-shaped
-    hole still occupies a `Tree` slot, so `Tree` specs apply). One atom per
-    metavariable/hypothesis, under every mode. Must short-circuit *before*
-    custom-relationalizer dispatch — a value decomposer must never be handed a
-    bare hole of its target type. A variable with an entry in
-    `cfg.refinements` is not opaque: it draws the shape IYKYK established. -/
+/-- A hole renders as a leaf but keeps its structural atom type, so a
+    `Tree`-shaped hole still occupies a `Tree` slot and `Tree` specs apply.
+    Must short-circuit *before* custom-relationalizer dispatch: a value
+    decomposer must never be handed a bare hole of its target type. A variable
+    with an entry in `cfg.refinements` is not opaque: it draws the shape IYKYK
+    established. -/
 private meta def holeAtom? (cfg : WalkConfig) (recurse : Expr → StateT WalkState MetaM String)
     (e ty : Expr) : StateT WalkState MetaM (Option String) := do
   match e with
@@ -1120,10 +1054,9 @@ private meta def walkComputed? (cfg : WalkConfig) (e : Expr)
     { state with applicationAtoms := state.applicationAtoms.insert ⟨e⟩ resultId }
   return some resultId
 
-/-- Emit `relName` as the flat table over the enumerable domain product;
-    report whether it fired. A data codomain gives `(owner, d₁, …, dₖ,
-    result)`; a `Prop` codomain has no result column — a tuple exactly where
-    the proposition decides true. -/
+/-- A data codomain gives `(owner, d₁, …, dₖ, result)`; a `Prop` codomain has no
+    result column, and emits a tuple exactly where the proposition decides
+    true. -/
 private meta def tabulate? (cfg : WalkConfig) (recurse : Expr → StateT WalkState MetaM String)
     (relName ownerSig ownerId : String) (value : Expr) : StateT WalkState MetaM Bool := do
   let some plan ← tabulationPlan? (← inferType value) | return false
@@ -1216,10 +1149,9 @@ private meta def leafLabel (e tyKey : Expr) : StateT WalkState MetaM String := d
         pure ()
   ppLabel e
 
-/-- Emit the atom for `e` (already whnf'd; id already allocated) and walk its
-    children through `recurse` — the display dispatch shared by the fused
-    walker and the two-pass reference. `recurse` closes over the child walk
-    context (ambient mode, unfold-guard ancestors). -/
+/-- The display dispatch shared by the fused walker and the two-pass reference.
+    `e` is already whnf'd and `atomId` already allocated; `recurse` closes over
+    the child walk context. -/
 private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkState MetaM String)
     (e ty tyKey : Expr) (origName : Option Name) (atomId : String)
     (forceFunctionGraph : Bool := false) :
@@ -1231,38 +1163,31 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
       modify fun s => s.addAtom { id := atomId, type := typeName, label := label }
     return
   match e with
-  -- Nat literal
   | .lit (.natVal n) =>
     modify fun s => s.addAtom { id := atomId, type := "Nat", label := toString n }
 
-  -- String literal
   | .lit (.strVal str) =>
     modify fun s => s.addAtom { id := atomId, type := "String", label := s!"\"{str}\"" }
 
-  -- Lambda — tabulate over an enumerable domain, otherwise labeled node
   | .lam binderName _ _ _ => do
     let typeName ← sigOfType ty
     let label := match origName with
       | some n => shortName n
       | none => s!"λ {binderName}"
     modify fun s => s.addAtom { id := atomId, type := typeName, label := label }
-    -- no owning field here, so the function itself is column 0
+    -- No owning field here, so the function itself is column 0.
     let _ ← tabulate? cfg recurse "maps" typeName atomId e
 
   | _ => do
-    -- Try to get the type name
     let typeName ← sigOfType ty
 
-    -- Check if it's an application of a constructor
     match e.getAppFn with
     | .const fnName _ => do
       let env ← getEnv
-      -- Is it a constructor?
       if let some (.ctorInfo ci) := env.find? fnName then
         let ctorShortName := shortName fnName
         modify fun s => s.addAtom { id := atomId, type := typeName, label := ctorShortName }
         let binderNames := ctorDataBinderNames ci
-        -- Process data arguments (skip type and proof parameters)
         let args := e.getAppArgs
         let dataArgs := args.extract ci.numParams args.size
         for i in [:dataArgs.size] do
@@ -1273,8 +1198,8 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
             unless ← tabulate? cfg recurse fieldName typeName atomId arg do
               let childId ← recurse arg
               let types := #[typeName, ← columnSig typeName arg]
-              let tuple := { atoms := #[atomId, childId], types := types }
-              modify fun state => state.addTuple fieldName types tuple
+              modify fun s => s.addTuple fieldName types
+                { atoms := #[atomId, childId], types := types }
       -- stuck match (iota can't fire on a hole/hypothesis discriminant):
       -- ternary scrutinee edges; motive and alternatives are plumbing
       else if let some minfo := getMatcherInfoCore? env fnName then
@@ -1329,26 +1254,13 @@ private meta def withSelectorTerm (cfg : WalkConfig) (term : Expr)
     modify fun state => state.rememberSelectorTerm term atomId
   return atomId
 
-/-- Walk a Lean expression and produce atoms + relations.
-    Returns the atom ID assigned to this expression.
-
-    Merging: in `declared` mode, each closed subterm's type resolves
-    `SpytialIdentity`; subterms with the same `(type, identity)` are one atom,
-    and a repeated identity returns the existing atom without re-walking the
-    subtree (the first-walked occurrence is the drawn representative). An
-    `asWritten` type, a refused derivation, an open subterm, meta-key failure,
-    or eval failure ⇒ a fresh atom, node-local. In `asWritten` mode no
-    instance is consulted at all;
-    `Raw`/`Viewed` shift the mode for their subtree. -/
+/-- Returns the atom id for `e`. A repeated identity returns the existing atom
+    without re-walking the subtree, so the first-walked occurrence is the drawn
+    representative. -/
 public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
     (ctx : WalkCtx := {}) : StateT WalkState MetaM String := withSelectorTerm cfg eOrig do
-  -- Save original name before WHNF unfolds it
+  -- Before whnf unfolds it.
   let origName := eOrig.getAppFn.constName?
-  -- Raw/Viewed shift the ambient mode; recognized on the pre-whnf type because
-  -- whnf melts the semireducible wrappers (which is also why no wrapper atom
-  -- is ever emitted). A wrapper value that is not a literal `mk` application
-  -- (a hole, a hypothesis) falls through to the as-written rendering of
-  -- what's there.
   let mode ← shiftForWrappers ctx.mode (← Meta.inferType eOrig)
   if let some id ← walkComputed? cfg eOrig
       (fun nested value => walkExpr nested value { ctx with mode }) then return id
@@ -1358,18 +1270,13 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
   -- application; only other expressions WHNF to expose data constructors.
   let sourceFunctionGraph := (← observedGraphSideCached? cfg eOrig).isSome
   let e ← if sourceFunctionGraph then pure eOrig else Meta.whnf eOrig
-  -- Unfold guard: ancestors only (push-on-entry; pop-on-exit holds by
-  -- construction, the array lives in the per-call ctx), confirmed structural
-  -- equality — a self-similar unfolding terminates as an explicit cycle edge.
   if let some (_, ancestorId) := ctx.ancestors.find? (fun (a, _) => a.equal e) then
     return ancestorId
   let ty ← Meta.inferType e
-  -- Open-value holes: one atom per metavariable/hypothesis, under every mode.
   if let some id ← holeAtom? cfg (fun c => walkExpr cfg c { mode, ancestors := ctx.ancestors })
       e ty then
     rememberObservationTerm (cfg.recordTerms || !cfg.observations.isEmpty) e id
     return id
-  -- Custom relationalizer wins over any identity instance.
   let tyKey ← Meta.whnf ty
   let isFunctionGraph := sourceFunctionGraph ||
     (cfg.functionGraphs && (← graphSide? e).isSome)
@@ -1391,7 +1298,6 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
     if let some id := (← get).symbolicAtoms[(⟨key⟩ : ExprStructEq)]? then
       rememberObservationTerm (cfg.recordTerms || !cfg.observations.isEmpty) e id
       return id
-  -- The identity decision (declared mode, closed subterms only).
   let verdict ←
     if !isFunctionGraph && mode == .declared && isClosedValue e then identityVerdict tyKey e
     else pure .fresh
@@ -1408,8 +1314,7 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
       | some key => s.symbolicAtoms.insert ⟨key⟩ atomId
       | none => s.symbolicAtoms }
   -- Register before walking children, so a re-occurrence inside the subtree
-  -- (sharing, or a quotient collapsing a child into its parent) resolves to
-  -- this atom.
+  -- resolves to this atom.
   registerIdentity verdict e atomId
   emitNode cfg (fun c => walkExpr cfg c { mode, ancestors := ctx.ancestors.push (e, atomId) })
     e ty tyKey origName atomId sourceFunctionGraph
@@ -1489,13 +1394,9 @@ public meta def addActiveDomainObservations (cfg : WalkConfig)
       let some application ← liftM <| instantiateObservationAt? observation value | continue
       addObservation cfg application application #[value] #[(value, atomId)]
 
-/-- Walk an expression and produce a complete data instance, keeping the
-    subterm each atom was walked from (see `Provenance`).
-
-    `withoutModifyingEnv` because the walk derives instances: persisting them
+/-- `withoutModifyingEnv` because the walk derives instances: persisting them
     would let two modules that draw the same third-party type mint the same
-    instance name, and importing both would fail. The result is plain data, so
-    nothing outlives the rollback. -/
+    instance name, and importing both would fail. -/
 public meta def relationalizeWithEvidence (e : Expr) (cfg : WalkConfig := {})
     (observations : Array Expr := #[]) :
     MetaM (JsonDataInstance × Provenance × SelectorEvidence) :=
@@ -1526,33 +1427,22 @@ public meta def relationalize (e : Expr) (cfg : WalkConfig := {})
 
 /-! ## Two-pass reference implementation
 
-The spec, implemented literally: a fresh-atom walk (the as-written machinery,
-holes and custom relationalizers included), then a merge pass grouping
-occurrences by `(type, identity)` computed by the *same* three-way decision
-procedure (`identityVerdict`). Merged-away occurrences drop their outgoing
-edges and orphaned atoms are collected, because the fused walker never
-re-walks a merged subtree. Lives here so tests can import it; it is not on
-any hot path. -/
+The spec implemented literally, as the differential oracle `walkExpr` is tested
+against. It shares `identityVerdict`, so only the fusion is under test. Not on
+any hot path; it lives here so tests can import it. -/
 
-/-- One pass-1 atom with what the merge pass needs to decide its identity. -/
 private meta structure RefRecord where
   atomId : String
-  /-- The subterm, post-whnf. -/
   expr : Expr
-  /-- Its whnf'd elaborated type. -/
   tyKey : Expr
-  /-- The ambient mode at this node. -/
   mode : WalkMode
   /-- Function-graph points never participate in value-identity merging. -/
   functionGraph : Bool
 
-/-- The literal two-pass renderer: returns the root atom id and the data
-    instance. Differential oracle target for `walkExpr`. -/
 public meta partial def referenceRelationalize (e : Expr) (cfg : WalkConfig := {}) :
     MetaM (String × JsonDataInstance) := do
   let records ← IO.mkRef (#[] : Array RefRecord)
-  -- Pass 1: every subterm a fresh atom; modes, holes, the unfold guard, and
-  -- custom relationalizers behave exactly as in the fused walker.
+  -- Pass 1: every subterm a fresh atom.
   let rec refWalk (cfg : WalkConfig) (eOrig : Expr) (ctx : WalkCtx) :
       StateT WalkState MetaM String := do
     let origName := eOrig.getAppFn.constName?
@@ -1592,9 +1482,9 @@ public meta partial def referenceRelationalize (e : Expr) (cfg : WalkConfig := {
       e ty tyKey origName atomId sourceFunctionGraph
     return atomId
   let (rootId, s) ← (refWalk cfg e {}).run {}
-  -- Pass 2: group occurrences by (type, identity), first occurrence the
-  -- representative. Runs in the pass-1 state so atom ids stay consistent;
-  -- the identity tables are still empty (pass 1 never consulted them).
+  -- Pass 2: group by (type, identity), first occurrence the representative.
+  -- Runs in the pass-1 state so atom ids stay consistent; the identity tables
+  -- are still empty, pass 1 never having consulted them.
   let recs ← records.get
   let (union, _) ← StateT.run (s := s) do
     let mut union : Std.HashMap String String := {}

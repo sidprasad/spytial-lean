@@ -49,29 +49,26 @@ public meta def fieldRelName (ctorShort : String) (binderNames : Array Name) (i 
   else
     s!"{ctorShort}_{i}"
 
-/-- The label the relationalizer assigns to a hole (an unassigned metavariable):
-    `?` when anonymous, `?name` for a user-named hole. Macro-scoped names count as
-    anonymous — they are synthetic, not something the user wrote. -/
+/-- Macro-scoped names count as anonymous: they are synthetic, not something the
+    user wrote. -/
 public meta def holeLabel (userName : Name) : String :=
   if userName.isAnonymous || userName.hasMacroScopes then "?"
   else s!"?{userName}"
 
-/-- The label the relationalizer assigns to a hypothesis (`fvar`) leaf: its user name
-    with macro scopes erased (so inaccessible names render without the dagger),
-    falling back to `?` for genuinely anonymous binders. -/
+/-- Macro scopes are erased so that inaccessible names render without the
+    dagger. -/
 public meta def hypLabel (userName : Name) : String :=
   let n := userName.eraseMacroScopes
   if n.isAnonymous then "?" else toString n
 
-/-- Whether the walker erases a value of this type — proofs (`Prop`) and types
-    (`Sort`) — and so drops fields of it. -/
+/-- The walker erases values of these types, and so drops fields of them. -/
 public meta def isProofLikeType (ty : Expr) : MetaM Bool := do
   return (← Meta.isProp ty) || ty.isSort
 
 /-! ## Context-fact naming
 
-Names the relational walker can emit, shared with the context consumer so its
-selector scope predicts exactly what the resulting data contains. -/
+Shared with the context consumer, so its selector scope predicts what the
+walker emits. -/
 
 /-- The canonical relation name for a Lean application head: a constant's
     short name or a local relation's user name. -/
@@ -96,10 +93,7 @@ public meta def propRelName? (head : Expr) : MetaM (Option String) := do
   | .const ``Ne _ => return none
   | _ => relationHeadName? head
 
-/-! ## Function tabulation
-
-Shared with the static checkers, so a predicted relation cannot drift from an
-emitted one. -/
+/-! ## Function tabulation -/
 
 /-- `ppExpr` may qualify a constructor; a diagram label wants the short name. -/
 private meta def elemLabel (e : Expr) : MetaM String := do

@@ -14,7 +14,7 @@ The walker holds `Expr`s, and `toKey` cannot see one, so each encoding has a
 meta twin computing the same key from a closed value's `Expr` without
 evaluation. The twins mirror `Identity.lean`'s instances one-to-one, in
 order; agreement is pinned byte-for-byte by the enumerating cross-check in
-`tests/IdentityWalkTest.lean`, and the walker falls back to evaluating the
+`SpytialTests/IdentityWalkTest.lean`, and the walker falls back to evaluating the
 compiled classifier where a twin is missing or stuck — slower, never wrong. -/
 
 /-- `some n` for a value of type `Nat`, without evaluating through opacity

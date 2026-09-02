@@ -89,9 +89,17 @@ target widgetJsAll pkg : Unit := do
     |>.mix (← widgetTsconfig.fetch)
   pkg.afterBuildCacheAsync do
   inputs.mapM fun _ => do
+    let sgqManifest := pkg.dir / "node_modules" / "simple-graph-query" /
+      "docs" / "sgq-language.json"
+    let spytialManifest := pkg.widgetDir / "node_modules" / "spytial-core" /
+      "docs" / "spytial-language.json"
+    let depsMissing := !(← sgqManifest.pathExists) || !(← spytialManifest.pathExists)
+    if depsMissing then
+      pkg.runPnpmCommand #["install", "--frozen-lockfile"]
     let traceFile := pkg.buildDir / "js" / "lake.trace"
     buildUnlessUpToDate traceFile (← getTrace) traceFile do
-      pkg.runPnpmCommand #["install", "--frozen-lockfile"]
+      unless depsMissing do
+        pkg.runPnpmCommand #["install", "--frozen-lockfile"]
       pkg.runPnpmCommand #["-C", widgetDir.toString, "run", "build"]
     -- the job's trace is the built JS itself, so out-of-band rebuilds re-embed
     setTrace (← computeTrace (pkg.buildDir / "js" / "spytialWidget.js"))
@@ -122,25 +130,46 @@ target renderHarnessJs pkg : Unit := do
     buildUnlessUpToDate harnessJs (← getTrace) (pkg.buildDir / "renderHarness.trace") do
       pkg.runPnpmCommand #["-C", renderDir.toString, "run", "build:render-harness"]
 
+/-! ## Files read at elaboration time
+
+Lean's import graph sees only imports, so a file a module reads while it
+elaborates (`include_str`, `IO.FS.readFile`) is invisible to the build:
+editing it leaves a stale olean. Each such file is traced here and listed in
+the reading library's `needs`. Both live under node_modules, which exists
+only after `widgetJsAll`'s pnpm install — a plain `input_file` races it and
+fails a fresh checkout's first build. Sequencing after `widgetJsAll` is
+free: the library already waits on it for the JS embed. -/
+
+target sgqManifest pkg : Unit := do
+  (← widgetJsAll.fetch).mapM fun _ => do
+    addTrace (← computeTrace (pkg.dir / "node_modules" / "simple-graph-query" /
+      "docs" / "sgq-language.json"))
+
+target spytialManifest pkg : Unit := do
+  (← widgetJsAll.fetch).mapM fun _ => do
+    addTrace (← computeTrace (pkg.widgetDir / "node_modules" / "spytial-core" /
+      "docs" / "spytial-language.json"))
+
+/-- `SpytialTests/SelectorLoweringTest.lean`'s golden. -/
+input_file sgqLoweringGolden where
+  path := "SpytialTests" / "SelectorLoweringTest.golden.tsv"
+  text := true
+
 @[default_target]
 lean_lib SpytialLean where
-  needs := #[widgetJsAll]
+  needs := #[widgetJsAll, sgqManifest, spytialManifest]
+
+/-! Both libraries glob their directory, so a file added there is built without
+    an edit here. Neither has a root module: nothing imports a demo or a test. -/
 
 lean_lib Demos where
-  srcDir := "demos"
-  roots := #[`Showcase, `ProofFieldFiltering, `FunctionFields, `TypeClassInstances,
-             `CustomRelationalizer, `ProofTerms, `HoareLogic, `OperationalSemantics,
-             `PartialTerms, `BDD, `Automata, `LeanSelectors, `ProgramKnowledge, `AVL,
-             `UnionFind]
+  globs := #[.submodules `Demos]
   needs := #[widgetJsAll]
 
 /-- Headless unit tests: `lake build SpytialTests`. -/
 lean_lib SpytialTests where
-  srcDir := "tests"
-  roots := #[`WalkCanon, `TypeShapeTest, `CoverageTest, `TacticTest, `SelectorTest,
-             `LeanSelectorTest, `IdentityTest, `IdentityWalkTest, `RelationShapeTest,
-             `InContextTest, `ContextInspectionTest, `KnowledgeSelectorFixture,
-             `KnowledgeSelectorTest]
+  globs := #[.submodules `SpytialTests]
+  needs := #[sgqLoweringGolden]
 
 require proofwidgets from
   git "https://github.com/leanprover-community/ProofWidgets4" @ "v0.0.105"

@@ -101,5 +101,5 @@ This behavior belongs to Spytial's Lean relationalizer. IYKYK supplies checked
 context facts; it does not need a new inference mechanism to evaluate a
 requested function application. No new `observing` option is required.
 
-Regressions live in `tests/ContextInspectionTest.lean`, `tests/InContextTest.lean`,
-and `tests/TacticTest.lean`.
+Regressions live in `SpytialTests/ContextInspectionTest.lean`,
+`SpytialTests/InContextTest.lean`, and `SpytialTests/TacticTest.lean`.

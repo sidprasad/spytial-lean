@@ -72,7 +72,7 @@ public section
 
 /-- Dump the `cndSpec` the widget actually receives, so the deferred
     resolution of an attached spec is what gets tested — not a re-render. -/
-syntax (name := wireSpecCmd) "#wire_spec " term : command
+syntax (name := payloadSpecCmd) "#payload_spec " term : command
 
 /-- `#spytial.spec`, with source-stamp lines masked (`maskLines`). -/
 syntax (name := maskedSpecCmd) "#masked_spec " term " with "
@@ -80,9 +80,9 @@ syntax (name := maskedSpecCmd) "#masked_spec " term " with "
 
 end
 
-@[command_elab wireSpecCmd]
-public meta def elabWireSpec : CommandElab := fun
-  | `(#wire_spec $t:term) => do
+@[command_elab payloadSpecCmd]
+public meta def elabPayloadSpec : CommandElab := fun
+  | `(#payload_spec $t:term) => do
     let props ← liftTermElabM <| spytialPayloadProps t
     logInfo (maskLines s!"{props.getObjValD "cndSpec"}")
   | stx => throwError "Unexpected syntax {stx}."
@@ -91,45 +91,39 @@ public meta def elabWireSpec : CommandElab := fun
 public meta def elabMaskedSpec : CommandElab := fun
   | `(#masked_spec $t:term with [$ops,*]) => do
     let props ← liftTermElabM <| spytialPayloadProps t (some (ops.getElems))
-    -- `cndSpec` is the rendered spec as a JSON string; unwrap it so the
-    -- golden reads as the spec, not as an escaped one-liner.
+    -- unwrap the JSON string so the golden reads as the spec, not as an
+    -- escaped one-liner
     logInfo (maskLines <| match props.getObjValD "cndSpec" with
       | .str spec => spec
       | j => toString j)
   | stx => throwError "Unexpected syntax {stx}."
 
-/-! ## Arity 1
-
-A predicate resolves to the atoms it selects — the extensional form
-spytial-core resolves by atom id. -/
+/-! ## Arity 1: a predicate resolves to the atoms it selects, extensionally,
+by atom id -/
 
 /-- info: {"constraints": [{"hideAtom": {"selector": "`atom_3"}}]} -/
 #guard_msgs in
 #spytial.spec lSmall with [hideAtom lean (fun n : LRB => n matches .nil)]
 
--- A `Prop`-valued predicate goes through `Decidable`, not compiled `Bool`.
+-- a `Prop`-valued predicate goes through `Decidable`, not compiled `Bool`
 /-- info: {"constraints": [{"hideAtom": {"selector": "`atom_1"}}]} -/
 #guard_msgs in
 #spytial.spec lSmall with [hideAtom lean (fun c : LHue => c = LHue.black)]
 
--- The argument type fixes the sig the column ranges over, so scalar atoms are
--- reachable like any other.
+-- the argument type fixes the sig the column ranges over, so scalars are reachable
 /-- info: {"constraints": [{"hideAtom": {"selector": "`atom_2"}}]} -/
 #guard_msgs in
 #spytial.spec lSmall with [hideAtom lean (fun k : Nat => k > 0)]
 
--- A `def` reads the same as a lambda.
 /-- info: {"constraints": [{"hideAtom": {"selector": "`atom_0"}}]} -/
 #guard_msgs in
 #spytial.spec lSmall with [hideAtom lean (LRB.isBlack)]
 
--- Resolution happens before lowering, so a resolved selector composes with the
--- relational DSL like any other expression.
 /-- info: {"constraints": [{"hideAtom": {"selector": "`atom_3 + LHue"}}]} -/
 #guard_msgs in
 #spytial.spec lSmall with [hideAtom lean (fun n : LRB => n matches .nil) + LHue]
 
--- An empty selection is `none`, not an empty union.
+-- an empty selection is `none`, not an empty union
 /-- info: {"constraints": [{"hideAtom": {"selector": "none"}}]} -/
 #guard_msgs in
 #spytial.spec lSmall with [hideAtom lean (fun _ : LHue => false)]
@@ -197,7 +191,7 @@ info: {"directives":
      n matches .node .red _ _ _ && h == .black && k > 1)]
 
 -- The arity reaches the op's position check, so a mismatch is still an error.
-/-- error: this position selects atoms (arity 1), but the selector has arity 2 -/
+/-- error: this position accepts a selector of arity 1, but this one has arity 2 -/
 #guard_msgs in
 #spytial.spec lBig with [hideAtom lean (fun p c : LRB => p.lt == c)]
 
@@ -270,7 +264,7 @@ info: {"constraints":
 #spytial.spec lBig with
   [orientation lean ((⟨fun t => [(t, t.lt)]⟩ : Spytial.Sel LRB (LRB × LRB))) below]
 
-/-- error: this position selects atoms (arity 1), but the selector has arity 2 -/
+/-- error: this position accepts a selector of arity 1, but this one has arity 2 -/
 #guard_msgs in
 #spytial.spec lBig with
   [hideAtom lean ((⟨fun t => [(t, t)]⟩ : Spytial.Sel LRB (LRB × LRB)))]
@@ -316,7 +310,7 @@ spytial_spec LRB [
 info: "{\"directives\":\n [{\"atomStyle\": {\"selector\": \"`atom_0\", \"borderStyle\": {\"color\": \"black\"}}}],\n \"constraints\": [{\"hideAtom\": {\"selector\": \"`atom_3\"}}]}"
 -/
 #guard_msgs in
-#wire_spec lSmall
+#payload_spec lSmall
 
 -- An inherited spec: `lookupTypeSpec` composes a parent structure's spec
 -- into a child render, so a parent's `Sel` applies to the child's parent
@@ -334,14 +328,14 @@ spytial_spec LBase [hideAtom lean ((⟨fun b => [b.tag]⟩ : Spytial.Sel LBase N
 info: "{\"constraints\": [{\"hideAtom\": {\"selector\": \"`atom_2\"}}]}"
 -/
 #guard_msgs in
-#wire_spec (LExt.mk ⟨7⟩ 9)
+#payload_spec (LExt.mk ⟨7⟩ 9)
 
 -- Same stored spec, different value: `isBlack` now picks the interior node.
 /--
 info: "{\"directives\":\n [{\"atomStyle\": {\"selector\": \"`atom_3\", \"borderStyle\": {\"color\": \"black\"}}}],\n \"constraints\": [{\"hideAtom\": {\"selector\": \"`atom_6\"}}]}"
 -/
 #guard_msgs in
-#wire_spec lBig
+#payload_spec lBig
 
 /-! ## Rejections -/
 
@@ -359,17 +353,29 @@ info: {"constraints": [{"hideAtom": {"selector": "none"}}]}
 #guard_msgs in
 #spytial.spec lSmall with [hideAtom lean (fun _ : Float => true)]
 
--- Lean's own error, and only Lean's error: no follow-on complaint about the
--- holes in the recovery term.
+-- Lean's own error says what went wrong; the warning says what the op does
+-- about it. No follow-on complaint about the holes in the recovery term.
 /--
 error: Invalid field `nosuchfield`: The environment does not contain `LRB.nosuchfield`, so it is not possible to project the field `nosuchfield` from an expression
   n
 of type `LRB`
 ---
+warning: this term carries a sorry, so the op selects nothing at render
+---
 info: {"constraints": [{"hideAtom": {"selector": "none"}}]}
 -/
 #guard_msgs in
 #spytial.spec lSmall with [hideAtom lean (fun n : LRB => n.nosuchfield)]
+
+-- A written `sorry` takes the same recovery, and Lean says nothing about one
+-- inside a command, so the warning is the whole report.
+/--
+warning: this term carries a sorry, so the op selects nothing at render
+---
+info: {"constraints": [{"hideAtom": {"selector": "none"}}]}
+-/
+#guard_msgs in
+#spytial.spec lSmall with [hideAtom lean ((sorry : Spytial.Sel LRB LRB))]
 
 /-! ## `lean` is not a reserved word
 
@@ -399,7 +405,7 @@ info: {"constraints":
 report. Spytial is a generator, so the emitted spec carries the Lean the user
 wrote (`spytial.source`, on by default) and core cites that instead.
 
-`#masked_spec` and `#wire_spec` mask the stamp's line to `N`: what matters is
+`#masked_spec` and `#payload_spec` mask the stamp's line to `N`: what matters is
 that a location is emitted and which file it names, so these goldens do not
 move when the lines above them do. -/
 
@@ -415,8 +421,9 @@ info: {"constraints":
 #guard_msgs in
 #masked_spec lBig with [hideAtom lean (fun n : LRB => n matches .nil)]
 
--- Only the constraints are stamped: core cites those in conflict reports, and
--- on a directive the block would be payload it parses and ignores.
+-- Only the ops core cites are stamped: elsewhere the block would be payload it
+-- parses and ignores. Which ops those are is the manifest's own
+-- `source.displayedBy`, so a directive carries no stamp …
 set_option spytial.source true in
 /--
 info: {"directives":
@@ -424,6 +431,13 @@ info: {"directives":
 -/
 #guard_msgs in
 #masked_spec lBig with [atomStyle lean (LRB.isBlack) (borderStyle "black")]
+
+-- … and neither does `size`, which is a constraint core does not cite. The
+-- section an op lowers into is not what decides.
+set_option spytial.source true in
+/-- info: {"constraints": [{"size": {"width": 120, "height": 40}}]} -/
+#guard_msgs in
+#masked_spec lBig with [size 120 40]
 
 -- An attached spec stores its stamp, so a spec re-run against another value in
 -- another file still cites the line it was declared on.
@@ -435,4 +449,18 @@ set_option spytial.source true in
 info: "{\"constraints\":\n [{\"orientation\":\n   {\"source\":\n    {\"text\": \"orientation lean below\", \"location\": \"LeanSelectorTest.lean:N\"},\n    \"selector\": \"lean\",\n    \"directions\": [\"below\"]}}]}"
 -/
 #guard_msgs in
-#wire_spec lKw
+#payload_spec lKw
+
+/-! ## The arity ladder stops exactly at `maxSelArity`
+
+`Sel.lean` spells `selIdx1..4` and `locate1..4` by hand and `LeanSelector.lean`
+bounds the arity separately, so a bump to one without the other misroutes. -/
+
+run_cmd do
+  let env ← getEnv
+  for stem in [`Spytial.Sel.selIdx, `Spytial.Sel.locate] do
+    unless env.contains (stem.appendAfter (toString maxSelArity)) do
+      throwError "{stem}{maxSelArity} is missing: the ladder in Sel.lean stops \
+        below maxSelArity"
+    if env.contains (stem.appendAfter (toString (maxSelArity + 1))) then
+      throwError "{stem}{maxSelArity + 1} exists: raise maxSelArity in LeanSelector.lean"

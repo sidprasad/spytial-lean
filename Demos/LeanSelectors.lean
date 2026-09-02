@@ -4,18 +4,10 @@ open SpytialLean
 
 /-! # Raw Lean selectors
 
-A selector picks out the atoms an op applies to. The relational DSL spells that
-in Forge's expression language — `{x : RBNode | @:(x.color) = red}` — which is
-checked, but limited to what a relational query can say about the *diagram*.
-
-`lean (…)` uses the Lean terms interpreting those same atoms: write an ordinary
-Lean predicate over your own type. Spytial can compute it on concrete values,
-including recursive functions, and use proof-context evidence for symbolic ones.
-
-The function's type is its arity: `σ → Bool` picks out atoms, `σ₁ → σ₂ → Bool`
-picks out pairs, testing every one. The general form, `Spytial.Sel T α`, is a
-function of the whole value being drawn, returning the tuples to select.
--/
+`lean (…)` takes an ordinary Lean function; its type is its arity: `σ → Bool`
+picks out atoms, `σ₁ → σ₂ → Bool` picks out pairs. On a concrete value the
+function runs; on a symbolic one the predicate is established from the proof
+context instead. -/
 
 inductive Color where
   | red | black
@@ -102,11 +94,9 @@ evaluates: -/
 
 /-! ## The general form
 
-A whole-value selector — `Spytial.Sel T α`, wrapping `T → Spytial.Tuples α` —
-receives the entire value being drawn. It can traverse that tree and compare
-nodes against its root without capturing a particular inspection's root in
-the predicate. It needs a fully determined value and executable code: walk the
-tree yourself, return the values to select, test it with `#eval`. -/
+`Spytial.Sel T α` wraps `T → Spytial.Tuples α`. It receives the whole value, so
+it can compare nodes against the root, which a per-node predicate never sees.
+It needs a fully determined value and executable code. -/
 
 def RBNode.subtrees : RBNode → List RBNode
   | .nil => [.nil]
@@ -119,11 +109,10 @@ def deepHalf : Spytial.Sel RBNode RBNode :=
 
 /-! ## The same predicate during a proof
 
-Before reasoning about a parent, draw what the child-height assumptions tell
-us: the left subtree is height 3, the right is height 1, and the parent is
-therefore height 4. None of their keys or internal trees needs to be known.
-The blue highlight is the same Lean predicate in a command and in the proof.
--/
+Before reasoning about a parent, draw what the child-height assumptions say:
+the left subtree is height 3, the right is height 1, so the parent is height
+4. No key or inner tree needs to be known. The highlight is the same Lean
+predicate in the command and in the proof. -/
 
 spytial_ops heightFocus : RBNode [
   attribute key,
