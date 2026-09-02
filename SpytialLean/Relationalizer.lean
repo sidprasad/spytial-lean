@@ -1,6 +1,7 @@
 module
 
 public import Lean
+meta import Lean.Elab.Tactic.Omega
 public meta import SpytialLean.Types
 public meta import SpytialLean.TypeShape
 public meta import SpytialLean.Identity
@@ -214,9 +215,7 @@ public meta structure WalkConfig where
   observations : Array Expr := #[]
   /-- Checked evaluation/simplification results prepared before the final walk. -/
   observationResults : ExprStructMap Simp.Result := {}
-  /-- Unresolved computations inside observation results are value boundaries,
-      not requests to draw their implementation. Independently prepared source
-      applications (from observations or context facts) still have graphs. -/
+  /-- Named applications kept as atomic boundaries inside observation results. -/
   observationResiduals : Std.HashSet ExprStructEq := {}
   /-- The represented domain before observation-derived structure is added. -/
   observationDomain : Option (Array Expr) := none
@@ -802,11 +801,11 @@ private meta def isElaborationArgument (argument : Expr) : MetaM Bool := do
   if (← Meta.isClass? type).isSome then return true
   forallTelescopeReducing type fun _ result => return result.isSort
 
-/-- The arguments of an application that carry data. Besides removing
+/-- The positions of application arguments that carry data. Besides removing
     elaboration-only arguments, omit an implicit argument when the type of a
     retained argument determines it. Independent implicit data remains a graph
     column because dropping it could identify distinct applications. -/
-public meta def dataArgsOf (e : Expr) : MetaM (Array Expr) := do
+private meta def dataArgumentIndexesOf (e : Expr) : MetaM (Array Nat) := do
   let arguments := e.getAppArgs
   let elaborationArguments ← arguments.mapM isElaborationArgument
   let parameterInfo? ← try
@@ -817,14 +816,19 @@ public meta def dataArgsOf (e : Expr) : MetaM (Array Expr) := do
     for index in [:min arguments.size parameterInfo.size] do
       unless elaborationArguments[index]! do
         determinedParameters := determinedParameters ++ parameterInfo[index]!.backDeps
-  let mut out : Array Expr := #[]
+  let mut out : Array Nat := #[]
   for index in [:arguments.size] do
     if elaborationArguments[index]! then continue
     if let some parameterInfo := parameterInfo? then
       if let some info := parameterInfo[index]? then
         if !info.isExplicit && determinedParameters.contains index then continue
-    out := out.push arguments[index]!
+    out := out.push index
   return out
+
+/-- The arguments of an application that carry data. -/
+public meta def dataArgsOf (e : Expr) : MetaM (Array Expr) := do
+  let arguments := e.getAppArgs
+  return (← dataArgumentIndexesOf e).map (arguments[·]!)
 
 /-- Read a named application as a point in the function's graph. Constructors
     are values, not functions being observed. -/
@@ -948,16 +952,14 @@ private meta partial def observationValue? (e : Expr) : MetaM (Option Expr) :=
     args := args.map fun arg => if arg.equal argument then value else arg
   return some (mkAppN reduced.getAppFn args)
 
-/-- Locate computations that must remain symbolic values rather than exposing
-    an observer's implementation. Constructor and literal values include
-    non-`Nat` numerals such as negative `Int`s. -/
+/-- Locate computations that must remain symbolic values. Named applications
+    are graph boundaries; constructor and literal values include non-`Nat`
+    numerals such as negative `Int`s. -/
 private meta partial def residualApplications (e : Expr) :
     StateT (Std.HashSet ExprStructEq) MetaM Unit := do
   if (← observationValue? e).isSome then return
   if (← graphSide? e).isSome then
     modify (·.insert ⟨e⟩)
-    -- Its arguments are not separately requested results. In particular,
-    -- do not mark a helper inside an input tree as an opaque computation.
     return
   for argument in ← dataArgsOf e do
     residualApplications argument
@@ -980,6 +982,90 @@ private meta def observationMethods (cfg : WalkConfig) (simprocs : Simp.Simprocs
             return .visit { expr := observationAt e argument value }
       methods.pre e }
 
+/-- Recognize the `Nat` additions supported by observation normalization. This
+    is semantic, proof-producing operator knowledge; presentation remains
+    independent of the operation being normalized. -/
+private meta def natAdditionArguments? (expression : Expr) : MetaM (Option (Expr × Expr)) := do
+  unless expression.getAppFn.isConstOf ``HAdd.hAdd ||
+      expression.getAppFn.isConstOf ``Nat.add do return none
+  unless (← whnf (← inferType expression)).isConstOf ``Nat do return none
+  let arguments ← dataArgsOf expression
+  unless arguments.size == 2 do return none
+  return some (arguments[0]!, arguments[1]!)
+
+/-- Flatten a `Nat` sum into its symbolic terms and total literal offset. -/
+private meta partial def normalizedNatAddends (expression : Expr) : MetaM (Array Expr × Nat) := do
+  if let some value ← observationValue? expression then
+    if let some literal := value.rawNatLit? then return (#[], literal)
+  if let some (left, right) ← natAdditionArguments? expression then
+    let (leftTerms, leftConstant) ← normalizedNatAddends left
+    let (rightTerms, rightConstant) ← normalizedNatAddends right
+    return (leftTerms ++ rightTerms, leftConstant + rightConstant)
+  return (#[expression], 0)
+
+private meta def mkNormalizedNatAddition (terms : Array Expr) (constant : Nat) : MetaM Expr := do
+  let some first := terms[0]? | return mkNatLit constant
+  let mut result := first
+  for index in [1:terms.size] do
+    result ← mkAppM ``HAdd.hAdd #[result, terms[index]!]
+  if constant != 0 then
+    result ← mkAppM ``HAdd.hAdd #[result, mkNatLit constant]
+  return result
+
+/-- `observationMethods` exposes computed numerals as kernel literals. Repack
+    those addends into frontend `OfNat` syntax before asking `simp` for the
+    algebraic normalization proof. The two forms are definitionally equal. -/
+private meta partial def canonicalizeNatAdditionLiterals (expression : Expr) : MetaM Expr := do
+  if let some literal := expression.rawNatLit? then return mkNatLit literal
+  let some (left, right) ← natAdditionArguments? expression | return expression
+  let left ← canonicalizeNatAdditionLiterals left
+  let right ← canonicalizeNatAdditionLiterals right
+  mkAppM ``HAdd.hAdd #[left, right]
+
+private meta def proveNatAdditionNormalization? (source normalized : Expr)
+    (context : Simp.Context) (simprocs : Simp.SimprocsArray) : MetaM (Option Expr) := do
+  let canonical ← canonicalizeNatAdditionLiterals source
+  let goal ← mkEq canonical normalized
+  let (simplified, _) ← simp goal context simprocs
+  let proof? ← if ← isDefEq simplified.expr (mkConst ``True) then
+    pure (some (← instantiateMVars (← simplified.mkEqMPR (mkConst ``True.intro))))
+  else
+    try
+      let scope ← getLCtx
+      let target ← mkFreshExprSyntheticOpaqueMVar goal
+      if let some contradictionGoal ← target.mvarId!.falseOrByContra then
+        contradictionGoal.withContext do
+          let facts := (← getLocalHyps).filter fun hypothesis =>
+            !scope.contains hypothesis.fvarId!
+          Lean.Elab.Tactic.Omega.omega facts.toList contradictionGoal
+      unless ← target.mvarId!.isAssigned do return none
+      pure (some (← instantiateMVars target))
+    catch _ => pure none
+  let some proof := proof? | return none
+  return some (← mkEqTrans (← mkEqRefl source) proof)
+
+/-- The arithmetic normalizer proposes a canonical residual; Lean must
+    produce the equality proof before that residual is accepted. -/
+private meta def normalizeNatAddition (result : Simp.Result) (context : Simp.Context)
+    (simprocs : Simp.SimprocsArray) : MetaM Simp.Result := do
+  unless (← natAdditionArguments? result.expr).isSome do return result
+  let (terms, constant) ← normalizedNatAddends result.expr
+  let normalized ← mkNormalizedNatAddition terms constant
+  let canonical ← canonicalizeNatAdditionLiterals result.expr
+  if normalized.equal canonical then return result
+  let proof? ← withoutModifyingState do
+    try proveNatAdditionNormalization? result.expr normalized context simprocs
+    catch _ => return none
+  let some proof := proof? | return result
+  result.mkEqTrans { expr := normalized, proof? := some proof }
+
+private meta def natAdditionNormalizationContext : MetaM Simp.Context := do
+  let mut theorems ← getSimpTheorems
+  for rule in [``Nat.add_assoc, ``Nat.add_comm, ``Nat.add_left_comm] do
+    theorems ← theorems.addConst rule
+  Simp.mkContext (simpTheorems := #[theorems])
+    (congrTheorems := ← getSimpCongrTheorems)
+
 /-- Prepare observations against a fixed, already discovered domain. Compute
     through available definitions, then simplify with ordinary simp rules and
     supplied proofs. Each result carries a checked equality; failures retain
@@ -1001,6 +1087,7 @@ public meta def prepareObservations (cfg : WalkConfig) (values : Array Expr)
     let context ← Simp.mkContext (config := { maxSteps := cfg.maxObservationSteps })
       (simpTheorems := #[theorems]) (congrTheorems := ← getSimpCongrTheorems)
     let simprocs := #[(← Simp.getSimprocs)]
+    let normalizationContext ← natAdditionNormalizationContext
     let methods := observationMethods cfg simprocs
     let mut applications ← observationApplications cfg.observations values
     for value in values do
@@ -1015,6 +1102,7 @@ public meta def prepareObservations (cfg : WalkConfig) (values : Array Expr)
         let result ← withoutModifyingState do
           let inputMVars ← getMVars application
           let (result, _) ← withNewMCtxDepth <| Simp.main application context (methods := methods)
+          let result ← normalizeNatAddition result normalizationContext simprocs
           let expression ← instantiateMVars result.expr
           let proof ← instantiateMVars (← result.proof?.getDM (mkEqRefl application))
           let claim ← mkEq application expression
@@ -1042,23 +1130,141 @@ public meta def prepareObservations (cfg : WalkConfig) (values : Array Expr)
   for warning in warnings do logWarning warning
   return prepared
 
-/-- One symbolic result, without drawing a graph for the computation that
-    produced it. The requested observer supplies that result's relation. -/
-private meta def symbolicObservationResult (e : Expr) (recordSelectorTerm := false) :
+/-- A small set of alternative propositions, any one of which would unblock
+    further simplification of an observation residual. The observer consumer
+    decides whether and how to try proving them. -/
+public meta structure ObservationQuestion where
+  alternatives : Array Expr
+
+private meta partial def collectObservationQuestions (expression : Expr) :
+    StateT (Std.HashSet ExprStructEq × Array ObservationQuestion) MetaM Unit := do
+  let state ← get
+  if state.1.contains ⟨expression⟩ then return
+  set (state.1.insert ⟨expression⟩, state.2)
+  if expression.getAppFn.isConstOf ``Max.max then
+    let arguments ← dataArgsOf expression
+    if arguments.size == 2 then
+      let left := arguments[0]!
+      let right := arguments[1]!
+      let type ← whnf (← inferType left)
+      if type.isConstOf ``Nat || type.isConstOf ``Int then
+        let leftLeRight ← mkAppM ``LE.le #[left, right]
+        let rightLeLeft ← mkAppM ``LE.le #[right, left]
+        modify fun (seen, questions) =>
+          (seen, questions.push { alternatives := #[leftLeRight, rightLeLeft] })
+  for argument in ← dataArgsOf expression do
+    collectObservationQuestions argument
+
+/-- Inspect prepared observation residuals for focused propositions that could
+    make another simplification step possible. This discovers questions; it
+    performs no proof search and adds no facts. -/
+public meta def observationQuestions (cfg : WalkConfig) : MetaM (Array ObservationQuestion) := do
+  let mut state : Std.HashSet ExprStructEq × Array ObservationQuestion := ({}, #[])
+  for (_, result) in cfg.observationResults.toArray do
+    let (_, next) ← (collectObservationQuestions result.expr).run state
+    state := next
+  return state.2
+
+private meta def addSymbolicObservationAtom (cfg : WalkConfig) (e : Expr) (label : String) :
     StateT WalkState MetaM String := do
   if let some id := (← get).applicationAtoms[(⟨e⟩ : ExprStructEq)]? then return id
   let type ← sigOfType (← inferType e)
-  let (label, state) := (← get).freshApplicationLabel
+  let state ← get
   let (id, state) := state.freshId
   let state := { (state.addAtom { id, type, label }) with
     applicationAtoms := state.applicationAtoms.insert ⟨e⟩ id }
-  set <| if recordSelectorTerm then state.rememberSelectorTerm e id else state
+  set <| if cfg.recordSelectorTerms then state.rememberSelectorTerm e id else state
   return id
+
+private meta def symbolicAtomLabel (id : String) : StateT WalkState MetaM String := do
+  let some atom := (← get).atoms.find? (·.id == id)
+    | throwError "spytial internal error: symbolic observation atom '{id}' has no label"
+  return atom.label
+
+private meta structure RenderedObservationExpression where
+  text : String
+  atomic : Bool
+  deriving Inhabited
+
+private meta def RenderedObservationExpression.asChild
+    (rendered : RenderedObservationExpression) :
+    String :=
+  if rendered.atomic then rendered.text else s!"({rendered.text})"
+
+private meta def isAtomicObservationExpression (expression : Expr) : Bool :=
+  expression.isBVar || expression.isFVar || expression.isMVar || expression.isSort ||
+    expression.isConst || expression.isLit || expression.rawNatLit?.isSome ||
+    expression.isAppOf ``OfNat.ofNat
+
+/-- Ask Lean to render an application with neutral placeholders, then replace
+    each placeholder with its already-rendered child. This preserves arbitrary
+    notation while the one structural grouping rule handles every operation. -/
+private meta def renderObservationApplication (expression : Expr)
+    (argumentIndexes : Array Nat) (renderedArguments : Array RenderedObservationExpression) :
+    MetaM String := do
+  let rec addPlaceholders (offset : Nat) (arguments placeholders : Array Expr) : MetaM String := do
+    if offset < argumentIndexes.size then
+      let argumentIndex := argumentIndexes[offset]!
+      let argumentType ← inferType arguments[argumentIndex]!
+      let placeholderName := Name.mkSimple
+        s!"SPYTIAL_RENDER_ARGUMENT_{expression.hash}_{offset}"
+      withLocalDeclD placeholderName argumentType fun placeholder =>
+        addPlaceholders (offset + 1) (arguments.set! argumentIndex placeholder)
+          (placeholders.push placeholder)
+    else
+      let skeleton := mkAppN expression.getAppFn arguments
+      let mut rendered := (← ppExpr skeleton).pretty
+      for index in [:placeholders.size] do
+        let placeholder := (← ppExpr placeholders[index]!).pretty
+        rendered := rendered.replace placeholder renderedArguments[index]!.asChild
+      return rendered
+  addPlaceholders 0 expression.getAppArgs #[]
+
+mutual
+  /-- Render an observation residual in terms of its genuinely unknown
+      observation leaves. The renderer only distinguishes atomic results from
+      compound results; Lean's pretty-printer supplies every operation's
+      notation. -/
+  private meta partial def symbolicObservationExpression (cfg : WalkConfig) (expression : Expr) :
+      StateT WalkState MetaM RenderedObservationExpression := do
+    if hasObservedHead cfg expression && (← graphSide? expression).isSome then
+      let label ← symbolicObservationResult cfg expression >>= symbolicAtomLabel
+      return { text := label, atomic := true }
+    if isAtomicObservationExpression expression then
+      return { text := (← ppExpr expression).pretty, atomic := true }
+    if let some value ← observationValue? expression then
+      return { text := (← ppExpr value).pretty, atomic := isAtomicObservationExpression value }
+    let argumentIndexes ← dataArgumentIndexesOf expression
+    if argumentIndexes.isEmpty then
+      return { text := (← ppExpr expression).pretty, atomic := true }
+    let arguments := expression.getAppArgs
+    let mut renderedArguments : Array RenderedObservationExpression := #[]
+    for index in argumentIndexes do
+      let rendered ← symbolicObservationExpression cfg arguments[index]!
+      renderedArguments := renderedArguments.push rendered
+    return {
+      text := ← renderObservationApplication expression argumentIndexes renderedArguments
+      atomic := false }
+
+  /-- One symbolic observation result. Only irreducible observed applications
+      receive fresh names; residual computations are labelled by expressions
+      over those shared names. -/
+  private meta partial def symbolicObservationResult (cfg : WalkConfig) (e : Expr) :
+      StateT WalkState MetaM String := do
+    if let some id := (← get).applicationAtoms[(⟨e⟩ : ExprStructEq)]? then return id
+    if (← dependsOnObservation cfg e) && !hasObservedHead cfg e then
+      let rendered ← symbolicObservationExpression cfg e
+      addSymbolicObservationAtom cfg e rendered.text
+    else
+      let (label, state) := (← get).freshApplicationLabel
+      set state
+      addSymbolicObservationAtom cfg e label
+end
 
 private meta def walkSymbolicResult? (cfg : WalkConfig) (e : Expr) :
     StateT WalkState MetaM (Option String) := do
   if cfg.observationResiduals.contains ⟨e⟩ && !cfg.observationResults.contains ⟨e⟩ then
-    return some (← symbolicObservationResult e cfg.recordSelectorTerms)
+    return some (← symbolicObservationResult cfg e)
   return none
 
 /-- Emit a named application `f xs` as the graph point `f[xs, f xs]`.
@@ -1454,7 +1660,7 @@ public meta def addObservation (cfg : WalkConfig) (source result : Expr)
     | some resultId => pure resultId
     | none =>
       if reducedResult.equal result then
-        symbolicObservationResult result cfg.recordSelectorTerms
+        symbolicObservationResult cfg result
       else
         walkExpr cfg reducedResult
   modify fun state =>

@@ -625,7 +625,7 @@ syntax (name := spytialCmd) "#spytial " term (" observing " "[" term,* "]")?
 
 @[command_elab spytialCmd]
 meta def elabSpytialCmd : CommandElab := fun stx => do
-  let props ← liftTermElabM <|
+  let props ← liftTermElabM do
     spytialPayloadProps stx[1] (optionalOps stx[3]) {} (optionalTerms stx[2])
   liftCoreM <| savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
 
@@ -746,7 +746,8 @@ syntax (name := spytialDatumDebug) "#spytial.datum " term
 
 @[command_elab spytialDatumDebug]
 meta def elabSpytialDatumDebug : CommandElab := fun stx => do
-  let (_, _, di, _, _) ← liftTermElabM <| elabRelationalized stx[1] {} (optionalTerms stx[2])
+  let (_, _, di, _, _) ← liftTermElabM do
+    elabRelationalized stx[1] {} (optionalTerms stx[2])
   logInfo m!"{(toJson di).pretty}"
 
 /-! ## Proof visualization -/
@@ -852,8 +853,8 @@ open Tactic in
 /-- `spytial term` asks IYKYK what the current context establishes about
     `term`, translates that knowledge into relational data, and displays it.
     `observing [f₁, ...]` parameterizes that translation and displays each
-    function over every compatible represented value; `fyi [h₁, ...]`
-    supplies proved hypotheses or forward rules to IYKYK;
+    function over every compatible represented value;
+    `fyi [h₁, ...]` supplies proved hypotheses or forward rules to IYKYK;
     `with [...]` supplies Spytial layout operations. -/
 syntax (name := spytialTactic) "spytial " term (" observing " "[" term,* "]")?
   (" fyi " "[" term,* "]")?

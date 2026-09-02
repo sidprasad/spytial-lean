@@ -82,26 +82,21 @@ deliberately distinguish occurrences. There is no new observation option.
 For a known node with unknown children, `observing [height]` records:
 
 ```text
-height(parent, H)
-height(left, HL)
-height(right, HR)
+height(left, ?₁)
+height(right, ?₂)
+height(parent, (max ?₁ ?₂) + 1)
 ```
 
-The observer is evaluated before its result is added. Known child heights can
-therefore compute the parent's height. However, computing an observation does
-not implicitly request the relations used by its implementation:
-
-```text
-max(HL, HR, M)
-add(1, M, H)
-```
-
-Those `max` and `add` tuples are not emitted merely because `height` uses them.
-An independently retained fact such as `height r + 1 < height l` does introduce
-an `add` relationship, along with the observed heights and the comparison.
-An equation being provable by unfolding a definition does not, by itself,
-request its expansion in the diagram. See [Observations](observations.md) for
-the evaluation and result-representation contract.
+The observer is residualized before its result is added. Known child heights
+can therefore compute the parent's height, while deterministic symbolic
+results are labelled as expressions over genuinely unknown leaves. In tactic
+mode, Spytial can ask IYKYK focused arithmetic questions needed to simplify a
+symbolic `max`; successful answers are checked proofs and do not become extra
+facts in the displayed `Afaik`. An independently retained fact such as
+`height r + 1 < height l` can still introduce `add` and comparison relations.
+See
+[Observations](observations.md) for the evaluation and result-representation
+contract.
 
 In particular, neither retaining branch inequalities nor observing heights
 proves that an arbitrary result is balanced. That requires appropriate

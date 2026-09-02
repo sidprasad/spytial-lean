@@ -25,7 +25,8 @@ private meta def node (l : Expr) (key : Nat) (r : Expr) : Expr :=
 private meta def height (t : Expr) : Expr := mkApp (mkConst ``Tree.height) t
 
 private meta def view (root : Expr) (rootOnly := true) : MetaM ContextView := do
-  let (status, result) ← wdykInContext root {} { rootOnly, mechanisms := #[.simp] } #[height root]
+  let (status, result) ← wdykInContext root {}
+    { rootOnly, mechanisms := #[.simp] } #[height root]
   if status.inconsistent || status.truncated then throwError "unexpected extraction status"
   let some result := result | throwError "missing context view"
   return result
@@ -37,6 +38,17 @@ private meta def assertCount (label : String) (data : JsonDataInstance)
     (relation : String) (count : Nat) : MetaM Unit := do
   unless (tuples data relation).size == count do
     throwError "{label}: expected {count} {relation} tuples\n{canonInstance data}"
+
+private meta def graphResult? (data : JsonDataInstance) (relation input : String) :
+    Option String := do
+  let tuple ← (tuples data relation).find? (fun tuple => tuple.atoms[0]? == some input)
+  tuple.atoms.back?
+
+private meta def graphResult (label : String) (data : JsonDataInstance)
+    (relation input : String) : MetaM String := do
+  match graphResult? data relation input with
+  | some result => return result
+  | none => throwError "{label}: missing {relation} result\n{canonInstance data}"
 
 private meta def assertTrees (label : String) (data : JsonDataInstance) (count : Nat) :
     MetaM Unit := do
@@ -264,16 +276,44 @@ local instance : SpytialIdentity Tree := ⟨.eqv (fun _ _ => false), none⟩
 
 end
 
-/- Observing height requests its values, not its implementation's call graph.
-   Unknown subtrees do not determine heights or an ordering between them. -/
+/- A symbolic recursive observation labels deterministic results in terms of
+   their genuinely unknown leaves without exposing implementation relations or
+   inventing an ordering between them. -/
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `l tree fun l => do
   withLocalDeclD `r tree fun r => do
     let result ← view (node l 1 r)
     assertCount "symbolic heights" result.data "height" 3
-    assertCount "no implicit maximum observation" result.data "max" 0
-    assertCount "no implicit addition observation" result.data "hAdd" 0
+    assertCount "symbolic maximum stays in the label" result.data "max" 0
+    assertCount "symbolic addition stays in the label" result.data "hAdd" 0
+    let rootHeight ← graphResult "symbolic root height" result.data "height"
+      result.inspection.root
+    let some rootResult := result.data.atoms.find? (·.id == rootHeight)
+      | throwError "symbolic root height has no atom"
+    unless rootResult.label == "(max ?₁ ?₂) + 1" do
+      throwError "unexpected symbolic root height: {rootResult.label}"
     assertCount "no invented ordering" result.data "le" 0
+
+opaque combineHeights (left right : Nat) : Nat := left + right
+
+def Tree.combinedHeight : Tree → Nat
+  | .leaf => 0
+  | .node l _ r => combineHeights (combineHeights l.combinedHeight 1) r.combinedHeight
+
+/- Symbolic rendering obtains notation from Lean and groups compound children
+   structurally, including for operations the renderer has never named. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `l tree fun l => do
+  withLocalDeclD `r tree fun r => do
+    let root := node l 1 r
+    let data ← relationalize root {} #[mkApp (mkConst ``Tree.combinedHeight) root]
+    let some rootId := data.atoms[0]?.map (·.id) | throwError "missing root"
+    let rootHeight ← graphResult "generic symbolic renderer" data "combinedHeight" rootId
+    let some result := data.atoms.find? (·.id == rootHeight)
+      | throwError "generic symbolic result has no atom"
+    unless result.label == "combineHeights (combineHeights ?₁ 1) ?₂" do
+      throwError "unexpected generic symbolic result: {result.label}"
+    assertCount "generic expression stays in the label" data "combineHeights" 0
 
 /- Facts about the children compute the parent's height before any context
    expression can allocate a separate unknown for it. -/
@@ -307,8 +347,8 @@ end
     assertInspectionMetadata result
     assertCount "scalar retains comparison" result.data "lt" 1
 
-/- Known symbolic heights remain shared values. Arithmetic used internally to
-   calculate the parent does not become an additional observation. -/
+/- If supplied facts eliminate every recursive height application, remaining
+   arithmetic stays an atomic result rather than leaking an unrelated graph. -/
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `l tree fun l => do
   withLocalDeclD `r tree fun r => do
@@ -373,6 +413,25 @@ private meta def assertRootObservation (data : JsonDataInstance) (relation label
   unless data.atoms.any (fun a => some a.id == observed.atoms[1]? && a.label == label) do
     throwError "expected root {relation} = {label}\n{canonInstance data}"
 
+/- Spytial discovers the comparisons that block symbolic `max` reductions,
+   asks IYKYK's bounded arithmetic query, and then normalizes every derived
+   height over the one genuinely unknown base value. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `a tree fun a => do
+  withLocalDeclD `b tree fun b => do
+  withLocalDeclD `c tree fun c => do
+    let bPlusOne ← mkAppM ``HAdd.hAdd #[height b, mkRawNatLit 1]
+    withLocalDeclD `ha (← mkEq (height a) bPlusOne) fun _ => do
+    withLocalDeclD `hbc (← mkEq (height b) (height c)) fun _ => do
+      let before := node (node a 1 b) 2 c
+      let after := node a 1 (node b 2 c)
+      let beforeView ← view before
+      let afterView ← view after
+      assertRootObservation beforeView.data "height" "?₁ + 3"
+      assertRootObservation afterView.data "height" "?₁ + 2"
+      assertCount "focused queries do not mutate before knowledge" beforeView.data "le" 0
+      assertCount "focused queries do not mutate after knowledge" afterView.data "le" 0
+
 /- Evaluation can discard unknown keys, and must follow ordinary helper
    definitions without requiring the user to mark those helpers as simp rules. -/
 #eval show Lean.Elab.TermElabM Unit from do
@@ -398,15 +457,19 @@ private meta def assertRootObservation (data : JsonDataInstance) (relation label
           (fun a => some a.id == bound.atoms[0]? && a.label == "1") do
         throwError "a fact's helper application did not use its computed height"
 
-/- Partial evaluation still computes the known child, without drawing the
-   addition/maximum used to calculate the unresolved parent's height. -/
+/- Partial evaluation computes the known child and retains the unresolved
+   parent's arithmetic as a compact expression over the remaining unknown. -/
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `r tree fun r => do
     let root := node (mkApp (mkConst ``Tree.singleton) (mkRawNatLit 4)) 7 r
     let data ← relationalize root {} #[height root]
     assertCount "partially known tree heights" data "height" 4
-    assertCount "no implementation addition" data "hAdd" 0
-    assertCount "no implementation maximum" data "max" 0
+    let some rootId := data.atoms[0]?.map (·.id) | throwError "missing root"
+    let rootHeight ← graphResult "partial root height" data "height" rootId
+    let some rootResult := data.atoms.find? (·.id == rootHeight)
+      | throwError "partial root height has no atom"
+    unless rootResult.label == "(max 1 ?₁) + 1" do
+      throwError "unexpected partial root height: {rootResult.label}"
     let some child := (tuples data "left").find?
         (·.atoms[0]? == data.atoms[0]?.map (·.id)) | throwError "missing child"
     let some observed := (tuples data "height").find? (·.atoms[0]? == child.atoms[1]?)
