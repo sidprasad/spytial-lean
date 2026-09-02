@@ -20,12 +20,14 @@ This first implementation deliberately accepts a small, checkable fragment:
   constructors;
 * constructor fields are data, not functions or types; omitted proof fields
   must be closed and decidable, so the reifier can rebuild a proof;
-* no custom relationalizer or `Raw`/`Viewed` wrapper is active; and
+* no custom relationalizer is active; and
 * every atom and binary field edge in the datum is consumed.
 
 The ordinary visualization walk may deliberately merge structurally unequal
 values according to `SpytialIdentity`. `relationalizeForReify` instead walks in
-hereditary `asWritten` mode so that the fidelity path preserves occurrences.
+`fidelity` mode so that identity declarations and `Raw`/`Viewed` visualization
+semantics cannot merge occurrences. This is intentionally a different contract
+from the existing `relationalize` visualization API.
 
 The reifier does not receive the original value. `certifyReifyRoundTrip`
 relationalizes a concrete expression through the fidelity path, reifies the
@@ -46,7 +48,7 @@ public meta def relationalizeForReify (original : Expr) : MetaM ReifyDatum := do
   unless isClosedValue original do
     throwError "relationalize for reify: the original expression is not fully instantiated"
   withoutModifyingEnv do
-    let (root, state) ← (walkExpr {} original { mode := .asWritten }).run {}
+    let (root, state) ← (walkExpr {} original { mode := .fidelity }).run {}
     return { root, data := state.toDataInstance }
 
 private meta structure ReifyIndex where

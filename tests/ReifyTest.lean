@@ -55,7 +55,7 @@ Each sample goes through both relevant paths:
 
 ```
 value -> reprStr
-value -> relationalize -> reify -> reprStr
+value -> relationalizeForReify -> rooted datum -> reify expectedType -> reprStr
 ```
 
 The kernel-checked `rfl` certificate is the primary oracle.  `DecidableEq` and
@@ -133,8 +133,15 @@ private structure ModPair where
   left : ModTwo
   right : ModTwo
 
+private structure ViewedPair where
+  left : Viewed ModTwo
+  right : Viewed ModTwo
+
 private meta def modTwoExpr (value : Nat) : Expr :=
   mkApp (mkConst ``ModTwo.mk) (mkRawNatLit value)
+
+private meta def viewedModTwoExpr (value : Nat) : Expr :=
+  mkApp2 (mkConst ``Viewed.mk [0]) (mkConst ``ModTwo) (modTwoExpr value)
 
 private unsafe def unsafeOne : Nat := 1
 
@@ -152,6 +159,15 @@ private unsafe def unsafeOne : Nat := 1
 
   let modPair := mkApp2 (mkConst ``ModPair.mk) (modTwoExpr 1) (modTwoExpr 3)
   discard <| certifyReifyRoundTrip modPair
+
+  -- `Viewed` changes ordinary visualization walks back to declared identity.
+  -- The reification walk must remain occurrence-preserving through the wrapper.
+  let viewedPair := mkApp2 (mkConst ``ViewedPair.mk)
+    (viewedModTwoExpr 1) (viewedModTwoExpr 3)
+  let viewedDatum ← relationalizeForReify viewedPair
+  let viewedReconstructed ← reify (mkConst ``ViewedPair) viewedDatum
+  unless ← isDefEq viewedPair viewedReconstructed do
+    throwError "fidelity mode: Viewed merged structurally unequal fields"
 
   assertFailsWith "unsafe certificate" "kernel rejected"
     (certifyReifyRoundTrip (mkConst ``unsafeOne))
