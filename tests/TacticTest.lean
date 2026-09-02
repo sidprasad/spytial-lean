@@ -137,6 +137,16 @@ example (measure : Nat → Nat) (x : Nat) : True := by
 
 def twice (x : Nat) : Nat := x * 2
 
+-- Arithmetic around an observation stays in its source vocabulary. Its Lean
+-- heads enter the tactic's checked selector scope without operator aliases.
+set_option linter.unusedVariables false in
+example (a b : Nat) (h : twice a < 2 * twice b + 1) : True := by
+  spytial a observing [twice] with [
+    edgeStyle hAdd (lineStyle "blue"),
+    edgeStyle hMul (lineStyle "red")
+  ]
+  trivial
+
 /--
 info: {"relations":
  [{"types": ["Nat", "Nat"],
