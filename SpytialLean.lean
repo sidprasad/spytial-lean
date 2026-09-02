@@ -1,6 +1,7 @@
 module
 
 public import SpytialLean.Enum
+public import SpytialLean.Display
 public import SpytialLean.Identity
 public meta import SpytialLean.MetaEncode
 public meta import SpytialLean.Types
@@ -18,3 +19,5 @@ public meta import SpytialLean.Attr
 public meta import SpytialLean.Command
 public meta import SpytialLean.Snapshot
 public meta import SpytialLean.Coverage
+public meta import SpytialLean.MetaViz
+public meta import SpytialLean.ExprView

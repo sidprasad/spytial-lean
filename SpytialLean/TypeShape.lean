@@ -2,6 +2,7 @@ module
 
 public import Lean
 public import SpytialLean.Enum
+public import SpytialLean.Display
 
 namespace SpytialLean
 
@@ -162,14 +163,40 @@ public meta def FieldTable.of? (ty : Expr) : MetaM (Option FieldTable) := do
   let some plan ← tabulationPlan? ty | return none
   return some { arity := plan.arity, columnHeads := ← plan.columnHeads }
 
+/-- A `Rel` element type's columns: a right-nested product is one column per
+    component, anything else a single column. -/
+public meta partial def relElemColumns (elemTy : Expr) : MetaM (Array Expr) := do
+  let ty ← whnfR elemTy
+  if ty.isAppOfArity ``Prod 2 then
+    return #[ty.appFn!.appArg!] ++ (← relElemColumns ty.appArg!)
+  return #[ty]
+
+/-- The `Rel` payload of a field type, when it has one. -/
+public meta def relFieldElem? (ty : Expr) : MetaM (Option Expr) := do
+  let ty ← whnfR ty
+  return if ty.isAppOfArity ``Rel 1 then some ty.appArg! else none
+
+/-- Whether a field type is `Hidden` — the walker skips it entirely. -/
+public meta def isHiddenFieldType (ty : Expr) : MetaM Bool := do
+  return (← whnfR ty).isAppOfArity ``Hidden 1
+
+/-- What a `Rel` field's type emits: owner column plus one per element
+    component. -/
+public meta def FieldTable.ofRel? (ty : Expr) : MetaM (Option FieldTable) := do
+  let some elemTy ← relFieldElem? ty | return none
+  let cols ← relElemColumns elemTy
+  return some { arity := 1 + cols.size, columnHeads := ← cols.filterMapM typeHead? }
+
 public meta structure FieldShape where
   relName : String
   typeSig : Option String
   /-- `none` for a type parameter or function type: unpredictable vocabulary. -/
   typeHead : Option Name := none
   isProofLike : Bool
-  /-- When set, its columns rather than the type head are the vocabulary the
-      field's values contribute. -/
+  /-- The walker skips this field: declared `Hidden`. -/
+  hidden : Bool := false
+  /-- Set when the field's type tabulates — or is a `Rel` — so its columns,
+      not its type head, are the vocabulary its values contribute. -/
   table : Option FieldTable := none
   /-- `none` where the declaration fixes no arity: a function type over the
       inductive's own parameters leaves leaf-or-table to the instantiation. -/
@@ -202,16 +229,19 @@ public meta def TypeShape.ofInductive (typeName : Name) : MetaM (Option TypeShap
       for i in [:dataXs.size] do
         let xty ← Meta.inferType dataXs[i]!
         let isProofLike ← isProofLikeType xty
+        let hidden ← isHiddenFieldType xty
         let (typeSig, typeHead) ←
           match (← Meta.whnf xty).getAppFn with
           | .const n _ => pure (some (shortName n), some n)
           | _          => pure (none, none)
-        let table ← FieldTable.of? xty
+        let table ← match ← FieldTable.ofRel? xty with
+          | some t => pure (some t)
+          | none => FieldTable.of? xty
         let arity? ← match table with
           | some t => pure (some t.arity)
           | none => pure (if (← Meta.whnf xty).isForall && xty.hasFVar then none else some 2)
         fs := fs.push { relName := fieldRelName ctorShort binderNames i,
-                        typeSig, typeHead, isProofLike, table, arity? }
+                        typeSig, typeHead, isProofLike, hidden, table, arity? }
       return fs
     ctors := ctors.push { ctorName, ctorShort, fields }
   return some { typeName, sig := shortName typeName, ctors }
@@ -220,7 +250,7 @@ public meta def TypeShape.dataRelNames (ts : TypeShape) : Array String := Id.run
   let mut out : Array String := #[]
   for c in ts.ctors do
     for f in c.fields do
-      unless f.isProofLike do
+      unless f.isProofLike || f.hidden do
         out := out.push f.relName
   return out
 
