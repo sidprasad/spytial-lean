@@ -198,17 +198,6 @@ public meta def WalkState.toDataInstance (s : WalkState) : JsonDataInstance :=
     { id := name, name := name, types := types, tuples := tuples : JsonRelation }
   { atoms := s.atoms, relations := relations }
 
-/-- How much of a requested observation's evaluation is represented.
-
-`value` keeps an unresolved result as one symbolic atom. `dependencies` also
-represents the residual named applications that relate that atom to other
-observed values. This is a dependency graph of the simplified result, not a
-trace of every reduction performed by the simplifier. -/
-public meta inductive ObservationDetail where
-  | value
-  | dependencies
-  deriving BEq, Inhabited
-
 /-- Configuration for the expression walker. -/
 public meta structure WalkConfig where
   /-- When true, skip Prop-typed fields (data mode). When false, show them (proof mode). -/
@@ -225,13 +214,8 @@ public meta structure WalkConfig where
   observations : Array Expr := #[]
   /-- Checked evaluation/simplification results prepared before the final walk. -/
   observationResults : ExprStructMap Simp.Result := {}
-  /-- Named applications kept as atomic boundaries inside observation results.
-      Dependency mode omits graph applications that still contain the requested
-      observer, allowing the walker to relate their symbolic results instead. -/
+  /-- Named applications kept as atomic boundaries inside observation results. -/
   observationResiduals : Std.HashSet ExprStructEq := {}
-  /-- Whether unresolved observation results stay atomic or expose the named
-      applications in their simplified dependency expression. -/
-  observationDetail : ObservationDetail := .value
   /-- The represented domain before observation-derived structure is added. -/
   observationDomain : Option (Array Expr) := none
   /-- Bound on simplification of each observation or dependent computation. -/
@@ -962,22 +946,17 @@ private meta partial def observationValue? (e : Expr) : MetaM (Option Expr) :=
     args := args.map fun arg => if arg.equal argument then value else arg
   return some (mkAppN reduced.getAppFn args)
 
-/-- Locate computations that must remain symbolic values. In dependency mode,
-    named applications remain graph boundaries but are walked instead of being
-    collapsed into one atom. Constructor and literal values include non-`Nat`
+/-- Locate computations that must remain symbolic values. Named applications
+    are graph boundaries; constructor and literal values include non-`Nat`
     numerals such as negative `Int`s. -/
-private meta partial def residualApplications (cfg : WalkConfig) (e : Expr) :
+private meta partial def residualApplications (e : Expr) :
     StateT (Std.HashSet ExprStructEq) MetaM Unit := do
   if (← observationValue? e).isSome then return
   if (← graphSide? e).isSome then
-    if cfg.observationDetail == .value || !(← dependsOnObservation cfg e) then
-      modify (·.insert ⟨e⟩)
-    else
-      for argument in ← dataArgsOf e do
-        residualApplications cfg argument
+    modify (·.insert ⟨e⟩)
     return
   for argument in ← dataArgsOf e do
-    residualApplications cfg argument
+    residualApplications argument
 
 private meta def observationMethods (cfg : WalkConfig) (simprocs : Simp.SimprocsArray) :
     Simp.Methods :=
@@ -1046,7 +1025,7 @@ public meta def prepareObservations (cfg : WalkConfig) (values : Array Expr)
           | .error exception => throwError "{exception.toMessageData (← getOptions)}"
           | .ok _ => pure { result with expr := expression, proof? := some proof }
         results := results.insert ⟨application⟩ result
-        let (_, next) ← (residualApplications cfg result.expr).run residuals
+        let (_, next) ← (residualApplications result.expr).run residuals
         residuals := next
       catch error =>
         let detail ← error.toMessageData.toString
@@ -1059,23 +1038,128 @@ public meta def prepareObservations (cfg : WalkConfig) (values : Array Expr)
   for warning in warnings do logWarning warning
   return prepared
 
-/-- One symbolic result, without drawing a graph for the computation that
-    produced it. The requested observer supplies that result's relation. -/
-private meta def symbolicObservationResult (e : Expr) (recordSelectorTerm := false) :
+/-- A small set of alternative propositions, any one of which would unblock
+    further simplification of an observation residual. The observer consumer
+    decides whether and how to try proving them. -/
+public meta structure ObservationQuestion where
+  alternatives : Array Expr
+
+private meta partial def collectObservationQuestions (expression : Expr) :
+    StateT (Std.HashSet ExprStructEq × Array ObservationQuestion) MetaM Unit := do
+  let state ← get
+  if state.1.contains ⟨expression⟩ then return
+  set (state.1.insert ⟨expression⟩, state.2)
+  if expression.getAppFn.isConstOf ``Max.max then
+    let arguments ← dataArgsOf expression
+    if arguments.size == 2 then
+      let left := arguments[0]!
+      let right := arguments[1]!
+      let type ← whnf (← inferType left)
+      if type.isConstOf ``Nat || type.isConstOf ``Int then
+        let leftLeRight ← mkAppM ``LE.le #[left, right]
+        let rightLeLeft ← mkAppM ``LE.le #[right, left]
+        modify fun (seen, questions) =>
+          (seen, questions.push { alternatives := #[leftLeRight, rightLeLeft] })
+  for argument in ← dataArgsOf expression do
+    collectObservationQuestions argument
+
+/-- Inspect prepared observation residuals for focused propositions that could
+    make another simplification step possible. This discovers questions; it
+    performs no proof search and adds no facts. -/
+public meta def observationQuestions (cfg : WalkConfig) : MetaM (Array ObservationQuestion) := do
+  let mut state : Std.HashSet ExprStructEq × Array ObservationQuestion := ({}, #[])
+  for (_, result) in cfg.observationResults.toArray do
+    let (_, next) ← (collectObservationQuestions result.expr).run state
+    state := next
+  return state.2
+
+private meta def addSymbolicObservationAtom (cfg : WalkConfig) (e : Expr) (label : String) :
     StateT WalkState MetaM String := do
   if let some id := (← get).applicationAtoms[(⟨e⟩ : ExprStructEq)]? then return id
   let type ← sigOfType (← inferType e)
-  let (label, state) := (← get).freshApplicationLabel
+  let state ← get
   let (id, state) := state.freshId
   let state := { (state.addAtom { id, type, label }) with
     applicationAtoms := state.applicationAtoms.insert ⟨e⟩ id }
-  set <| if recordSelectorTerm then state.rememberSelectorTerm e id else state
+  set <| if cfg.recordSelectorTerms then state.rememberSelectorTerm e id else state
   return id
+
+private meta def symbolicAtomLabel (id : String) : StateT WalkState MetaM String := do
+  let some atom := (← get).atoms.find? (·.id == id)
+    | throwError "spytial internal error: symbolic observation atom '{id}' has no label"
+  return atom.label
+
+private meta def natAdditionArguments? (expression : Expr) : MetaM (Option (Expr × Expr)) := do
+  unless expression.getAppFn.isConstOf ``HAdd.hAdd ||
+      expression.getAppFn.isConstOf ``Nat.add do return none
+  unless (← whnf (← inferType expression)).isConstOf ``Nat do return none
+  let arguments ← dataArgsOf expression
+  unless arguments.size == 2 do return none
+  return some (arguments[0]!, arguments[1]!)
+
+mutual
+  /-- Render an observation residual in terms of its genuinely unknown
+      observation leaves. Deterministic arithmetic results keep their
+      expression instead of receiving another unrelated `?ₙ` label. -/
+  private meta partial def symbolicObservationExpression (cfg : WalkConfig) (expression : Expr) :
+      StateT WalkState MetaM String := do
+    if hasObservedHead cfg expression && (← graphSide? expression).isSome then
+      return ← symbolicObservationResult cfg expression >>= symbolicAtomLabel
+    if let some value ← observationValue? expression then
+      return (← ppExpr value).pretty
+    if (← natAdditionArguments? expression).isSome then
+      let (terms, constant) ← symbolicNatAddends cfg expression
+      let terms := if constant == 0 then terms else terms.push (toString constant)
+      return if terms.isEmpty then "0" else String.intercalate " + " terms.toList
+    if expression.getAppFn.isConstOf ``Max.max then
+      let arguments ← dataArgsOf expression
+      if arguments.size == 2 then
+        let left ← symbolicMaxArgument cfg arguments[0]!
+        let right ← symbolicMaxArgument cfg arguments[1]!
+        return s!"max {left} {right}"
+    return (← ppExpr expression).pretty
+
+  /-- Parenthesize a `max` operand unless it is exactly one generated
+      observation hole. This keeps compound residuals grouped without the
+      visually misleading `(?₁)` spelling for atomic unknowns. -/
+  private meta partial def symbolicMaxArgument (cfg : WalkConfig) (expression : Expr) :
+      StateT WalkState MetaM String := do
+    let isAtomicHole := hasObservedHead cfg expression && (← graphSide? expression).isSome
+    let rendered ← symbolicObservationExpression cfg expression
+    return if isAtomicHole then rendered else s!"({rendered})"
+
+  /-- Flatten Nat addition only for display, collecting numeral operands into
+      one offset. The atom still records the original checked Lean expression. -/
+  private meta partial def symbolicNatAddends (cfg : WalkConfig) (expression : Expr) :
+      StateT WalkState MetaM (Array String × Nat) := do
+    if let some value ← observationValue? expression then
+      if let some literal := value.rawNatLit? then return (#[], literal)
+    if let some (left, right) ← natAdditionArguments? expression then
+      let (leftTerms, leftConstant) ← symbolicNatAddends cfg left
+      let (rightTerms, rightConstant) ← symbolicNatAddends cfg right
+      return (leftTerms ++ rightTerms, leftConstant + rightConstant)
+    let rendered ← symbolicObservationExpression cfg expression
+    let rendered := if expression.getAppFn.isConstOf ``Max.max then s!"({rendered})" else rendered
+    return (#[rendered], 0)
+
+  /-- One symbolic observation result. Only irreducible observed applications
+      receive fresh names; residual computations are labelled by expressions
+      over those shared names. -/
+  private meta partial def symbolicObservationResult (cfg : WalkConfig) (e : Expr) :
+      StateT WalkState MetaM String := do
+    if let some id := (← get).applicationAtoms[(⟨e⟩ : ExprStructEq)]? then return id
+    if (← dependsOnObservation cfg e) && !hasObservedHead cfg e then
+      addSymbolicObservationAtom cfg e (← symbolicObservationExpression cfg e)
+    else
+      let (label, state) := (← get).freshApplicationLabel
+      set state
+      addSymbolicObservationAtom cfg e label
+end
 
 private meta def walkSymbolicResult? (cfg : WalkConfig) (e : Expr) :
     StateT WalkState MetaM (Option String) := do
   if cfg.observationResiduals.contains ⟨e⟩ && !cfg.observationResults.contains ⟨e⟩ then
-    return some (← symbolicObservationResult e cfg.recordSelectorTerms)
+    return some (← symbolicObservationResult cfg e)
   return none
 
 /-- Emit a named application `f xs` as the graph point `f[xs, f xs]`.
@@ -1471,7 +1555,7 @@ public meta def addObservation (cfg : WalkConfig) (source result : Expr)
     | some resultId => pure resultId
     | none =>
       if reducedResult.equal result then
-        symbolicObservationResult result cfg.recordSelectorTerms
+        symbolicObservationResult cfg result
       else
         walkExpr cfg reducedResult
   modify fun state =>

@@ -7,7 +7,7 @@ package spytialLean where
   releaseRepo := "https://github.com/sidprasad/spytial-lean"
 
 require iykyk from
-  git "https://github.com/sidprasad/iykyk" @ "v0.1.2"
+  git "https://github.com/sidprasad/iykyk" @ "v0.2.0"
 
 /-! ## JS build targets
 

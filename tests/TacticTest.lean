@@ -158,13 +158,7 @@ info: {"relations":
   {"type": "Nat", "label": "6", "id": "atom_1"}]}
 -/
 #guard_msgs in
-#spytial.datum 3 observing [twice] dependencies
-
-/-- error: 'dependencies' requires an 'observing [...]' clause -/
-#guard_msgs in
-example : True := by
-  spytial 3 dependencies
-  trivial
+#spytial.datum 3 observing [twice]
 
 universe u v
 
@@ -213,7 +207,7 @@ run_elab
       (some #[⟨op⟩]) {} #[Lean.mkIdent ``observedNext]
 
 def inspectNext (n : Nat) : Nat := by
-  spytial n observing [observedNext] dependencies with [attribute observedNext]
+  spytial n observing [observedNext] with [attribute observedNext]
   exact n + 1
 
 /--

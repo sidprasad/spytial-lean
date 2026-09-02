@@ -1,160 +1,149 @@
 # What `observing` means
 
 `observing [f]` asks for the value of `f t` for each applicable value `t`
-already represented in the inspection. Adding the `dependencies` modifier
-retains named operations in a symbolic simplified result that connect recursive
-observations. This is a dependency graph, not a trace of every reduction the
-evaluator performed:
+already represented in the inspection:
 
 ```lean
-spytial tree observing [height] dependencies
+spytial tree observing [height]
 ```
 
-## Three stages
+Observation retains a checked symbolic residual when the result is not
+concrete. Deterministic results are displayed as expressions over genuinely
+unknown observation leaves, rather than as unrelated fresh values.
 
-Observation has three separate stages:
+## Stages
 
-1. **Domain selection.** Spytial snapshots the represented values to which each
+Observation has four internal stages:
+
+1. **Domain discovery.** Spytial snapshots the represented values to which each
    requested unary function applies.
-2. **Evaluation.** It simplifies each application using definitions and, in
-   tactic mode, retained proof-backed facts. The result is accompanied by a
-   kernel-checked equality.
-3. **Representation.** Plain `observing` connects each input to its result.
-   `dependencies` additionally represents the named operations in a symbolic
-   residual that connect recursive applications of the observer.
+2. **Residualization.** It simplifies each application using definitions and,
+   in tactic mode, retained proof-backed facts. The result carries a checked
+   equality from the source application to its residual expression.
+3. **Focused questions.** Spytial recognizes propositions that could unblock
+   the residual. For a symbolic `max a b`, it may ask IYKYK to prove `a ≤ b`
+   or `b ≤ a` using its bounded `simp` and `omega` query mechanisms. Successful
+   checked proofs are fed back into simplification; unsuccessful queries leave
+   the expression symbolic.
+4. **Relationalization.** The final result is connected to its input by the
+   requested observation relation and emitted with the rest of the datum.
 
-The third stage changes only the relational datum. It does not perform more
-proof search or change which values are observed.
+The focused queries do not add facts to the inspected `Afaik`. They only help
+normalize the observation result before the final datum is produced.
 
 ## Relational contract
 
-Let `D` be the finite collection of represented values before adding
-observations. In command mode these come from the selected expression. In
-tactic mode they also include values represented by the retained, certified
-context facts. `D` is not every variable of a matching type in the local context.
+Let `D` be the finite collection of represented values before observations are
+added. In command mode these come from the selected expression. In tactic mode
+they also include values represented by the retained, certified context facts.
+`D` is not every variable of a matching type in the local context.
 
 For every requested unary function `f : A → B` and every represented `t : A`:
 
-1. Form `f t` and try to evaluate it using available definitions, ordinary
-   simplification rules, and the retained context proofs.
-2. Obtain a result expression `r` with a checked equality `Γ ⊢ f t = r`.
-   If no computation is possible, `r` can simply be `f t` itself.
-3. Represent the result in the same datum and add the tuple
-   `f(t, result)`, using the existing atom for `t`.
-4. With `dependencies`, if `r` is still symbolic and contains recursive
-   applications of the requested observer, represent the named operations
-   connecting those applications to the result. Fully evaluated results remain
-   ordinary values without a trace.
+1. Form `f t` and simplify it to a residual `r`.
+2. Retain checked evidence of `Γ ⊢ f t = r`. If no computation is possible,
+   `r` can be `f t` itself.
+3. In tactic mode, ask only focused questions discovered from `r`, then
+   re-simplify with any checked answers.
+4. Represent the result and add `f(t, result)`, reusing the existing atom for
+   `t`.
 
-Concrete results are ordinary values, such as the number `2`. A result known
-to equal a local value uses that value. Known result constructors retain their
-ordinary fields, including symbolic fields. An unresolved computation has a
-symbolic result atom (`?₁`, `?₂`, …). Named residual dependencies can connect
-that atom to other symbolic observation results.
-Occurrences of a named application share its result, so a context comparison
-and an observation refer to the same value.
-
-These are display labels, not assignable Lean metavariables. The subscript
-distinguishes values within one inspection; repeated references to the same
-atom keep the same label.
-
-The existing type/relationalizer identity policy still determines which input
-values share atoms. Observing does not override an occurrence-based policy.
-The domain is fixed before observation results are introduced: observing
-`bump : Nat → Nat` at `1` adds `bump(1, 2)`, not an infinite chain of observations.
-
-## Dependencies are not a reduction trace
-
-For `height (node l key r)`, evaluation can use
-`1 + max (height l) (height r)`. When the child heights are unresolved, this
-residual expression produces the following graph under `dependencies`:
+Concrete results are ordinary values such as `2`. An irreducible observed
+application receives a generated display name such as `?₁`. A deterministic
+residual is labelled by an expression over those shared names. For example:
 
 ```text
-height(l, HL)
-height(r, HR)
-max(HL, HR, M)
-add(1, M, H)
-height(node l key r, H)
+height(l)      = ?₁
+height(r)      = ?₂
+height(parent) = (max ?₁ ?₂) + 1
 ```
 
-These are the named operations remaining in the checked simplified result.
-Spytial does not expose the evaluator's intermediate rewrites or `Nat`'s
-implementation constructors. If the whole height evaluates to `2`, the result
-is simply the ordinary value `2`; no historical trace is reconstructed.
+If the context proves enough arithmetic relationships, the same result can be
+more compact:
 
-Other relations can come from explicit inspected expressions and retained
-proof-backed facts. For example, a branch fact
-`height r + 1 < height l` connects the height results through `add` and `lt`.
-That relationship is present in the context being inspected independently of
-the observer's residual dependency graph.
+```text
+height(before) = ?₁ + 3
+height(after)  = ?₁ + 2
+```
 
-Spytial does not perform general theorem discovery to find further equations.
-The current syntax accepts named unary data-returning functions; it does not
-accept binary `add` as a separate observer over pairs of domain values. An
-`add` relation can nevertheless occur when it is part of a retained residual.
+These labels are not assignable Lean metavariables. Each atom retains the
+actual Lean expression and the observation equality remains proof-backed.
+Occurrences of the same named application reuse its result atom, so context
+facts and observations refer to the same value.
+
+The represented domain is fixed before observation results are added. Thus
+observing `bump : Nat → Nat` at `1` adds `bump(1, 2)`, not an infinite sequence
+of newly observed results.
+
+## Focused proof questions
+
+Spytial, not IYKYK, decides which propositions would unblock an observed
+computation. IYKYK receives ordinary propositions and returns checked proofs;
+it knows nothing about trees, heights, or visualization.
+
+The first supported blocker is `max` over `Nat` or `Int`:
+
+```text
+residual contains max a b
+Spytial asks       a ≤ b  or  b ≤ a
+IYKYK answers      proved / not proved / truncated
+```
+
+This is goal-directed rather than arithmetic saturation. Spytial does not ask
+IYKYK to enumerate all consequences of the context, and failure to prove one
+ordering is not evidence for the other. The query loop and each proof attempt
+are bounded.
+
+Command mode has no `Afaik`, so it performs definition reduction and ordinary
+simplification but no context-backed IYKYK queries.
+
+## Why `max` and addition are not observers
 
 Writing `observing [height, max, HAdd.hAdd]` would have different semantics.
-`max` and `HAdd.hAdd` are binary functions, while observers currently map one
-unary function over a fixed domain. Treating them as observers would require a
-Cartesian product of represented numbers, producing many combinations that
-were never used by `height`; allowing their results back into that domain could
-also make the process unbounded. `dependencies` instead follows only the
-particular `max` and addition applications present in `height`'s checked
-symbolic residual.
+`height` is a unary function mapped over a fixed domain. `max` and addition are
+binary operations that occur at particular places in `height`'s residual.
+Observing them independently would require a Cartesian product of represented
+numbers and would produce combinations never used by the height computation.
 
-## Examples with height
+Spytial instead retains the particular operations already present in the
+checked residual. They do not require public observation options.
 
-Here `singleton key := node leaf key leaf` is an ordinary helper definition.
+## Height example and its limits
 
-| Represented tree / available facts | Observed height |
-| --- | --- |
-| `leaf` | `0` |
-| `singleton key`, with unknown `key` | `1` |
-| `node (singleton key) x leaf` | `2` |
-| `node l key r`, arbitrary `l` and `r` | Symbolic; `dependencies` connects it via `max` and `add` |
-| Same tree, with `height l = 2`, `height r = 1` | `3` |
-| Same tree, with only `height r + 1 < height l` | Generally still symbolic |
+For a right rotation, let:
 
-This is why evaluating the observation, rather than demanding a completely
-concrete input tree, matters: `height` does not need the node keys.
+```lean
+a := height ll
+b := height lr
+c := height r
+```
 
-In the generic AVL rotation/balance definitions, subtrees such as `ll`, `a`,
-`b`, and `r` are arbitrary trees, not known leaves. The branch conditions do
-not determine absolute heights. A concrete example can therefore show numeric
-before/after heights while the generic branch still shows symbolic heights
-and the comparisons supplied by its context. For example, two concrete LR
-inputs can have before/after heights `3 → 2` and `4 → 3` respectively.
+The tree shape alone establishes:
+
+```text
+height before = 1 + max (1 + max a b) c
+height after  = 1 + max a (1 + max b c)
+```
+
+It does not order `a`, `b`, and `c`. If the context additionally proves
+`a = b + 1` and `b = c`, IYKYK can discharge the relevant comparisons and the
+labels normalize to `c + 3` and `c + 2`. Without those facts, the maxima remain.
+Arithmetic derives consequences; it does not invent AVL preconditions.
 
 ## Limits and ownership
 
-- Evaluation is best-effort and bounded by the simplifier step limit and Lean's
-  reduction/heartbeat limits. It is not a promise of a complete normal form.
-  Recoverable preparation failures retain the application symbolically with a
-  warning; exhausting Lean's overall resource limits can stop the inspection.
-- Computation follows available, transparent Lean definitions. Opaque bodies,
-  unavailable definitions, and computations needing unknown data may remain
-  symbolic. No compiled runtime default is substituted for unknown data.
-- Simplification can use certified facts; it does not perform unrestricted
-  theorem search or invent branch preconditions. Observation is not a proof
-  that a rotation preserves balance.
+- Observation evaluation and focused-question discovery belong to Spytial.
+- Proof search, bounds, captured scope, and kernel certification belong to
+  IYKYK.
+- Final atom identity, expression labels, relations, and presentation belong
+  to Spytial.
+- Evaluation remains best-effort and bounded. Opaque bodies, unavailable
+  definitions, and computations requiring unknown data can remain symbolic.
 - Existing metavariables are not assigned, and fresh unresolved metavariables
-  cannot escape evaluation. The proof state is unchanged. Applications with
-  unresolved universe metavariables currently skip preparation.
-- The existing finite context-fact selection still applies. Observation does
-  not rerun IYKYK to discover new facts about its newly produced values.
-- Dependency expansion follows only named operations in the simplified result
-  that still contain the requested observer. Unrelated helper implementations
-  remain symbolic boundaries.
-- `with [attribute height]` controls presentation, not evaluation. A symbolic
-  height may still display as `?₁`; its dependencies are separate relations in
-  the datum rather than text embedded in the attribute.
+  cannot escape observation preparation.
+- Structured results retain their ordinary constructor fields.
+- `with [attribute height]` changes presentation, not the observation or proof
+  process.
 
-Programmatic callers select the same behavior with
-`{ observationDetail := .dependencies }` in their `WalkConfig`.
-
-This behavior belongs to Spytial's Lean relationalizer. IYKYK supplies checked
-context facts; it does not need a new inference mechanism to evaluate a
-requested function application. No new `observing` option is required.
-
-Regressions live in `tests/ContextInspectionTest.lean`, `tests/InContextTest.lean`,
-and `tests/TacticTest.lean`.
+Regressions live in `tests/ContextInspectionTest.lean`,
+`tests/InContextTest.lean`, and `tests/TacticTest.lean`.

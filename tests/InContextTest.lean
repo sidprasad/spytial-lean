@@ -162,8 +162,8 @@ private def Tree.height : Tree → Nat
     let observation := mkApp (mkConst ``Tree.height) root
     assertCanon "consumer.activeDomainObservation"
       (← relationalize root {} #[observation])
-      "Tree|node\nTree|left\nTree|right\nNat|?₁\nNat|?₂\nNat|?₃\n\
-       height[Tree,Nat]:0,3;1,4;2,5\nleft[Tree,Tree]:0,1\nright[Tree,Tree]:0,2"
+      "Tree|node\nTree|left\nTree|right\nNat|?₁\nNat|?₂\nNat|(max ?₁ ?₂) + 1\n\
+       height[Tree,Nat]:0,5;1,3;2,4\nleft[Tree,Tree]:0,1\nright[Tree,Tree]:0,2"
 
 /- Values introduced by proof-backed context facts join the same active
    domain, so observing the selected endpoint also observes its neighbor. -/

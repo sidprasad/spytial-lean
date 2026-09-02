@@ -1,6 +1,6 @@
 module
 
-public meta import Iykyk.Extract
+public meta import Iykyk.Query
 public meta import SpytialLean.Relationalizer
 public meta import SpytialLean.SelectorElab
 
@@ -224,6 +224,43 @@ private meta def rootWalkAtomIds (root : String) (witnessIds : Array String)
     if !witnessIds.contains atom.id || used.contains atom.id then atoms.insert atom.id
     else atoms
 
+/-- Simplify observations, ask IYKYK only the focused questions exposed by
+    remaining arithmetic blockers, and simplify again with every checked
+    answer. The loop is local and bounded; unanswered questions remain
+    symbolic. -/
+private meta def prepareContextObservations (afaik : Iykyk.Afaik) (config : WalkConfig)
+    (domain : Array Expr) : MetaM WalkConfig := do
+  let contextProofs := afaik.facts.map (·.proof)
+  let mut prepared ← prepareObservations config domain contextProofs
+  let mut answers : Array Iykyk.KnownFact := #[]
+  let mut attempted : Std.HashSet ExprStructEq := {}
+  let mut warnedAboutBudget := false
+  for _ in [:4] do
+    let mut changed := false
+    for question in ← observationQuestions prepared do
+      if question.alternatives.any fun goal =>
+          answers.any fun answer => answer.proposition.equal goal then
+        continue
+      for goal in question.alternatives do
+        if attempted.contains ⟨goal⟩ then continue
+        attempted := attempted.insert ⟨goal⟩
+        match ← Iykyk.prove afaik goal { mechanisms := #[.simp, .omega] } with
+        | .proved fact =>
+            answers := answers.push fact
+            changed := true
+            break
+        | .notProved => pure ()
+        | .truncated =>
+            unless warnedAboutBudget do
+              logWarning "spytial: an observation proof query exhausted its arithmetic budget; \
+                leaving the affected computation symbolic"
+              warnedAboutBudget := true
+    unless changed do return prepared
+    prepared ← prepareObservations
+      { prepared with observationResults := {}, observationResiduals := {} }
+      domain (contextProofs ++ answers.map (·.proof))
+  return prepared
+
 /-- Translate proof-backed knowledge into Spytial's relational data. The
     proofs remain owned by IYKYK. Requested observations parameterize the
     expression walk and add their function graphs over every represented value
@@ -252,8 +289,7 @@ private meta def relationalizeAfaikInspection (afaik : Iykyk.Afaik)
           if let some (variableId, value) ← refinementOf? (← displayedProposition fact) then
             if refinements[variableId]?.any (·.equal value) then continue
           anchors ← walkFact config fact anchors
-      config ← prepareObservations config (discovery.observationTerms.map (·.1))
-        (afaik.facts.map (·.proof))
+      config ← prepareContextObservations afaik config (discovery.observationTerms.map (·.1))
     let (rootId, state) ← StateT.run (s := {}) do
       -- Witnesses first: a witness can occur inside the refined root, and the
       -- walk reuses its atom only when it is already registered.

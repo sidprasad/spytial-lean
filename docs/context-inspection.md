@@ -82,25 +82,19 @@ deliberately distinguish occurrences. There is no new observation option.
 For a known node with unknown children, `observing [height]` records:
 
 ```text
-height(parent, H)
-height(left, HL)
-height(right, HR)
+height(left, ?₁)
+height(right, ?₂)
+height(parent, (max ?₁ ?₂) + 1)
 ```
 
-The observer is evaluated before its result is added. Known child heights can
-therefore compute the parent's height. With
-`observing [height] dependencies`, named operations in a symbolic simplified
-result connect the recursive observations:
-
-```text
-max(HL, HR, M)
-add(1, M, H)
-```
-
-These `max` and `add` tuples relate the symbolic parent and child heights. They
-are the residual dependency graph, not a trace of every reduction. An
-independently retained fact such as `height r + 1 < height l` can introduce
-additional `add` and comparison relationships. See
+The observer is residualized before its result is added. Known child heights
+can therefore compute the parent's height, while deterministic symbolic
+results are labelled as expressions over genuinely unknown leaves. In tactic
+mode, Spytial can ask IYKYK focused arithmetic questions needed to simplify a
+symbolic `max`; successful answers are checked proofs and do not become extra
+facts in the displayed `Afaik`. An independently retained fact such as
+`height r + 1 < height l` can still introduce `add` and comparison relations.
+See
 [Observations](observations.md) for the evaluation and result-representation
 contract.
 

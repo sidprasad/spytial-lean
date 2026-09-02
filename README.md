@@ -370,7 +370,9 @@ diagram. `spytial.datum term` prints the same relational datum, and
 `spytial term fyi [hypothesis]` supplies an explicit proved hypothesis or
 forward rule to IYKYK. Spytial uses IYKYK's `wdyk` API directly and enables
 `simp` normalization so constructor clashes and same-constructor equations
-are reflected in the diagram. Broader proof search is deliberately deferred.
+are reflected in the diagram. Observation residuals can also make bounded,
+goal-directed `simp` and `omega` queries through IYKYK; these queries return
+checked proofs without adding arithmetic closure to the inspected knowledge.
 
 The `observing` clause supplies named unary functions to the relationalizer in
 both command and tactic mode:
@@ -378,7 +380,6 @@ both command and tactic mode:
 ```lean
 #spytial tree observing [height]
 spytial tree observing [height]
-spytial tree observing [height] dependencies
 ```
 
 For each represented value `t` of the appropriate input type, `observing [height]`
@@ -388,20 +389,21 @@ node, not only the selected root. Evaluation computes through available
 definitions, including helper functions, and uses bounded `simp`; tactic mode
 also supplies the facts established by IYKYK. The input need not be closed:
 the height of `node leaf key leaf` is `1` even when `key` is unknown. Evaluation
-does not modify the proof state or run a general proof search.
+does not modify the proof state or run general proof search.
 
 A computed height is an ordinary number. If the context establishes
 `height l = 2` and `height r = 1`, the parent's result is `3`. Otherwise its
-height can remain a symbolic value, connected by the same `height` relation.
-With the optional `dependencies` modifier, Spytial also represents named
-residual dependencies when a symbolic simplified result still contains
-recursive height applications. For a node with two unknown child heights,
-`max(HL, HR, M)` and `add(1, M, H)` connect the child results to the parent's
-result. This is a dependency graph, not a trace of every evaluator rewrite or
-an expansion of `Nat`'s implementation.
+height can remain a symbolic expression, connected by the same `height`
+relation. Only irreducible observation leaves receive generated names. For a
+node with two unknown child heights, the parent can therefore display as
+`(max ?₁ ?₂) + 1` instead of receiving an unrelated third name. In tactic
+mode, Spytial recognizes focused questions such as which side of a symbolic
+`max` is larger, asks IYKYK's bounded proof API, and simplifies again with any
+checked answers. With sufficient context this can produce related labels such
+as `?₁ + 3` and `?₁ + 2`.
 Structured results still have their ordinary fields; unresolved computations
-inside them that do not retain the requested observer stay symbolic. There is
-no separate symbolic-result view.
+inside them stay symbolic. There is no separate symbolic-result view or
+observation-detail modifier.
 The represented domain is fixed before these results are added, so observations
 do not recursively observe their own newly introduced outputs.
 
@@ -410,8 +412,8 @@ application and the enclosing named computations that depend on it are
 represented before WHNF. For example, with `observing [height]`, a fact
 `height r + 1 < height l` produces `height`, `add`, and `lt` relations rather
 than exposing `Nat.succ` and its constructor field. Here `add` comes from an
-explicit retained fact; residual `add` and `max` relationships can also come
-from a symbolic recursive height computation when `dependencies` is requested.
+explicit retained fact. Arithmetic inside an observation residual is retained
+in its result expression rather than emitted as an implementation graph.
 
 `#spytial` uses the same observation-aware relationalizer with no proof
 context, so it observes all values represented by the selected datum. Tactic
