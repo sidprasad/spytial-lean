@@ -150,6 +150,31 @@ info: {"relations":
 #guard_msgs in
 #spytial.datum 3 observing [twice]
 
+universe u v
+
+inductive ObservationBox (α : Type u) (β : α → Type v) : Type (max u v) where
+  | mk
+
+def observationBox : ObservationBox String (fun _ => Nat) := .mk
+
+def dependentMeasure {α : Type u} {β : α → Type v} (_ : ObservationBox α β) : Nat := 1
+
+/- Observation templates are instantiated independently for each value, so
+   dependent implicit parameters and universe levels are inferred from that value. -/
+/--
+info: {"relations":
+ [{"types": ["ObservationBox", "Nat"],
+   "tuples":
+   [{"types": ["ObservationBox", "Nat"], "atoms": ["atom_0", "atom_1"]}],
+   "name": "dependentMeasure",
+   "id": "dependentMeasure"}],
+ "atoms":
+ [{"type": "ObservationBox", "label": "mk", "id": "atom_0"},
+  {"type": "Nat", "label": "1", "id": "atom_1"}]}
+-/
+#guard_msgs in
+#spytial.datum observationBox observing [dependentMeasure]
+
 #spytial 3 observing [twice] with [attribute twice]
 
 -- The observer's domain, not the selected root's type, determines where it
