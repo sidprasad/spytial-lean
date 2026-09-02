@@ -829,15 +829,10 @@ public meta def dataArgsOf (e : Expr) : MetaM (Array Expr) := do
 /-- Read a named application as a point in the function's graph. Constructors
     are values, not functions being observed. -/
 public meta def graphSide? (side : Expr) : MetaM (Option (String × Array Expr)) := do
-  let name? ← match side.getAppFn with
-    | .const ``HAdd.hAdd _ => pure (some "add")
-    | .const n _ =>
-      match (← getEnv).find? n with
-      | some (.ctorInfo _) => pure none
-      | _ => pure (some (shortName n))
-    | .fvar id => pure (some (hypLabel (← id.getUserName)))
-    | _ => pure none
-  let some name := name? | return none
+  let head := side.getAppFn
+  if let .const n _ := head then
+    if (← getEnv).find? n matches some (.ctorInfo _) then return none
+  let some name ← relationHeadName? head | return none
   let args ← dataArgsOf side
   if args.isEmpty then return none
   return some (name, args)

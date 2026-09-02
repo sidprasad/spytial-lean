@@ -179,24 +179,28 @@ private def Tree.height : Tree → Nat
        edge[Tree,Tree]:0,2\nheight[Tree,Nat]:0,1;2,3"
 
 /- Observations parameterize fact relationalization. The source computation
-    containing `height` remains `height`/`add`/`lt`; WHNF must not expose
+    containing `height` remains `height`/`hAdd`/`hMul`/`lt`; WHNF must not expose
     the implementation-level `Nat.succ` constructor and its `n` field. -/
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `left tree fun left => do
   withLocalDeclD `right tree fun right => do
     let leftHeight := mkApp (mkConst ``Tree.height) left
     let rightHeight := mkApp (mkConst ``Tree.height) right
-    let oneMore ← mkAppM ``HAdd.hAdd #[rightHeight, mkRawNatLit 1]
+    let doubled ← mkAppM ``HMul.hMul #[mkRawNatLit 2, rightHeight]
+    let oneMore ← mkAppM ``HAdd.hAdd #[doubled, mkRawNatLit 1]
     withLocalDeclD `branch (← mkAppM ``LT.lt #[oneMore, leftHeight]) fun _ => do
       let view ← viewOf "consumer.observationContext" left {} #[leftHeight]
       assertCanon "consumer.observationContext" view.data
-        "Tree|left\nNat|?₁\nNat|?₂\nNat|?₃\nTree|right\nNat|1\n\
-         add[Nat,Nat,Nat]:3,5,2\nheight[Tree,Nat]:0,1;4,3\nlt[Nat,Nat]:2,1"
+        "Tree|left\nNat|?₁\nNat|?₂\nNat|?₃\nNat|2\nNat|?₄\nTree|right\nNat|1\n\
+         hAdd[Nat,Nat,Nat]:3,7,2\nhMul[Nat,Nat,Nat]:4,5,3\n\
+         height[Tree,Nat]:0,1;6,5\nlt[Nat,Nat]:2,1"
       assertMatchesReference "consumer.observationContext.reference" oneMore
         { functionGraphs := true, observations := #[leftHeight] }
       let scope ← scopeForAfaik view.afaik (← SelScope.ofType ``Tree) #[leftHeight]
-      unless (scope.rels.get? "add").map (·.2) == some (some 3) do
-        throwError "consumer.observationContext: expected ternary add"
+      unless (scope.rels.get? "hAdd").map (·.2) == some (some 3) do
+        throwError "consumer.observationContext: expected ternary hAdd"
+      unless (scope.rels.get? "hMul").map (·.2) == some (some 3) do
+        throwError "consumer.observationContext: expected ternary hMul"
 
 /-! ## IYKYK inconsistency prevents a diagram -/
 

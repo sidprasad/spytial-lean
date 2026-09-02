@@ -22,6 +22,16 @@ private meta def assertEq {α} [BEq α] [Repr α] (label : String) (got expected
   assertEq "rel.anon"   #[fieldRelName "mk" #[Name.anonymous] 0] #["mk_0"]
   assertEq "rel.empty"  #[fieldRelName "mk" #[] 5] #["mk_5"]
 
+/-! Application heads keep their Lean short names. In particular, overloaded
+operators follow one rule rather than accumulating per-operator aliases. -/
+
+#eval show MetaM Unit from do
+  let add ← mkAppM ``HAdd.hAdd #[mkRawNatLit 1, mkRawNatLit 2]
+  let mul ← mkAppM ``HMul.hMul #[mkRawNatLit 2, mkRawNatLit 3]
+  let some (addName, _) ← graphSide? add | throwError "addition has no graph side"
+  let some (mulName, _) ← graphSide? mul | throwError "multiplication has no graph side"
+  assertEq "graph.operatorNames" #[addName, mulName] #["hAdd", "hMul"]
+
 public inductive Tree (α : Type) where
   | leaf (value : α)
   | node (left right : Tree α)

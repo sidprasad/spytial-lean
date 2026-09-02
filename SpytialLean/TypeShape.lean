@@ -73,6 +73,14 @@ public meta def isProofLikeType (ty : Expr) : MetaM Bool := do
 Names the relational walker can emit, shared with the context consumer so its
 selector scope predicts exactly what the resulting data contains. -/
 
+/-- The canonical relation name for a Lean application head: a constant's
+    short name or a local relation's user name. -/
+public meta def relationHeadName? (head : Expr) : MetaM (Option String) := do
+  match head with
+  | .const n _ => return some (shortName n)
+  | .fvar fvarId => return some (hypLabel (← fvarId.getUserName))
+  | _ => return none
+
 /-- The relation an equality hypothesis emits into when it does not refine a
     variable (`f a = g b`). -/
 public meta def eqRelName : String := "="
@@ -86,9 +94,7 @@ public meta def propRelName? (head : Expr) : MetaM (Option String) := do
   match head with
   | .const ``Eq _ => return some eqRelName
   | .const ``Ne _ => return none
-  | .const n _ => return some (shortName n)
-  | .fvar fvarId => return some (hypLabel (← fvarId.getUserName))
-  | _ => return none
+  | _ => relationHeadName? head
 
 /-! ## Function tabulation
 
