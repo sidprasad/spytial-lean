@@ -6,7 +6,7 @@ public meta import SpytialLean.SpecLang
 
 namespace SpytialLean
 
-open Lean (Json ToJson toJson JsonNumber)
+open Lean (Json ToJson toJson JsonNumber DeclarationLocation)
 open SpecLang
 
 /-! ## The op AST -/
@@ -48,6 +48,10 @@ public meta structure SpytialOp where
   /-- `hold: never`; only `ItemSpec.supportsHold` items carry it. -/
   hold : Option String := none
   source : Option OpSource := none
+  /-- Where an introducing op wrote its graph-side name. Rides the op through
+      bundles and attached specs so references elsewhere can jump to it; never
+      serialized. -/
+  nameDecl : Option DeclarationLocation := none
   deriving Repr, Inhabited
 
 public meta abbrev SpytialSpec := List SpytialOp

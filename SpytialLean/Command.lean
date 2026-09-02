@@ -409,9 +409,11 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
       if fields.any (·.1 == f) then
         throwErrorAt ref m!"duplicate {fieldName f}; usage: {usage}"
       return fields.push (f, v)
+    let introFid := item.introduces.map (·.field)
     let mut fields : Array (FieldId × FieldVal) := #[]
     let mut hold : Option String := none
     let mut pending := item.positional
+    let mut declStx : Option Syntax := none
     -- an entered variadic enum-list: its field, the words so far, the last ref
     let mut tail : Option (FieldSpec × Array String × Syntax) := none
     for i in [0:argStxs.size] do
@@ -435,6 +437,7 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
             if item.positional.contains f.id then
               throwErrorAt inner m!"'{kw}' is a positional argument; usage: {usage}"
             fields ← setField fields inner f.id (← elabKwValue usage sel rel f vstx)
+            if introFid == some f.id then declStx := some vstx
       else if let some (f, chosen, _) := tail then
         let .enumList vs _ := f.type | unreachable!
         let w ← enumWord (fieldName f.id) vs (.ofSel inner) usage
@@ -467,6 +470,7 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
           | .str | .iconPath | .color | .«enum» .. | .number .. =>
             fields ← setField fields inner fid
               (← elabScalar (fieldName fid) f (.ofSel inner) usage)
+            if introFid == some fid then declStx := some inner
           | _ =>
             throwErrorAt inner m!"unexpected argument; usage: {usage}"
         | [] =>
@@ -489,7 +493,13 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
     -- table order, so the serialized spec is stable however the source ordered them
     let ordered := item.fields.filterMap fun f =>
       (fields.find? (·.1 == f.id)).map fun (_, v) => (f.id, v)
-    return { item := itemId, fields := ordered, hold }
+    let mut o : SpytialOp := { item := itemId, fields := ordered, hold }
+    if let some stx := declStx then
+      if let some (n, i) := o.introduces? then
+        addIntroducedInfo stx n i.kind i.referencedBy (isBinder := true)
+        if let some range ← getDeclarationRange? stx then
+          o := { o with nameDecl := some { module := ← getMainModule, range } }
+    return o
 
 /-- Read back from the file, not reprinted, so a conflict report cites the line. -/
 private meta def opSource? (op : TSyntax `spytial_op) : TermElabM (Option OpSource) := do
@@ -507,7 +517,9 @@ meta def elabSpytialOps (scope : SelScope) (ops : Array (TSyntax `spytial_op))
     (attached? : Option SpytialSpec := none) : TermElabM SpytialSpec := do
   let introduce (scope : SelScope) (op : SpytialOp) : SelScope :=
     match op.introduces? with
-    | some (n, i) => scope.introduce n { arity := i.arity, referencedBy := i.referencedBy }
+    | some (n, i) => scope.introduce n
+        { kind := i.kind, arity := i.arity, referencedBy := i.referencedBy,
+          decl := op.nameDecl }
     | none => scope
   let mut scope := scope
   let mut spec : Array SpytialOp := #[]

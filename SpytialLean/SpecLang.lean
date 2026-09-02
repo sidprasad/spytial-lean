@@ -256,6 +256,7 @@ private meta structure RawAltForm where
 
 private meta structure RawIntroduces where
   field : String
+  kind : String
   arity : Nat
   referencedBy : List String
 
@@ -386,7 +387,7 @@ private meta def fieldOf (kinds : IntroducedKinds) (itemId : String)
     let some arity := kinds.lookup i.kind
       | .error (here s!"introduces names the kind {i.kind.quote}, which \
           introducedKinds does not declare")
-    return { field := name, arity, referencedBy := i.referencedBy }
+    return { field := name, kind := i.kind, arity, referencedBy := i.referencedBy }
   return some { name, type, required := c.required.getD false, alt, introduces }
 
 /-- `fieldPaths` and the deprecation pairs cover deprecated surface; `item` leaves it out. -/
@@ -618,9 +619,11 @@ public meta structure SelForm where
   deriving Repr, Inhabited
 
 /-- `referencedBy` are the `item.field` positions where the engine resolves such
-    a name; a reference from anywhere else is never looked up. -/
+    a name; a reference from anywhere else is never looked up. `kind` is the
+    manifest's `introducedKinds` key, kept for diagnostics and hovers. -/
 public meta structure Introduces where
   field : FieldId
+  kind : String
   arity : Nat
   referencedBy : List String
   deriving Repr, Inhabited
@@ -707,8 +710,8 @@ private meta def quoteSelForm (f : RawSelForm) : Term :=
     quote f.middlesIgnored]
 
 private meta def quoteIntroduces (i : RawIntroduces) : Term :=
-  Syntax.mkCApp ``Introduces.mk #[enumCtor `FieldId i.field, quote i.arity,
-    quote i.referencedBy]
+  Syntax.mkCApp ``Introduces.mk #[enumCtor `FieldId i.field, quote i.kind,
+    quote i.arity, quote i.referencedBy]
 
 private meta def quoteFieldType : RawFieldType → Term
   | .selector fs => Syntax.mkCApp ``FieldType.selector #[quote (fs.map quoteSelForm)]

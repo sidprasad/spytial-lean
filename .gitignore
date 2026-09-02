@@ -7,3 +7,4 @@ widget/dist/
 render/cases/
 render/out/
 render/dist/
+tests/interactive/test-cases/*.produced.out
