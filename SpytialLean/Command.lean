@@ -29,19 +29,34 @@ public section
 declare_syntax_cat spytial_op
 declare_syntax_cat spytial_block_arg
 declare_syntax_cat spytial_op_block
+declare_syntax_cat spytial_field_form
 
 syntax str : spytial_block_arg
 syntax num : spytial_block_arg
 syntax scientific : spytial_block_arg
 syntax ident : spytial_block_arg
 syntax spytial_op_block : spytial_block_arg
+syntax spytial_field_form : spytial_block_arg
 
-/-- `atomic` over the whole form, so a parenthesized selector backtracks out to
-    `spytial_sel`. A shorter window cannot decide it: a selector opens
-    `( ident ident` too, and only the close says which was written. A form
-    complete as both reads as a block; write `(some (lo))` for the selector. -/
-syntax (name := spytialBlockStx)
-  atomic("(" ident spytial_block_arg spytial_block_arg* ")") : spytial_op_block
+-- A parenthesized form is headed by a name the manifest declares, so `(some lo)`
+-- never reads as one and falls through to `selExpr`; `atomic` lets any other head
+-- backtrack past the `(`. A block heads an op argument, a block's field heads a
+-- form nested inside it, and the two name sets are disjoint.
+run_cmd do
+  let declare (kind cat : Name) (heads : List String) : CommandElabM Unit := do
+    let alts ← heads.eraseDups.mapM fun h => `(stx| &$(Syntax.mkStrLit h):str)
+    let head ← match alts with
+      | [] => throwError "the manifest declares no head for {kind}"
+      | a :: rest => rest.foldlM (fun acc b => `(stx| $acc <|> $b)) a
+    elabCommand (← `(syntax (name := $(mkIdent kind):ident)
+      atomic("(" ($head) spytial_block_arg spytial_block_arg* ")") : $(mkIdent cat):ident))
+  let altFields := SpecLang.allItems.flatMap fun i =>
+    (SpecLang.ItemSpec.of i).fields.filter (·.alt.isSome)
+  declare `spytialBlockStx `spytial_op_block
+    (SpecLang.allBlocks.map SpecLang.blockName ++ altFields.map (SpecLang.fieldName ·.id))
+  declare `spytialFieldStx `spytial_field_form
+    (SpecLang.allBlocks.flatMap fun b =>
+      (SpecLang.BlockSpec.of b).fields.map (SpecLang.fieldName ·.id))
 
 syntax spytialKwArg := atomic(ident noWs ":" ) selExpr
 
@@ -69,9 +84,12 @@ run_cmd do
 
 private meta def argInner (arg : TSyntax `spytialOpArg) : Syntax := arg.raw[0]
 
-/-- `spytialBlockStx`'s arguments, each stripped of its `spytial_block_arg` wrapper. -/
+/-- A block or field form's arguments, each stripped of its `spytial_block_arg` wrapper. -/
 private meta def blockArgs (stx : Syntax) : Array Syntax :=
   (#[stx[2]] ++ stx[3].getArgs).map (·[0])
+
+/-- `&"name"` wraps the token it matched in a `token.name` node. -/
+private meta def blockHead (stx : Syntax) : String := stx[1][0].getAtomVal
 
 private meta def orVals (vs : List String) : String := "|".intercalate vs
 
@@ -255,8 +273,8 @@ private meta def elabBlock (usage : String) (b : BlockSpec) (stx : Syntax) :
           match f.type with | .«enum» vs _ => vs | _ => []
         throwErrorAt inner m!"unknown word '{w}' in ({blockName b.id} …)\
           {if vocab.isEmpty then m!"" else m!" (expected {orVals vocab})"}"
-    else if inner.isOfKind ``spytialBlockStx then
-      let kw := inner[1].getId.toString
+    else if inner.isOfKind ``spytialFieldStx then
+      let kw := blockHead inner
       let some f := b.fields.find? (fun f => fieldName f.id == kw)
         | throwErrorAt inner m!"({blockName b.id} …) has no field '{kw}'; \
             fields: {", ".intercalate (b.fields.map (fieldName ·.id))}"
@@ -284,7 +302,7 @@ private meta def elabAltForm (usage : String) (f : FieldSpec) (alt : AltForm)
         throwErrorAt inner m!"duplicate direction in ({fieldName f.id} …)"
       dir := some w
     else if inner.isOfKind ``spytialBlockStx then
-      let bname := inner[1].getId.toString
+      let bname := blockHead inner
       let some (bf, bid) := alt.blocks.find? (fun (bf, _) => fieldName bf == bname)
         | throwErrorAt inner m!"({fieldName f.id} …) nests only \
             {", ".intercalate (alt.blocks.map fun (bf, _) => s!"({fieldName bf} …)")}"
@@ -303,7 +321,7 @@ private meta def elabAltForm (usage : String) (f : FieldSpec) (alt : AltForm)
 open SpecLang in
 private meta def elabBlockArg (item : ItemSpec) (usage : String) (inner : Syntax) :
     TermElabM (FieldId × FieldVal) := do
-  let kw := inner[1].getId.toString
+  let kw := blockHead inner
   match item.fields.find? (fun f => fieldName f.id == kw) with
   | none =>
     let blocks := item.fields.filterMap fun f =>
@@ -381,7 +399,7 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
     let written := argStxs.toList.filterMap fun a =>
       let inner := argInner a
       if inner.isOfKind ``spytialKwArg then some inner[0].getId.toString
-      else if inner.isOfKind ``spytialBlockStx then some inner[1].getId.toString
+      else if inner.isOfKind ``spytialBlockStx then some (blockHead inner)
       else none
     let isNumber (stx : Syntax) : Bool :=
       stx.isOfKind numLitKind || stx.isOfKind scientificLitKind
