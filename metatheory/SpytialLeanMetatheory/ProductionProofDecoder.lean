@@ -92,8 +92,9 @@ public structure ProvedTupleRealization {World : Type u}
   atom_ids : exprTupleAtomIds tuple = origin.atoms.toList
   proof_checked : meaning.proofChecks origin.proposition origin.proof
   source_is_proposition : source = meaning.proposition origin.proposition
-  decoder_preserves_meaning : meaning.proposition origin.proposition =
-    (meaning.instanceOfTuples tuples).tupleFact ground tuple
+  proposition_implies_tuple : ∀ world (compatible : context world),
+    meaning.proposition origin.proposition world →
+      (meaning.instanceOfTuples tuples).TupleHolds ground tuple world compatible
 
 /-- The checked runtime facts required to interpret all proof-derived tuples.
     Each tuple has one emitted checked origin and one local realization above;
@@ -158,9 +159,11 @@ public def toProofDecoding {World : Type u} {Root : Type v}
   reflects := by
     intro tuple present world compatible sourceHolds
     let tupleRealization := realization.tuple_realization tuple present
-    rw [tupleRealization.source_is_proposition,
-      tupleRealization.decoder_preserves_meaning] at sourceHolds
-    exact sourceHolds compatible
+    have propositionHolds : meaning.proposition
+        (realization.origin tuple present).proposition world := by
+      rw [← tupleRealization.source_is_proposition]
+      exact sourceHolds
+    exact tupleRealization.proposition_implies_tuple world compatible propositionHolds
 
 /-- Therefore every proof-derived production tuple is true in every world
     compatible with sound IYKYK knowledge. -/

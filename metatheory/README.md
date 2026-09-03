@@ -103,9 +103,10 @@ proves that every emitted proof-derived tuple is true in every world allowed
 by sound IYKYK knowledge.
 
 The only semantic premise specific to proposition decoding is
-`decoder_preserves_meaning`: the proposition before decoding and the typed
-tuple after decoding must mean the same thing. Naming this premise is
-important; hiding it inside the display code would make the result circular.
+`proposition_implies_tuple`: whenever the proposition before decoding is true,
+the typed tuple after decoding must be true in the same context-compatible
+world. Soundness does not need the stronger claim that these two predicates
+are equal.
 
 ## Computed structural tuples
 
@@ -166,7 +167,7 @@ instances still have to be supplied before the main result is complete:
 
 1. Construct the `LeanExprMeaning` interpretation for the captured local
    context and state its trusted-kernel assumptions precisely.
-2. Prove `decoder_preserves_meaning` for both cases of the production decoder:
+2. Prove `proposition_implies_tuple` for both cases of the production decoder:
    an atomic predicate and an equation decoded as a function-graph tuple.
 3. Build the semantic `TraceRealization` automatically from a production
    trace, its provenance map, and selector evidence. This must prove that one
