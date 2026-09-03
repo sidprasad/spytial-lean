@@ -78,20 +78,19 @@ public theorem production_sound {World : Type u} {Root : Type v}
     {meaning : LeanExprMeaning World context}
     (inspection : Inspection meaning)
     (knowledge : Iykyk.Metatheory.Knowledge World Root)
-    (ground : World → GroundInstance meaning.signature meaning.Carrier)
     (trace : SpytialLean.TracedDataInstance)
     (checkedStructure : SpytialLean.CheckedStructuralTrace trace)
     (checkedProofs : SpytialLean.CheckedProofTrace trace)
     (required : StructuralRequirement
       (signature := meaning.signature)
       (Entry := (meaning.instanceOfTuples inspection.structuralTuples).Atom))
-    (structural : ComputedStructuralCertificate trace inspection.rootStruct
-      ground required checkedStructure)
-    (proofs : ProductionProofRealization meaning knowledge ground
-      inspection.provedTuples trace checkedProofs)
-    (knowledgeSound : knowledge.Sound context) :
-    Completes context inspection.data ground :=
-  inspection.sound ground structural.adequate (proofs.sound knowledgeSound)
+    (structural : ComputedStructuralCertificate meaning trace
+      inspection.structuralTuples required checkedStructure)
+    (proofs : ProductionProofRealization meaning knowledge
+      inspection.provedTuples trace checkedProofs) :
+    Completes context inspection.data (ProductionTupleHolds.ground meaning) :=
+  inspection.sound (ProductionTupleHolds.ground meaning) structural.adequate
+    proofs.sound
 
 end Inspection
 

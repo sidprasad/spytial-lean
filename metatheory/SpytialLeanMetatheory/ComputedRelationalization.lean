@@ -1,7 +1,7 @@
 module
 
-public import SpytialLeanMetatheory.SemanticInstance
 public import SpytialLeanMetatheory.RelationalInstance
+public import SpytialLeanMetatheory.ProductionRelationSemantics
 public meta import SpytialLean.Relationalizer
 
 public section
@@ -11,10 +11,9 @@ public section
 
 This file states the semantic obligations for the direct structural part of a
 real computed-value trace. The executable checker recognizes constructor
-fields and projections and checks field coverage. A separate interpretation
-must connect those checked expressions to typed semantic tuples and show that
-the tuples are true. Given that interpretation, this file proves soundness and
-semantic field coverage.
+fields and projections and checks field coverage. A realization connects those
+checked expressions to typed semantic tuples. Their truth then follows from
+the production relation judgment shared with proof-derived tuples.
 -/
 
 namespace SpytialLean.Metatheory
@@ -64,33 +63,34 @@ public abbrev StructuralRequirement {SemanticType : Type v}
     (required : StructuralRequirement (signature := signature) (Entry := data.Atom)) : Prop :=
   ∀ tuple, required tuple → tuple ∈ data.tuples
 
-/-- The semantic interpretation paired with a successful executable
-    structural check. Its obligations are local:
+/-- The typed realization paired with a successful executable structural
+    check. Its obligations are local:
 
     * each output tuple has a structural production origin;
-    * each such origin has the correct semantic meaning; and
+    * each such origin has the checked terms and types represented by its
+      semantic tuple; and
     * every expected field has a corresponding structural origin.
 
-    The executable checker supplies the checked origins and syntactic field
-    coverage. The `LeanExprMeaning` boundary supplies their typing and
-    denotation. -/
+    There is no tuple-truth premise here. Truth comes from the production
+    relation judgment used by `adequate`. -/
 public structure ComputedStructuralCertificate {World : Type u}
-    {SemanticType : Type v} {context : Iykyk.Metatheory.Context World}
-    {signature : RelationalSignature SemanticType} {Carrier : SemanticType → Type w}
+    {context : Iykyk.Metatheory.Context World}
+    (meaning : LeanExprMeaning World context)
     (trace : TracedDataInstance)
-    (data : SemanticInstance.{u, v, w, x} context signature Carrier)
-    (ground : World → GroundInstance signature Carrier)
-    (required : StructuralRequirement (signature := signature) (Entry := data.Atom))
+    (tuples : List (RelationalTuple meaning.signature
+      (LeanExprMeaning.ExprAtom meaning)))
+    (required : StructuralRequirement
+      (signature := meaning.signature)
+      (Entry := (meaning.instanceOfTuples tuples).Atom))
     (checked : CheckedStructuralTrace trace) where
-  realization : TraceRealization trace data
-  output_has_checked_origin : ∀ tuple, tuple ∈ data.tuples →
+  realization : TraceRealization trace (meaning.instanceOfTuples tuples)
+  output_has_checked_origin : ∀ tuple, tuple ∈ tuples →
     ∃ origin ∈ checked.origins.toList, origin.emission ∈ trace.emissions ∧
       realization.represents origin.emission tuple
-  checked_origin_sound : ∀ origin ∈ checked.origins.toList,
+  tuple_realization : ∀ origin ∈ checked.origins.toList,
     origin.emission ∈ trace.emissions → ∀ tuple,
       realization.represents origin.emission tuple →
-      ∀ world (compatible : context world),
-        data.TupleHolds ground tuple world compatible
+        StructuralTupleRealization meaning origin tuple
   required_has_checked_origin : ∀ tuple, required tuple →
     ∃ origin ∈ checked.origins.toList, origin.emission ∈ trace.emissions ∧
       realization.represents origin.emission tuple
@@ -99,34 +99,40 @@ namespace ComputedStructuralCertificate
 
 /-- A completed semantic certificate implies soundness of the computed
     structural slice. -/
-public theorem adequate {World : Type u} {SemanticType : Type v}
+public theorem adequate {World : Type u}
     {context : Iykyk.Metatheory.Context World}
-    {signature : RelationalSignature SemanticType} {Carrier : SemanticType → Type w}
+    {meaning : LeanExprMeaning World context}
     {trace : TracedDataInstance}
-    {data : SemanticInstance.{u, v, w, x} context signature Carrier}
-    {ground : World → GroundInstance signature Carrier}
-    {required : StructuralRequirement (signature := signature) (Entry := data.Atom)}
+    {tuples : List (RelationalTuple meaning.signature
+      (LeanExprMeaning.ExprAtom meaning))}
+    {required : StructuralRequirement
+      (signature := meaning.signature)
+      (Entry := (meaning.instanceOfTuples tuples).Atom)}
     {checked : CheckedStructuralTrace trace}
-    (certificate : ComputedStructuralCertificate trace data ground required checked) :
-    Completes context data ground := by
+    (certificate : ComputedStructuralCertificate meaning trace tuples required checked) :
+    Completes context (meaning.instanceOfTuples tuples)
+      (ProductionTupleHolds.ground meaning) := by
   intro world compatible tuple present
   obtain ⟨origin, originMem, emissionMem, represented⟩ :=
     certificate.output_has_checked_origin tuple present
-  exact certificate.checked_origin_sound origin originMem emissionMem tuple represented
+  exact ProductionTupleHolds.structuralTupleHolds
+    (certificate.tuple_realization origin originMem emissionMem tuple represented)
     world compatible
 
 /-- Origin coverage for every expected field implies structural completeness
     of the semantic instance. -/
-public theorem structurallyComplete {World : Type u} {SemanticType : Type v}
+public theorem structurallyComplete {World : Type u}
     {context : Iykyk.Metatheory.Context World}
-    {signature : RelationalSignature SemanticType} {Carrier : SemanticType → Type w}
+    {meaning : LeanExprMeaning World context}
     {trace : TracedDataInstance}
-    {data : SemanticInstance.{u, v, w, x} context signature Carrier}
-    {ground : World → GroundInstance signature Carrier}
-    {required : StructuralRequirement (signature := signature) (Entry := data.Atom)}
+    {tuples : List (RelationalTuple meaning.signature
+      (LeanExprMeaning.ExprAtom meaning))}
+    {required : StructuralRequirement
+      (signature := meaning.signature)
+      (Entry := (meaning.instanceOfTuples tuples).Atom)}
     {checked : CheckedStructuralTrace trace}
-    (certificate : ComputedStructuralCertificate trace data ground required checked) :
-    StructurallyComplete data required := by
+    (certificate : ComputedStructuralCertificate meaning trace tuples required checked) :
+    StructurallyComplete (meaning.instanceOfTuples tuples) required := by
   intro tuple expected
   obtain ⟨origin, _, emissionMem, represented⟩ :=
     certificate.required_has_checked_origin tuple expected
@@ -136,15 +142,19 @@ public theorem structurallyComplete {World : Type u} {SemanticType : Type v}
     "faithful": no emitted structural tuple is wrong, and no required
     structural field is missing. -/
 public theorem adequate_and_structurallyComplete {World : Type u}
-    {SemanticType : Type v} {context : Iykyk.Metatheory.Context World}
-    {signature : RelationalSignature SemanticType} {Carrier : SemanticType → Type w}
+    {context : Iykyk.Metatheory.Context World}
+    {meaning : LeanExprMeaning World context}
     {trace : TracedDataInstance}
-    {data : SemanticInstance.{u, v, w, x} context signature Carrier}
-    {ground : World → GroundInstance signature Carrier}
-    {required : StructuralRequirement (signature := signature) (Entry := data.Atom)}
+    {tuples : List (RelationalTuple meaning.signature
+      (LeanExprMeaning.ExprAtom meaning))}
+    {required : StructuralRequirement
+      (signature := meaning.signature)
+      (Entry := (meaning.instanceOfTuples tuples).Atom)}
     {checked : CheckedStructuralTrace trace}
-    (certificate : ComputedStructuralCertificate trace data ground required checked) :
-    Completes context data ground ∧ StructurallyComplete data required :=
+    (certificate : ComputedStructuralCertificate meaning trace tuples required checked) :
+    Completes context (meaning.instanceOfTuples tuples)
+        (ProductionTupleHolds.ground meaning) ∧
+      StructurallyComplete (meaning.instanceOfTuples tuples) required :=
   ⟨certificate.adequate, certificate.structurallyComplete⟩
 
 end ComputedStructuralCertificate

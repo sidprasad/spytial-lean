@@ -3,6 +3,7 @@ module
 public import SpytialLeanMetatheory.RelationalInstance
 public import SpytialLeanMetatheory.LeanExprMeaning
 public import SpytialLeanMetatheory.ProofDecoder
+public import SpytialLeanMetatheory.ProductionRelationSemantics
 public meta import SpytialLeanMetatheory.ProductionProofDecoder
 public import SpytialLeanMetatheory.ComputedRelationalization
 public import SpytialLeanMetatheory.SemanticIsomorphism

@@ -91,7 +91,21 @@ allowed world. A symbolic atom may have a different value in different worlds.
 All uses of one extracted existential witness still denote one value within a
 world.
 
-`GroundInstance` interprets each typed relation symbol. The Lean proposition
+`GroundInstance` interprets each typed relation symbol. The general semantic
+library allows any such interpretation. The production theorem does not take
+an arbitrary interpretation. `ProductionTupleHolds` defines one relation
+judgment with two rules:
+
+- a checked structural origin establishes its represented tuple; and
+- a checked proof origin establishes its represented tuple when its Lean
+  proposition is true.
+
+`ProductionTupleHolds.ground` constructs the production `GroundInstance` from
+those rules. This matters: a caller cannot choose an unrelated interpretation
+in which every relation is false, and no tuple certificate contains the result
+that it is meant to prove.
+
+The Lean proposition
 
 ```text
 Completes context data ground
@@ -129,10 +143,12 @@ D = inspect(Gamma, e)       rho satisfies Gamma
 ```
 
 `Inspection.sound` proves this result by separating the two tuple sources.
-Structural tuples use the computed structural result. Proof-derived tuples use
-`ProductionProofRealization.sound`, which in turn uses IYKYK's context
-soundness. `Inspection.production_sound` combines the checked production
-origins of one trace.
+Structural tuples use the checked constructor or projection rule.
+Proof-derived tuples use the retained proof after the production checker has
+checked it again. `Inspection.production_sound` combines the checked
+production origins of one trace. Its conclusion uses
+`ProductionTupleHolds.ground`; the theorem does not accept a `GroundInstance`
+from its caller.
 
 This result is important for partial programs and proof-constrained values:
 inspection may omit information, but it must not invent information.
@@ -186,7 +202,9 @@ constructs both directions of the typed atom map, proves that denotations are
 preserved, proves tuple preservation, and proves the two maps are inverse on
 the active atoms. `ProductionRefinement.full_inspect_bridge` packages this
 agreement together with denotational equality and soundness of the inspected
-root tuples.
+root tuples. Its checked structural certificate proves relationalization
+soundness; `full_inspect_bridge` no longer accepts that conclusion as a
+premise.
 
 The theorem compares `rootStruct(inspect(Gamma, e))`, not the full contextual
 instance. The context may legitimately add predicates and relationships that
@@ -207,11 +225,12 @@ The checked production instance covers:
 - finite walks that do not exceed their work limit; and
 - atom identity policies known to preserve the represented Lean value.
 
-The semantic theorem uses relation identities that retain the Lean head and
-hidden parameters. The JSON interface still groups relations by a short
-display name. Applying the theorem directly to serialized JSON therefore
-requires either collision-free relation identifiers or a check that one short
-name has one meaning in the inspected slice.
+The semantic theorem retains the Lean head and hidden parameters of a proved
+relation. The JSON interface may deliberately group several such relations
+under one display name, because Spytial consumes their union as one table.
+This does not affect the typed semantic theorem. A hidden relation stamp would
+only be needed for a consumer that must reconstruct the original Lean head
+from JSON.
 
 An unrestricted `SpytialIdentity` classifier may intentionally merge different
 values for presentation. That merge can be useful in a diagram, but it is not
@@ -305,6 +324,13 @@ parameters, terms, and Lean type expressions.
   proof checking, and Lean equality. The bridge derives equality of denotations
   from one checked `Eq` fact; individual bridge calls do not assume that result.
 
+- **Production relation meaning.**
+  [ProductionRelationSemantics.lean](SpytialLeanMetatheory/ProductionRelationSemantics.lean)
+  defines the shared structural/proved relation judgment and constructs its
+  `GroundInstance`. It also defines the typed correspondence between checked
+  Lean origins and semantic tuples. These correspondences contain no
+  tuple-truth field.
+
 - **Abstract proof decoding.**
   [ProofDecoder.lean](SpytialLeanMetatheory/ProofDecoder.lean) proves soundness
   for an abstract proof-to-tuple decoder. This reuses IYKYK soundness instead
@@ -313,14 +339,16 @@ parameters, terms, and Lean type expressions.
 - **Production proof decoding.**
   [ProductionProofDecoder.lean](SpytialLeanMetatheory/ProductionProofDecoder.lean)
   connects checked production origins to typed tuples and constructs the
-  abstract `ProofDecoding` result. The local interpretation states how the
-  selected ground relation implements the decoded Lean predicate.
+  abstract `ProofDecoding` result. `ProductionProofRealization.sound` derives
+  tuple truth from the retained kernel-checked proof in the generated
+  production ground.
 
 - **Computed structure.**
   [ComputedRelationalization.lean](SpytialLeanMetatheory/ComputedRelationalization.lean)
   proves soundness and field coverage from the checked constructor and
-  projection origins plus their typed interpretation. These are the two
-  directions needed for computed-value correctness.
+  projection origins plus their typed correspondence. Its certificate has no
+  `checked_origin_sound` field. These are the two directions needed for
+  computed-value correctness.
 
 - **Agreement up to atom names.**
   [SemanticIsomorphism.lean](SpytialLeanMetatheory/SemanticIsomorphism.lean)
@@ -336,8 +364,10 @@ parameters, terms, and Lean type expressions.
 - **Computation/proof agreement.**
   [InspectionAgreement.lean](SpytialLeanMetatheory/InspectionAgreement.lean)
   proves conservativity for computed values, the partial equality-refinement
-  embedding, and the complete isomorphism theorem. Its `ProductionRefinement`
-  contains an actual fact from the production `Afaik` result.
+  embedding, and the complete isomorphism theorem. The final theorem obtains
+  relationalization soundness from a checked structural certificate instead
+  of taking it as a premise. Its `ProductionRefinement` contains an actual fact
+  from the production `Afaik` result.
 
 - **Root extraction from the real trace.**
   [RootedTrace.lean](SpytialLeanMetatheory/RootedTrace.lean) defines reachability
@@ -356,20 +386,27 @@ parameters, terms, and Lean type expressions.
 
 ## Trust boundary and remaining engineering
 
-The bridge itself is proved. The following work remains before making the
-broadest possible claim about every production feature:
+The core bridge is proved for a checked trace and its typed realization. The
+production ground is now constructed by the formalization. It is not a caller
+parameter, and soundness is not a field of an individual tuple realization.
 
-1. Automate construction of the typed Lean-expression interpretation from a
-   checked trace. The current theorems state its obligations explicitly. Lean's
-   kernel, elaborator typing, and definitional equality remain trusted in the
-   same way as the production metaprogram.
-2. Replace short JSON relation IDs with collision-free IDs, or reject a trace
-   when one short name denotes two Lean relation heads.
-3. Add separate semantic rules for observations, tabulation, synthetic edges,
-   and unrestricted custom relationalizers. The production soundness theorem
-   intentionally covers the direct structural and checked-proof core.
-4. Build the three evaluation domains and report how often computation,
-   partial structure, and proof refinement each contribute useful tuples.
+The following work remains before making the broadest claim about every
+production run:
+
+1. Construct `LeanExprMeaning`, expression-backed atoms, and the typed tuple
+   realization mechanically from a checked trace. The current theorem states
+   these typing and correspondence obligations explicitly. Lean's kernel,
+   elaborator typing, and definitional equality remain trusted in the same way
+   as the production metaprogram.
+2. Package the typed realization with the exact result returned by each public
+   relationalizer entry point. `RuntimeCorrespondence.lean` already proves the
+   trace erases to the existing JSON result; this step adds the semantic object
+   produced from that trace.
+3. Add separate relation rules for observations, tabulation, synthetic edges,
+   and unrestricted custom relationalizers. The current production theorem
+   covers direct structure and checked proof facts.
+4. Build the three evaluation domains and report when computation, partial
+   structure, and proof refinement each contribute useful tuples.
 
 ## Responsibility between projects
 

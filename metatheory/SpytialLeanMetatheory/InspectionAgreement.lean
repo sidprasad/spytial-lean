@@ -1,6 +1,7 @@
 module
 
 public import SpytialLeanMetatheory.LeanExprMeaning
+public import SpytialLeanMetatheory.ComputedRelationalization
 public import SpytialLeanMetatheory.SemanticIsomorphism
 public meta import SpytialLean.InContext
 
@@ -286,32 +287,40 @@ public theorem full_bridge {World : Type u} {SemanticType : Type v}
         (relationalize refinement.valueTerm) :=
   ⟨refinement.root_denote_eq, ⟨selection.isoOfCoverage names coverage⟩⟩
 
-/-- The packaged headline result. For a sound ordinary relationalization and
-    a complete proof-guided root walk, the selected term denotes the computed
-    value, the inspected root tuples are sound, and the two relational
-    structures are isomorphic up to atom names. -/
-public theorem full_inspect_bridge {World : Type u} {SemanticType : Type v}
+/-- The packaged headline result. A checked structural trace proves ordinary
+    relationalization sound in the generated production ground. If the
+    proof-guided root walk has full coverage, the selected term denotes the
+    computed value, its inspected root tuples are sound in that same model,
+    and the relational structures are isomorphic up to atom names. -/
+public theorem full_inspect_bridge {World : Type u}
     {context : Iykyk.Metatheory.Context World}
-    {signature : RelationalSignature SemanticType} {Carrier : SemanticType → Type w}
-    {meaning : LeanExprMeaning.{u, x} World context} {knowledge : Iykyk.Afaik}
+    {meaning : LeanExprMeaning.{u, v} World context} {knowledge : Iykyk.Afaik}
     (refinement : ProductionRefinement meaning knowledge)
     (relationalize : LeanExprMeaning.CheckedTerm meaning →
-      SemanticInstance.{u, v, w, x} context signature Carrier)
-    (selection : StructuralSelection (relationalize refinement.valueTerm))
-    (names : AtomRenaming.{u, v, w, x, y}
-      (relationalize refinement.valueTerm))
+      List (RelationalTuple meaning.signature (LeanExprMeaning.ExprAtom meaning)))
+    (selection : StructuralSelection
+      (meaning.instanceOfTuples (relationalize refinement.valueTerm)))
+    (names : AtomRenaming
+      (meaning.instanceOfTuples (relationalize refinement.valueTerm)))
     (coverage : selection.Covers)
-    (ground : World → GroundInstance signature Carrier)
-    (relationalizationSound : Completes context
-      (relationalize refinement.valueTerm) ground) :
+    {trace : SpytialLean.TracedDataInstance}
+    {checked : SpytialLean.CheckedStructuralTrace trace}
+    (required : StructuralRequirement
+      (signature := meaning.signature)
+      (Entry := (meaning.instanceOfTuples
+        (relationalize refinement.valueTerm)).Atom))
+    (computed : ComputedStructuralCertificate meaning trace
+      (relationalize refinement.valueTerm) required checked) :
     (∀ world (compatible : context world),
       refinement.rootTerm.denote world compatible =
         refinement.valueTerm.denote world compatible) ∧
-      Completes context (selection.rootStruct names) ground ∧
+      Completes context (selection.rootStruct names)
+        (ProductionTupleHolds.ground meaning) ∧
       StructurallyAgrees (selection.rootStruct names)
-        (relationalize refinement.valueTerm) :=
+        (meaning.instanceOfTuples (relationalize refinement.valueTerm)) :=
   ⟨refinement.root_denote_eq,
-    selection.rootStruct_sound names ground relationalizationSound,
+    selection.rootStruct_sound names (ProductionTupleHolds.ground meaning)
+      computed.adequate,
     ⟨selection.isoOfCoverage names coverage⟩⟩
 
 end ProductionRefinement
