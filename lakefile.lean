@@ -142,5 +142,9 @@ lean_lib SpytialTests where
              `InContextTest, `ContextInspectionTest, `KnowledgeSelectorFixture,
              `KnowledgeSelectorTest]
 
+/-- Metatheory for computation- and proof-derived relational instances. -/
+lean_lib SpytialLeanMetatheory where
+  srcDir := "metatheory"
+
 require proofwidgets from
   git "https://github.com/leanprover-community/ProofWidgets4" @ "v0.0.105"

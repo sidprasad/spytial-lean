@@ -64,6 +64,8 @@ public meta structure WalkState where
   atoms : Array JsonAtom := #[]
   /-- Map from relation name to accumulated tuples. -/
   relations : Std.HashMap String (Array String × Array JsonTuple) := {}
+  /-- Per-tuple origins retained until the ordinary JSON projection. -/
+  emissions : Array TupleEmission := #[]
   nextId : Nat := 0
   /-- Hole atoms, one per metavariable: occurrences of one `?m` are one hole
       under every mode — substitution structure, not identity policy. -/
@@ -223,11 +225,23 @@ private meta def rememberObservationTerm (enabled : Bool) (term : Expr) (atomId 
       else { state with observationTerms := state.observationTerms.push (term, atomId) }
   else pure ()
 
-/-- Add a tuple to a relation, creating the relation if needed. -/
+/-- Record another justification for a tuple already present in the output. -/
+public meta def WalkState.addTupleOrigin (s : WalkState) (relName : String)
+    (tuple : JsonTuple) (origin : TupleOrigin) : WalkState :=
+  { s with emissions := s.emissions.push { relation := relName, tuple, origin } }
+
+/-- Add a tuple and its origin to a relation, creating the relation if needed. -/
+public meta def WalkState.addTupleWithOrigin (s : WalkState) (relName : String)
+    (types : Array String) (tuple : JsonTuple) (origin : TupleOrigin) : WalkState :=
+  let existing := s.relations.getD relName (types, #[])
+  { s.addTupleOrigin relName tuple origin with
+    relations := s.relations.insert relName (existing.1, existing.2.push tuple) }
+
+/-- Add a tuple from an unrestricted custom relationalizer. Production code
+    should use `addTupleWithOrigin` to make its semantic case explicit. -/
 public meta def WalkState.addTuple (s : WalkState) (relName : String) (types : Array String)
     (tuple : JsonTuple) : WalkState :=
-  let existing := s.relations.getD relName (types, #[])
-  { s with relations := s.relations.insert relName (existing.1, existing.2.push tuple) }
+  s.addTupleWithOrigin relName types tuple .custom
 
 /-- Register a relation with no tuples, so an empty extension still appears. -/
 public meta def WalkState.addRelation (s : WalkState) (relName : String)
@@ -236,10 +250,14 @@ public meta def WalkState.addRelation (s : WalkState) (relName : String)
   else { s with relations := s.relations.insert relName (types, #[]) }
 
 /-- Convert accumulated state to ordinary extracted data. -/
-public meta def WalkState.toDataInstance (s : WalkState) : JsonDataInstance :=
+@[expose] public meta def WalkState.toDataInstance (s : WalkState) : JsonDataInstance :=
   let relations := s.relations.toArray.map fun (name, types, tuples) =>
     { id := name, name := name, types := types, tuples := tuples : JsonRelation }
   { atoms := s.atoms, relations := relations }
+
+/-- Retain tuple origins alongside the exact production JSON projection. -/
+@[expose] public meta def WalkState.toTracedDataInstance (s : WalkState) : TracedDataInstance :=
+  { data := s.toDataInstance, emissions := s.emissions }
 
 /-- Configuration for the expression walker. -/
 public meta structure WalkConfig where
@@ -1336,12 +1354,14 @@ private meta def emitFunctionGraph? (cfg : WalkConfig)
   ids := ids.push atomId
   types := types.push typeName
   let tuple : JsonTuple := { atoms := ids, types }
-  modify fun state => state.addTuple relName types tuple
+  modify fun state =>
+    state.addTupleWithOrigin relName types tuple (.symbolic e (args.push e))
   return true
 
 /-- A reduced source application may already have emitted this same graph
     point through its residual (for example after simplifying numeral syntax). -/
-private meta def addComputedTuple (relation : String) (types ids : Array String) :
+private meta def addComputedTuple (relation : String) (types ids : Array String)
+    (origin : TupleOrigin) :
     StateT WalkState MetaM Unit := do
   if let some (previousTypes, tuples) := (← get).relations.get? relation then
     if previousTypes != types then
@@ -1349,7 +1369,8 @@ private meta def addComputedTuple (relation : String) (types ids : Array String)
         the computed tuple is not drawn"
       return
     if tuples.any (·.atoms == ids) then return
-  modify fun state => state.addTuple relation types { atoms := ids, types }
+  modify fun state =>
+    state.addTupleWithOrigin relation types { atoms := ids, types } origin
 
 /-- An evaluated application is an ordinary result expression plus the graph
     tuple connecting it to its arguments. Shared by both expression walkers. -/
@@ -1372,6 +1393,7 @@ private meta def walkComputed? (cfg : WalkConfig) (e : Expr)
   ids := ids.push resultId
   types := types.push (← sigOfType (← inferType e))
   addComputedTuple relation types ids
+    (.observed e result.expr result.proof? (arguments.push result.expr))
   modify fun state =>
     { state with applicationAtoms := state.applicationAtoms.insert ⟨e⟩ resultId }
   return some resultId
@@ -1381,7 +1403,8 @@ private meta def walkComputed? (cfg : WalkConfig) (e : Expr)
     result)`; a `Prop` codomain has no result column — a tuple exactly where
     the proposition decides true. -/
 private meta def tabulate? (cfg : WalkConfig) (recurse : Expr → StateT WalkState MetaM String)
-    (relName ownerSig ownerId : String) (value : Expr) : StateT WalkState MetaM Bool := do
+    (relName ownerSig ownerId : String) (owner value : Expr) :
+    StateT WalkState MetaM Bool := do
   let some plan ← tabulationPlan? (← inferType value) | return false
   unless plan.size ≤ cfg.maxTableTuples do return false
   let fn@(.lam ..) ← Meta.whnf value | return false
@@ -1393,9 +1416,14 @@ private meta def tabulate? (cfg : WalkConfig) (recurse : Expr → StateT WalkSta
     modify (·.addRelation relName types)
     let ids ← columns.mapM (·.mapM recurse)
     for pt in points do
-      let resId ← recurse (← Meta.whnf (mkAppN fn (pick columns pt)))
+      let arguments := pick columns pt
+      let application := mkAppN fn arguments
+      let result ← Meta.whnf application
+      let resId ← recurse result
       let atoms := #[ownerId] ++ pick ids pt ++ #[resId]
-      modify fun s => s.addTuple relName types { atoms, types }
+      let terms := #[owner] ++ arguments ++ #[result]
+      modify fun s =>
+        s.addTupleWithOrigin relName types { atoms, types } (.tabulated application terms)
     return true
   | .prop =>
     -- decide every point before walking any atom: an undecided point bails
@@ -1419,7 +1447,11 @@ private meta def tabulate? (cfg : WalkConfig) (recurse : Expr → StateT WalkSta
             ids := ids.set! col (ids[col]!.set! i (some id))
             pure id
         atoms := atoms.push id
-      modify fun s => s.addTuple relName types { atoms, types }
+      let arguments := pick columns pt
+      let application := mkAppN fn arguments
+      let terms := #[owner] ++ arguments
+      modify fun s =>
+        s.addTupleWithOrigin relName types { atoms, types } (.tabulated application terms)
     return true
 
 /-! ### Instance-evaluated leaf labels
@@ -1503,7 +1535,7 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
       | none => s!"λ {binderName}"
     modify fun s => s.addAtom { id := atomId, type := typeName, label := label }
     -- no owning field here, so the function itself is column 0
-    let _ ← tabulate? cfg recurse "maps" typeName atomId e
+    let _ ← tabulate? cfg recurse "maps" typeName atomId e e
 
   | _ => do
     -- Try to get the type name
@@ -1526,11 +1558,12 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
           let isProof ← if cfg.filterProofs then isProofArg arg else pure false
           unless isProof do
             let fieldName := fieldRelName ctorShortName binderNames i
-            unless ← tabulate? cfg recurse fieldName typeName atomId arg do
+            unless ← tabulate? cfg recurse fieldName typeName atomId e arg do
               let childId ← recurse arg
               let types := #[typeName, ← columnSig typeName arg]
               let tuple := { atoms := #[atomId, childId], types := types }
-              modify fun state => state.addTuple fieldName types tuple
+              modify fun state =>
+                state.addTupleWithOrigin fieldName types tuple (.structural #[e, arg])
       -- stuck match (iota can't fire on a hole/hypothesis discriminant):
       -- ternary scrutinee edges; motive and alternatives are plumbing
       else if let some minfo := getMatcherInfoCore? env fnName then
@@ -1541,11 +1574,14 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
             let discr := args[minfo.getFirstDiscrPos + i]!
             let isProof ← if cfg.filterProofs then isProofArg discr else pure false
             unless isProof do
-              let posId ← recurse (mkRawNatLit i)
+              let position := mkRawNatLit i
+              let posId ← recurse position
               let childId ← recurse discr
               let types := #[typeName, "Nat", ← columnSig typeName discr]
-              modify fun s => s.addTuple "scrutinee" types
-                { atoms := #[atomId, posId, childId], types := types }
+              let tuple := { atoms := #[atomId, posId, childId], types := types }
+              modify fun state =>
+                state.addTupleWithOrigin "scrutinee" types tuple
+                  (.synthetic e #[e, position, discr])
         else
           -- partially/over-applied matcher: generic leaf
           let label ← ppLabel e
@@ -1562,11 +1598,12 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
           unless isProof do
             let projReduced ← Meta.whnf proj
             let fn := fieldName.toString (escape := false)
-            unless ← tabulate? cfg recurse fn typeName atomId projReduced do
+            unless ← tabulate? cfg recurse fn typeName atomId e projReduced do
               let childId ← recurse projReduced
               let types := #[typeName, ← columnSig typeName projReduced]
-              modify fun s => s.addTuple fn types
-                { atoms := #[atomId, childId], types := types }
+              let tuple := { atoms := #[atomId, childId], types := types }
+              modify fun state =>
+                state.addTupleWithOrigin fn types tuple (.structural #[e, projReduced])
       else do
         unless ← emitFunctionGraph? cfg recurse e typeName atomId do
           -- Generic function application or unknown — leaf atom
@@ -1694,9 +1731,8 @@ public meta def addObservation (cfg : WalkConfig) (source result : Expr)
     types := types.push (← sigOfType (← inferType argument))
   let resultType := ← sigOfType (← inferType result)
   types := types.push resultType
-  let reducedResult ← match cfg.observationResults[(⟨result⟩ : ExprStructEq)]? with
-    | some normalized => pure normalized.expr
-    | none => pure result
+  let normalized? := cfg.observationResults[(⟨result⟩ : ExprStructEq)]?
+  let reducedResult := normalized?.map (·.expr) |>.getD result
   let state ← get
   let mut knownResult? := state.applicationAtoms[(⟨result⟩ : ExprStructEq)]?
   if knownResult?.isNone then
@@ -1727,7 +1763,12 @@ public meta def addObservation (cfg : WalkConfig) (source result : Expr)
         {declaredTypes.size} and {types.size}; the observation is not drawn"
       return
     if tuples.any (fun tuple => tuple.atoms == atomIds) then return
-  modify fun state => state.addTuple relation types { atoms := atomIds, types }
+  let terms := arguments.push reducedResult
+  let origin := match normalized? with
+    | some normalized => .observed result reducedResult normalized.proof? terms
+    | none => .symbolic result terms
+  modify fun state =>
+    state.addTupleWithOrigin relation types { atoms := atomIds, types } origin
 
 /-- Extend the current datum with each requested function's graph over the
     represented values of its domain type. The domain is snapshotted before
@@ -1745,16 +1786,16 @@ public meta def addActiveDomainObservations (cfg : WalkConfig)
       let some application ← liftM <| instantiateObservationAt? observation value | continue
       addObservation cfg application application #[value] #[(value, atomId)]
 
-/-- Walk an expression and produce a complete data instance, keeping the
-    subterm each atom was walked from (see `Provenance`).
+/-- Walk an expression and retain the origin of every emitted tuple, together
+    with the subterm each atom was walked from (see `Provenance`).
 
     `withoutModifyingEnv` because the walk derives instances: persisting them
     would let two modules that draw the same third-party type mint the same
     instance name, and importing both would fail. The result is plain data, so
     nothing outlives the rollback. -/
-public meta def relationalizeWithEvidence (e : Expr) (cfg : WalkConfig := {})
+public meta def relationalizeWithTrace (e : Expr) (cfg : WalkConfig := {})
     (observations : Array Expr := #[]) :
-    MetaM (JsonDataInstance × Provenance × SelectorEvidence) :=
+    MetaM (TracedDataInstance × Provenance × SelectorEvidence) :=
   withoutModifyingEnv do
     let mut observationAwareConfig := { cfg with observations, recordSelectorTerms := true }
     unless observations.isEmpty do
@@ -1765,9 +1806,28 @@ public meta def relationalizeWithEvidence (e : Expr) (cfg : WalkConfig := {})
       let _ ← walkExpr observationAwareConfig e
       let observationConfig := { observationAwareConfig with functionGraphs := true }
       addActiveDomainObservations observationConfig observations
-    return (state.toDataInstance, state.provenance, {
+    let trace := state.toTracedDataInstance
+    unless trace.wellFormedTrace do
+      throwError "spytial: internal error: malformed computed-value tuple trace"
+    return (trace, state.provenance, {
       terms := state.selectorTerms
       proofs := observationAwareConfig.observationResults.toArray.filterMap (·.2.proof?) })
+
+/-- Compatibility projection that erases per-tuple origins. -/
+public meta def relationalizeWithEvidence (e : Expr) (cfg : WalkConfig := {})
+    (observations : Array Expr := #[]) :
+    MetaM (JsonDataInstance × Provenance × SelectorEvidence) := do
+  let (trace, provenance, evidence) ← relationalizeWithTrace e cfg observations
+  return (trace.data, provenance, evidence)
+
+/-- The established evidence API is exactly the traced producer followed by
+    tuple-origin erasure. -/
+public theorem relationalizeWithEvidence_eq_trace_erasure (e : Expr) (cfg : WalkConfig := {})
+    (observations : Array Expr := #[]) :
+    relationalizeWithEvidence e cfg observations = do
+      let (trace, provenance, evidence) ← relationalizeWithTrace e cfg observations
+      return (trace.data, provenance, evidence) := by
+  rfl
 
 /-- Compatibility projection for callers that only need value provenance. -/
 public meta def relationalizeWithProvenance (e : Expr) (cfg : WalkConfig := {})
@@ -1776,9 +1836,10 @@ public meta def relationalizeWithProvenance (e : Expr) (cfg : WalkConfig := {})
   return (data, prov)
 
 /-- Walk an expression and produce a complete data instance. -/
-public meta def relationalize (e : Expr) (cfg : WalkConfig := {})
+@[expose] public meta def relationalize (e : Expr) (cfg : WalkConfig := {})
     (observations : Array Expr := #[]) : MetaM JsonDataInstance := do
-  return (← relationalizeWithProvenance e cfg observations).1
+  let (data, _, _) ← relationalizeWithEvidence e cfg observations
+  return data
 
 /-! ## Two-pass reference implementation
 
