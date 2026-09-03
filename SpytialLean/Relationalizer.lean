@@ -1801,12 +1801,11 @@ public structure CheckedStructuralOrigin where
   emission : TupleEmission
   terms : Array Expr
   origin_eq : emission.origin = .structural terms
+  columns : CheckedColumns terms.toList emission.tuple.atoms.toList
   relation : String
   kind : CheckedStructuralKind
   source : Expr
   child : Expr
-  sourceType : Expr
-  childType : Expr
   sourceAtom : String
   childAtom : String
 
@@ -1847,8 +1846,8 @@ private meta def checkStructuralEmission (provenance : Provenance)
     MetaM (Option CheckedStructuralOrigin) := do
   match originEq : emission.origin with
   | .structural terms => do
-      unless terms.size == emission.tuple.atoms.size do
-        throwError "spytial: a structural origin is not aligned with its tuple columns"
+      let some columns ← CheckedColumns.check terms.toList emission.tuple.atoms.toList
+        | throwError "spytial: a structural origin is not aligned with its tuple columns"
       let (kind, source, child) ← classifyStructuralOrigin emission terms
       let sourceAtom := emission.tuple.atoms[0]!
       let childAtom := emission.tuple.atoms[1]!
@@ -1856,21 +1855,18 @@ private meta def checkStructuralEmission (provenance : Provenance)
         throwError "spytial: a structural source term does not name its recorded atom"
       unless termNamesAtom provenance evidence child childAtom do
         throwError "spytial: a structural child term does not name its recorded atom"
-      let sourceType ← inferType source
-      let childType ← inferType child
-      let inferredLabels := #[← sigOfType sourceType, ← sigOfType childType]
+      let inferredLabels ← columns.types.toArray.mapM sigOfType
       unless inferredLabels == emission.tuple.types do
         throwError "spytial: a structural origin changed its relational column types"
       return some {
         emission
         terms
         origin_eq := originEq
+        columns
         relation := emission.relation
         kind
         source
         child
-        sourceType
-        childType
         sourceAtom
         childAtom }
   | _ => return none

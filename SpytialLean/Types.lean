@@ -33,6 +33,40 @@ public structure JsonDataInstance where
   relations : Array JsonRelation
   deriving ToJson, FromJson, Inhabited
 
+/-- Evidence returned after Lean has inferred the type of one tuple column.
+    The private constructor keeps unchecked expressions out of production
+    semantic traces. -/
+public structure CheckedColumn (term : Expr) (_atom : String) where
+  private mk ::
+  type : Expr
+
+/-- Column evidence indexed by the exact term and atom-ID lists that it checks. -/
+public inductive CheckedColumns : List Expr → List String → Type where
+  | nil : CheckedColumns [] []
+  | cons {term atom terms atoms} :
+      CheckedColumn term atom → CheckedColumns terms atoms →
+        CheckedColumns (term :: terms) (atom :: atoms)
+
+namespace CheckedColumns
+
+/-- The Lean type inferred for each checked column. -/
+@[expose] public def types : {terms : List Expr} → {atoms : List String} →
+    CheckedColumns terms atoms → List Expr
+  | _, _, .nil => []
+  | _, _, .cons head tail => head.type :: tail.types
+
+/-- Check two aligned column lists and retain every inferred Lean type. -/
+public meta def check : (terms : List Expr) → (atoms : List String) →
+    MetaM (Option (CheckedColumns terms atoms))
+  | [], [] => pure (some .nil)
+  | term :: terms, _atom :: atoms => do
+      let type ← Meta.inferType term
+      let some tail ← check terms atoms | return none
+      return some (.cons (.mk type) tail)
+  | _, _ => pure none
+
+end CheckedColumns
+
 /-- Why the production relationalizer emitted one tuple. The `terms` arrays
     are column-aligned with the emitted tuple. A custom relationalizer may not
     have Lean terms for its columns, so custom output is explicitly unclaimed

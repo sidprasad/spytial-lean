@@ -1,6 +1,7 @@
 module
 
 public meta import Iykyk.Query
+public import SpytialLean.Types
 public meta import SpytialLean.Relationalizer
 public meta import SpytialLean.SelectorElab
 
@@ -328,8 +329,19 @@ public structure CheckedProvedOrigin where
   proof : Expr
   terms : Array Expr
   origin_eq : emission.origin = .proved proposition proof terms
-  types : Array Expr
-  atoms : Array String
+  columns : CheckedColumns terms.toList emission.tuple.atoms.toList
+
+namespace CheckedProvedOrigin
+
+/-- The inferred Lean type of each checked proof-origin column. -/
+@[expose] public def types (origin : CheckedProvedOrigin) : Array Expr :=
+  origin.columns.types.toArray
+
+/-- The production atom IDs indexed by the checked columns. -/
+@[expose] public def atoms (origin : CheckedProvedOrigin) : Array String :=
+  origin.emission.tuple.atoms
+
+end CheckedProvedOrigin
 
 private meta def selectorEvidenceNames (evidence : SelectorEvidence)
     (term : Expr) (atom : String) : Bool :=
@@ -348,12 +360,12 @@ private meta def checkProvedEmission (emission : TupleEmission)
       unless shape.arguments.size == terms.size &&
           (shape.arguments.zip terms).all fun (decoded, recorded) => decoded.equal recorded do
         throwError "spytial: a proof origin changed its relational arguments"
-      let types ← terms.mapM inferType
+      let some columns ← CheckedColumns.check terms.toList emission.tuple.atoms.toList
+        | throwError "spytial: a proof origin is not aligned with its tuple columns"
+      let types := columns.types.toArray
       let inferredLabels ← types.mapM sigOfType
       unless inferredLabels == emission.tuple.types do
         throwError "spytial: a proof origin changed its relational column types"
-      unless terms.size == emission.tuple.atoms.size do
-        throwError "spytial: a proof origin is not aligned with its tuple columns"
       if let some evidence := evidence? then
         for (term, atom) in terms.zip emission.tuple.atoms do
           unless selectorEvidenceNames evidence term atom do
@@ -368,8 +380,7 @@ private meta def checkProvedEmission (emission : TupleEmission)
         proposition
         proof
         terms
-        types
-        atoms := emission.tuple.atoms }
+        columns }
   | _ => return none
 
 /-- Recheck every production `proved` origin and return the actual Lean
