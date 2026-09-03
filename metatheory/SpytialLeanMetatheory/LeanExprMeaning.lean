@@ -13,9 +13,9 @@ those expressions a place in the semantic model without attempting to prove
 Lean's kernel correct inside Lean.
 
 `LeanExprMeaning` is the small trusted boundary. An implementation supplies
-the type-checking and definitional-equality judgments already checked by Lean,
-plus their mathematical meanings. The rest of the metatheory uses those
-judgments explicitly.
+the typing and definitional-equality results already checked by Lean, together
+with their mathematical meanings. The formalization uses those results
+explicitly.
 -/
 
 namespace SpytialLean.Metatheory

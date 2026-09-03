@@ -5,17 +5,16 @@ public import SpytialLeanMetatheory.SemanticInstance
 public section
 
 /-!
-# Proof-derived relationalization
+# Relational facts obtained from proofs
 
-IYKYK owns the sound finite knowledge extracted from a proof context. A
-Spytial decoder chooses relational facts from that knowledge and turns their
-typed terms into shared atoms. The only decoder-specific obligation is
-`ProofDecoding.reflects`: the source proposition must imply the emitted tuple.
+IYKYK extracts a finite set of justified facts from a proof context. A Spytial
+decoder turns supported facts into typed tuples with shared atoms. The decoder
+must prove one property: the source proposition implies the emitted tuple.
 
-This isolates the runtime reflection boundary precisely. For an already
-semantic atomic relation, `decodeAtomicFacts_sound` discharges reflection by
-construction. The remaining implementation theorem is that
-`propTupleShape?`, after kernel checking, realizes that atomic decoder.
+For an atomic relation that is already in semantic form,
+`decodeAtomicFacts_sound` proves this property by construction. The production
+connection must prove it for the two cases handled by
+`propositionTupleShape?` after Lean checks the retained proof.
 -/
 
 namespace SpytialLean.Metatheory

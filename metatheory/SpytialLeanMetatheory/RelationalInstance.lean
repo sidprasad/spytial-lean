@@ -5,16 +5,14 @@ public import SpytialLean.Types
 public section
 
 /-!
-# Wire-level partial relational instances
+# Positive relational data at the JSON boundary
 
-This module gives an open-world positive-information order directly to the
-`JsonDataInstance` type emitted by the production Spytial Lean relationalizer.
-It deliberately ignores labels, relation ordering, and fresh atom names. Since
-raw JSON does not retain Lean denotations or tuple origins, this is the
-wire-level skeleton of the eventual semantic completion relation, not yet a
-claim that an emitted tuple is true of the inspected value. Production traces
-now retain origins; the remaining correspondence is to validate the semantic
-claim associated with each origin.
+This module defines positive tuple membership directly on the
+`JsonDataInstance` emitted by Spytial Lean. It ignores labels, relation order,
+and generated atom names. Raw JSON does not retain Lean meanings or tuple
+origins, so these definitions describe only the serialized shape of an
+instance. They do not claim that an emitted tuple is true. Production traces
+retain the evidence needed to make that later claim.
 -/
 
 namespace SpytialLean.Metatheory

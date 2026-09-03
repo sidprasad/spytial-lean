@@ -7,13 +7,12 @@ public meta import SpytialLean.Relationalizer
 public section
 
 /-!
-# Computed structural relationalization
+# Relational structure obtained by computation
 
-This file gives the theorem shape for the structural fragment of the real
-computed-value trace. A trace realization relates production emissions to
-intrinsically typed semantic tuples. Local checks for constructor fields and
-projections can then be composed into adequacy and completeness of that
-structural slice.
+This file covers the direct structural part of a real computed-value trace. It
+relates production emissions to typed semantic tuples. If each checked
+constructor field and projection has the stated meaning, then every emitted
+structural tuple is true and every required supported field is present.
 -/
 
 namespace SpytialLean.Metatheory

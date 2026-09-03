@@ -8,17 +8,17 @@ public section
 /-!
 # Production correspondence
 
-These theorems pin the metatheory to both production relationalizers. They
-establish exact trace-erasure facts. Semantic soundness remains origin-specific:
-in particular, the proof-origin case must connect IYKYK evidence to relational
-atom interpretation.
+These theorems connect the formalization to both production relationalizers.
+They prove that removing trace evidence gives exactly the existing public
+output. They do not prove that a tuple is true; that proof depends on the
+tuple's origin.
 -/
 
 namespace SpytialLean.Metatheory
 
 open Lean SpytialLean
 
-/-- The atoms interpreted by the metatheory are exactly the atoms accumulated
+/-- The atoms interpreted by the semantics are exactly the atoms accumulated
     by the production walk; `toDataInstance` does not reconstruct them. -/
 theorem production_atoms_are_preserved (state : WalkState) :
     state.toDataInstance.atoms = state.atoms :=

@@ -5,16 +5,15 @@ public import IykykMetatheory
 public section
 
 /-!
-# Semantic relational instances
+# Typed relational descriptions
 
-This module gives the common semantic target for computation- and
-proof-derived relationalization. Types, relation symbols, and their column
-types are intrinsic: an ill-typed tuple cannot be constructed. Atoms denote
-values in every possible world compatible with the IYKYK context.
+This module defines the result of relational inspection. Computation and proof
+both produce values of this type. Relation symbols contain their column types,
+so an ill-typed tuple cannot be constructed. Each atom denotes a value in every
+interpretation that satisfies the Lean context.
 
-The model is deliberately independent of `Lean.Expr`. Connecting Lean terms
-to `SemanticType` and `Carrier` is part of the trusted reflection boundary;
-the definitions below state what that bridge must preserve.
+These definitions do not depend on `Lean.Expr`. A separate interface connects
+actual Lean terms to semantic types and values.
 -/
 
 namespace SpytialLean.Metatheory

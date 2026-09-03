@@ -7,16 +7,18 @@ public meta import SpytialLean.InContext
 public section
 
 /-!
-# Checked production proof origins
+# Connecting production proof traces to semantics
 
 `SpytialLean.checkedProvedOrigins` runs on the trace and selector evidence
 returned by the real proof-context relationalizer. It rechecks the proof,
 reruns the proposition decoder, retains the actual relation head and Lean
 column types, and checks that every decoded term names the recorded atom.
 
-This file states the remaining, deliberately small semantic boundary: what
-the checked Lean expressions mean. Once that meaning is supplied, the checked
-origins construct the existing `ProofDecoding` certificate.
+The remaining semantic obligation is direct: in an interpretation satisfying
+the Lean context, truth of the decoded proposition must imply truth of the
+emitted tuple. Together with a typed interpretation of the trace, this
+obligation connects the checked origins to the existing `ProofDecoding`
+result.
 -/
 
 namespace SpytialLean.Metatheory

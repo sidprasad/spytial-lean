@@ -5,11 +5,11 @@ public import SpytialLeanMetatheory.SemanticInstance
 public section
 
 /-!
-# Semantic isomorphism
+# Agreement between relational descriptions
 
-Computed and proof-derived diagrams should agree independently of fresh atom
-identifiers and list order. The relevant comparison is therefore a bijection
-of typed atoms that preserves their values and all positive tuples.
+Computed and proof-derived relational descriptions should agree independently
+of fresh atom identifiers and list order. The comparison is a bijection of
+typed atoms that preserves their values and all positive tuples.
 -/
 
 namespace SpytialLean.Metatheory
@@ -265,8 +265,8 @@ public theorem completes_iff {World : Type u} {SemanticType : Type v}
 
 end SemanticIso
 
-/-- Structural agreement between two diagrams means semantic isomorphism,
-    rather than equality of fresh IDs or serialization order. -/
+/-- Structural agreement between two relational descriptions means semantic
+    isomorphism, rather than equality of fresh IDs or serialization order. -/
 public def StructurallyAgrees {World : Type u} {SemanticType : Type v}
     {context : Iykyk.Metatheory.Context World}
     {signature : RelationalSignature SemanticType} {Carrier : SemanticType → Type w}
@@ -275,8 +275,9 @@ public def StructurallyAgrees {World : Type u} {SemanticType : Type v}
   Nonempty (SemanticIso left right)
 
 /-- Two independently produced instances agree when each is isomorphic to
-    the same reference structure. This is the intended proof pattern for a
-    computed instance and a proof-derived instance of one value. -/
+    the same reference structure. This algebraic helper does not prove that
+    either producer realizes the reference; the computation/proof bridge must
+    establish those producer-specific facts. -/
 public theorem structurallyAgrees_of_common_reference {World : Type u}
     {SemanticType : Type v} {context : Iykyk.Metatheory.Context World}
     {signature : RelationalSignature SemanticType} {Carrier : SemanticType → Type w}
