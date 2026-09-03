@@ -9,10 +9,12 @@ public section
 /-!
 # Relational structure obtained by computation
 
-This file covers the direct structural part of a real computed-value trace. It
-relates production emissions to typed semantic tuples. If each checked
-constructor field and projection has the stated meaning, then every emitted
-structural tuple is true and every required supported field is present.
+This file states the semantic obligations for the direct structural part of a
+real computed-value trace. The executable checker recognizes constructor
+fields and projections and checks field coverage. A separate interpretation
+must connect those checked expressions to typed semantic tuples and show that
+the tuples are true. Given that interpretation, this file proves soundness and
+semantic field coverage.
 -/
 
 namespace SpytialLean.Metatheory
@@ -62,15 +64,16 @@ public abbrev StructuralRequirement {SemanticType : Type v}
     (required : StructuralRequirement (signature := signature) (Entry := data.Atom)) : Prop :=
   ∀ tuple, required tuple → tuple ∈ data.tuples
 
-/-- A certificate for the direct structural fragment of a computed-value
-    trace. Its obligations are local:
+/-- The semantic certificate still needed after the executable structural
+    checker succeeds. Its obligations are local:
 
     * each output tuple has a structural production origin;
     * each such origin has the correct semantic meaning; and
     * every expected field has a corresponding structural origin.
 
-    These are exactly the obligations a checker for actual constructor and
-    projection origins must discharge. -/
+    The executable checker supplies the checked origins and syntactic field
+    coverage. Constructing this certificate additionally requires the missing
+    interpretation from Lean expressions to semantic tuples. -/
 public structure ComputedStructuralCertificate {World : Type u}
     {SemanticType : Type v} {context : Iykyk.Metatheory.Context World}
     {signature : RelationalSignature SemanticType} {Carrier : SemanticType → Type w}
@@ -84,7 +87,8 @@ public structure ComputedStructuralCertificate {World : Type u}
     ∃ origin ∈ checked.origins.toList, origin.emission ∈ trace.emissions ∧
       realization.represents origin.emission tuple
   checked_origin_sound : ∀ origin ∈ checked.origins.toList,
-    origin.emission ∈ trace.emissions → ∀ tuple, realization.represents origin.emission tuple →
+    origin.emission ∈ trace.emissions → ∀ tuple,
+      realization.represents origin.emission tuple →
       ∀ world (compatible : context world),
         data.TupleHolds ground tuple world compatible
   required_has_checked_origin : ∀ tuple, required tuple →
@@ -93,8 +97,8 @@ public structure ComputedStructuralCertificate {World : Type u}
 
 namespace ComputedStructuralCertificate
 
-/-- Local correctness of every checked structural origin implies adequacy of
-    the computed structural slice. -/
+/-- A completed semantic certificate implies soundness of the computed
+    structural slice. -/
 public theorem adequate {World : Type u} {SemanticType : Type v}
     {context : Iykyk.Metatheory.Context World}
     {signature : RelationalSignature SemanticType} {Carrier : SemanticType → Type w}

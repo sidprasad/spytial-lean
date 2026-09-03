@@ -34,8 +34,8 @@ public structure ProofDecoding {World : Type u} {Root : Type v}
   reflects : ∀ tuple, tuple ∈ data.tuples → ∀ world (compatible : context world),
     source tuple world → data.TupleHolds ground tuple world compatible
 
-/-- Possible-world soundness of proof-to-tuple decoding. Every emitted tuple
-    is true in every ground structure compatible with the proof context. -/
+/-- Soundness of proof-to-tuple decoding. Every emitted tuple is true in every
+    interpretation that satisfies the proof context. -/
 public theorem ProofDecoding.sound {World : Type u} {Root : Type v}
     {SemanticType : Type w} {context : Iykyk.Metatheory.Context World}
     {signature : RelationalSignature SemanticType} {Carrier : SemanticType → Type x}
@@ -48,16 +48,16 @@ public theorem ProofDecoding.sound {World : Type u} {Root : Type v}
   exact decoding.reflects tuple present world compatible
     (knowledgeSound (decoding.source_mem tuple present) world compatible)
 
-/-- A proof-derived atom may choose a value separately in every compatible
-    possible world. This is the same dependency used by IYKYK's shared
-    existential witnesses. -/
+/-- A proof-derived atom may choose a value separately in every interpretation
+    that satisfies the context. This is the same dependency used by IYKYK's
+    shared existential witnesses. -/
 public abbrev ContextualAtom {World : Type u} {SemanticType : Type v}
     (context : Iykyk.Metatheory.Context World)
     (Carrier : SemanticType → Type w) (type : SemanticType) :=
   ∀ world, context world → Carrier type
 
 /-- Decode semantic atomic relation facts by reusing their typed terms as
-    atoms. The tuple list is finite and remains positive/open-world. -/
+    atoms. The finite result asserts only the tuples in the list. -/
 @[expose] public def decodeAtomicFacts {World : Type u} {SemanticType : Type v}
     (context : Iykyk.Metatheory.Context World)
     (signature : RelationalSignature SemanticType)
@@ -78,7 +78,7 @@ public abbrev ContextualAtom {World : Type u} {SemanticType : Type v}
         | tail _ tupleMem =>
             exact List.mem_append_right _ (ih tupleMem)
 
-/-- Atomic decoding has no additional semantic leap: its source fact is
+/-- Atomic decoding needs no separate implication proof: its source fact is
     exactly the proposition denoted by the emitted tuple. -/
 public def atomicProofDecoding {World : Type u} {Root : Type v}
     {SemanticType : Type w} {context : Iykyk.Metatheory.Context World}

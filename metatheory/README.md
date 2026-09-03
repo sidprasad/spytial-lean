@@ -195,6 +195,13 @@ The first end-to-end result covers:
 - finite walks that do not exceed their work limit; and
 - atom identity policies known to preserve the represented Lean value.
 
+It also needs one clear policy for relation identity. The production trace now
+distinguishes two Lean predicates that have the same short display name, but
+the JSON interface still groups relations by that short name. Before the
+end-to-end theorem, we must either use collision-free relation identifiers or
+state and check that every displayed relation name in the inspected slice has
+one semantic meaning.
+
 An unrestricted `SpytialIdentity` classifier may intentionally merge unequal
 values for presentation. That merge can be useful in a diagram, but it is not
 a semantic equality and is outside these theorems.
@@ -242,6 +249,10 @@ For a structural origin, the production checker recognizes direct constructor
 fields and structure projections. It checks their source terms, child terms,
 types, and atom links. It also checks that every represented constructor has a
 tuple for each supported first-order field.
+
+The computed entry point runs the structural checker. The proof-context entry
+point runs both the structural checker and the proof-origin checker, because a
+single contextual inspection can contain tuples obtained in both ways.
 
 The actual Lean expressions matter. JSON names such as `lt` are not unique
 relation symbols. JSON type labels also do not account for definitional
@@ -327,17 +338,20 @@ The next steps are:
 3. Construct typed semantic instances from checked traces, provenance, and
    selector evidence. Reused atom identifiers must denote one shared typed
    atom.
-4. Construct the computed structural soundness and field-coverage result from
+4. Choose collision-free relation identifiers, or enforce the condition that
+   one displayed relation name has one semantic meaning in each inspected
+   slice.
+5. Construct the computed structural soundness and field-coverage result from
    checked constructor and projection origins.
-5. Define `inspect` for the supported core and prove inspection soundness by
+6. Define `inspect` for the supported core and prove inspection soundness by
    combining the computed and proof results.
-6. Define `rootStruct`. The trace may need a small origin marker that
+7. Define `rootStruct`. The trace may need a small origin marker that
    distinguishes structure discovered from the selected root from structure
    discovered while processing an additional fact.
-7. Prove the partial embedding after equality refinement. Add field coverage
+8. Prove the partial embedding after equality refinement. Add field coverage
    and termination to obtain the final isomorphism theorem.
 
-Steps 1--5 establish the unified semantics and its soundness. Steps 6--7
+Steps 1--6 establish the unified semantics and its soundness. Steps 7--8
 establish the main agreement result.
 
 ## Responsibility between projects

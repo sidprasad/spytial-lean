@@ -20,6 +20,8 @@ private meta def viewOf (label : String) (root : Expr) (config : Iykyk.Config :=
   let some view := view? | throwError "{label}: no context view"
   unless view.trace.wellFormedTrace do
     throwError "{label}: malformed production trace"
+  let _ ← checkStructuralTrace {} view.trace view.prov view.evidence
+  let _ ← checkProofTrace view.trace view.evidence
   return view
 
 /-! ## Positive and connected facts -/
@@ -144,6 +146,9 @@ end SecondPredicate
     assertCanon "consumer.refinement" view.data
       "Tree|t\nTree|leaf\nNat|1\nTree|leaf\nNat|2\n\
        left[Tree,Tree]:0,1\nright[Tree,Tree]:0,3\nvalue[Tree,Nat]:1,2;3,4"
+    let structural ← checkedStructuralOrigins view.trace view.prov view.evidence
+    unless structural.size == 4 do
+      throwError "consumer.refinement: contextual inspection lost computed structure"
 
 /- A fact whose endpoint is a constructor subterm reuses the atom reached by
    the root walk instead of drawing the entire subtree a second time. -/

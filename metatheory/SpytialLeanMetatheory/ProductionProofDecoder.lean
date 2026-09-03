@@ -14,11 +14,11 @@ returned by the real proof-context relationalizer. It rechecks the proof,
 reruns the proposition decoder, retains the actual relation head and Lean
 column types, and checks that every decoded term names the recorded atom.
 
-The remaining semantic obligation is direct: in an interpretation satisfying
-the Lean context, truth of the decoded proposition must imply truth of the
-emitted tuple. Together with a typed interpretation of the trace, this
-obligation connects the checked origins to the existing `ProofDecoding`
-result.
+The executable checks do not by themselves interpret Lean expressions. A
+semantic realization must still build typed tuples, preserve shared atom
+identifiers, and show that truth of each decoded proposition implies truth of
+its emitted tuple. Given that realization, this file connects the checked
+origins to the existing `ProofDecoding` result.
 -/
 
 namespace SpytialLean.Metatheory
@@ -73,9 +73,9 @@ public def ExprAtomIdsAreShared {World : Type u}
         (meaning.instanceOfTuples tuples).atoms →
     left.id = right.id → HEq left right
 
-/-- The local semantic facts for one checked production origin and one typed
-    tuple. They state exactly what the runtime checks established and the one
-    semantic fact the expression interpreter must establish. -/
+/-- The semantic counterpart of one checked production origin and one typed
+    tuple. The equality fields mirror runtime checks. The proof-check and
+    implication fields belong to the trusted expression interpretation. -/
 public structure ProvedTupleRealization {World : Type u}
     {context : Iykyk.Metatheory.Context World}
     (meaning : LeanExprMeaning World context)
@@ -98,9 +98,10 @@ public structure ProvedTupleRealization {World : Type u}
     meaning.proposition origin.proposition world →
       (meaning.instanceOfTuples tuples).TupleHolds ground tuple world compatible
 
-/-- The checked runtime facts required to interpret all proof-derived tuples.
+/-- The complete realization required to interpret all proof-derived tuples.
     Each tuple has one emitted checked origin and one local realization above;
-    shared atom IDs and IYKYK membership are global properties. -/
+    shared atom IDs and IYKYK membership are global properties. Constructing
+    this structure from a production trace remains separate work. -/
 public structure ProductionProofRealization {World : Type u} {Root : Type v}
     {context : Iykyk.Metatheory.Context World}
     (meaning : LeanExprMeaning World context)
@@ -143,8 +144,8 @@ public theorem source_sound {World : Type u} {Root : Type v}
   rw [tupleRealization.source_is_proposition]
   exact meaning.proofChecks_sound tupleRealization.proof_checked
 
-/-- Checked `proved` origins from the production proposition decoder
-    instantiate the abstract `ProofDecoding` interface. -/
+/-- A completed realization of checked `proved` origins instantiates the
+    abstract `ProofDecoding` interface. -/
 public def toProofDecoding {World : Type u} {Root : Type v}
     {context : Iykyk.Metatheory.Context World}
     {meaning : LeanExprMeaning World context}

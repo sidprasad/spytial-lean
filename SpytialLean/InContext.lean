@@ -307,11 +307,11 @@ private meta def walkFact (cfg : WalkConfig)
   -- An observation may already have emitted the graph point established by
   -- this equation. Relations contain one tuple but the trace retains both
   -- justifications.
-  if ((← get).relations.get? relation).any (fun (_, tuples) =>
-      tuples.any (·.atoms == atomIds)) then
-    modify fun state => state.addTupleOrigin relation tuple origin
-  else
-    modify fun state => state.addTupleWithOrigin relation types tuple origin
+  if let some (_, tuples) := (← get).relations.get? relation then
+    if let some existing := tuples.find? (·.atoms == atomIds) then
+      modify fun state => state.addTupleOrigin relation existing origin
+      return anchors
+  modify fun state => state.addTupleWithOrigin relation types tuple origin
   return anchors
 
 /-- The checked information retained for one production `proved` origin.
@@ -546,6 +546,7 @@ private meta def relationalizeAfaikInspectionWithTrace (afaik : Iykyk.Afaik)
       terms := state.selectorTerms
       proofs := afaik.facts.map (·.proof) ++
         config.observationResults.toArray.filterMap (·.2.proof?) }
+    let _ ← checkStructuralTrace config trace state.provenance evidence
     let _ ← checkProofTrace trace evidence
     return (trace, state.provenance,
       substituteKnown refinements 8 afaik.root, inspection, evidence)
