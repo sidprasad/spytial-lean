@@ -119,20 +119,26 @@ private meta def atomForRefinedLocal? (fvarId : FVarId)
     if representative.equal value then return some atomId
   return none
 
-/-- Prefer user-written local names for represented structured values refined
-    by the context. Later declarations are nearer the inspection site and win
-    when several aliases denote one atom; the explicitly inspected root wins
-    over every other alias. Atom ids, relations, and provenance are unchanged. -/
+/-- Prefer user-written local names for represented values refined by the
+    context. Concrete primitive values keep informative labels such as `3`,
+    while a name may replace a generated symbolic primitive label. Later
+    declarations are nearer the inspection site and win when several aliases
+    denote one atom; the explicitly inspected root wins over every other alias.
+    Atom ids, relations, and provenance are unchanged. -/
 private meta def labelRefinedLocals (selected : Expr) (rootId : String)
     (refinements : Std.HashMap FVarId Expr) (state : WalkState) : MetaM WalkState := do
   let mut labels : Std.HashMap String String := {}
+  let mut generatedRenames : Std.HashMap String String := {}
   for declaration in ← getLCtx do
     if declaration.isImplementationDetail || !refinements.contains declaration.fvarId then
       continue
-    if ← isPrimitiveLabelType declaration.type then continue
     let userName := declaration.userName
     if userName.isAnonymous || userName.hasMacroScopes then continue
     if let some atomId ← atomForRefinedLocal? declaration.fvarId refinements state then
+      if ← isPrimitiveLabelType declaration.type then
+        unless state.generatedAtoms.contains atomId do continue
+        let some atom := state.atoms.find? (·.id == atomId) | continue
+        generatedRenames := generatedRenames.insert atom.label (toString userName)
       labels := labels.insert atomId (toString userName)
   if let .fvar fvarId := selected then
     let declaration ← fvarId.getDecl
@@ -141,9 +147,11 @@ private meta def labelRefinedLocals (selected : Expr) (rootId : String)
       if !userName.isAnonymous && !userName.hasMacroScopes then
         labels := labels.insert rootId (toString userName)
   return { state with atoms := state.atoms.map fun atom =>
+    let rewritten := generatedRenames.toArray.foldl
+      (fun label (generated, contextual) => label.replace generated contextual) atom.label
     match labels[atom.id]? with
     | some label => { atom with label }
-    | none => atom }
+    | none => { atom with label := rewritten } }
 
 private meta def contextArgument (cfg : WalkConfig) (argument : Expr) :
     MetaM Expr :=
@@ -157,11 +165,21 @@ private meta def contextArgument (cfg : WalkConfig) (argument : Expr) :
 private meta def displayedProposition (fact : Iykyk.KnownFact) : MetaM Expr :=
   do instantiateMVars (← inferType fact.proof)
 
+/-- Recover the user-written binder from the existential proof consumed by a
+    witness's `Classical.choose`, when that binder survived elaboration. -/
+private meta def witnessBinderName? (term : Expr) : MetaM (Option String) := do
+  let some proof := term.getAppArgs.back? | return none
+  let proposition ← instantiateMVars (← inferType proof)
+  unless proposition.isAppOfArity ``Exists 2 do return none
+  let predicate := proposition.getAppArgs[1]!
+  let .lam binderName _ _ _ := predicate | return none
+  if binderName.isAnonymous || binderName.hasMacroScopes then return none
+  return some (toString binderName)
+
 /-- Allocate the shared unknowns before anything else walks. Registering each
     choice term in `applicationAtoms` makes all of its occurrences reuse the
-    same short-labelled atom rather than displaying `Classical.choose`, and the
-    labels come from the walk's one generated-name counter so no other atom can
-    repeat them. -/
+    same atom rather than displaying `Classical.choose`. Prefer the source
+    existential's binder; genuinely anonymous witnesses use their type. -/
 private meta def addWitnesses (afaik : Iykyk.Afaik) (recordObservationTerms : Bool) :
     StateT WalkState MetaM (Array (Expr × String)) := do
   let mut anchors := #[]
@@ -170,7 +188,12 @@ private meta def addWitnesses (afaik : Iykyk.Afaik) (recordObservationTerms : Bo
     -- inside the root is found under the reduced spelling.
     let reduced ← whnf witness.term
     let state ← get
-    let (label, state) := state.freshApplicationLabel
+    let binderName? ← witnessBinderName? witness.term
+    let (label, state) ← match binderName? with
+      | some binderName => pure (state.freshGeneratedLabel binderName)
+      | none => do
+        let typeName ← sigOfType witness.type
+        pure (state.freshGeneratedLabel typeName true)
     let (atomId, state) := state.freshId
     let atom : JsonAtom := {
       id := atomId
@@ -180,6 +203,7 @@ private meta def addWitnesses (afaik : Iykyk.Afaik) (recordObservationTerms : Bo
     set <| ({ state.addAtom atom with
       applicationAtoms :=
         (state.applicationAtoms.insert ⟨witness.term⟩ atomId).insert ⟨reduced⟩ atomId
+      generatedAtoms := state.generatedAtoms.insert atomId
       observationTerms := if recordObservationTerms then
         state.observationTerms.push (witness.term, atomId)
       else state.observationTerms }).rememberSelectorTerm witness.term atomId

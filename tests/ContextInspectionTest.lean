@@ -309,9 +309,24 @@ end
       result.inspection.root
     let some rootResult := result.data.atoms.find? (·.id == rootHeight)
       | throwError "symbolic root height has no atom"
-    unless rootResult.label == "(max xˀ yˀ) + 1" do
+    unless rootResult.label == "(max height(l)ˀ height(r)ˀ) + 1" do
       throwError "unexpected symbolic root height: {rootResult.label}"
     assertCount "no invented ordering" result.data "le" 0
+    withLetDecl `leftHeight (mkConst ``Nat) (height l) fun _ => do
+      let named ← view (node l 1 r)
+      let some left := named.data.atoms.find? (·.label == "l")
+        | throwError "named symbolic observation lost its left subtree"
+      let observed ← graphResult "named symbolic observation" named.data "height" left.id
+      let some observed := named.data.atoms.find? (·.id == observed)
+        | throwError "named symbolic observation lost its result"
+      unless observed.label == "leftHeight" do
+        throwError "symbolic primitive did not use its contextual name: {observed.label}"
+      let rootHeight ← graphResult "named symbolic root" named.data "height"
+        named.inspection.root
+      let some rootHeight := named.data.atoms.find? (·.id == rootHeight)
+        | throwError "named symbolic observation lost its parent result"
+      unless rootHeight.label == "(max leftHeight height(r)ˀ) + 1" do
+        throwError "symbolic expression retained a stale generated name: {rootHeight.label}"
 
 opaque combineHeights (left right : Nat) : Nat := left + right
 
@@ -330,7 +345,8 @@ def Tree.combinedHeight : Tree → Nat
     let rootHeight ← graphResult "generic symbolic renderer" data "combinedHeight" rootId
     let some result := data.atoms.find? (·.id == rootHeight)
       | throwError "generic symbolic result has no atom"
-    unless result.label == "combineHeights (combineHeights xˀ 1) yˀ" do
+    unless result.label ==
+        "combineHeights (combineHeights combinedHeight(l)ˀ 1) combinedHeight(r)ˀ" do
       throwError "unexpected generic symbolic result: {result.label}"
     assertCount "generic expression stays in the label" data "combineHeights" 0
 
@@ -453,8 +469,8 @@ private meta def assertRootObservation (data : JsonDataInstance) (relation label
       let after := node a 1 (node b 2 c)
       let beforeView ← view before
       let afterView ← view after
-      assertRootObservation beforeView.data "height" "xˀ + 3"
-      assertRootObservation afterView.data "height" "xˀ + 2"
+      assertRootObservation beforeView.data "height" "height(c)ˀ + 3"
+      assertRootObservation afterView.data "height" "height(c)ˀ + 2"
       assertCount "focused queries do not mutate before knowledge" beforeView.data "le" 0
       assertCount "focused queries do not mutate after knowledge" afterView.data "le" 0
 
@@ -494,7 +510,7 @@ private meta def assertRootObservation (data : JsonDataInstance) (relation label
     let rootHeight ← graphResult "partial root height" data "height" rootId
     let some rootResult := data.atoms.find? (·.id == rootHeight)
       | throwError "partial root height has no atom"
-    unless rootResult.label == "(max 1 xˀ) + 1" do
+    unless rootResult.label == "(max 1 height(r)ˀ) + 1" do
       throwError "unexpected partial root height: {rootResult.label}"
     let some child := (tuples data "left").find?
         (·.atoms[0]? == data.atoms[0]?.map (·.id)) | throwError "missing child"

@@ -91,6 +91,15 @@ public structure Bundle where
   assertEq "hole.scoped" #[holeLabel hygienic] #["?"]
   assertEq "hyp.scoped"  #[hypLabel hygienic] #["x"]
 
+/-! ## Generated labels -/
+
+#eval show MetaM Unit from do
+  let (first, state) := ({} : WalkState).freshGeneratedLabel "height(l)"
+  let (second, state) := state.freshGeneratedLabel "height(l)"
+  let (fallback, _) := state.freshGeneratedLabel "Nat" true
+  assertEq "generated.meaningfulAndUnique" #[first, second, fallback]
+    #["height(l)ˀ", "height(l)₂ˀ", "Nat₁ˀ"]
+
 /-! ## Walker: open values (holes and hypotheses) -/
 
 #eval show MetaM Unit from do

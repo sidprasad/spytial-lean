@@ -78,9 +78,13 @@ public meta structure WalkState where
   /-- Context-only references to open constructor terms. This is separate
       from closed-value identity and never merges different symbolic terms. -/
   symbolicAtoms : ExprStructMap String := {}
-  /-- Counter for short display names of determined but otherwise unnamed
-      application results (`xˀ`, `yˀ`, ...). -/
-  nextApplicationLabel : Nat := 0
+  /-- Number of generated labels already allocated for each meaningful stem.
+      This keeps provenance-derived names readable while disambiguating two
+      different values whose source expressions print alike. -/
+  generatedLabelCounts : Std.HashMap String Nat := {}
+  /-- Atoms whose labels describe unknown witnesses or application results.
+      Consumers use this provenance instead of interpreting label text. -/
+  generatedAtoms : Std.HashSet String := {}
   /-- Refinements currently being expanded — the cycle guard for mutual
       equations (`h₁ : x = y`, `h₂ : y = x`): a variable re-entered during its
       own refinement renders as the opaque leaf instead. -/
@@ -133,18 +137,31 @@ public meta def WalkState.freshId (s : WalkState) : String × WalkState :=
   let id := s!"atom_{s.nextId}"
   (id, { s with nextId := s.nextId + 1 })
 
-/-- A generated display label for an unnamed value, not a Lean metavariable. -/
-private meta def applicationLabel (index : Nat) : String :=
-  let stem := #["x", "y", "z"][index % 3]!
-  let generation := index / 3
-  let identifier := if generation == 0 then stem else stem ++ toString generation
-  identifier ++ "ˀ"
+private meta def subscriptDigit : Char → String
+  | '0' => "₀"
+  | '1' => "₁"
+  | '2' => "₂"
+  | '3' => "₃"
+  | '4' => "₄"
+  | '5' => "₅"
+  | '6' => "₆"
+  | '7' => "₇"
+  | '8' => "₈"
+  | '9' => "₉"
+  | c => c.toString
 
-/-- Allocate the next generated `xˀ`, `yˀ`, ... display name. Every generated label in a
-    walk draws from this one counter, so two distinct atoms never share one. -/
-public meta def WalkState.freshApplicationLabel (s : WalkState) : String × WalkState :=
-  (applicationLabel s.nextApplicationLabel,
-    { s with nextApplicationLabel := s.nextApplicationLabel + 1 })
+private meta def subscriptNat (number : Nat) : String :=
+  String.join ((toString number).toList.map subscriptDigit)
+
+/-- Allocate a generated display label from a meaningful stem. The raised
+    marker says that the atom's value is not known; a subscript distinguishes
+    different atoms whose provenance supplies the same visible stem. -/
+public meta def WalkState.freshGeneratedLabel (s : WalkState) (stem : String)
+    (numberFirst := false) : String × WalkState :=
+  let count := s.generatedLabelCounts.getD stem 0
+  let suffix := if count == 0 && !numberFirst then "" else subscriptNat (count + 1)
+  let label := stem ++ suffix ++ "ˀ"
+  (label, { s with generatedLabelCounts := s.generatedLabelCounts.insert stem (count + 1) })
 
 /-- Register an atom in the state. -/
 public meta def WalkState.addAtom (s : WalkState) (atom : JsonAtom) : WalkState :=
@@ -831,6 +848,36 @@ public meta def graphSide? (side : Expr) : MetaM (Option (String × Array Expr))
   if args.isEmpty then return none
   return some (name, args)
 
+/-- The visible name of an argument already represented by the walk. This lets
+    an application of an existential witness say `measure(yˀ)ˀ` instead of
+    exposing the witness's implementation as `Classical.choose`. -/
+private meta def representedTermLabel? (state : WalkState) (expression : Expr) : Option String := do
+  let atomId ← state.applicationAtoms[(⟨expression⟩ : ExprStructEq)]? <|>
+    state.symbolicAtoms[(⟨expression⟩ : ExprStructEq)]? <|>
+    (match expression with
+      | .fvar id => state.fvarAtoms[id]?
+      | _ => none) <|>
+    (state.selectorTerms.find? fun (term, _) => term.equal expression).map (·.2)
+  (state.atoms.find? (·.id == atomId)).map (·.label)
+
+/-- Use a named application's source expression as the display name of its
+    unknown result: `height l` becomes `height(l)ˀ`. -/
+private meta def applicationLabelStem? (expression : Expr) :
+    StateT WalkState MetaM (Option String) := do
+  let some (name, arguments) ← graphSide? expression | return none
+  let rendered ← arguments.mapM fun argument => do
+    if let some label := representedTermLabel? (← get) argument then return label
+    ppLabel argument
+  return some s!"{name}({String.intercalate ", " rendered.toList})"
+
+/-- Allocate a provenance-derived application label, with the result type as
+    the deterministic fallback for an expression that has no named head. -/
+private meta def freshApplicationLabel (expression : Expr) : StateT WalkState MetaM String := do
+  if let some stem ← applicationLabelStem? expression then
+    return ← modifyGet fun state => state.freshGeneratedLabel stem
+  let stem ← sigOfType (← inferType expression)
+  return ← modifyGet fun state => state.freshGeneratedLabel stem true
+
 /-- Whether `application` has the same function head as one of the explicitly
     requested observations. Function identity, rather than the applied root
     argument, makes `observing [height]` govern every `height _` appearing in
@@ -1162,7 +1209,8 @@ private meta def addSymbolicObservationAtom (cfg : WalkConfig) (e : Expr) (label
   let state ← get
   let (id, state) := state.freshId
   let state := { (state.addAtom { id, type, label }) with
-    applicationAtoms := state.applicationAtoms.insert ⟨e⟩ id }
+    applicationAtoms := state.applicationAtoms.insert ⟨e⟩ id
+    generatedAtoms := state.generatedAtoms.insert id }
   set <| if cfg.recordSelectorTerms then state.rememberSelectorTerm e id else state
   return id
 
@@ -1246,8 +1294,7 @@ mutual
       let rendered ← symbolicObservationExpression cfg e
       addSymbolicObservationAtom cfg e rendered.text
     else
-      let (label, state) := (← get).freshApplicationLabel
-      set state
+      let label ← freshApplicationLabel e
       addSymbolicObservationAtom cfg e label
 end
 
@@ -1264,10 +1311,12 @@ private meta def emitFunctionGraph? (cfg : WalkConfig)
     StateT WalkState MetaM Bool := do
   unless cfg.functionGraphs do return false
   let some (relName, args) ← graphSide? e | return false
-  let label ← modifyGet WalkState.freshApplicationLabel
+  let label ← freshApplicationLabel e
   modify fun state =>
     let state := state.addAtom { id := atomId, type := typeName, label }
-    { state with applicationAtoms := state.applicationAtoms.insert ⟨e⟩ atomId }
+    { state with
+      applicationAtoms := state.applicationAtoms.insert ⟨e⟩ atomId
+      generatedAtoms := state.generatedAtoms.insert atomId }
   let mut ids : Array String := #[]
   let mut types : Array String := #[]
   for arg in args do

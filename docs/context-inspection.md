@@ -40,7 +40,9 @@ back to `node`. Refined structured locals used below the root likewise label
 their atoms. If several in-scope aliases denote one atom, the nearest local
 declaration wins, except that the explicitly inspected name always wins at the
 root. Primitive values keep their value labels (`3`, `true`, `"text"`, and so
-on) instead of being renamed by refinements.
+on) instead of being renamed by refinements. A contextual name for a symbolic
+primitive does win over its generated label, and expressions referring to that
+atom use the same contextual name.
 
 After a rotation, root-only inspection does not import an old constructor-built
 parent merely because it shares leaves with the new tree. Facts wholly about
@@ -92,9 +94,9 @@ deliberately distinguish occurrences. There is no new observation option.
 For a known node with unknown children, `observing [height]` records:
 
 ```text
-height(left, xˀ)
-height(right, yˀ)
-height(parent, (max xˀ yˀ) + 1)
+height(left, height(left)ˀ)
+height(right, height(right)ˀ)
+height(parent, (max height(left)ˀ height(right)ˀ) + 1)
 ```
 
 The observer is residualized before its result is added. Known child heights
