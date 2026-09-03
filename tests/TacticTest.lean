@@ -128,7 +128,7 @@ info: {"relations":
    "id": "measure"}],
  "atoms":
  [{"type": "Nat", "label": "x", "id": "atom_0"},
-  {"type": "Nat", "label": "measure(x)ˀ", "id": "atom_1"}]}
+  {"type": "Nat", "label": "¿x?", "id": "atom_1"}]}
 -/
 #guard_msgs in
 example (measure : Nat → Nat) (x : Nat) : True := by
@@ -314,7 +314,7 @@ example (x n : Nat) (h : x < n) : True := by
   spytial.datum x fyi [n]
   trivial
 
--- a witness occurring inside the refined subject keeps the existential binder `yˀ`
+-- a witness occurring inside the refined subject keeps the existential binder `¿y?`
 set_option linter.unusedVariables false in
 /--
 info: {"relations":
@@ -335,7 +335,7 @@ info: {"relations":
    "name": "tail",
    "id": "tail"}],
  "atoms":
- [{"type": "Nat", "label": "yˀ", "id": "atom_0"},
+ [{"type": "Nat", "label": "¿y?", "id": "atom_0"},
   {"type": "List", "label": "xs", "id": "atom_1"},
   {"type": "List", "label": "cons", "id": "atom_2"},
   {"type": "List", "label": "cons", "id": "atom_3"},
@@ -346,7 +346,7 @@ example (xs : List Nat) (h : ∃ y, xs = [y, y]) : True := by
   spytial.datum xs
   trivial
 
--- witness binders and application provenance produce distinct meaningful labels
+-- witness binders remain meaningful while anonymous results use neutral labels
 set_option linter.unusedVariables false in
 /--
 info: {"relations":
@@ -363,9 +363,9 @@ info: {"relations":
    "name": "edge",
    "id": "edge"}],
  "atoms":
- [{"type": "α", "label": "uˀ", "id": "atom_0"},
+ [{"type": "α", "label": "¿u?", "id": "atom_0"},
   {"type": "α", "label": "s", "id": "atom_1"},
-  {"type": "α", "label": "next(s)ˀ", "id": "atom_2"}]}
+  {"type": "α", "label": "¿x?", "id": "atom_2"}]}
 -/
 #guard_msgs in
 example {α : Type} (edge : α → α → Prop) (Reach : α → Prop) (next : α → α) (s : α)
@@ -402,7 +402,7 @@ info: {"relations":
    "id": "bypass"}],
  "atoms":
  [{"type": "ArgumentWalk", "label": "p", "id": "atom_0"},
-  {"type": "ArgumentWalk", "label": "bypass(p)ˀ", "id": "atom_1"}]}
+  {"type": "ArgumentWalk", "label": "¿x?", "id": "atom_1"}]}
 -/
 #guard_msgs in
 example {V : Type u} {G : ArgumentGraph V} {u v : V} (p : ArgumentWalk G u v)

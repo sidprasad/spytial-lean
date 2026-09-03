@@ -94,11 +94,17 @@ public structure Bundle where
 /-! ## Generated labels -/
 
 #eval show MetaM Unit from do
-  let (first, state) := ({} : WalkState).freshGeneratedLabel "height(l)"
-  let (second, state) := state.freshGeneratedLabel "height(l)"
-  let (fallback, _) := state.freshGeneratedLabel "Nat" true
-  assertEq "generated.meaningfulAndUnique" #[first, second, fallback]
-    #["height(l)ˀ", "height(l)₂ˀ", "Nat₁ˀ"]
+  let (named, state) := ({} : WalkState).freshGeneratedLabel "middle"
+  let (first, state) := state.freshAnonymousLabel
+  let (second, state) := state.freshAnonymousLabel
+  let (namedAgain, _) := state.freshGeneratedLabel "middle"
+  assertEq "generated.namedAndNeutral" #[named, first, second, namedAgain]
+    #["¿middle?", "¿x?", "¿y?", "¿middle₂?"]
+
+#eval show MetaM Unit from do
+  let (_, state) := ({} : WalkState).freshGeneratedLabel "x"
+  let (anonymous, _) := state.freshAnonymousLabel
+  assertEq "generated.avoidsBinderCollision" #[anonymous] #["¿y?"]
 
 /-! ## Walker: open values (holes and hypotheses) -/
 

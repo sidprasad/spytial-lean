@@ -117,7 +117,7 @@ example (edge : Nat → Nat → Prop) (x y : Nat) (h : edge x y) : True := by
       mkAppM ``Exists #[← mkLambdaFVars #[middle] body]
     withLocalDeclD `route route fun _ => do
       assertSelection (← viewOf source) edge
-        #[#["middleˀ", "target"], #["source", "middleˀ"]]
+        #[#["¿middle?", "target"], #["source", "¿middle?"]]
 
 -- Refining x changes its picture but does not lose the term used by h : P x.
 #eval show TermElabM Unit from do

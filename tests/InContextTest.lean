@@ -91,9 +91,18 @@ private meta def node (left right : Expr) : Expr :=
     withLocalDeclD `route routeType fun _ => do
       let view ← viewOf "consumer.witness" source
       assertCanon "consumer.witness" view.data
-        "α|middleˀ\nα|source\nα|target\nedge[α,α]:1,0;0,2"
+        "α|¿middle?\nα|source\nα|target\nedge[α,α]:1,0;0,2"
       let observed ← viewOf "consumer.observedWitness" source {} #[mkApp measure source]
-      unless observed.data.atoms.any (·.label == "measure(middleˀ)ˀ") do
+      let some middle := observed.data.atoms.find? (·.label == "¿middle?")
+        | throwError "an observed witness lost its binder name"
+      let some measureRelation := observed.data.relations.find? (·.name == "measure")
+        | throwError "an observed witness lost its observation relation"
+      let some measured := measureRelation.tuples.find?
+          (·.atoms[0]? == some middle.id)
+        | throwError "an observed witness exposed its choice implementation\n\
+            {canonInstance observed.data}"
+      unless observed.data.atoms.any
+          (fun atom => some atom.id == measured.atoms[1]? && atom.label == "¿y?") do
         throwError "an observed witness exposed its choice implementation\n\
           {canonInstance observed.data}"
 
@@ -105,8 +114,8 @@ private meta def node (left right : Expr) : Expr :=
       mkAppM ``Exists #[← mkLambdaFVars #[witness] body]
     withLocalDeclD `anonymousWitness existence fun _ => do
       let view ← viewOf "consumer.anonymousWitness" source { rootOnly := false }
-      unless view.data.atoms.any (·.label == "Nat₁ˀ") do
-        throwError "anonymous witness did not use its type fallback\n{canonInstance view.data}"
+      unless view.data.atoms.any (·.label == "¿x?") do
+        throwError "anonymous witness did not use a neutral name\n{canonInstance view.data}"
 
 /-! ## Explicit IYKYK rules add derived relations -/
 
@@ -146,7 +155,7 @@ private meta def node (left right : Expr) : Expr :=
     withLocalDeclD `h₁ (mkApp Reach nextStart) fun _ => do
       let view ← viewOf "consumer.functionGraph" start
       assertCanon "consumer.functionGraph" view.data
-        "α|start\nα|next(start)ˀ\nReach[α]:0;1\nnext[α,α]:0,1"
+        "α|start\nα|¿x?\nReach[α]:0;1\nnext[α,α]:0,1"
 
 /-! ## Requested observations become graph points -/
 
@@ -155,7 +164,7 @@ private meta def node (left right : Expr) : Expr :=
   withLocalDeclD `x (mkConst ``Nat) fun x => do
     let view ← viewOf "consumer.observation" x {} #[mkApp measure x]
     assertCanon "consumer.observation" view.data
-      "Nat|x\nNat|measure(x)ˀ\nmeasure[Nat,Nat]:0,1"
+      "Nat|x\nNat|¿x?\nmeasure[Nat,Nat]:0,1"
 
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `measure (← mkArrow (mkConst ``Nat) (mkConst ``Nat)) fun measure => do
@@ -163,7 +172,7 @@ private meta def node (left right : Expr) : Expr :=
   withLocalDeclD `known (← mkAppM ``Eq #[mkApp measure x, mkRawNatLit 3]) fun _ => do
     let view ← viewOf "consumer.knownObservation" x {} #[mkApp measure x]
     assertCanon "consumer.knownObservation" view.data
-      "Nat|x\nNat|3\nNat|measure(3)ˀ\nmeasure[Nat,Nat]:0,1;1,2"
+      "Nat|x\nNat|3\nNat|¿x?\nmeasure[Nat,Nat]:0,1;1,2"
 
 private def Tree.height : Tree → Nat
   | .leaf _ => 0
@@ -178,8 +187,8 @@ private def Tree.height : Tree → Nat
     let observation := mkApp (mkConst ``Tree.height) root
     assertCanon "consumer.activeDomainObservation"
       (← relationalize root {} #[observation])
-      "Tree|node\nTree|left\nTree|right\nNat|height(left)ˀ\nNat|height(right)ˀ\n\
-       Nat|(max height(left)ˀ height(right)ˀ) + 1\n\
+      "Tree|node\nTree|left\nTree|right\nNat|¿x?\nNat|¿y?\n\
+       Nat|(max ¿x? ¿y?) + 1\n\
        height[Tree,Nat]:0,5;1,3;2,4\nleft[Tree,Tree]:0,1\nright[Tree,Tree]:0,2"
 
 /- Values introduced by proof-backed context facts join the same active
@@ -192,7 +201,7 @@ private def Tree.height : Tree → Nat
     let leftHeight := mkApp (mkConst ``Tree.height) left
     let view ← viewOf "consumer.contextActiveDomainObservation" left {} #[leftHeight]
     assertCanon "consumer.contextActiveDomainObservation" view.data
-      "Tree|left\nNat|height(left)ˀ\nTree|right\nNat|height(right)ˀ\n\
+      "Tree|left\nNat|¿x?\nTree|right\nNat|¿y?\n\
        edge[Tree,Tree]:0,2\nheight[Tree,Nat]:0,1;2,3"
 
 /- Observations parameterize fact relationalization. The source computation
@@ -208,8 +217,8 @@ private def Tree.height : Tree → Nat
     withLocalDeclD `branch (← mkAppM ``LT.lt #[oneMore, leftHeight]) fun _ => do
       let view ← viewOf "consumer.observationContext" left {} #[leftHeight]
       assertCanon "consumer.observationContext" view.data
-        "Tree|left\nNat|height(left)ˀ\nNat|hAdd(2 * right.height, 1)ˀ\n\
-         Nat|hMul(2, right.height)ˀ\nNat|2\nNat|height(right)ˀ\n\
+        "Tree|left\nNat|¿x?\nNat|¿y?\n\
+         Nat|¿z?\nNat|2\nNat|¿a?\n\
          Tree|right\nNat|1\n\
          hAdd[Nat,Nat,Nat]:3,7,2\nhMul[Nat,Nat,Nat]:4,5,3\n\
          height[Tree,Nat]:0,1;6,5\nlt[Nat,Nat]:2,1"

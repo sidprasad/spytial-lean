@@ -179,7 +179,7 @@ private meta def witnessBinderName? (term : Expr) : MetaM (Option String) := do
 /-- Allocate the shared unknowns before anything else walks. Registering each
     choice term in `applicationAtoms` makes all of its occurrences reuse the
     same atom rather than displaying `Classical.choose`. Prefer the source
-    existential's binder; genuinely anonymous witnesses use their type. -/
+    existential's binder; genuinely anonymous witnesses use a neutral name. -/
 private meta def addWitnesses (afaik : Iykyk.Afaik) (recordObservationTerms : Bool) :
     StateT WalkState MetaM (Array (Expr × String)) := do
   let mut anchors := #[]
@@ -191,9 +191,7 @@ private meta def addWitnesses (afaik : Iykyk.Afaik) (recordObservationTerms : Bo
     let binderName? ← witnessBinderName? witness.term
     let (label, state) ← match binderName? with
       | some binderName => pure (state.freshGeneratedLabel binderName)
-      | none => do
-        let typeName ← sigOfType witness.type
-        pure (state.freshGeneratedLabel typeName true)
+      | none => pure state.freshAnonymousLabel
     let (atomId, state) := state.freshId
     let atom : JsonAtom := {
       id := atomId

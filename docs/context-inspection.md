@@ -94,9 +94,9 @@ deliberately distinguish occurrences. There is no new observation option.
 For a known node with unknown children, `observing [height]` records:
 
 ```text
-height(left, height(left)ˀ)
-height(right, height(right)ˀ)
-height(parent, (max height(left)ˀ height(right)ˀ) + 1)
+height(left, ¿x?)
+height(right, ¿y?)
+height(parent, (max ¿x? ¿y?) + 1)
 ```
 
 The observer is residualized before its result is added. Known child heights

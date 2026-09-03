@@ -78,10 +78,15 @@ public meta structure WalkState where
   /-- Context-only references to open constructor terms. This is separate
       from closed-value identity and never merges different symbolic terms. -/
   symbolicAtoms : ExprStructMap String := {}
-  /-- Number of generated labels already allocated for each meaningful stem.
-      This keeps provenance-derived names readable while disambiguating two
-      different values whose source expressions print alike. -/
+  /-- Position in the readable name sequence for anonymous generated atoms. -/
+  nextAnonymousLabel : Nat := 0
+  /-- Number of generated labels already allocated for each requested stem.
+      Named witnesses retain their binder; otherwise unknown values receive
+      distinct letters. -/
   generatedLabelCounts : Std.HashMap String Nat := {}
+  /-- Decorated generated labels already in use. This prevents a binder such
+      as `x` from colliding with the anonymous `¿x?`. -/
+  generatedLabels : Std.HashSet String := {}
   /-- Atoms whose labels describe unknown witnesses or application results.
       Consumers use this provenance instead of interpreting label text. -/
   generatedAtoms : Std.HashSet String := {}
@@ -153,15 +158,45 @@ private meta def subscriptDigit : Char → String
 private meta def subscriptNat (number : Nat) : String :=
   String.join ((toString number).toList.map subscriptDigit)
 
-/-- Allocate a generated display label from a meaningful stem. The raised
-    marker says that the atom's value is not known; a subscript distinguishes
-    different atoms whose provenance supplies the same visible stem. -/
-public meta def WalkState.freshGeneratedLabel (s : WalkState) (stem : String)
-    (numberFirst := false) : String × WalkState :=
-  let count := s.generatedLabelCounts.getD stem 0
-  let suffix := if count == 0 && !numberFirst then "" else subscriptNat (count + 1)
-  let label := stem ++ suffix ++ "ˀ"
-  (label, { s with generatedLabelCounts := s.generatedLabelCounts.insert stem (count + 1) })
+private meta def generatedLabel (stem : String) (count : Nat) : String :=
+  let suffix := if count == 0 then "" else subscriptNat (count + 1)
+  s!"¿{stem}{suffix}?"
+
+private meta partial def freshGeneratedLabelFrom (s : WalkState) (stem : String) (count : Nat) :
+    String × WalkState :=
+  let label := generatedLabel stem count
+  if s.generatedLabels.contains label then
+    freshGeneratedLabelFrom s stem (count + 1)
+  else
+    (label, { s with
+      generatedLabelCounts := s.generatedLabelCounts.insert stem (count + 1)
+      generatedLabels := s.generatedLabels.insert label })
+
+/-- Allocate a generated display label from a meaningful source binder.
+    Spanish-style question marks distinguish the unknown value from an
+    ordinary local; a subscript is needed only when that binder repeats. -/
+public meta def WalkState.freshGeneratedLabel (s : WalkState) (stem : String) :
+    String × WalkState :=
+  freshGeneratedLabelFrom s stem (s.generatedLabelCounts.getD stem 0)
+
+private meta def anonymousLabelStems : Array String :=
+  #["x", "y", "z", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j",
+    "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w"]
+
+private meta def anonymousLabelStem (index : Nat) : String :=
+  let stem := anonymousLabelStems[index % anonymousLabelStems.size]!
+  let cycle := index / anonymousLabelStems.size
+  if cycle == 0 then stem else stem ++ subscriptNat (cycle + 1)
+
+/-- Allocate a neutral generated label. Distinct letters carry the common-case
+    difference; numeric subscripts appear only after the alphabet is exhausted. -/
+public meta partial def WalkState.freshAnonymousLabel (s : WalkState) :
+    String × WalkState :=
+  let stem := anonymousLabelStem s.nextAnonymousLabel
+  let state := { s with nextAnonymousLabel := s.nextAnonymousLabel + 1 }
+  let candidate := generatedLabel stem 0
+  if state.generatedLabels.contains candidate then state.freshAnonymousLabel
+  else state.freshGeneratedLabel stem
 
 /-- Register an atom in the state. -/
 public meta def WalkState.addAtom (s : WalkState) (atom : JsonAtom) : WalkState :=
@@ -848,35 +883,11 @@ public meta def graphSide? (side : Expr) : MetaM (Option (String × Array Expr))
   if args.isEmpty then return none
   return some (name, args)
 
-/-- The visible name of an argument already represented by the walk. This lets
-    an application of an existential witness say `measure(yˀ)ˀ` instead of
-    exposing the witness's implementation as `Classical.choose`. -/
-private meta def representedTermLabel? (state : WalkState) (expression : Expr) : Option String := do
-  let atomId ← state.applicationAtoms[(⟨expression⟩ : ExprStructEq)]? <|>
-    state.symbolicAtoms[(⟨expression⟩ : ExprStructEq)]? <|>
-    (match expression with
-      | .fvar id => state.fvarAtoms[id]?
-      | _ => none) <|>
-    (state.selectorTerms.find? fun (term, _) => term.equal expression).map (·.2)
-  (state.atoms.find? (·.id == atomId)).map (·.label)
-
-/-- Use a named application's source expression as the display name of its
-    unknown result: `height l` becomes `height(l)ˀ`. -/
-private meta def applicationLabelStem? (expression : Expr) :
-    StateT WalkState MetaM (Option String) := do
-  let some (name, arguments) ← graphSide? expression | return none
-  let rendered ← arguments.mapM fun argument => do
-    if let some label := representedTermLabel? (← get) argument then return label
-    ppLabel argument
-  return some s!"{name}({String.intercalate ", " rendered.toList})"
-
-/-- Allocate a provenance-derived application label, with the result type as
-    the deterministic fallback for an expression that has no named head. -/
-private meta def freshApplicationLabel (expression : Expr) : StateT WalkState MetaM String := do
-  if let some stem ← applicationLabelStem? expression then
-    return ← modifyGet fun state => state.freshGeneratedLabel stem
-  let stem ← sigOfType (← inferType expression)
-  return ← modifyGet fun state => state.freshGeneratedLabel stem true
+/-- Allocate a neutral label for an unknown application result. Its incoming
+    relations already record where the value came from, so the label should
+    identify the atom without privileging one provenance path. -/
+private meta def freshUnknownLabel : StateT WalkState MetaM String :=
+  modifyGet WalkState.freshAnonymousLabel
 
 /-- Whether `application` has the same function head as one of the explicitly
     requested observations. Function identity, rather than the applied root
@@ -1294,7 +1305,7 @@ mutual
       let rendered ← symbolicObservationExpression cfg e
       addSymbolicObservationAtom cfg e rendered.text
     else
-      let label ← freshApplicationLabel e
+      let label ← freshUnknownLabel
       addSymbolicObservationAtom cfg e label
 end
 
@@ -1311,7 +1322,7 @@ private meta def emitFunctionGraph? (cfg : WalkConfig)
     StateT WalkState MetaM Bool := do
   unless cfg.functionGraphs do return false
   let some (relName, args) ← graphSide? e | return false
-  let label ← freshApplicationLabel e
+  let label ← freshUnknownLabel
   modify fun state =>
     let state := state.addAtom { id := atomId, type := typeName, label }
     { state with
