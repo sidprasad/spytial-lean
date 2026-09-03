@@ -106,8 +106,8 @@ example (x a b : Nat) (hxa : x ≤ a) (hab : a ≤ b) : True := by
 
 The hypothesis `h` guarantees that `l` has a head and that `x` is less than or
 equal to that head. Before `obtain`, the head has no name in the proof. IYKYK
-represents it with the fresh name `xˀ`, and Spytial uses that same atom in the
-list and in the ordering relation. After `obtain`, the witness is named `y`
+preserves its existential binder as `¿y?`, and Spytial uses that same atom in
+the list and in the ordering relation. After `obtain`, `y` becomes a local name
 and the equality gives `l` its known list structure. -/
 
 set_option linter.unusedVariables false in

@@ -58,24 +58,29 @@ For every requested unary function `f : A → B` and every represented `t : A`:
    `t`.
 
 Concrete results are ordinary values such as `2`. An irreducible observed
-application receives a generated display name such as `xˀ`. The short
-alphabetic identifier makes the value easy to refer to, while the raised
-question-like marker distinguishes it from an ordinary variable. A deterministic
-residual is proof-normalized before being labelled by an expression over those
-shared names. For example:
+application receives a neutral display name such as `¿x?`. Existential
+witnesses retain their source binder (`¿middle?` for `∃ middle, ...`); a
+genuinely anonymous witness joins the same neutral sequence. The surrounding
+question marks distinguish generated names from ordinary variables. Distinct
+letters carry the common-case difference; numeric subscripts appear only after
+the letter supply is exhausted or when a binder repeats. A generated label
+does not repeat an application's source expression: the incoming relation
+already records that provenance, and more than one relation may eventually
+refer to the same atom. A deterministic residual is proof-normalized before
+being labelled by an expression over those shared names. For example:
 
 ```text
-height(l)      = xˀ
-height(r)      = yˀ
-height(parent) = (max xˀ yˀ) + 1
+height(l)      = ¿x?
+height(r)      = ¿y?
+height(parent) = (max ¿x? ¿y?) + 1
 ```
 
 If the context proves enough arithmetic relationships, the same result can be
 more compact:
 
 ```text
-height(before) = xˀ + 3
-height(after)  = xˀ + 2
+height(before) = ¿x? + 3
+height(after)  = ¿x? + 2
 ```
 
 These labels are not assignable Lean metavariables. Each atom retains the

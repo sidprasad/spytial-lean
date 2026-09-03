@@ -19,7 +19,7 @@ spytial_spec Tree [
   orientation right - Tree->{t : Tree | @:t = leaf} right below,
   align {x, y : Tree | @:x != leaf and @:y != leaf and (x.~(left + right) = y.~(left+right))} horizontal,
   attribute key,
-  --flag hideDisconnectedBuiltIns,
+  flag hideDisconnectedBuiltIns,
   hideAtom {x : Tree | @:x = leaf}
 ]
 

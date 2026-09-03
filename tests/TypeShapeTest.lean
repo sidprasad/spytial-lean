@@ -91,6 +91,21 @@ public structure Bundle where
   assertEq "hole.scoped" #[holeLabel hygienic] #["?"]
   assertEq "hyp.scoped"  #[hypLabel hygienic] #["x"]
 
+/-! ## Generated labels -/
+
+#eval show MetaM Unit from do
+  let (named, state) := ({} : WalkState).freshGeneratedLabel "middle"
+  let (first, state) := state.freshAnonymousLabel
+  let (second, state) := state.freshAnonymousLabel
+  let (namedAgain, _) := state.freshGeneratedLabel "middle"
+  assertEq "generated.namedAndNeutral" #[named, first, second, namedAgain]
+    #["¿middle?", "¿x?", "¿y?", "¿middle₂?"]
+
+#eval show MetaM Unit from do
+  let (_, state) := ({} : WalkState).freshGeneratedLabel "x"
+  let (anonymous, _) := state.freshAnonymousLabel
+  assertEq "generated.avoidsBinderCollision" #[anonymous] #["¿y?"]
+
 /-! ## Walker: open values (holes and hypotheses) -/
 
 #eval show MetaM Unit from do

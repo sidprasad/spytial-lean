@@ -396,11 +396,13 @@ A computed height is an ordinary number. If the context establishes
 height can remain a symbolic expression, connected by the same `height`
 relation. Only irreducible observation leaves receive generated names. For a
 node with two unknown child heights, the parent can therefore display as
-`(max xˀ yˀ) + 1` instead of receiving an unrelated third name. In tactic
-mode, Spytial recognizes focused questions such as which side of a symbolic
-`max` is larger, asks IYKYK's bounded proof API, and simplifies again with any
-checked answers. With sufficient context this can produce related labels such
-as `xˀ + 3` and `xˀ + 2`.
+`(max ¿x? ¿y?) + 1` instead of receiving an unrelated third name. The `height`
+relations already record where those atoms came from, so their labels do not
+repeat one particular provenance path.
+In tactic mode, Spytial recognizes focused questions such as which side of a
+symbolic `max` is larger, asks IYKYK's bounded proof API, and simplifies again
+with any checked answers. With sufficient context this can produce related
+labels such as `¿x? + 3` and `¿x? + 2`.
 Arithmetic compaction changes the retained Lean residual only when Lean proves
 the normalized expression equal to it. Symbolic presentation then uses one
 generic structural rule: atomic children remain bare and compound children are

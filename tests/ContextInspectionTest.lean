@@ -127,8 +127,9 @@ private meta def assertInspectionMetadata (view : ContextView) : MetaM Unit := d
       unless bound.atoms[1]? == observed.atoms[1]? do
         throwError "bound refers to a different subtree's height"
 
-/- The new root is not mentioned in the old inequalities. Unchanged subtrees
-   still connect the result to those facts; the old parent is a distinct value. -/
+/- The new root is not mentioned in the old inequalities. Sharing leaves with
+   the selected result must not import the old constructor-built parents: that
+   would turn the selected tree's field relations into a multi-rooted DAG. -/
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `ll tree fun ll => do
   withLocalDeclD `a tree fun a => do
@@ -140,9 +141,12 @@ private meta def assertInspectionMetadata (view : ContextView) : MetaM Unit := d
     withLocalDeclD `outer (← mkAppM ``LT.lt #[height r, height oldLeft]) fun _ => do
     withLocalDeclD `inner (← mkAppM ``LT.lt #[height ll, height inner]) fun _ => do
       let result ← view after
-      assertCount "after retains old bounds" result.data "lt" 2
-      assertTrees "old and new parents stay distinct" result.data 9
+      assertCount "after discards old bounds" result.data "lt" 0
+      assertTrees "after contains one tree" result.data 7
       assertInspectionMetadata result
+      let full ← view after false
+      assertCount "full context retains old bounds" full.data "lt" 2
+      assertTrees "full context retains old and new parents" full.data 9
 
 /- A refinement of the selected variable exposes children whose facts also
    belong to its view. No unrelated relation is admitted through the type. -/
@@ -305,9 +309,24 @@ end
       result.inspection.root
     let some rootResult := result.data.atoms.find? (·.id == rootHeight)
       | throwError "symbolic root height has no atom"
-    unless rootResult.label == "(max xˀ yˀ) + 1" do
+    unless rootResult.label == "(max ¿x? ¿y?) + 1" do
       throwError "unexpected symbolic root height: {rootResult.label}"
     assertCount "no invented ordering" result.data "le" 0
+    withLetDecl `leftHeight (mkConst ``Nat) (height l) fun _ => do
+      let named ← view (node l 1 r)
+      let some left := named.data.atoms.find? (·.label == "l")
+        | throwError "named symbolic observation lost its left subtree"
+      let observed ← graphResult "named symbolic observation" named.data "height" left.id
+      let some observed := named.data.atoms.find? (·.id == observed)
+        | throwError "named symbolic observation lost its result"
+      unless observed.label == "leftHeight" do
+        throwError "symbolic primitive did not use its contextual name: {observed.label}"
+      let rootHeight ← graphResult "named symbolic root" named.data "height"
+        named.inspection.root
+      let some rootHeight := named.data.atoms.find? (·.id == rootHeight)
+        | throwError "named symbolic observation lost its parent result"
+      unless rootHeight.label == "(max leftHeight ¿y?) + 1" do
+        throwError "symbolic expression retained a stale generated name: {rootHeight.label}"
 
 opaque combineHeights (left right : Nat) : Nat := left + right
 
@@ -326,7 +345,7 @@ def Tree.combinedHeight : Tree → Nat
     let rootHeight ← graphResult "generic symbolic renderer" data "combinedHeight" rootId
     let some result := data.atoms.find? (·.id == rootHeight)
       | throwError "generic symbolic result has no atom"
-    unless result.label == "combineHeights (combineHeights xˀ 1) yˀ" do
+    unless result.label == "combineHeights (combineHeights ¿x? 1) ¿y?" do
       throwError "unexpected generic symbolic result: {result.label}"
     assertCount "generic expression stays in the label" data "combineHeights" 0
 
@@ -449,8 +468,8 @@ private meta def assertRootObservation (data : JsonDataInstance) (relation label
       let after := node a 1 (node b 2 c)
       let beforeView ← view before
       let afterView ← view after
-      assertRootObservation beforeView.data "height" "xˀ + 3"
-      assertRootObservation afterView.data "height" "xˀ + 2"
+      assertRootObservation beforeView.data "height" "¿x? + 3"
+      assertRootObservation afterView.data "height" "¿x? + 2"
       assertCount "focused queries do not mutate before knowledge" beforeView.data "le" 0
       assertCount "focused queries do not mutate after knowledge" afterView.data "le" 0
 
@@ -490,7 +509,7 @@ private meta def assertRootObservation (data : JsonDataInstance) (relation label
     let rootHeight ← graphResult "partial root height" data "height" rootId
     let some rootResult := data.atoms.find? (·.id == rootHeight)
       | throwError "partial root height has no atom"
-    unless rootResult.label == "(max 1 xˀ) + 1" do
+    unless rootResult.label == "(max 1 ¿x?) + 1" do
       throwError "unexpected partial root height: {rootResult.label}"
     let some child := (tuples data "left").find?
         (·.atoms[0]? == data.atoms[0]?.map (·.id)) | throwError "missing child"
@@ -517,7 +536,8 @@ opaque unavailableHeight : Tree → Nat := Tree.height
   let leaf := mkConst ``Tree.leaf
   let data ← relationalize leaf {} #[mkApp (mkConst ``unavailableHeight) leaf]
   assertCount "opaque observation" data "unavailableHeight" 1
-  unless (data.atoms.filter (·.type == "Nat")).all (·.label.endsWith "ˀ") do
+  unless (data.atoms.filter (·.type == "Nat")).all
+      (fun atom => atom.label.startsWith "¿" && atom.label.endsWith "?") do
     throwError "opaque observer was reported as a concrete number"
 
 /- Symbolic observation results are still Lean-interpreted atoms. A predicate
@@ -549,7 +569,7 @@ def negativeThree (_ : Nat) : Int := -3
     | throwError "missing negative Int observation"
   let some result := data.atoms.find? (fun atom => point.atoms[1]? == some atom.id)
     | throwError "missing negative Int result"
-  if result.label.endsWith "ˀ" then
+  if result.label.startsWith "¿" && result.label.endsWith "?" then
     throwError "negative Int was classified as a symbolic residual"
 
 /- Warnings produced during saved-state observation preparation are replayed

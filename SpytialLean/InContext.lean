@@ -119,20 +119,26 @@ private meta def atomForRefinedLocal? (fvarId : FVarId)
     if representative.equal value then return some atomId
   return none
 
-/-- Prefer user-written local names for represented structured values refined
-    by the context. Later declarations are nearer the inspection site and win
-    when several aliases denote one atom; the explicitly inspected root wins
-    over every other alias. Atom ids, relations, and provenance are unchanged. -/
+/-- Prefer user-written local names for represented values refined by the
+    context. Concrete primitive values keep informative labels such as `3`,
+    while a name may replace a generated symbolic primitive label. Later
+    declarations are nearer the inspection site and win when several aliases
+    denote one atom; the explicitly inspected root wins over every other alias.
+    Atom ids, relations, and provenance are unchanged. -/
 private meta def labelRefinedLocals (selected : Expr) (rootId : String)
     (refinements : Std.HashMap FVarId Expr) (state : WalkState) : MetaM WalkState := do
   let mut labels : Std.HashMap String String := {}
+  let mut generatedRenames : Std.HashMap String String := {}
   for declaration in ← getLCtx do
     if declaration.isImplementationDetail || !refinements.contains declaration.fvarId then
       continue
-    if ← isPrimitiveLabelType declaration.type then continue
     let userName := declaration.userName
     if userName.isAnonymous || userName.hasMacroScopes then continue
     if let some atomId ← atomForRefinedLocal? declaration.fvarId refinements state then
+      if ← isPrimitiveLabelType declaration.type then
+        unless state.generatedAtoms.contains atomId do continue
+        let some atom := state.atoms.find? (·.id == atomId) | continue
+        generatedRenames := generatedRenames.insert atom.label (toString userName)
       labels := labels.insert atomId (toString userName)
   if let .fvar fvarId := selected then
     let declaration ← fvarId.getDecl
@@ -141,9 +147,11 @@ private meta def labelRefinedLocals (selected : Expr) (rootId : String)
       if !userName.isAnonymous && !userName.hasMacroScopes then
         labels := labels.insert rootId (toString userName)
   return { state with atoms := state.atoms.map fun atom =>
+    let rewritten := generatedRenames.toArray.foldl
+      (fun label (generated, contextual) => label.replace generated contextual) atom.label
     match labels[atom.id]? with
     | some label => { atom with label }
-    | none => atom }
+    | none => { atom with label := rewritten } }
 
 private meta def contextArgument (cfg : WalkConfig) (argument : Expr) :
     MetaM Expr :=
@@ -157,11 +165,21 @@ private meta def contextArgument (cfg : WalkConfig) (argument : Expr) :
 private meta def displayedProposition (fact : Iykyk.KnownFact) : MetaM Expr :=
   do instantiateMVars (← inferType fact.proof)
 
+/-- Recover the user-written binder from the existential proof consumed by a
+    witness's `Classical.choose`, when that binder survived elaboration. -/
+private meta def witnessBinderName? (term : Expr) : MetaM (Option String) := do
+  let some proof := term.getAppArgs.back? | return none
+  let proposition ← instantiateMVars (← inferType proof)
+  unless proposition.isAppOfArity ``Exists 2 do return none
+  let predicate := proposition.getAppArgs[1]!
+  let .lam binderName _ _ _ := predicate | return none
+  if binderName.isAnonymous || binderName.hasMacroScopes then return none
+  return some (toString binderName)
+
 /-- Allocate the shared unknowns before anything else walks. Registering each
     choice term in `applicationAtoms` makes all of its occurrences reuse the
-    same short-labelled atom rather than displaying `Classical.choose`, and the
-    labels come from the walk's one generated-name counter so no other atom can
-    repeat them. -/
+    same atom rather than displaying `Classical.choose`. Prefer the source
+    existential's binder; genuinely anonymous witnesses use a neutral name. -/
 private meta def addWitnesses (afaik : Iykyk.Afaik) (recordObservationTerms : Bool) :
     StateT WalkState MetaM (Array (Expr × String)) := do
   let mut anchors := #[]
@@ -170,7 +188,10 @@ private meta def addWitnesses (afaik : Iykyk.Afaik) (recordObservationTerms : Bo
     -- inside the root is found under the reduced spelling.
     let reduced ← whnf witness.term
     let state ← get
-    let (label, state) := state.freshApplicationLabel
+    let binderName? ← witnessBinderName? witness.term
+    let (label, state) ← match binderName? with
+      | some binderName => pure (state.freshGeneratedLabel binderName)
+      | none => pure state.freshAnonymousLabel
     let (atomId, state) := state.freshId
     let atom : JsonAtom := {
       id := atomId
@@ -180,6 +201,7 @@ private meta def addWitnesses (afaik : Iykyk.Afaik) (recordObservationTerms : Bo
     set <| ({ state.addAtom atom with
       applicationAtoms :=
         (state.applicationAtoms.insert ⟨witness.term⟩ atomId).insert ⟨reduced⟩ atomId
+      generatedAtoms := state.generatedAtoms.insert atomId
       observationTerms := if recordObservationTerms then
         state.observationTerms.push (witness.term, atomId)
       else state.observationTerms }).rememberSelectorTerm witness.term atomId
@@ -440,6 +462,43 @@ private meta partial def contextualTerms (cfg : WalkConfig) (root e : Expr) :
   let (_, terms) ← (visit (← contextTerm cfg e)).run {}
   return terms
 
+/-- Whether `e` is a constructor-built value of a recursive inductive. Such a
+    value contributes another instance of the selected representation's shape,
+    rather than merely an opaque endpoint or scalar fact. -/
+private meta def recursiveConstructorValue? (e : Expr) : MetaM (Option (Name × Expr)) := do
+  let type ← inferType e
+  if ← isPrimitiveLabelType type then return none
+  let some typeName ← typeHead? type | return none
+  let some shape ← TypeShape.ofInductive typeName | return none
+  unless shape.ctors.any (fun ctor =>
+      ctor.fields.any (fun field => field.typeHead == some typeName)) do
+    return none
+  let value ← whnf e
+  let .const ctorName _ := value.getAppFn | return none
+  unless shape.ctors.any (·.ctorName == ctorName) do return none
+  return some (typeName, value)
+
+/-- A root-only fact must not extend an explicit observation to an alternate
+    constructor-built recursive value when the selected representation already
+    contains that recursive type. Opaque endpoints remain admissible, as do
+    observations wholly about represented subterms. -/
+private meta partial def observesAlternateRecursiveValue (cfg : WalkConfig)
+    (representedTerms : Std.HashSet ExprStructEq)
+    (representedTypes : Std.HashSet Name)
+    (expression : Expr) : MetaM Bool := do
+  let expression ← contextTerm cfg expression
+  if let some (_, arguments) ← observedGraphSide? cfg expression then
+    for argument in arguments do
+      let argument ← contextTerm cfg argument
+      unless representedTerms.contains ⟨argument⟩ do
+        if let some (typeName, value) ← recursiveConstructorValue? argument then
+          if !representedTerms.contains ⟨value⟩ && representedTypes.contains typeName then
+            return true
+  for argument in ← dataArgsOf expression do
+    if ← observesAlternateRecursiveValue cfg representedTerms representedTypes argument then
+      return true
+  return false
+
 /-- Keep the certified component connected to the values actually represented
     by the selected root. IYKYK still owns extraction and contradiction checks;
     this consumer only selects a subset of its checked facts and witnesses. -/
@@ -455,17 +514,37 @@ private meta def projectToRepresentation (afaik : Iykyk.Afaik) (baseConfig : Wal
     pure ()
   let mut anchors : Std.HashSet ExprStructEq := {}
   anchors := anchors.insert ⟨root⟩
+  let mut representedTerms : Std.HashSet ExprStructEq := {}
+  let mut representedTypes : Std.HashSet Name := {}
   for (term, _) in state.observationTerms do
     let term ← contextTerm cfg term
+    representedTerms := representedTerms.insert ⟨term⟩
+    if let some typeName ← typeHead? (← inferType term) then
+      representedTypes := representedTypes.insert typeName
     if term.hasFVar || term.hasMVar then anchors := anchors.insert ⟨term⟩
+  for (_, representative) in state.provenance do
+    let representative ← contextTerm cfg representative
+    representedTerms := representedTerms.insert ⟨representative⟩
+    if let some typeName ← typeHead? (← inferType representative) then
+      representedTypes := representedTypes.insert typeName
+  representedTerms := representedTerms.insert ⟨root⟩
+  if let some typeName ← typeHead? (← inferType root) then
+    representedTypes := representedTypes.insert typeName
   let candidates ← afaik.facts.mapM fun fact => do
     contextualTerms cfg root (← displayedProposition fact)
+  let mut stale : Array Bool := #[]
+  for index in [:afaik.facts.size] do
+    let proposition ← displayedProposition afaik.facts[index]!
+    let isRefinement := (← refinementOf? proposition).isSome
+    let isStale ← if isRefinement then pure false else
+      observesAlternateRecursiveValue cfg representedTerms representedTypes proposition
+    stale := stale.push isStale
   let mut selected : Std.HashSet Nat := {}
   let mut changed := true
   while changed do
     changed := false
     for index in [:afaik.facts.size] do
-      if selected.contains index then continue
+      if selected.contains index || stale[index]! then continue
       let terms := candidates[index]!
       if terms.toArray.any anchors.contains then
         selected := selected.insert index
