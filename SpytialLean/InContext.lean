@@ -25,22 +25,73 @@ private meta def isNegation (proposition : Expr) : Bool :=
   | .forallE _ _ body _ => !body.hasLooseBVar 0 && body.isConstOf ``False
   | _ => false
 
+/-- Which of the two proposition-decoding rules produced a tuple. -/
+public inductive PropositionTupleKind where
+  /-- A positive predicate application such as `edge x y`. -/
+  | predicate
+  /-- An equation used as a function-graph point. The Boolean is true when
+      the application was the left side of the source equation. -/
+  | graph (application result : Expr) (applicationOnLeft : Bool)
+
+/-- The relation and columns decoded from a proposition. The head expression
+    is retained because the short display name need not uniquely identify a
+    Lean predicate. -/
+public structure PropositionTupleShape where
+  kind : PropositionTupleKind
+  name : String
+  head : Expr
+  parameters : Array Expr
+  arguments : Array Expr
+
+private meta def relationParametersOf (application : Expr) : MetaM (Array Expr) := do
+  let arguments := application.getAppArgs
+  let dataIndexes ← dataArgumentIndexesOf application
+  let mut parameters := #[]
+  for index in [:arguments.size] do
+    unless dataIndexes.contains index do
+      parameters := parameters.push arguments[index]!
+  return parameters
+
 /-- The positive relation represented by a known proposition. Equations with a
     named application become function-graph tuples. Negative and disjunctive
     knowledge does not produce an unconditional tuple. -/
-public meta def propTupleShape? (proposition : Expr) : MetaM (Option (String × Array Expr)) := do
+public meta def propositionTupleShape? (proposition : Expr) :
+    MetaM (Option PropositionTupleShape) := do
   unless ← isProp proposition do return none
   if proposition.isAppOfArity ``Or 2 then return none
   if let some (_, domain, result) := proposition.eq? then
     if let some (name, args) ← graphSide? domain then
-      return some (name, args.push result)
+      return some {
+        kind := .graph domain result true
+        name
+        head := domain.getAppFn
+        parameters := ← relationParametersOf domain
+        arguments := args.push result }
     if let some (name, args) ← graphSide? result then
-      return some (name, args.push domain)
+      return some {
+        kind := .graph result domain false
+        name
+        head := result.getAppFn
+        parameters := ← relationParametersOf result
+        arguments := args.push domain }
   if isNegation proposition then return none
-  let some name ← propRelName? proposition.getAppFn | return none
+  let head := proposition.getAppFn
+  let some name ← propRelName? head | return none
   let args ← dataArgsOf proposition
   if args.isEmpty then return none
-  return some (name, args)
+  return some {
+    kind := .predicate
+    name
+    head
+    parameters := ← relationParametersOf proposition
+    arguments := args }
+
+/-- Compatibility projection used by callers that only need the display name
+    and decoded columns. New semantic code should use
+    `propositionTupleShape?` so it retains the actual relation head. -/
+public meta def propTupleShape? (proposition : Expr) : MetaM (Option (String × Array Expr)) := do
+  return (← propositionTupleShape? proposition).map fun shape =>
+    (shape.name, shape.arguments)
 
 /-- An equality that supplies visible structure for a local variable. An
     equation involving a named application remains a relation instead. -/
@@ -263,28 +314,93 @@ private meta def walkFact (cfg : WalkConfig)
     modify fun state => state.addTupleWithOrigin relation types tuple origin
   return anchors
 
-/-- Check the IYKYK-to-Spytial boundary for every proof-derived tuple. IYKYK's
-    sealed `Afaik` construction is the source of proof validity; the local
-    evidence check is defensive. This checker primarily establishes that
-    Spytial decoded the proposition into the recorded relation and columns. -/
-public meta def validateProvedOrigins (trace : TracedDataInstance) : MetaM Unit := do
-  for emission in trace.emissions do
-    match emission.origin with
-    | .proved proposition proof terms =>
+/-- The checked information retained for one production `proved` origin.
+    The constructor is private: values come from `checkedProvedOrigins`, which
+    rechecks the proof, decoder, types, and term-to-atom links. -/
+public structure CheckedProvedOrigin where
+  private mk ::
+  emission : TupleEmission
+  relation : String
+  kind : PropositionTupleKind
+  head : Expr
+  parameters : Array Expr
+  proposition : Expr
+  proof : Expr
+  terms : Array Expr
+  origin_eq : emission.origin = .proved proposition proof terms
+  types : Array Expr
+  atoms : Array String
+
+private meta def selectorEvidenceNames (evidence : SelectorEvidence)
+    (term : Expr) (atom : String) : Bool :=
+  evidence.terms.any fun (knownTerm, knownAtom) =>
+    knownAtom == atom && knownTerm.equal term
+
+private meta def checkProvedEmission (emission : TupleEmission)
+    (evidence? : Option SelectorEvidence) : MetaM (Option CheckedProvedOrigin) := do
+  match originEq : emission.origin with
+  | .proved proposition proof terms => do
       Iykyk.checkEvidence proposition proof
-      let some (relation, decodedTerms) ← propTupleShape? proposition
+      let some shape ← propositionTupleShape? proposition
         | throwError "spytial: a proof origin has no supported relational decoding"
-      unless relation == emission.relation do
+      unless shape.name == emission.relation do
         throwError "spytial: a proof origin changed relation name"
-      unless decodedTerms.size == terms.size &&
-          (decodedTerms.zip terms).all fun (decoded, recorded) => decoded.equal recorded do
+      unless shape.arguments.size == terms.size &&
+          (shape.arguments.zip terms).all fun (decoded, recorded) => decoded.equal recorded do
         throwError "spytial: a proof origin changed its relational arguments"
-      let inferredTypes ← terms.mapM fun term => do sigOfType (← inferType term)
-      unless inferredTypes == emission.tuple.types do
+      let types ← terms.mapM inferType
+      let inferredLabels ← types.mapM sigOfType
+      unless inferredLabels == emission.tuple.types do
         throwError "spytial: a proof origin changed its relational column types"
       unless terms.size == emission.tuple.atoms.size do
         throwError "spytial: a proof origin is not aligned with its tuple columns"
-    | _ => pure ()
+      if let some evidence := evidence? then
+        for (term, atom) in terms.zip emission.tuple.atoms do
+          unless selectorEvidenceNames evidence term atom do
+            throwError "spytial: a proof-origin term does not name its recorded atom"
+      return some {
+        emission
+        origin_eq := originEq
+        relation := shape.name
+        kind := shape.kind
+        head := shape.head
+        parameters := shape.parameters
+        proposition
+        proof
+        terms
+        types
+        atoms := emission.tuple.atoms }
+  | _ => return none
+
+/-- Recheck every production `proved` origin and return the actual Lean
+    expressions needed by the semantic decoder. In addition to proof and type
+    checking, every decoded term must name the recorded tuple atom in the
+    selector evidence produced by the same walk. -/
+public meta def checkedProvedOrigins (trace : TracedDataInstance)
+    (evidence : SelectorEvidence) : MetaM (Array CheckedProvedOrigin) := do
+  let mut checked := #[]
+  for emission in trace.emissions do
+    if let some origin ← checkProvedEmission emission (some evidence) then
+      checked := checked.push origin
+  return checked
+
+/-- The result of checking every `proved` origin against the trace and the
+    selector evidence produced by the same relationalization run. -/
+public structure CheckedProofTrace (trace : TracedDataInstance) where
+  private mk ::
+  origins : Array CheckedProvedOrigin
+
+/-- Run the complete production check for proof-derived tuple origins. -/
+public meta def checkProofTrace (trace : TracedDataInstance)
+    (evidence : SelectorEvidence) : MetaM (CheckedProofTrace trace) := do
+  return { origins := ← checkedProvedOrigins trace evidence }
+
+/-- Compatibility checker for callers that do not retain selector evidence.
+    The production proof-context path uses the stronger
+    `checkedProvedOrigins` check above. -/
+public meta def validateProvedOrigins (trace : TracedDataInstance) : MetaM Unit := do
+  for emission in trace.emissions do
+    let _ ← checkProvedEmission emission none
 
 private meta def contextWalkConfig (afaik : Iykyk.Afaik) (baseConfig : WalkConfig)
     (observations : Array Expr) : MetaM WalkConfig := do
@@ -426,12 +542,13 @@ private meta def relationalizeAfaikInspectionWithTrace (afaik : Iykyk.Afaik)
     let trace := state.toTracedDataInstance
     unless trace.wellFormedTrace do
       throwError "spytial: internal error: malformed proof-context tuple trace"
-    validateProvedOrigins trace
+    let evidence : SelectorEvidence := {
+      terms := state.selectorTerms
+      proofs := afaik.facts.map (·.proof) ++
+        config.observationResults.toArray.filterMap (·.2.proof?) }
+    let _ ← checkProofTrace trace evidence
     return (trace, state.provenance,
-      substituteKnown refinements 8 afaik.root, inspection, {
-        terms := state.selectorTerms
-        proofs := afaik.facts.map (·.proof) ++
-          config.observationResults.toArray.filterMap (·.2.proof?) })
+      substituteKnown refinements 8 afaik.root, inspection, evidence)
 
 /-- Translate context knowledge while retaining the exact origin of every
     tuple as well as the evidence consumed by Lean selectors. -/

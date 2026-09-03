@@ -108,6 +108,31 @@ public structure SemanticInstance {World : Type u} {SemanticType : Type v}
 
 namespace SemanticInstance
 
+/-- Build a finite semantic instance from an already typed tuple list. Its
+    atom list is exactly the atoms mentioned by those tuples. Repeated uses of
+    one atom remain the same value even though the flat catalogue may list it
+    more than once. -/
+@[expose] public def ofTuples {World : Type u} {SemanticType : Type v}
+    (context : Iykyk.Metatheory.Context World)
+    (signature : RelationalSignature SemanticType)
+    (Carrier : SemanticType → Type w) (Atom : SemanticType → Type x)
+    (denote : ∀ {type}, Atom type → ∀ world, context world → Carrier type)
+    (tuples : List (RelationalTuple signature Atom)) :
+    SemanticInstance context signature Carrier where
+  Atom := Atom
+  denote := denote
+  atoms := tuples.flatMap (·.atoms)
+  tuples := tuples
+  tuplesUseKnownAtoms := by
+    intro tuple tupleMem atom atomMem
+    induction tuples with
+    | nil => contradiction
+    | cons head tail ih =>
+        cases tupleMem with
+        | head _ => exact List.mem_append_left _ atomMem
+        | tail _ tupleMem =>
+            exact List.mem_append_right _ (ih tupleMem)
+
 /-- Interpret all atoms of a tuple in one compatible world. -/
 @[expose] public def denoteTuple {World : Type u} {SemanticType : Type v}
     {context : Iykyk.Metatheory.Context World}

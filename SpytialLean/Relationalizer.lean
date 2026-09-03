@@ -865,7 +865,7 @@ private meta def isElaborationArgument (argument : Expr) : MetaM Bool := do
     elaboration-only arguments, omit an implicit argument when the type of a
     retained argument determines it. Independent implicit data remains a graph
     column because dropping it could identify distinct applications. -/
-private meta def dataArgumentIndexesOf (e : Expr) : MetaM (Array Nat) := do
+public meta def dataArgumentIndexesOf (e : Expr) : MetaM (Array Nat) := do
   let arguments := e.getAppArgs
   let elaborationArguments ← arguments.mapM isElaborationArgument
   let parameterInfo? ← try
@@ -1786,6 +1786,150 @@ public meta def addActiveDomainObservations (cfg : WalkConfig)
       let some application ← liftM <| instantiateObservationAt? observation value | continue
       addObservation cfg application application #[value] #[(value, atomId)]
 
+/-- The direct structural rule verified for one production emission. -/
+public inductive CheckedStructuralKind where
+  /-- A data argument at the given zero-based constructor-field position. -/
+  | constructorField (constructor : Name) (index : Nat)
+  /-- A named structure projection whose result is definitionally equal to the child. -/
+  | projection (field : Name) (application : Expr)
+
+/-- A checked constructor-field or structure-projection origin from the real
+    computed-value trace. The constructor is private so these values can only
+    be obtained through `checkedStructuralOrigins`. -/
+public structure CheckedStructuralOrigin where
+  private mk ::
+  emission : TupleEmission
+  terms : Array Expr
+  origin_eq : emission.origin = .structural terms
+  relation : String
+  kind : CheckedStructuralKind
+  source : Expr
+  child : Expr
+  sourceType : Expr
+  childType : Expr
+  sourceAtom : String
+  childAtom : String
+
+private meta def termNamesAtom (provenance : Provenance) (evidence : SelectorEvidence)
+    (term : Expr) (atom : String) : Bool :=
+  evidence.terms.any (fun (knownTerm, knownAtom) =>
+    knownAtom == atom && knownTerm.equal term) ||
+  provenance[atom]?.any fun representative => representative.equal term
+
+private meta def classifyStructuralOrigin (emission : TupleEmission)
+    (terms : Array Expr) : MetaM (CheckedStructuralKind × Expr × Expr) := do
+  let some source := terms[0]? | throwError "spytial: a structural origin has no source term"
+  let some child := terms[1]? | throwError "spytial: a structural origin has no child term"
+  unless terms.size == 2 do
+    throwError "spytial: a direct structural origin must have two columns"
+  if let .const constructor _ := source.getAppFn then
+    if let some (.ctorInfo info) := (← getEnv).find? constructor then
+      let arguments := source.getAppArgs
+      let dataArguments := arguments.extract info.numParams arguments.size
+      let binderNames := ctorDataBinderNames info
+      for index in [:dataArguments.size] do
+        let expectedRelation := fieldRelName (shortName constructor) binderNames index
+        if expectedRelation == emission.relation && dataArguments[index]!.equal child then
+          return (.constructorField constructor index, source, child)
+  let sourceType ← inferType source
+  if let some typeName ← typeHead? sourceType then
+    let env ← getEnv
+    if isStructure env typeName then
+      for field in getStructureFields env typeName do
+        if field.toString (escape := false) != emission.relation then continue
+        let application ← Meta.mkProjection source field
+        if ← isDefEq application child then
+          return (.projection field application, source, child)
+  throwError "spytial: a structural origin is neither a constructor field nor a projection"
+
+private meta def checkStructuralEmission (provenance : Provenance)
+    (evidence : SelectorEvidence) (emission : TupleEmission) :
+    MetaM (Option CheckedStructuralOrigin) := do
+  match originEq : emission.origin with
+  | .structural terms => do
+      unless terms.size == emission.tuple.atoms.size do
+        throwError "spytial: a structural origin is not aligned with its tuple columns"
+      let (kind, source, child) ← classifyStructuralOrigin emission terms
+      let sourceAtom := emission.tuple.atoms[0]!
+      let childAtom := emission.tuple.atoms[1]!
+      unless termNamesAtom provenance evidence source sourceAtom do
+        throwError "spytial: a structural source term does not name its recorded atom"
+      unless termNamesAtom provenance evidence child childAtom do
+        throwError "spytial: a structural child term does not name its recorded atom"
+      let sourceType ← inferType source
+      let childType ← inferType child
+      let inferredLabels := #[← sigOfType sourceType, ← sigOfType childType]
+      unless inferredLabels == emission.tuple.types do
+        throwError "spytial: a structural origin changed its relational column types"
+      return some {
+        emission
+        terms
+        origin_eq := originEq
+        relation := emission.relation
+        kind
+        source
+        child
+        sourceType
+        childType
+        sourceAtom
+        childAtom }
+  | _ => return none
+
+/-- Check all direct structural origins in an actual production trace. -/
+public meta def checkedStructuralOrigins (trace : TracedDataInstance)
+    (provenance : Provenance) (evidence : SelectorEvidence) :
+    MetaM (Array CheckedStructuralOrigin) := do
+  let mut checked := #[]
+  for emission in trace.emissions do
+    if let some origin ← checkStructuralEmission provenance evidence emission then
+      checked := checked.push origin
+  return checked
+
+private meta def isFirstOrderField (term : Expr) : MetaM Bool := do
+  let type ← whnf (← inferType term)
+  return !type.isForall
+
+/-- Check the completeness claim supported by the direct structural fragment:
+    every represented constructor has a tuple for each non-proof,
+    non-function data field. Function fields have separate tabulation rules. -/
+public meta def validateFirstOrderConstructorCoverage (cfg : WalkConfig)
+    (provenance : Provenance) (checked : Array CheckedStructuralOrigin) : MetaM Unit := do
+  for (sourceAtom, source) in provenance do
+    let .const constructor _ := source.getAppFn | continue
+    let some (.ctorInfo info) := (← getEnv).find? constructor | continue
+    let arguments := source.getAppArgs
+    let dataArguments := arguments.extract info.numParams arguments.size
+    let binderNames := ctorDataBinderNames info
+    for index in [:dataArguments.size] do
+      let child := dataArguments[index]!
+      if cfg.filterProofs && (← isProofArg child) then continue
+      unless ← isFirstOrderField child do continue
+      let relation := fieldRelName (shortName constructor) binderNames index
+      unless checked.any fun origin =>
+          origin.relation == relation && origin.sourceAtom == sourceAtom &&
+            origin.source.equal source && origin.child.equal child &&
+              match origin.kind with
+              | .constructorField checkedConstructor checkedIndex =>
+                  checkedConstructor == constructor && checkedIndex == index
+              | .projection .. => false do
+        throwError "spytial: a represented constructor field has no structural tuple"
+
+/-- The result of checking both the meaning-independent shape of every direct
+    structural origin and first-order constructor-field coverage. Its private
+    constructor prevents callers from marking an unchecked origin list as a
+    checked production trace. -/
+public structure CheckedStructuralTrace (trace : TracedDataInstance) where
+  private mk ::
+  origins : Array CheckedStructuralOrigin
+
+/-- Run the complete production check for the direct structural fragment. -/
+public meta def checkStructuralTrace (cfg : WalkConfig) (trace : TracedDataInstance)
+    (provenance : Provenance) (evidence : SelectorEvidence) :
+    MetaM (CheckedStructuralTrace trace) := do
+  let origins ← checkedStructuralOrigins trace provenance evidence
+  validateFirstOrderConstructorCoverage cfg provenance origins
+  return { origins }
+
 /-- Walk an expression and retain the origin of every emitted tuple, together
     with the subterm each atom was walked from (see `Provenance`).
 
@@ -1809,9 +1953,11 @@ public meta def relationalizeWithTrace (e : Expr) (cfg : WalkConfig := {})
     let trace := state.toTracedDataInstance
     unless trace.wellFormedTrace do
       throwError "spytial: internal error: malformed computed-value tuple trace"
-    return (trace, state.provenance, {
+    let evidence : SelectorEvidence := {
       terms := state.selectorTerms
-      proofs := observationAwareConfig.observationResults.toArray.filterMap (·.2.proof?) })
+      proofs := observationAwareConfig.observationResults.toArray.filterMap (·.2.proof?) }
+    let _ ← checkStructuralTrace observationAwareConfig trace state.provenance evidence
+    return (trace, state.provenance, evidence)
 
 /-- Compatibility projection that erases per-tuple origins. -/
 public meta def relationalizeWithEvidence (e : Expr) (cfg : WalkConfig := {})

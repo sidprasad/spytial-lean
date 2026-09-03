@@ -1,6 +1,10 @@
 module
 
 public import SpytialLeanMetatheory.RelationalInstance
+public import SpytialLeanMetatheory.LeanExprMeaning
 public import SpytialLeanMetatheory.ProofDecoder
+public meta import SpytialLeanMetatheory.ProductionProofDecoder
+public import SpytialLeanMetatheory.ComputedRelationalization
+public import SpytialLeanMetatheory.SemanticIsomorphism
 public import SpytialLeanMetatheory.SharedWitnessExample
 public meta import SpytialLeanMetatheory.RuntimeCorrespondence

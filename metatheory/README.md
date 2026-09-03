@@ -1,147 +1,182 @@
 # Spytial Lean metatheory
 
-This directory formalizes the producer boundary introduced by Spytial Lean:
+This directory studies one boundary:
 
 ```text
-computation or proof context -> relational instance -> Spytial
+computed value or proof context -> relational instance -> Spytial
 ```
 
-The PLDI Spytial formalization begins at the relational instance and gives the
-downstream spatial semantics. IYKYK formalizes and certifies finite knowledge
-extracted from a proof context. This directory is intended to connect those two
-boundaries.
+The PLDI Spytial work starts with a relational instance and explains how a
+diagram is produced from it. This directory asks where that instance came
+from, and what its tuples mean.
 
-The ownership boundary is deliberate:
+IYKYK and Spytial Lean have separate jobs:
 
-- IYKYK owns extraction, shared witnesses, inconsistency, truncation, and the
-  checked `(proposition, proof)` pairs in `Afaik`;
-- Spytial Lean owns decoding those propositions into relation tuples, all
-  computation-derived tuples, and the trace relating tuples to their origins;
-- the metatheory interprets the trace and states the cross-boundary theorems.
+- IYKYK extracts facts and shared witnesses from a Lean proof context. It
+  retains a checked proof for every fact.
+- Spytial Lean turns computed values and IYKYK facts into atoms and tuples. It
+  records why each tuple was emitted.
+- This metatheory connects those production records to typed mathematical
+  relations.
 
-## Runtime correspondence requirement
+## What “true” means here
 
-An abstract partial-instance calculus is not sufficient. The production
-relationalizer must emit the object interpreted by the metatheory.
+A *world* is one assignment of values that satisfies the current Lean
+hypotheses. A proof-derived atom may denote a different value in different
+worlds. This is needed for an existential witness whose value is not fixed by
+the context.
 
-The production side therefore starts directly from
-`SpytialLean.JsonDataInstance`, the actual type returned by `relationalize`.
-`RelationalInstance.lean` gives that type a wire-level open-world order via
-`WireHom` and `WireCompletes`. The semantic side is necessarily separate:
-`SemanticInstance.lean` adds intrinsically typed tuples, a finite typed atom
-domain, possible-world denotations, and ground relation interpretations. The
-remaining bridge must show that a checked production trace realizes one of
-those semantic instances; it may not posit a second, toy producer.
+`Completes context data ground` says that every tuple in `data` is true in
+every world allowed by `context`. It says nothing about a tuple that is absent
+from `data`: an absent tuple is unspecified, not false.
 
-Typing is read from each `JsonTuple`, not from `JsonRelation.types`. The latter
-is presentation/default metadata in the current wire format: reused field names
-and generated `scrutinee` relations can legitimately contain tuples with
-different column types. Thus the effective typed relation symbol is currently
-`(name, tuple-type labels)`. Even those labels are not semantic types: a field
-declared with the alias `Set Q` can point to an atom whose reduced type prints as
-`Q → Prop`. The eventual typed semantics must retain Lean type expressions and
-compare them by definitional equality. Both facts were exposed by running the
-trace invariant against the real relationalizer.
+## The production object
 
-`RuntimeCorrespondence.lean` imports the actual relationalizers and proves the
-first exact implementation facts: `WalkState.toDataInstance` preserves the
-walker's atom array, and both public producer entry points—`relationalize` for a
-computed value and `relationalizeAfaik` for proof-context knowledge—are
-definitionally their evidence-producing walks followed by evidence erasure. This
-rules out a detached toy producer, while deliberately making no tuple-soundness
-claim yet.
-
-The erasure results are `rfl` by design. Their contribution is architectural:
-the public API is factored through the traced producer, so a later soundness
-checker applies to the object that production actually erases. They neither
-prove that an origin is truthful nor establish backward compatibility with an
-older commit; origin-specific theorems and canonical regression tests discharge
-those separate obligations.
-
-The production walker now constructs this internal traced instance:
+The metatheory is tied to `JsonDataInstance`, the type returned by the real
+relationalizer. The walker first builds this internal object:
 
 ```text
-TracedInstance
+TracedDataInstance
   data      : JsonDataInstance
   emissions : [(relation, tuple, origin)]
-  origin    : structural | symbolic | proved | observed
-              | tabulated | synthetic | custom
+
+origin = structural | symbolic | proved | observed
+       | tabulated | synthetic | custom
 ```
 
-Both computed-value and proof-context APIs expose their traced form. Their
-established JSON/evidence APIs are definitionally the traced producer followed
-by erasure. The executable structural checker additionally establishes that
-output tuples and origins account for one another exactly, with aligned columns
-and no dangling atom references. This remains a shape theorem, not semantic
-soundness. The semantic checker can therefore treat origins separately:
+Erasing `emissions` gives exactly the JSON data consumed by Spytial. The
+theorems in `RuntimeCorrespondence.lean` establish this by definition for both
+`relationalize` and `relationalizeAfaik`.
 
-- `structural`: justified by a constructor or projection rule;
-- `symbolic`: records the Lean application represented by a function-graph
-  tuple;
-- `proved`: linked to the retained IYKYK proposition and proof;
-- `observed`: linked to an equality proof `f t = r` or definitional reduction;
-- `tabulated`: linked to the evaluated application or decided proposition;
-- `synthetic`: given an explicit representation-only interpretation;
-- `custom`: outside the generic soundness theorem unless the custom
-  relationalizer supplies its own certificate.
+The basic trace checker also establishes three concrete facts:
 
-The instrumented tuple-emission paths include constructor fields, structure
-projections, symbolic function graphs, computed observations, finite function
-tabulation, proposition tabulation, stuck-match `scrutinee` edges, retained
-context facts, and custom relationalizers. Every ordinary production insertion
-goes through the traced operation; the legacy `addTuple` API marks unrestricted
-custom output as `custom`.
+- every output tuple has at least one origin;
+- every origin names a tuple that is actually in the output; and
+- every tuple column names an output atom, with one type label per column.
 
-The proof-context producer already validates the tight `proved` slice at
-runtime: it defensively rechecks the proof, reruns `propTupleShape?`, and checks
-the relation name, decoded arguments, column labels, and alignment. Proof
-validity fundamentally comes from IYKYK's sealed `Afaik` construction and final
-certificate. `ProofDecoder.lean` now gives the semantic half of this boundary:
-`ProofDecoding.sound` composes sound IYKYK knowledge with a decoder-reflection
-certificate to prove completion, and `decodeAtomicFacts_sound` proves that
-reflection by construction for semantic atomic relation facts. What remains is
-the narrow reflection theorem showing that the production `Lean.Expr` decoder
-realizes that atomic decoder.
+These are shape facts. They do not, by themselves, say that a tuple is true.
+
+## Actual Lean expressions and types
+
+`LeanExprMeaning.lean` places real `Lean.Expr` values in the semantic model.
+It does not replace Lean's kernel with a second type theory.
+
+The interface records:
+
+- which expression is a type;
+- when a term has a type;
+- Lean definitional equality for both terms and types;
+- the value denoted by a checked term in each allowed world; and
+- the proposition denoted by a checked proof claim.
+
+Semantic types are quotients of actual Lean type expressions by definitional
+equality. Thus an alias such as `Set Q` and its reduced form `Q → Prop` name
+the same semantic type.
+
+This interface is the trusted boundary. Lean's `inferType`, `isDefEq`, and
+kernel proof check supply its runtime evidence. The metatheory assumes the
+usual sound interpretation of those successful checks; it does not claim to
+prove Lean's kernel sound inside Lean.
+
+## Proof-derived tuples
+
+The production proof checker now returns a sealed `CheckedProofTrace`
+containing `CheckedProvedOrigin` values. For each `proved` origin it:
+
+1. checks that the retained proof has the retained proposition as its type;
+2. reruns the proposition-to-tuple decoder;
+3. retains the actual predicate head and its hidden Lean parameters, rather
+   than relying on a short display name;
+4. checks the decoded arguments and their inferred Lean types; and
+5. checks that each decoded term names the atom in the corresponding tuple
+   column.
+
+Keeping the predicate expression matters. Two distinct predicates can have
+the same short name, and one predicate head can be used with different type or
+type-class parameters.
+
+`ProductionProofDecoder.lean` connects these checked values to the semantic
+model. `ProductionProofRealization.toProofDecoding` proves that they instantiate
+the common `ProofDecoding` interface once their Lean expressions have been
+given their mathematical meanings. `ProductionProofRealization.sound` then
+proves that every emitted proof-derived tuple is true in every world allowed
+by sound IYKYK knowledge.
+
+The only semantic premise specific to proposition decoding is
+`decoder_preserves_meaning`: the proposition before decoding and the typed
+tuple after decoding must mean the same thing. Naming this premise is
+important; hiding it inside the display code would make the result circular.
+
+## Computed structural tuples
+
+The first computed theorem deliberately covers the direct structural fragment:
+constructor fields and structure projections. It does not silently include
+observations, synthetic representation edges, or unrestricted custom
+relationalizers.
+
+The production walker now produces a sealed `CheckedStructuralTrace` after
+checking each actual `structural` origin. It checks
+the source and child expressions, inferred Lean types, atom links, and whether
+the origin is a real constructor field or a definitionally equal structure
+projection. It also checks a concrete completeness property: every represented
+constructor has a structural tuple for each non-proof, non-function data
+field. Function fields use the separate tabulation rules.
+
+`ComputedRelationalization.lean` composes these local facts. Given a semantic
+interpretation of the checked origins, it proves both:
+
+- **adequacy:** every emitted structural tuple is true; and
+- **structural completeness:** every required first-order structural field is
+  present.
+
+These are the two directions meant by “the diagram represents the computed
+value.”
+
+## Comparing computation and proof
+
+Fresh atom names and output order are presentation details, so equality of
+JSON files is too strong. `SemanticIsomorphism.lean` defines agreement as a
+type-preserving bijection of atoms that:
+
+- preserves the value denoted by each atom; and
+- maps every positive tuple in each direction.
+
+It proves that semantic isomorphisms compose and preserve completion. It also
+gives the intended computation/proof proof rule: if the computed instance and
+the proof-derived instance are each isomorphic to one common reference
+instance, they structurally agree with each other.
 
 ## Tight theorem spine
 
-The paper does not need one semantics for every implementation feature. Its
-smallest convincing core has one common semantic instance and two producer
-theorems:
+The smallest paper result is now organized around four claims:
 
-1. **computed adequacy:** a terminating structural walk denotes the computed
-   algebraic value;
-2. **proof soundness:** every decoded proof-origin tuple holds in every world
-   compatible with the IYKYK context; and
-3. **runtime correspondence:** the real producers emit a checked trace whose
-   erasure is exactly the instance consumed by Spytial.
+1. actual Lean expressions, typing, and definitional equality have an explicit
+   semantic interface;
+2. a sealed proof trace produces `ProofDecoding` once proposition decoding is
+   shown to preserve meaning;
+3. a sealed direct-structural trace gives adequacy and completeness once its
+   checked origins are interpreted; and
+4. two outputs for the same reference value agree up to semantic atom
+   renaming.
 
-Structural agreement when the context proves `e = v` should then be a corollary
-of the first two results, not a third independent semantics. Observations,
-synthetic relations, and certified custom relationalizers can extend this core
-without obscuring it.
+## What is still missing
 
-## Current semantic checkpoint
+The framework and composition theorems are checked. The following concrete
+instances still have to be supplied before the main result is complete:
 
-The first formal checkpoint consists of:
+1. Construct the `LeanExprMeaning` interpretation for the captured local
+   context and state its trusted-kernel assumptions precisely.
+2. Prove `decoder_preserves_meaning` for both cases of the production decoder:
+   an atomic predicate and an equation decoded as a function-graph tuple.
+3. Build the semantic `TraceRealization` automatically from a production
+   trace, its provenance map, and selector evidence. This must prove that one
+   atom ID denotes one shared semantic atom even when several Lean expressions
+   name it.
+4. Interpret the checked constructor-field and projection records and use the
+   runtime coverage check to construct `ComputedStructuralCertificate`.
+5. For each case study, define the common reference instance and prove the two
+   semantic isomorphisms: computed-to-reference and proof-to-reference.
 
-1. semantic atoms with intrinsically indexed types and contextual denotations;
-2. completion and isomorphism for semantic instances;
-3. a proof-to-tuple decoder with a possible-world soundness theorem; and
-4. the bridge from checked production traces to that semantic model.
-
-Items 1 and the completion half of item 2 are now formalized. In particular,
-`completes_iff_tupleFacts` proves that semantic completion is exactly IYKYK
-entailment of every emitted tuple. Item 3 is proved for an abstract certified
-decoder and for atomic semantic relation facts. The shared-witness example
-constructs two edges from one existential path and uses definitionally the same
-contextual atom in both tuples.
-
-The next load-bearing result is the remaining part of item 4: a realization of
-the actual `TracedDataInstance` whose `proved` origins instantiate
-`ProofDecoding`. That result must account for Lean expression typing,
-definitional equality, atom reuse, and the output of `propTupleShape?`. These
-belong to a small trusted reflection interface rather than a reimplementation
-of Lean's type theory. After that bridge, the work proceeds to computed
-structural adequacy, semantic isomorphism, and finally computation/proof
-agreement.
+Those are now narrow proof obligations attached to the actual relationalizer.
+They are not a request to formalize all of Lean or all optional Spytial
+features.

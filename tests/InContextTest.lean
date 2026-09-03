@@ -30,6 +30,15 @@ private meta def viewOf (label : String) (root : Expr) (config : Iykyk.Config :=
   withLocalDeclD `h (← mkAppM ``LT.lt #[x, y]) fun _ => do
     let view ← viewOf "consumer.lt" x
     assertCanon "consumer.lt" view.data "Nat|x\nNat|y\nlt[Nat,Nat]:0,1"
+    let checked ← checkedProvedOrigins view.trace view.evidence
+    unless checked.size == 1 && checked[0]?.any (·.head.isConstOf ``LT.lt) do
+      throwError "consumer.lt: the checked proof origin lost its Lean relation head"
+    let missingAtomLinkRejected ← try
+      let _ ← checkedProvedOrigins view.trace {}
+      pure false
+    catch _ => pure true
+    unless missingAtomLinkRejected do
+      throwError "consumer.lt: checked proof origins accepted missing term-to-atom evidence"
     let some emission := view.trace.emissions.find? fun emission =>
         emission.relation == "lt" &&
           match emission.origin with
@@ -71,14 +80,62 @@ private meta def node (left right : Expr) : Expr :=
   mkApp2 (mkConst ``Tree.node) left right
 
 #eval show Lean.Elab.TermElabM Unit from do
-  let (trace, _, _) ← relationalizeWithTrace (node (leaf 1) (leaf 2))
+  let (trace, provenance, evidence) ← relationalizeWithTrace (node (leaf 1) (leaf 2))
   unless trace.wellFormedTrace do
     throwError "computed tree: malformed production trace"
+  let checked ← checkedStructuralOrigins trace provenance evidence
+  unless checked.size == 4 && checked.all fun origin =>
+      match origin.kind with
+      | .constructorField .. => true
+      | .projection .. => false do
+    throwError "computed tree: expected all four first-order constructor fields"
+  let missingFieldRejected ← try
+    validateFirstOrderConstructorCoverage {} provenance checked.pop
+    pure false
+  catch _ => pure true
+  unless missingFieldRejected do
+    throwError "computed tree: structural coverage accepted a missing constructor field"
   unless trace.emissions.any fun emission =>
       match emission.origin with
       | .structural terms => terms.size == emission.tuple.atoms.size
       | _ => false do
     throwError "computed tree: expected a column-aligned structural origin"
+
+private structure OpaqueBox where
+  value : Nat
+
+private opaque opaqueBox : OpaqueBox := ⟨1⟩
+
+#eval show Lean.Elab.TermElabM Unit from do
+  let (trace, provenance, evidence) ← relationalizeWithTrace (mkConst ``opaqueBox)
+  let checked ← checkedStructuralOrigins trace provenance evidence
+  unless checked.size == 1 && checked[0]?.any fun origin =>
+      match origin.kind with
+      | .projection .. => true
+      | .constructorField .. => false do
+    throwError "opaque structure: expected one checked projection origin; got \
+      {checked.size} checked origins from {trace.emissions.size} emissions"
+
+namespace FirstPredicate
+
+def Related (value : Nat) : Prop := value = value
+
+end FirstPredicate
+
+namespace SecondPredicate
+
+def Related (value : Nat) : Prop := value = value
+
+end SecondPredicate
+
+#eval show Lean.Elab.TermElabM Unit from do
+  let first ← propositionTupleShape? (mkApp (mkConst ``FirstPredicate.Related) (mkRawNatLit 0))
+  let second ← propositionTupleShape?
+    (mkApp (mkConst ``SecondPredicate.Related) (mkRawNatLit 0))
+  let some first := first | throwError "first predicate was not decoded"
+  let some second := second | throwError "second predicate was not decoded"
+  unless first.name == second.name && !first.head.equal second.head do
+    throwError "equal display names did not retain distinct Lean predicate heads"
 
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `t tree fun t => do
