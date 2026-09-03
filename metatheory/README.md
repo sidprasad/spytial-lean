@@ -129,7 +129,7 @@ These are the relations used below.
 
 ## The main theorems
 
-The formalization now proves three headline results. Each theorem is
+The formalization now proves four headline results. Each semantic theorem is
 parametric in an interpretation of Lean expressions. That interpretation is
 the trust boundary for Lean typing, definitional equality, proof checking, and
 the meaning of Lean's `Eq` proposition.
@@ -217,6 +217,30 @@ Two supporting results remain important:
   their shared witness; and
 - deleting tuples or stopping after a justified prefix preserves soundness.
 
+### 4. Semantic relations project to Spytial relations by name
+
+The semantic layer keeps the full Lean relation head and hidden parameters.
+The display layer intentionally keeps only the short relation name:
+
+```text
+semantic R1 --\
+semantic R2 ----> rows named R ----> one Spytial relation R
+semantic R3 --/
+```
+
+Each displayed row retains its own typed schema. Therefore relations with the
+same name may have different column types or arities. This is not a collision:
+Spytial relations are ragged and each tuple is self-describing. A malformed
+row with a different number of atoms and types is rejected at the shared
+insertion boundary.
+
+`Inspection.named_presentation_union` proves that, for every display
+name, the displayed rows are exactly the structural rows with that name plus
+the proof-derived rows with that name. The projection neither drops nor
+invents a row. `CheckedCoreTrace.sound_and_presentation_union` packages this
+with semantic soundness of the checked inspection. No renderer change is
+required.
+
 ## Scope of the production result
 
 The checked production instance covers:
@@ -227,11 +251,12 @@ The checked production instance covers:
 - atom identity policies known to preserve the represented Lean value.
 
 The semantic theorem retains the Lean head and hidden parameters of a proved
-relation. The JSON interface may deliberately group several such relations
-under one display name, because Spytial consumes their union as one table.
-This does not affect the typed semantic theorem. A hidden relation stamp would
-only be needed for a consumer that must reconstruct the original Lean head
-from JSON.
+relation. The JSON interface deliberately groups several such relations under
+one display name, because Spytial consumes their union as one table. Each tuple
+retains its own types, and a relation with more than one tuple width has an
+empty relation-level type summary. This does not affect the typed semantic
+theorem. A hidden relation stamp would only be needed for a consumer that must
+reconstruct the original Lean head from JSON.
 
 An unrestricted `SpytialIdentity` classifier may intentionally merge different
 values for presentation. That merge can be useful in a diagram, but it is not
@@ -346,6 +371,12 @@ parameters, terms, and Lean type expressions.
   soundness directly. It has no per-origin realization premise and does not
   require a certificate from a custom relationalizer.
 
+- **Presentation projection.**
+  [PresentationProjection.lean](SpytialLeanMetatheory/PresentationProjection.lean)
+  replaces internal relation identity by the short Spytial name while
+  retaining each tuple's own typed schema. It proves row preservation,
+  same-name coalescing, and union of the computed and proof-derived rows.
+
 - **Abstract proof decoding.**
   [ProofDecoder.lean](SpytialLeanMetatheory/ProofDecoder.lean) proves soundness
   for an abstract proof-to-tuple decoder. This reuses IYKYK soundness instead
@@ -417,15 +448,11 @@ correct inside Lean, which is intentionally outside the model.
 The following work remains before making the broadest claim about every
 production run:
 
-1. Formalize the projection from distinct semantic relation symbols to
-   Spytial display relations. Relations with the same display name and schema
-   should contribute to one table; the projection should reject only a name
-   used with incompatible schemas.
-2. Add separate relation rules for observations, tabulation, synthetic edges,
+1. Add separate relation rules for observations, tabulation, synthetic edges,
    and unrestricted custom relationalizers if future claims need them. The
    current theorem deliberately covers only the checked built-in structural
    and proof paths.
-3. Build the three evaluation domains and report when computation, partial
+2. Build the three evaluation domains and report when computation, partial
    structure, and proof refinement each contribute useful tuples.
 
 ## Responsibility between projects

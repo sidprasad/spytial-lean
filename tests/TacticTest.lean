@@ -470,8 +470,8 @@ example {α : Type u} (β : α → Type v) (value : Nat) (h : FamilyTagged β va
   spytial.datum value
   trivial
 
--- two predicates sharing a short name cannot corrupt one relation: the
--- colliding arity warns and stays undrawn
+-- Two predicates sharing a short name form one ragged display relation. Each
+-- tuple retains its own schema, while the relation-level summary is empty.
 namespace ArityFoo
 inductive Adj : Nat → Nat → Prop
 end ArityFoo
@@ -481,16 +481,17 @@ end ArityBar
 
 set_option linter.unusedVariables false in
 /--
-warning: spytial: 'Adj' names relations of arity 2 and 3; the second is not drawn
----
 info: {"relations":
- [{"types": ["Nat", "Nat"],
-   "tuples": [{"types": ["Nat", "Nat"], "atoms": ["atom_0", "atom_1"]}],
+ [{"types": [],
+   "tuples":
+   [{"types": ["Nat", "Nat"], "atoms": ["atom_0", "atom_1"]},
+    {"types": ["Nat", "Nat", "Nat"], "atoms": ["atom_0", "atom_1", "atom_2"]}],
    "name": "Adj",
    "id": "Adj"}],
  "atoms":
  [{"type": "Nat", "label": "x", "id": "atom_0"},
-  {"type": "Nat", "label": "y", "id": "atom_1"}]}
+  {"type": "Nat", "label": "y", "id": "atom_1"},
+  {"type": "Nat", "label": "z", "id": "atom_2"}]}
 -/
 #guard_msgs in
 example (x y z : Nat) (h₁ : ArityFoo.Adj x y) (h₂ : ArityBar.Adj x y z) : True := by
