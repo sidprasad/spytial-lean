@@ -81,6 +81,24 @@ private meta def leaf (value : Nat) : Expr :=
 private meta def node (left right : Expr) : Expr :=
   mkApp2 (mkConst ``Tree.node) left right
 
+private meta def sameStructuralKind : CheckedStructuralKind → CheckedStructuralKind → Bool
+  | .constructorField leftConstructor leftIndex,
+      .constructorField rightConstructor rightIndex =>
+    leftConstructor == rightConstructor && leftIndex == rightIndex
+  | .projection leftField leftApplication, .projection rightField rightApplication =>
+    leftField == rightField && leftApplication.equal rightApplication
+  | _, _ => false
+
+private meta def sameStructuralMeaning
+    (left right : CheckedStructuralOrigin) : Bool :=
+  left.relation == right.relation && left.source.equal right.source &&
+    left.child.equal right.child && sameStructuralKind left.kind right.kind
+
+private meta def sameStructuralMeanings
+    (left right : Array CheckedStructuralOrigin) : Bool :=
+  (left.all fun origin => right.any (sameStructuralMeaning origin)) &&
+    (right.all fun origin => left.any (sameStructuralMeaning origin))
+
 #eval show Lean.Elab.TermElabM Unit from do
   let (trace, provenance, evidence) ← relationalizeWithTrace (node (leaf 1) (leaf 2))
   unless trace.wellFormedTrace do
@@ -141,7 +159,8 @@ end SecondPredicate
 
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `t tree fun t => do
-  withLocalDeclD `shape (← mkAppM ``Eq #[t, node (leaf 1) (leaf 2)]) fun _ => do
+  let value := node (leaf 1) (leaf 2)
+  withLocalDeclD `shape (← mkAppM ``Eq #[t, value]) fun _ => do
     let view ← viewOf "consumer.refinement" t
     assertCanon "consumer.refinement" view.data
       "Tree|t\nTree|leaf\nNat|1\nTree|leaf\nNat|2\n\
@@ -149,6 +168,11 @@ end SecondPredicate
     let structural ← checkedStructuralOrigins view.trace view.prov view.evidence
     unless structural.size == 4 do
       throwError "consumer.refinement: contextual inspection lost computed structure"
+    let (computedTrace, computedProvenance, computedEvidence) ←
+      relationalizeWithTrace value { functionGraphs := true, shareSymbolicValues := true }
+    let computed ← checkedStructuralOrigins computedTrace computedProvenance computedEvidence
+    unless sameStructuralMeanings structural computed do
+      throwError "consumer.refinement: proof and computation disagree on structural meaning"
 
 /- A fact whose endpoint is a constructor subterm reuses the atom reached by
    the root walk instead of drawing the entire subtree a second time. -/

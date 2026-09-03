@@ -34,7 +34,7 @@ def HasTuple (data : JsonDataInstance) (relation : String)
       ∃ tuple ∈ rel.tuples, tuple.atoms = atoms ∧ tuple.types = types
 
 /-- A traced emission describes the named typed tuple. -/
-def Describes (emission : TupleEmission) (relation : String)
+@[expose] def Describes (emission : TupleEmission) (relation : String)
     (types atoms : Array String) : Prop :=
   emission.relation = relation ∧ emission.tuple.atoms = atoms ∧
     emission.tuple.types = types
@@ -51,7 +51,7 @@ def OriginsCover (trace : TracedDataInstance) : Prop :=
 
 /-- Every recorded origin describes a tuple that actually appears in the
     erased output. -/
-def NoSpuriousOrigins (trace : TracedDataInstance) : Prop :=
+@[expose] def NoSpuriousOrigins (trace : TracedDataInstance) : Prop :=
   ∀ emission ∈ trace.emissions,
     HasTuple trace.data emission.relation emission.tuple.types emission.tuple.atoms
 

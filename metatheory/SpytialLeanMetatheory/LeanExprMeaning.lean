@@ -49,6 +49,15 @@ public structure LeanExprMeaning (World : Type u)
   proofChecks : Expr → Expr → Prop
   proofChecks_sound : ∀ {claim proof}, proofChecks claim proof →
     Iykyk.Metatheory.Entails context (proposition claim)
+  /-- Semantic meaning of Lean's actual equality expression. This is part of
+      the trusted Lean-expression interpretation, not a premise supplied by
+      an individual inspection theorem. -/
+  equality_sound : ∀ {claim type left right : Expr},
+    claim.eq? = some (type, left, right) →
+    (leftChecked : hasType left type) → (rightChecked : hasType right type) →
+    ∀ world (compatible : context world), proposition claim world →
+      denote left type leftChecked world compatible =
+        denote right type rightChecked world compatible
 
 namespace LeanExprMeaning
 
@@ -85,14 +94,14 @@ public structure CheckedTerm {World : Type u}
 namespace CheckedTerm
 
 /-- The semantic type represented by a checked term's Lean type. -/
-public def typeCode {World : Type u}
+public abbrev typeCode {World : Type u}
     {context : Iykyk.Metatheory.Context World}
     {meaning : LeanExprMeaning World context} (term : CheckedTerm meaning) :
     meaning.TypeCode :=
   Quotient.mk meaning.defEq term.type
 
 /-- Interpret a checked term in a world compatible with the proof context. -/
-public def denote {World : Type u}
+public abbrev denote {World : Type u}
     {context : Iykyk.Metatheory.Context World}
     {meaning : LeanExprMeaning World context} (term : CheckedTerm meaning)
     (world : World) (compatible : context world) :

@@ -16,6 +16,17 @@ namespace SpytialLean.Metatheory
 
 universe u v w x y z
 
+namespace TypedAtom
+
+/-- Apply a type-preserving function to one existentially packaged atom. -/
+@[expose] public def map {SemanticType : Type u} {Source : SemanticType → Type v}
+    {Target : SemanticType → Type w}
+    (transform : ∀ {type}, Source type → Target type) :
+    TypedAtom Source → TypedAtom Target
+  | ⟨type, value⟩ => ⟨type, transform value⟩
+
+end TypedAtom
+
 namespace TypedTuple
 
 /-- Mapping a typed tuple twice is the same as mapping it by the composite. -/
@@ -54,6 +65,19 @@ public theorem map_id {SemanticType : Type u} {Entry : SemanticType → Type v}
       simp only [map]
       rw [ih]
 
+/-- Forgetting tuple shape after a map maps the corresponding packaged atom
+    list. -/
+public theorem atoms_map {SemanticType : Type u} {Source : SemanticType → Type v}
+    {Target : SemanticType → Type w}
+    (transform : ∀ {type}, Source type → Target type)
+    {types : List SemanticType} (tuple : TypedTuple Source types) :
+    (tuple.map transform).atoms = tuple.atoms.map (TypedAtom.map transform) := by
+  induction tuple with
+  | nil => rfl
+  | cons head tail ih =>
+      simp only [map, atoms, List.map_cons, TypedAtom.map]
+      rw [ih]
+
 end TypedTuple
 
 namespace RelationalTuple
@@ -79,6 +103,45 @@ public theorem map_id {SemanticType : Type u}
   rcases tuple with ⟨relation, entries⟩
   simp only [map]
   rw [TypedTuple.map_id]
+
+/-- Pointwise equal atom maps give equal relational tuples. -/
+public theorem map_congr {SemanticType : Type u}
+    {signature : RelationalSignature SemanticType}
+    {Source : SemanticType → Type v} {Target : SemanticType → Type w}
+    (left right : ∀ {type}, Source type → Target type)
+    (equal : ∀ {type} (value : Source type), left value = right value)
+    (tuple : RelationalTuple signature Source) :
+    tuple.map left = tuple.map right := by
+  rcases tuple with ⟨relation, entries⟩
+  simp only [map]
+  rw [TypedTuple.map_congr left right equal entries]
+
+/-- Mapping a tuple forward and then backward is the identity when the atom
+    maps are pointwise inverses. -/
+public theorem map_leftInverse {SemanticType : Type u}
+    {signature : RelationalSignature SemanticType}
+    {Source : SemanticType → Type v} {Target : SemanticType → Type w}
+    (forward : ∀ {type}, Source type → Target type)
+    (backward : ∀ {type}, Target type → Source type)
+    (inverse : ∀ {type} (value : Source type), backward (forward value) = value)
+    (tuple : RelationalTuple signature Source) :
+    (tuple.map forward).map backward = tuple := by
+  rw [map_map]
+  calc
+    tuple.map (fun value => backward (forward value)) =
+        tuple.map (fun value => value) := map_congr _ _ inverse tuple
+    _ = tuple := map_id tuple
+
+/-- Packaged atoms of a mapped relational tuple are the mapped packaged atoms
+    of the source tuple. -/
+public theorem atoms_map {SemanticType : Type u}
+    {signature : RelationalSignature SemanticType}
+    {Source : SemanticType → Type v} {Target : SemanticType → Type w}
+    (transform : ∀ {type}, Source type → Target type)
+    (tuple : RelationalTuple signature Source) :
+    (tuple.map transform).atoms = tuple.atoms.map (TypedAtom.map transform) := by
+  rcases tuple with ⟨relation, entries⟩
+  exact TypedTuple.atoms_map transform entries
 
 end RelationalTuple
 
@@ -267,7 +330,7 @@ end SemanticIso
 
 /-- Structural agreement between two relational descriptions means semantic
     isomorphism, rather than equality of fresh IDs or serialization order. -/
-public def StructurallyAgrees {World : Type u} {SemanticType : Type v}
+public abbrev StructurallyAgrees {World : Type u} {SemanticType : Type v}
     {context : Iykyk.Metatheory.Context World}
     {signature : RelationalSignature SemanticType} {Carrier : SemanticType → Type w}
     (left : SemanticInstance.{u, v, w, x} context signature Carrier)

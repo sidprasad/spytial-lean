@@ -64,16 +64,16 @@ public abbrev StructuralRequirement {SemanticType : Type v}
     (required : StructuralRequirement (signature := signature) (Entry := data.Atom)) : Prop :=
   ∀ tuple, required tuple → tuple ∈ data.tuples
 
-/-- The semantic certificate still needed after the executable structural
-    checker succeeds. Its obligations are local:
+/-- The semantic interpretation paired with a successful executable
+    structural check. Its obligations are local:
 
     * each output tuple has a structural production origin;
     * each such origin has the correct semantic meaning; and
     * every expected field has a corresponding structural origin.
 
     The executable checker supplies the checked origins and syntactic field
-    coverage. Constructing this certificate additionally requires the missing
-    interpretation from Lean expressions to semantic tuples. -/
+    coverage. The `LeanExprMeaning` boundary supplies their typing and
+    denotation. -/
 public structure ComputedStructuralCertificate {World : Type u}
     {SemanticType : Type v} {context : Iykyk.Metatheory.Context World}
     {signature : RelationalSignature SemanticType} {Carrier : SemanticType → Type w}

@@ -6,5 +6,8 @@ public import SpytialLeanMetatheory.ProofDecoder
 public meta import SpytialLeanMetatheory.ProductionProofDecoder
 public import SpytialLeanMetatheory.ComputedRelationalization
 public import SpytialLeanMetatheory.SemanticIsomorphism
+public import SpytialLeanMetatheory.Inspection
+public import SpytialLeanMetatheory.InspectionAgreement
+public import SpytialLeanMetatheory.RootedTrace
 public import SpytialLeanMetatheory.SharedWitnessExample
 public meta import SpytialLeanMetatheory.RuntimeCorrespondence

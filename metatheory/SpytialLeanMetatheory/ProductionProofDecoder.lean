@@ -98,10 +98,9 @@ public structure ProvedTupleRealization {World : Type u}
     meaning.proposition origin.proposition world →
       (meaning.instanceOfTuples tuples).TupleHolds ground tuple world compatible
 
-/-- The complete realization required to interpret all proof-derived tuples.
+/-- The interpretation of all proof-derived tuples from one checked trace.
     Each tuple has one emitted checked origin and one local realization above;
-    shared atom IDs and IYKYK membership are global properties. Constructing
-    this structure from a production trace remains separate work. -/
+    shared atom IDs and IYKYK membership are global properties. -/
 public structure ProductionProofRealization {World : Type u} {Root : Type v}
     {context : Iykyk.Metatheory.Context World}
     (meaning : LeanExprMeaning World context)
