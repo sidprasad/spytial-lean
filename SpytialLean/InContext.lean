@@ -440,6 +440,43 @@ private meta partial def contextualTerms (cfg : WalkConfig) (root e : Expr) :
   let (_, terms) ← (visit (← contextTerm cfg e)).run {}
   return terms
 
+/-- Whether `e` is a constructor-built value of a recursive inductive. Such a
+    value contributes another instance of the selected representation's shape,
+    rather than merely an opaque endpoint or scalar fact. -/
+private meta def recursiveConstructorValue? (e : Expr) : MetaM (Option (Name × Expr)) := do
+  let type ← inferType e
+  if ← isPrimitiveLabelType type then return none
+  let some typeName ← typeHead? type | return none
+  let some shape ← TypeShape.ofInductive typeName | return none
+  unless shape.ctors.any (fun ctor =>
+      ctor.fields.any (fun field => field.typeHead == some typeName)) do
+    return none
+  let value ← whnf e
+  let .const ctorName _ := value.getAppFn | return none
+  unless shape.ctors.any (·.ctorName == ctorName) do return none
+  return some (typeName, value)
+
+/-- A root-only fact must not extend an explicit observation to an alternate
+    constructor-built recursive value when the selected representation already
+    contains that recursive type. Opaque endpoints remain admissible, as do
+    observations wholly about represented subterms. -/
+private meta partial def observesAlternateRecursiveValue (cfg : WalkConfig)
+    (representedTerms : Std.HashSet ExprStructEq)
+    (representedTypes : Std.HashSet Name)
+    (expression : Expr) : MetaM Bool := do
+  let expression ← contextTerm cfg expression
+  if let some (_, arguments) ← observedGraphSide? cfg expression then
+    for argument in arguments do
+      let argument ← contextTerm cfg argument
+      unless representedTerms.contains ⟨argument⟩ do
+        if let some (typeName, value) ← recursiveConstructorValue? argument then
+          if !representedTerms.contains ⟨value⟩ && representedTypes.contains typeName then
+            return true
+  for argument in ← dataArgsOf expression do
+    if ← observesAlternateRecursiveValue cfg representedTerms representedTypes argument then
+      return true
+  return false
+
 /-- Keep the certified component connected to the values actually represented
     by the selected root. IYKYK still owns extraction and contradiction checks;
     this consumer only selects a subset of its checked facts and witnesses. -/
@@ -455,17 +492,37 @@ private meta def projectToRepresentation (afaik : Iykyk.Afaik) (baseConfig : Wal
     pure ()
   let mut anchors : Std.HashSet ExprStructEq := {}
   anchors := anchors.insert ⟨root⟩
+  let mut representedTerms : Std.HashSet ExprStructEq := {}
+  let mut representedTypes : Std.HashSet Name := {}
   for (term, _) in state.observationTerms do
     let term ← contextTerm cfg term
+    representedTerms := representedTerms.insert ⟨term⟩
+    if let some typeName ← typeHead? (← inferType term) then
+      representedTypes := representedTypes.insert typeName
     if term.hasFVar || term.hasMVar then anchors := anchors.insert ⟨term⟩
+  for (_, representative) in state.provenance do
+    let representative ← contextTerm cfg representative
+    representedTerms := representedTerms.insert ⟨representative⟩
+    if let some typeName ← typeHead? (← inferType representative) then
+      representedTypes := representedTypes.insert typeName
+  representedTerms := representedTerms.insert ⟨root⟩
+  if let some typeName ← typeHead? (← inferType root) then
+    representedTypes := representedTypes.insert typeName
   let candidates ← afaik.facts.mapM fun fact => do
     contextualTerms cfg root (← displayedProposition fact)
+  let mut stale : Array Bool := #[]
+  for index in [:afaik.facts.size] do
+    let proposition ← displayedProposition afaik.facts[index]!
+    let isRefinement := (← refinementOf? proposition).isSome
+    let isStale ← if isRefinement then pure false else
+      observesAlternateRecursiveValue cfg representedTerms representedTypes proposition
+    stale := stale.push isStale
   let mut selected : Std.HashSet Nat := {}
   let mut changed := true
   while changed do
     changed := false
     for index in [:afaik.facts.size] do
-      if selected.contains index then continue
+      if selected.contains index || stale[index]! then continue
       let terms := candidates[index]!
       if terms.toArray.any anchors.contains then
         selected := selected.insert index

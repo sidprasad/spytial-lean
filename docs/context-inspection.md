@@ -42,17 +42,18 @@ declaration wins, except that the explicitly inspected name always wins at the
 root. Primitive values keep their value labels (`3`, `true`, `"text"`, and so
 on) instead of being renamed by refinements.
 
-After a rotation, facts about unchanged subtrees remain relevant even if no
-hypothesis mentions the new whole tree. A fact about an old parent still refers
-to that old parent, not to the new root. The resulting datum can therefore
-include old structure needed to express the retained facts.
+After a rotation, root-only inspection does not import an old constructor-built
+parent merely because it shares leaves with the new tree. Facts wholly about
+subtrees of the selected result remain relevant, but inequalities involving an
+obsolete parent are omitted from that view.
 
-The widget shows one relational datum: the selected expression together with all
-relevant structures and relationships needed by its retained facts. For example,
-an after-rotation inspection can include an old parent mentioned by a branch
-inequality. This is program knowledge, not a second display mode. Use layout
-operations such as `hideAtom`, `hideField`, and selectors to control what the
-diagram presents. The context facts are listed below the diagram.
+The widget shows one relational datum: the selected expression together with
+the relationships retained by its root-only projection. Opaque relation
+endpoints may extend that datum, but a second constructor-built recursive value
+does not overwrite the selected structure's shape. Use `rootOnly := false`
+programmatically when the full extracted context, including alternate
+structures, is required. The retained context facts are listed below the
+diagram.
 
 `spytial.datum` prints the same datum. The widget payload additionally records the
 selected root and its source term so the infoview can identify what was inspected.

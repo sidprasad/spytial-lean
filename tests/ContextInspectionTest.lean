@@ -127,8 +127,9 @@ private meta def assertInspectionMetadata (view : ContextView) : MetaM Unit := d
       unless bound.atoms[1]? == observed.atoms[1]? do
         throwError "bound refers to a different subtree's height"
 
-/- The new root is not mentioned in the old inequalities. Unchanged subtrees
-   still connect the result to those facts; the old parent is a distinct value. -/
+/- The new root is not mentioned in the old inequalities. Sharing leaves with
+   the selected result must not import the old constructor-built parents: that
+   would turn the selected tree's field relations into a multi-rooted DAG. -/
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `ll tree fun ll => do
   withLocalDeclD `a tree fun a => do
@@ -140,9 +141,12 @@ private meta def assertInspectionMetadata (view : ContextView) : MetaM Unit := d
     withLocalDeclD `outer (← mkAppM ``LT.lt #[height r, height oldLeft]) fun _ => do
     withLocalDeclD `inner (← mkAppM ``LT.lt #[height ll, height inner]) fun _ => do
       let result ← view after
-      assertCount "after retains old bounds" result.data "lt" 2
-      assertTrees "old and new parents stay distinct" result.data 9
+      assertCount "after discards old bounds" result.data "lt" 0
+      assertTrees "after contains one tree" result.data 7
       assertInspectionMetadata result
+      let full ← view after false
+      assertCount "full context retains old bounds" full.data "lt" 2
+      assertTrees "full context retains old and new parents" full.data 9
 
 /- A refinement of the selected variable exposes children whose facts also
    belong to its view. No unrelated relation is admitted through the type. -/
