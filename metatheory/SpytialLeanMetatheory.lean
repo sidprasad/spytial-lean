@@ -1,4 +1,6 @@
 module
 
 public import SpytialLeanMetatheory.RelationalInstance
+public import SpytialLeanMetatheory.ProofDecoder
+public import SpytialLeanMetatheory.SharedWitnessExample
 public meta import SpytialLeanMetatheory.RuntimeCorrespondence

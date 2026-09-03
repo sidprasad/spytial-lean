@@ -24,13 +24,14 @@ The ownership boundary is deliberate:
 An abstract partial-instance calculus is not sufficient. The production
 relationalizer must emit the object interpreted by the metatheory.
 
-The model therefore starts directly from `SpytialLean.JsonDataInstance`, the
-actual type returned by `relationalize`, rather than defining an unrelated copy.
-`RelationalInstance.lean` gives that type a wire-level open-world completion
-relation via `WireHom` and `WireCompletes`. They preserve serialized labels, not
-semantic Lean typing. Because JSON has neither Lean denotations nor tuple
-origins, that relation is a syntactic foundation for the eventual semantic
-completion theorem, not the theorem itself.
+The production side therefore starts directly from
+`SpytialLean.JsonDataInstance`, the actual type returned by `relationalize`.
+`RelationalInstance.lean` gives that type a wire-level open-world order via
+`WireHom` and `WireCompletes`. The semantic side is necessarily separate:
+`SemanticInstance.lean` adds intrinsically typed tuples, a finite typed atom
+domain, possible-world denotations, and ground relation interpretations. The
+remaining bridge must show that a checked production trace realizes one of
+those semantic instances; it may not posit a second, toy producer.
 
 Typing is read from each `JsonTuple`, not from `JsonRelation.types`. The latter
 is presentation/default metadata in the current wire format: reused field names
@@ -95,9 +96,12 @@ The proof-context producer already validates the tight `proved` slice at
 runtime: it defensively rechecks the proof, reruns `propTupleShape?`, and checks
 the relation name, decoded arguments, column labels, and alignment. Proof
 validity fundamentally comes from IYKYK's sealed `Afaik` construction and final
-certificate; this check establishes that Spytial faithfully recorded the
-IYKYK-to-Spytial decoding. It is not yet the possible-world soundness proof for
-that decoder.
+certificate. `ProofDecoder.lean` now gives the semantic half of this boundary:
+`ProofDecoding.sound` composes sound IYKYK knowledge with a decoder-reflection
+certificate to prove completion, and `decodeAtomicFacts_sound` proves that
+reflection by construction for semantic atomic relation facts. What remains is
+the narrow reflection theorem showing that the production `Lean.Expr` decoder
+realizes that atomic decoder.
 
 ## Tight theorem spine
 
@@ -117,22 +121,27 @@ of the first two results, not a third independent semantics. Observations,
 synthetic relations, and certified custom relationalizers can extend this core
 without obscuring it.
 
-## First target
+## Current semantic checkpoint
 
-The first formal checkpoint is therefore:
+The first formal checkpoint consists of:
 
-1. semantic atoms carrying Lean terms and types;
+1. semantic atoms with intrinsically indexed types and contextual denotations;
 2. completion and isomorphism for semantic instances;
 3. a proof-to-tuple decoder with a possible-world soundness theorem; and
 4. the bridge from checked production traces to that semantic model.
 
-Only after that connection should the model add computed algebraic values,
-observations, and the computation/proof structural agreement theorem.
+Items 1 and the completion half of item 2 are now formalized. In particular,
+`completes_iff_tupleFacts` proves that semantic completion is exactly IYKYK
+entailment of every emitted tuple. Item 3 is proved for an abstract certified
+decoder and for atomic semantic relation facts. The shared-witness example
+constructs two edges from one existential path and uses definitionally the same
+contextual atom in both tuples.
 
-The present checkpoint implements the production side of item 4 and a
-wire-level precursor to item 2:
-per-tuple origins are produced by the actual walkers, IYKYK-derived origins carry
-the exact proposition and checked proof, and erasure is exact. Items 1-3 are now
-the next substantive proof obligations. The `proved` runtime checker covers
-the narrow implementation correspondence; the remaining theorem must show that
-its accepted relational atom holds in every IYKYK-compatible world.
+The next load-bearing result is the remaining part of item 4: a realization of
+the actual `TracedDataInstance` whose `proved` origins instantiate
+`ProofDecoding`. That result must account for Lean expression typing,
+definitional equality, atom reuse, and the output of `propTupleShape?`. These
+belong to a small trusted reflection interface rather than a reimplementation
+of Lean's type theory. After that bridge, the work proceeds to computed
+structural adequacy, semantic isomorphism, and finally computation/proof
+agreement.
