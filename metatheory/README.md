@@ -129,7 +129,7 @@ These are the relations used below.
 
 ## The main theorems
 
-The formalization now proves three headline results. Each theorem is
+The formalization now proves four headline results. Each semantic theorem is
 parametric in an interpretation of Lean expressions. That interpretation is
 the trust boundary for Lean typing, definitional equality, proof checking, and
 the meaning of Lean's `Eq` proposition.
@@ -145,8 +145,9 @@ D = inspect(Gamma, e)       rho satisfies Gamma
 `Inspection.sound` proves this result by separating the two tuple sources.
 Structural tuples use the checked constructor or projection rule.
 Proof-derived tuples use the retained proof after the production checker has
-checked it again. `Inspection.production_sound` combines the checked
-production origins of one trace. Its conclusion uses
+checked it again. `CheckedCoreTrace.inspection_sound` applies both production
+checkers, constructs the typed atoms and tuples from their checked Lean
+expressions, and proves the resulting inspection sound. Its conclusion uses
 `ProductionTupleHolds.ground`; the theorem does not accept a `GroundInstance`
 from its caller.
 
@@ -216,6 +217,30 @@ Two supporting results remain important:
   their shared witness; and
 - deleting tuples or stopping after a justified prefix preserves soundness.
 
+### 4. Semantic relations project to Spytial relations by name
+
+The semantic layer keeps the full Lean relation head and hidden parameters.
+The display layer intentionally keeps only the short relation name:
+
+```text
+semantic R1 --\
+semantic R2 ----> rows named R ----> one Spytial relation R
+semantic R3 --/
+```
+
+Each displayed row retains its own typed schema. Therefore relations with the
+same name may have different column types or arities. This is not a collision:
+Spytial relations are ragged and each tuple is self-describing. A malformed
+row with a different number of atoms and types is rejected at the shared
+insertion boundary.
+
+`Inspection.named_presentation_union` proves that, for every display
+name, the displayed rows are exactly the structural rows with that name plus
+the proof-derived rows with that name. The projection neither drops nor
+invents a row. `CheckedCoreTrace.sound_and_presentation_union` packages this
+with semantic soundness of the checked inspection. No renderer change is
+required.
+
 ## Scope of the production result
 
 The checked production instance covers:
@@ -226,11 +251,12 @@ The checked production instance covers:
 - atom identity policies known to preserve the represented Lean value.
 
 The semantic theorem retains the Lean head and hidden parameters of a proved
-relation. The JSON interface may deliberately group several such relations
-under one display name, because Spytial consumes their union as one table.
-This does not affect the typed semantic theorem. A hidden relation stamp would
-only be needed for a consumer that must reconstruct the original Lean head
-from JSON.
+relation. The JSON interface deliberately groups several such relations under
+one display name, because Spytial consumes their union as one table. Each tuple
+retains its own types, and a relation with more than one tuple width has an
+empty relation-level type summary. This does not affect the typed semantic
+theorem. A hidden relation stamp would only be needed for a consumer that must
+reconstruct the original Lean head from JSON.
 
 An unrestricted `SpytialIdentity` classifier may intentionally merge different
 values for presentation. That merge can be useful in a diagram, but it is not
@@ -275,6 +301,13 @@ For a proof origin, the production checker also:
 3. retains the actual predicate head and hidden parameters;
 4. checks the decoded arguments and their inferred Lean types; and
 5. checks that each decoded term names the recorded tuple atom.
+
+The checker retains a `CheckedColumn` for each aligned term and atom ID. A
+`CheckedColumn` can be created only after Lean has inferred the term's type.
+`ProductionTraceInstance.lean` recursively turns these checked columns into an
+intrinsically typed tuple. This construction supplies the typing, relation,
+atom-ID, and term-correspondence fields that earlier results took as separate
+premises.
 
 For a structural origin, the production checker recognizes direct constructor
 fields and structure projections. It checks their source terms, child terms,
@@ -331,6 +364,19 @@ parameters, terms, and Lean type expressions.
   Lean origins and semantic tuples. These correspondences contain no
   tuple-truth field.
 
+- **Checked production instance.**
+  [ProductionTraceInstance.lean](SpytialLeanMetatheory/ProductionTraceInstance.lean)
+  runs both built-in trace checkers and constructs expression-backed semantic
+  tuples from their checked columns. `CheckedCoreTrace.inspection_sound` proves
+  soundness directly. It has no per-origin realization premise and does not
+  require a certificate from a custom relationalizer.
+
+- **Presentation projection.**
+  [PresentationProjection.lean](SpytialLeanMetatheory/PresentationProjection.lean)
+  replaces internal relation identity by the short Spytial name while
+  retaining each tuple's own typed schema. It proves row preservation,
+  same-name coalescing, and union of the computed and proof-derived rows.
+
 - **Abstract proof decoding.**
   [ProofDecoder.lean](SpytialLeanMetatheory/ProofDecoder.lean) proves soundness
   for an abstract proof-to-tuple decoder. This reuses IYKYK soundness instead
@@ -386,26 +432,27 @@ parameters, terms, and Lean type expressions.
 
 ## Trust boundary and remaining engineering
 
-The core bridge is proved for a checked trace and its typed realization. The
-production ground is now constructed by the formalization. It is not a caller
-parameter, and soundness is not a field of an individual tuple realization.
+The built-in structural and proof checkers now construct the semantic
+inspection from the real trace. The production ground is also constructed by
+the formalization. Neither tuple truth nor tuple realization is supplied by a
+caller.
+
+`ProductionEvidenceMeaning` states one connection between successful Lean
+checks and the abstract interpretation of Lean expressions. In particular, a
+term accepted by `inferType` has that type in the interpretation, and a proof
+accepted for a proposition satisfies `LeanExprMeaning.proofChecks`. These are
+global laws about Lean's checker. They are not repeated for each tuple. Proving
+them inside this project would require proving Lean's elaborator and kernel
+correct inside Lean, which is intentionally outside the model.
 
 The following work remains before making the broadest claim about every
 production run:
 
-1. Construct `LeanExprMeaning`, expression-backed atoms, and the typed tuple
-   realization mechanically from a checked trace. The current theorem states
-   these typing and correspondence obligations explicitly. Lean's kernel,
-   elaborator typing, and definitional equality remain trusted in the same way
-   as the production metaprogram.
-2. Package the typed realization with the exact result returned by each public
-   relationalizer entry point. `RuntimeCorrespondence.lean` already proves the
-   trace erases to the existing JSON result; this step adds the semantic object
-   produced from that trace.
-3. Add separate relation rules for observations, tabulation, synthetic edges,
-   and unrestricted custom relationalizers. The current production theorem
-   covers direct structure and checked proof facts.
-4. Build the three evaluation domains and report when computation, partial
+1. Add separate relation rules for observations, tabulation, synthetic edges,
+   and unrestricted custom relationalizers if future claims need them. The
+   current theorem deliberately covers only the checked built-in structural
+   and proof paths.
+2. Build the three evaluation domains and report when computation, partial
    structure, and proof refinement each contribute useful tuples.
 
 ## Responsibility between projects

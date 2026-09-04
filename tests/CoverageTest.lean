@@ -158,3 +158,14 @@ open Lean in
       for a in t.atoms do
         unless atomIds.contains a do
           throwError "dangling endpoint '{a}' in relation '{r.name}' — not an emitted atom"
+
+/-! ## Display-relation row checks -/
+
+-- Custom producers do not need semantic certificates. The shared insertion
+-- boundary simply refuses a malformed row whose atom and type columns differ.
+open Lean in
+#eval show MetaM Unit from do
+  let malformed : JsonTuple := { atoms := #["a", "b"], types := #["Nat"] }
+  let state := ({} : WalkState).addTupleWithOrigin "bad" #["Nat"] malformed .custom
+  unless state.relations.toArray.isEmpty && state.emissions.isEmpty do
+    throwError "a malformed display-relation row was retained"

@@ -69,7 +69,7 @@ public structure ProvedTupleRealization {World : Type u}
   relation_parameters : (exprRelation tuple.relation).parameters =
     origin.parameters.toList.map fun parameter => Quotient.mk meaning.defEq parameter
   column_types : (exprRelation tuple.relation).columns =
-    origin.types.toList.map fun type => Quotient.mk meaning.defEq type
+    origin.columns.types.map fun type => Quotient.mk meaning.defEq type
   atom_ids : exprTupleAtomIds tuple = origin.atoms.toList
   atom_terms : exprTupleTerms tuple = origin.terms.toList
   proof_checked : meaning.proofChecks origin.proposition origin.proof
@@ -82,10 +82,9 @@ public structure StructuralTupleRealization {World : Type u}
     (tuple : RelationalTuple meaning.signature (LeanExprMeaning.ExprAtom meaning)) where
   relation_name : (exprRelation tuple.relation).name = origin.relation
   column_types : (exprRelation tuple.relation).columns =
-    [Quotient.mk meaning.defEq origin.sourceType,
-      Quotient.mk meaning.defEq origin.childType]
-  atom_ids : exprTupleAtomIds tuple = [origin.sourceAtom, origin.childAtom]
-  atom_terms : exprTupleTerms tuple = [origin.source, origin.child]
+    origin.columns.types.map fun type => Quotient.mk meaning.defEq type
+  atom_ids : exprTupleAtomIds tuple = origin.emission.tuple.atoms.toList
+  atom_terms : exprTupleTerms tuple = origin.terms.toList
 
 /-- Truth in the supported production relation semantics. A tuple is true when
     it is the denotation of a checked structural origin, or when it is the
