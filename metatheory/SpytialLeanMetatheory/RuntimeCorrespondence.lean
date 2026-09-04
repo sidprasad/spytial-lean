@@ -67,4 +67,14 @@ theorem proof_context_evidence_is_trace_erasure (afaik : Iykyk.Afaik)
       return (trace.data, provenance, datum, inspection, evidence) := by
   exact relationalizeAfaikWithEvidence_eq_trace_erasure afaik cfg observations
 
+/-- The checked two-phase run changes no production output. Erasing its
+    retained computation phase gives the established proof-context trace API. -/
+theorem proof_context_trace_is_phase_erasure (afaik : Iykyk.Afaik)
+    (cfg : WalkConfig := {}) (observations : Array Expr := #[]) :
+    relationalizeAfaikWithTrace afaik cfg observations = do
+      let result ← relationalizeAfaikWithPhaseTrace afaik cfg observations
+      return (result.trace, result.provenance, result.datum, result.inspection,
+        result.evidence) := by
+  exact relationalizeAfaikWithTrace_eq_phase_erasure afaik cfg observations
+
 end SpytialLean.Metatheory

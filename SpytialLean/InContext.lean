@@ -217,6 +217,103 @@ private meta def contextArgument (cfg : WalkConfig) (argument : Expr) :
 private meta def displayedProposition (fact : Iykyk.KnownFact) : MetaM Expr :=
   do instantiateMVars (← inferType fact.proof)
 
+/-- An equality retained by IYKYK and checked against the refined expression
+    represented by the computation phase of proof-guided inspection. The constructor
+    is private; `CheckedEqualityRefinement.check` checks the proof, equality
+    shape, term types, and definitional equality of the retained value and
+    computed expression. -/
+public structure CheckedEqualityRefinement (knowledge : Iykyk.Afaik)
+    (_computed : Expr) where
+  private mk ::
+  factIndex : Fin knowledge.facts.size
+  proposition : Expr
+  type : Expr
+  value : Expr
+
+namespace CheckedEqualityRefinement
+
+/-- The retained IYKYK fact selected by a checked equality refinement. -/
+@[expose] public def fact {knowledge : Iykyk.Afaik} {computed : Expr}
+    (checked : CheckedEqualityRefinement knowledge computed) : Iykyk.KnownFact :=
+  knowledge.facts[checked.factIndex]
+
+private meta partial def find? (knowledge : Iykyk.Afaik) (computed : Expr)
+    (index : Nat) : MetaM (Option (CheckedEqualityRefinement knowledge computed)) := do
+  if inBounds : index < knowledge.facts.size then
+    let fact := knowledge.facts[index]
+    let proposition ← displayedProposition fact
+    if let some (type, left, right) := proposition.eq? then
+      let candidate? :=
+        if left.equal knowledge.root then some right
+        else if right.equal knowledge.root then some left
+        else none
+      if let some value := candidate? then
+        let rootType ← inferType knowledge.root
+        let valueType ← inferType value
+        let computedType ← inferType computed
+        if (← isDefEq rootType type) && (← isDefEq valueType type) &&
+            (← isDefEq computedType type) && (← isDefEq value computed) then
+          Iykyk.checkEvidence proposition fact.proof
+          return some (.mk ⟨index, inBounds⟩ proposition type value)
+    find? knowledge computed (index + 1)
+  else
+    return none
+
+/-- Select and recheck an equality that relates the inspected root to the
+    expression used by the retained computation phase. -/
+public meta def check (knowledge : Iykyk.Afaik) (computed : Expr) :
+    MetaM (CheckedEqualityRefinement knowledge computed) := do
+  let some checked ← find? knowledge computed 0
+    | throwError "spytial: no checked equality relates the inspected root to its computation"
+  return checked
+
+end CheckedEqualityRefinement
+
+/-- Evidence that ordinary Lean computation identifies the selected root with
+    the expression represented by the structural walk. -/
+public structure CheckedComputedValue (knowledge : Iykyk.Afaik)
+    (_computed : Expr) where
+  private mk ::
+  type : Expr
+
+namespace CheckedComputedValue
+
+private meta def check? (knowledge : Iykyk.Afaik) (computed : Expr) :
+    MetaM (Option (CheckedComputedValue knowledge computed)) := do
+  let rootType ← inferType knowledge.root
+  let computedType ← inferType computed
+  unless ← isDefEq rootType computedType do return none
+  unless ← isDefEq knowledge.root computed do return none
+  return some (.mk rootType)
+
+end CheckedComputedValue
+
+/-- Why the production inspector accepts one common root/computed type. -/
+public inductive CheckedValueReason (knowledge : Iykyk.Afaik)
+    (computed : Expr) : Expr → Type where
+  | computation (checked : CheckedComputedValue knowledge computed)
+    : CheckedValueReason knowledge computed checked.type
+  | proof (checked : CheckedEqualityRefinement knowledge computed)
+    : CheckedValueReason knowledge computed checked.type
+
+/-- How the production inspector knows the expression represented by its
+    structural walk: either by computation or by a retained checked equality. -/
+public structure CheckedValueSource (knowledge : Iykyk.Afaik) (computed : Expr) where
+  type : Expr
+  reason : CheckedValueReason knowledge computed type
+
+namespace CheckedValueSource
+
+/-- Check the computation case first, then look for a retained equality. -/
+public meta def check (knowledge : Iykyk.Afaik) (computed : Expr) :
+    MetaM (CheckedValueSource knowledge computed) := do
+  if let some checked ← CheckedComputedValue.check? knowledge computed then
+    return .mk checked.type (.computation checked)
+  let checked ← CheckedEqualityRefinement.check knowledge computed
+  return .mk checked.type (.proof checked)
+
+end CheckedValueSource
+
 /-- Recover the user-written binder from the existential proof consumed by a
     witness's `Classical.choose`, when that binder survived elaboration. -/
 private meta def witnessBinderName? (term : Expr) : MetaM (Option String) := do
@@ -432,6 +529,26 @@ public meta structure InspectedValue where
   facts : Array String
   deriving ToJson, Inhabited
 
+/-- The two phases of one proof-guided inspection. `computedTrace` is the
+    snapshot immediately after the ordinary expression walker has inspected
+    the refined root. `trace` extends that state with facts from the context.
+    The public JSON result remains `trace.data`. -/
+public meta structure ProofGuidedTrace (_knowledge : Iykyk.Afaik) where
+  private mk ::
+  trace : TracedDataInstance
+  provenance : Provenance
+  /-- The refined expression represented by the ordinary structural walk. -/
+  computedTerm : Expr
+  computedTrace : TracedDataInstance
+  computedProvenance : Provenance
+  computedEvidence : SelectorEvidence
+  computedChecked : CheckedStructuralTrace computedTrace
+  structuralChecked : CheckedStructuralTrace trace
+  proofsChecked : CheckedProofTrace trace
+  datum : Expr
+  inspection : InspectedValue
+  evidence : SelectorEvidence
+
 private meta def rootWalkAtomIds (root : String) (witnessIds : Array String)
     (data : JsonDataInstance) : Std.HashSet String := Id.run do
   -- Preallocated witnesses used by the root walk belong with the root's other
@@ -493,8 +610,7 @@ private meta def prepareContextObservations (afaik : Iykyk.Afaik) (config : Walk
 private meta def relationalizeAfaikInspectionWithTrace (afaik : Iykyk.Afaik)
     (baseConfig : WalkConfig := {}) (observations : Array Expr := #[])
     (selectedRoot? : Option Expr := none) :
-    MetaM (TracedDataInstance × Provenance × Expr × InspectedValue ×
-      SelectorEvidence) :=
+    MetaM (ProofGuidedTrace afaik) :=
   withoutModifyingEnv do
     let mut config ← contextWalkConfig afaik
       { baseConfig with recordSelectorTerms := true } observations
@@ -513,13 +629,14 @@ private meta def relationalizeAfaikInspectionWithTrace (afaik : Iykyk.Afaik)
             if refinements[variableId]?.any (·.equal value) then continue
           anchors ← walkFact config fact anchors
       config ← prepareContextObservations afaik config (discovery.observationTerms.map (·.1))
-    let (rootId, state) ← StateT.run (s := {}) do
+    let ((rootId, computedState), state) ← StateT.run (s := {}) do
       -- Witnesses first: a witness can occur inside the refined root, and the
       -- walk reuses its atom only when it is already registered.
       let mut anchors ← addWitnesses afaik (!observations.isEmpty)
       let witnessIds := anchors.map (·.2)
       let rootId ← walkExpr config root
       modify fun state => state.rememberSelectorTerm afaik.root rootId
+      let computedState ← get
       unless anchors.any fun (expression, _) => expression.equal root do
         anchors := anchors.push (root, rootId)
       -- Emit root-walk observations before relations introduced by facts.
@@ -536,7 +653,7 @@ private meta def relationalizeAfaikInspectionWithTrace (afaik : Iykyk.Afaik)
           if refinements[variableId]?.any (·.equal value) then continue
         anchors ← walkFact config fact anchors
       addActiveDomainObservations config observations
-      return rootId
+      return (rootId, computedState)
     let state ← labelRefinedLocals (selectedRoot?.getD afaik.root) rootId refinements state
     let facts ← afaik.facts.mapM fun fact => do
       return (← ppExpr (← displayedProposition fact)).pretty
@@ -549,10 +666,54 @@ private meta def relationalizeAfaikInspectionWithTrace (afaik : Iykyk.Afaik)
       terms := state.selectorTerms
       proofs := afaik.facts.map (·.proof) ++
         config.observationResults.toArray.filterMap (·.2.proof?) }
-    let _ ← checkStructuralTrace config trace state.provenance evidence
-    let _ ← checkProofTrace trace evidence
-    return (trace, state.provenance,
-      substituteKnown refinements 8 afaik.root, inspection, evidence)
+    let computedTrace := computedState.toTracedDataInstance
+    unless computedTrace.wellFormedTrace do
+      throwError "spytial: internal error: malformed computed root tuple trace"
+    let computedEvidence : SelectorEvidence := {
+      terms := computedState.selectorTerms
+      proofs := config.observationResults.toArray.filterMap (·.2.proof?) }
+    let datum := substituteKnown refinements 8 afaik.root
+    let computedChecked ←
+      checkStructuralTrace config computedTrace computedState.provenance computedEvidence
+    let structuralChecked ← checkStructuralTrace config trace state.provenance evidence
+    let proofsChecked ← checkProofTrace trace evidence
+    return {
+      trace
+      provenance := state.provenance
+      computedTerm := datum
+      computedTrace
+      computedProvenance := computedState.provenance
+      computedEvidence
+      computedChecked
+      structuralChecked
+      proofsChecked
+      datum
+      inspection
+      evidence }
+
+/-- Run proof-guided inspection while retaining the ordinary structural
+    computation of the refined root as a separate trace. -/
+public meta def relationalizeAfaikWithPhaseTrace (afaik : Iykyk.Afaik)
+    (baseConfig : WalkConfig := {}) (observations : Array Expr := #[]) :
+    MetaM (ProofGuidedTrace afaik) :=
+  relationalizeAfaikInspectionWithTrace afaik baseConfig observations
+
+/-- A proof-guided inspection whose structural value is justified by
+    computation or by a retained, kernel-checked equality. The private
+    constructor prevents a caller from pairing a run with unrelated evidence. -/
+public meta structure CheckedKnownValueInspection (knowledge : Iykyk.Afaik) where
+  private mk ::
+  run : ProofGuidedTrace knowledge
+  source : CheckedValueSource knowledge run.computedTerm
+
+/-- Inspect a proof-known value and retain the checked connection between the
+    selected root and the value used by the structural computation phase. -/
+public meta def inspectKnownValue (knowledge : Iykyk.Afaik)
+    (baseConfig : WalkConfig := {}) (observations : Array Expr := #[]) :
+    MetaM (CheckedKnownValueInspection knowledge) := do
+  let run ← relationalizeAfaikWithPhaseTrace knowledge baseConfig observations
+  let source ← CheckedValueSource.check knowledge run.computedTerm
+  return .mk run source
 
 /-- Translate context knowledge while retaining the exact origin of every
     tuple as well as the evidence consumed by Lean selectors. -/
@@ -560,7 +721,19 @@ public meta def relationalizeAfaikWithTrace (afaik : Iykyk.Afaik)
     (baseConfig : WalkConfig := {}) (observations : Array Expr := #[]) :
     MetaM (TracedDataInstance × Provenance × Expr × InspectedValue ×
       SelectorEvidence) :=
-  relationalizeAfaikInspectionWithTrace afaik baseConfig observations
+  do
+    let result ← relationalizeAfaikWithPhaseTrace afaik baseConfig observations
+    return (result.trace, result.provenance, result.datum, result.inspection, result.evidence)
+
+/-- The established trace API is the checked two-phase run with its internal
+    computation snapshot erased. -/
+theorem relationalizeAfaikWithTrace_eq_phase_erasure (afaik : Iykyk.Afaik)
+    (cfg : WalkConfig := {}) (observations : Array Expr := #[]) :
+    relationalizeAfaikWithTrace afaik cfg observations = do
+      let result ← relationalizeAfaikWithPhaseTrace afaik cfg observations
+      return (result.trace, result.provenance, result.datum, result.inspection,
+        result.evidence) := by
+  rfl
 
 /-- Compatibility projection that erases per-tuple origins. -/
 public meta def relationalizeAfaikWithEvidence (afaik : Iykyk.Afaik)
@@ -760,10 +933,14 @@ public meta def wdykInContext (subject : Expr) (walkConfig : WalkConfig := {})
       let afaik ← if wdykConfig.rootOnly && !(← isProp (← inferType subject)) then
         projectToRepresentation afaik walkConfig observations
       else pure afaik
-      let (trace, prov, datum, inspection, evidence) ←
+      let result ←
         relationalizeAfaikInspectionWithTrace afaik walkConfig observations (some subject)
+      let trace := result.trace
+      let prov := result.provenance
+      let datum := result.datum
+      let evidence := result.evidence
       let data := trace.data
-      let inspection := { inspection with term := (← ppExpr subject).pretty }
+      let inspection := { result.inspection with term := (← ppExpr subject).pretty }
       return ({ truncated := afaik.truncated },
         some { afaik, trace, data, prov, datum, inspection, evidence })
 

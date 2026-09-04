@@ -33,6 +33,117 @@ public structure ProductionEvidenceMeaning {World : Type u}
     meaning.hasType term column.type
   proved_origin_checks : ∀ origin : CheckedProvedOrigin,
     meaning.proofChecks origin.proposition origin.proof
+  computation_root_has_type : ∀ {knowledge computed}
+    (checked : CheckedComputedValue knowledge computed),
+      meaning.hasType knowledge.root checked.type
+  computation_result_has_type : ∀ {knowledge computed}
+    (checked : CheckedComputedValue knowledge computed),
+      meaning.hasType computed checked.type
+  computation_defEq : ∀ {knowledge computed}
+    (_checked : CheckedComputedValue knowledge computed),
+      meaning.defEq.r knowledge.root computed
+  refinement_root_has_type : ∀ {knowledge computed}
+    (checked : CheckedEqualityRefinement knowledge computed),
+      meaning.hasType knowledge.root checked.type
+  refinement_value_has_type : ∀ {knowledge computed}
+    (checked : CheckedEqualityRefinement knowledge computed),
+      meaning.hasType checked.value checked.type
+  refinement_computed_has_type : ∀ {knowledge computed}
+    (checked : CheckedEqualityRefinement knowledge computed),
+      meaning.hasType computed checked.type
+  refinement_proof_checks : ∀ {knowledge computed}
+    (checked : CheckedEqualityRefinement knowledge computed),
+      meaning.proofChecks checked.proposition checked.fact.proof
+  refinement_shape : ∀ {knowledge computed}
+    (checked : CheckedEqualityRefinement knowledge computed),
+      checked.proposition.eq? = some (checked.type, knowledge.root, checked.value) ∨
+        checked.proposition.eq? = some (checked.type, checked.value, knowledge.root)
+  refinement_value_defEq : ∀ {knowledge computed}
+    (checked : CheckedEqualityRefinement knowledge computed),
+      meaning.defEq.r checked.value computed
+
+namespace ProductionEvidenceMeaning
+
+/-- Interpret the production check that the selected root has the common type
+    of the value found by computation or proof. -/
+public theorem root_has_type {World : Type u}
+    {context : Iykyk.Metatheory.Context World}
+    {meaning : LeanExprMeaning World context}
+    (evidence : ProductionEvidenceMeaning meaning)
+    {knowledge : Iykyk.Afaik} {computed : Expr}
+    (source : CheckedValueSource knowledge computed) :
+    meaning.hasType knowledge.root source.type :=
+  match source with
+  | ⟨_, .computation checked⟩ => evidence.computation_root_has_type checked
+  | ⟨_, .proof checked⟩ => evidence.refinement_root_has_type checked
+
+/-- Interpret the production check that the structural phase's expression has
+    the common type of the selected root. -/
+public theorem result_has_type {World : Type u}
+    {context : Iykyk.Metatheory.Context World}
+    {meaning : LeanExprMeaning World context}
+    (evidence : ProductionEvidenceMeaning meaning)
+    {knowledge : Iykyk.Afaik} {computed : Expr}
+    (source : CheckedValueSource knowledge computed) :
+    meaning.hasType computed source.type :=
+  match source with
+  | ⟨_, .computation checked⟩ => evidence.computation_result_has_type checked
+  | ⟨_, .proof checked⟩ => evidence.refinement_computed_has_type checked
+
+/-- A value accepted from either production source denotes the selected root.
+    The computation case uses definitional equality. The proof case uses the
+    checked Lean equality and then definitional equality with the walked term. -/
+public theorem checked_value_denotes_same {World : Type u}
+    {context : Iykyk.Metatheory.Context World}
+    {meaning : LeanExprMeaning World context}
+    (evidence : ProductionEvidenceMeaning meaning)
+    {knowledge : Iykyk.Afaik} {computed : Expr}
+    (source : CheckedValueSource knowledge computed)
+    (world : World) (compatible : context world) :
+    meaning.denote knowledge.root source.type (evidence.root_has_type source)
+        world compatible =
+      meaning.denote computed source.type (evidence.result_has_type source)
+        world compatible := by
+  rcases source with ⟨_, reason⟩
+  cases reason with
+  | computation checked =>
+      exact meaning.denote_defEq
+        (evidence.computation_root_has_type checked)
+        (evidence.computation_result_has_type checked)
+        (meaning.defEq.refl checked.type)
+        (evidence.computation_defEq checked)
+        world compatible
+  | proof refinement =>
+      have propositionHolds := meaning.proofChecks_sound
+        (evidence.refinement_proof_checks refinement) world compatible
+      have rootEqualsValue :
+          meaning.denote knowledge.root refinement.type
+              (evidence.refinement_root_has_type refinement) world compatible =
+            meaning.denote refinement.value refinement.type
+              (evidence.refinement_value_has_type refinement) world compatible := by
+        rcases evidence.refinement_shape refinement with forward | backward
+        · exact meaning.equality_sound forward
+            (evidence.refinement_root_has_type refinement)
+            (evidence.refinement_value_has_type refinement)
+            world compatible propositionHolds
+        · exact (meaning.equality_sound backward
+            (evidence.refinement_value_has_type refinement)
+            (evidence.refinement_root_has_type refinement)
+            world compatible propositionHolds).symm
+      have valueEqualsComputed :
+          meaning.denote refinement.value refinement.type
+              (evidence.refinement_value_has_type refinement) world compatible =
+            meaning.denote computed refinement.type
+              (evidence.refinement_computed_has_type refinement) world compatible :=
+        meaning.denote_defEq
+          (evidence.refinement_value_has_type refinement)
+          (evidence.refinement_computed_has_type refinement)
+          (meaning.defEq.refl refinement.type)
+          (evidence.refinement_value_defEq refinement)
+          world compatible
+      exact rootEqualsValue.trans valueEqualsComputed
+
+end ProductionEvidenceMeaning
 
 /-- Interpret one production-checked column as an expression-backed atom. -/
 public def checkedColumnAtom {World : Type u}

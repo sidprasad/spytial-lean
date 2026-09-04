@@ -121,6 +121,22 @@ private meta def sameStructuralMeanings
       | _ => false do
     throwError "computed tree: expected a column-aligned structural origin"
 
+#eval show Lean.Elab.TermElabM Unit from do
+  let value := node (leaf 1) (leaf 2)
+  let view ← viewOf "consumer.computedValue" value
+  let known ← inspectKnownValue view.afaik
+  match known.source with
+  | ⟨_, .computation _⟩ => pure ()
+  | ⟨_, .proof _⟩ => throwError "consumer.computedValue: expected computation evidence"
+
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `t tree fun t => do
+    let view ← viewOf "consumer.partialValue" t
+    let known ← inspectKnownValue view.afaik
+    match known.source with
+    | ⟨_, .computation _⟩ => pure ()
+    | ⟨_, .proof _⟩ => throwError "consumer.partialValue: expected computation evidence"
+
 private structure OpaqueBox where
   value : Nat
 
@@ -168,9 +184,24 @@ end SecondPredicate
     let structural ← checkedStructuralOrigins view.trace view.prov view.evidence
     unless structural.size == 4 do
       throwError "consumer.refinement: contextual inspection lost computed structure"
+    let known ← inspectKnownValue view.afaik
+    unless known.run.computedTerm.equal value do
+      throwError "consumer.refinement: checked inspection retained the wrong computed value"
+    match known.source with
+    | ⟨_, .proof _⟩ => pure ()
+    | ⟨_, .computation _⟩ =>
+        throwError "consumer.refinement: expected checked proof evidence"
+    let unrelatedValueRejected ← try
+      let _ ← CheckedEqualityRefinement.check view.afaik (leaf 9)
+      pure false
+    catch _ => pure true
+    unless unrelatedValueRejected do
+      throwError "consumer.refinement: equality evidence was paired with an unrelated value"
     let (computedTrace, computedProvenance, computedEvidence) ←
       relationalizeWithTrace value { functionGraphs := true, shareSymbolicValues := true }
     let computed ← checkedStructuralOrigins computedTrace computedProvenance computedEvidence
+    unless sameStructuralMeanings known.run.computedChecked.origins computed do
+      throwError "consumer.refinement: retained computation phase disagrees with a direct walk"
     unless sameStructuralMeanings structural computed do
       throwError "consumer.refinement: proof and computation disagree on structural meaning"
 
