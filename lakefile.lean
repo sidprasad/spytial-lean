@@ -145,7 +145,6 @@ lean_lib SpytialTests where
 /-- The semantic core of relational inspection by computation and proof. -/
 lean_lib SpytialLeanInspectionSemantics where
   srcDir := "metatheory"
-  roots := #[`Relational, `Inspection, `Correctness]
 
 require proofwidgets from
   git "https://github.com/leanprover-community/ProofWidgets4" @ "v0.0.105"

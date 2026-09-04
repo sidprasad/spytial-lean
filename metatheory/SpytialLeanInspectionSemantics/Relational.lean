@@ -92,7 +92,7 @@ public structure Instance {World : Type u} {Ty : Type v}
 namespace Instance
 
 /-- An instance containing one atom and no relational claims. -/
-public def ofAtom {World : Type u} {Ty : Type v}
+@[expose] public def ofAtom {World : Type u} {Ty : Type v}
     {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
     {model : Model World signature} {sort : Ty} (atom : Atom context model sort) :
     Instance context model where
@@ -101,7 +101,7 @@ public def ofAtom {World : Type u} {Ty : Type v}
   tuplesUseAtoms := by simp
 
 /-- An instance containing one tuple and exactly the atoms used by that tuple. -/
-public def ofTuple {World : Type u} {Ty : Type v}
+@[expose] public def ofTuple {World : Type u} {Ty : Type v}
     {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
     {model : Model World signature} (tuple : Tuple signature (Atom context model)) :
     Instance context model where

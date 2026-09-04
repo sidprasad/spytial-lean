@@ -1,6 +1,6 @@
 module
 
-public import Inspection
+public import SpytialLeanInspectionSemantics.Inspection
 
 public section
 
@@ -67,6 +67,10 @@ public theorem Inspection.sound {World : Type u} {Ty : Type v} {KnowledgeRoot : 
 /--
 One existential proof produces one contextual atom. Both projected facts use that same atom, so a
 consumer cannot accidentally draw two unrelated witnesses.
+
+This is a standalone lemma about checked knowledge. No `Inspection` rule introduces a witness
+atom, so the inspection judgment does not yet expose existential witnesses; the lemma records the
+property such a rule would have to preserve.
 -/
 public theorem checked_existential_has_shared_atom
     {World : Type u} {Ty : Type v} {KnowledgeRoot : Type w}
@@ -114,6 +118,10 @@ public theorem proof_reveals_same_structure_as_computation
 /--
 The main result packages the two central guarantees: an inspection result is sound, and the
 structural view is independent of whether computation or proof exposed the value.
+
+Because `ComputesTo` is contextual equality, the agreement conjunct is immediate from
+`proof_reveals_same_structure_as_computation`; the theorem's job is to package it with soundness
+and containment of the computed structure.
 -/
 public theorem proof_aware_inspection_agrees_with_computation
     {World : Type u} {Ty : Type v} {KnowledgeRoot : Type w}

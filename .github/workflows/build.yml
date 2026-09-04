@@ -30,14 +30,13 @@ jobs:
           path: |
             ~/.elan
             .lake/packages
-          key: lake-${{ hashFiles('lean-toolchain') }}-${{ hashFiles('lake-manifest.json') }}
+          key: lake-metatheory-${{ hashFiles('lean-toolchain') }}-${{ hashFiles('lake-manifest.json') }}
 
       - name: Build metatheory
         run: lake build SpytialLeanInspectionSemantics
 
   build:
     name: Build
-    needs: metatheory
     runs-on: ubuntu-latest
     permissions:
       contents: write

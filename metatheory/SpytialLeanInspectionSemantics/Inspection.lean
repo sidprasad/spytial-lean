@@ -1,6 +1,6 @@
 module
 
-public import Relational
+public import SpytialLeanInspectionSemantics.Relational
 
 public section
 
@@ -32,7 +32,15 @@ universe u v w
   fun world => ∀ compatible : context world,
     left world compatible = right world compatible
 
-/-- The semantic result of evaluating an expression far enough to expose a value. -/
+/--
+The semantic result of evaluating an expression far enough to expose a value.
+
+Computation is not modelled here as a reduction relation on syntax. A computed value is simply one
+that denotes the same thing as the expression in every compatible world, so `ComputesTo` is
+`EqualInContext` by definition. Computation and proof therefore differ only in where that equality
+came from: `Resolution.computation` takes it as given, and `Resolution.proof` reads it from a
+checked fact in IYKYK knowledge.
+-/
 public abbrev ComputesTo {World : Type u} {Ty : Type v}
     {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
     {model : Model World signature} {sort : Ty}
@@ -69,6 +77,11 @@ The inspection judgment. It contains only the rules needed by the central claim:
 * inspect structure exposed by computation or proof;
 * report a tuple backed by checked knowledge; and
 * combine independently justified observations.
+
+The judgment records how each reported observation is justified. It does not say that an
+observation is about `expression`: `proved` accepts any tuple whose fact is in `knowledge`, and
+`combine` accepts any two justified instances. Relevance to the selected expression is not
+modelled here.
 -/
 public inductive Inspection {World : Type u} {Ty : Type v} {KnowledgeRoot : Type w}
     {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
@@ -79,6 +92,7 @@ public inductive Inspection {World : Type u} {Ty : Type v} {KnowledgeRoot : Type
   | opaqueTerm : Inspection relationalize knowledge expression (Instance.ofAtom expression)
   | resolved {value} (resolution : Resolution knowledge expression value) :
       Inspection relationalize knowledge expression (relationalize value)
+  /-- Report a tuple backed by checked knowledge. The tuple need not mention `expression`. -/
   | proved {tuple : Tuple signature (Atom context model)}
       (known : tuple.fact ∈ knowledge.facts) :
       Inspection relationalize knowledge expression (Instance.ofTuple tuple)
