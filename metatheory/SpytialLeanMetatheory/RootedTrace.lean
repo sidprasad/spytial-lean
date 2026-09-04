@@ -1,7 +1,6 @@
 module
 
-public import SpytialLeanMetatheory.RelationalInstance
-public meta import SpytialLean.Relationalizer
+public import SpytialLeanMetatheory.ProductionTraceInstance
 
 public section
 
@@ -17,6 +16,8 @@ source-to-child direction.
 namespace SpytialLean.Metatheory
 
 open SpytialLean
+
+universe u
 
 /-- Atom reachability through checked structural origins. Predicate and
     function-graph tuples are deliberately not traversal edges. -/
@@ -67,5 +68,81 @@ public theorem child_reachable (trace : TracedDataInstance)
     (belongs : IsRootStructuralOrigin trace checked root origin) :
     RootReachable trace checked root origin.childAtom :=
   .child origin belongs.1 belongs.2.1 belongs.2.2
+
+/-- The checked structural origins reachable from the inspected root. This is
+    a semantic projection of the existing trace; it does not run the
+    relationalizer again. -/
+@[expose] public noncomputable def rootedStructuralOrigins
+    (trace : TracedDataInstance) (checked : CheckedStructuralTrace trace)
+    (root : String) : List CheckedStructuralOrigin := by
+  classical
+  exact checked.origins.toList.filter fun origin =>
+    decide (IsRootStructuralOrigin trace checked root origin)
+
+/-- Every origin selected for the rooted projection was checked by the
+    production structural checker. -/
+public theorem mem_checked_of_mem_rootedStructuralOrigins
+    (trace : TracedDataInstance) (checked : CheckedStructuralTrace trace)
+    (root : String) (origin : CheckedStructuralOrigin)
+    (present : origin ∈ rootedStructuralOrigins trace checked root) :
+    origin ∈ checked.origins.toList := by
+  classical
+  exact (List.mem_filter.mp present).1
+
+/-- Interpret the actual root-reachable structural origins as typed semantic
+    tuples. Generated JSON atom identifiers remain attached to the expression
+    atoms, but only origins belonging to the selected root are included. -/
+@[expose] public noncomputable def rootedStructuralTuples {World : Type u}
+    {context : Iykyk.Metatheory.Context World}
+    {meaning : LeanExprMeaning World context}
+    {trace : TracedDataInstance} (checked : CheckedStructuralTrace trace)
+    (evidence : ProductionEvidenceMeaning meaning) (root : String) :
+    List (RelationalTuple meaning.signature (LeanExprMeaning.ExprAtom meaning)) :=
+  (rootedStructuralOrigins trace checked root).map fun origin =>
+    structuralOriginTuple evidence origin
+
+/-- Root projection preserves structural soundness: every selected tuple came
+    from a checked structural origin in the production trace. -/
+public theorem rootedStructuralTuples_sound {World : Type u}
+    {context : Iykyk.Metatheory.Context World}
+    {meaning : LeanExprMeaning World context}
+    {trace : TracedDataInstance} (checked : CheckedStructuralTrace trace)
+    (evidence : ProductionEvidenceMeaning meaning) (root : String) :
+    Completes context (meaning.instanceOfTuples
+      (rootedStructuralTuples checked evidence root))
+      (ProductionTupleHolds.ground meaning) := by
+  intro world compatible tuple present
+  obtain ⟨origin, _, rfl⟩ := List.mem_map.mp present
+  exact ProductionTupleHolds.structuralTupleHolds
+    (structuralOriginTuple_realizes evidence origin) world compatible
+
+namespace CheckedCoreTrace
+
+/-- The semantic inspection represented by an actual checked production trace
+    at one selected root. Structural tuples are restricted to the root walk;
+    proof-derived tuples remain available as contextual refinements. -/
+@[expose] public noncomputable def rootedInspection {World : Type u}
+    {context : Iykyk.Metatheory.Context World}
+    {meaning : LeanExprMeaning World context}
+    {trace : TracedDataInstance} (checked : CheckedCoreTrace trace)
+    (evidence : ProductionEvidenceMeaning meaning) (root : String) : Inspection meaning where
+  structuralTuples := rootedStructuralTuples checked.structural evidence root
+  provedTuples := proofTraceTuples checked.proofs evidence
+
+/-- The actual rooted inspection is sound in the same production semantics as
+    the complete checked trace. -/
+public theorem rootedInspection_sound {World : Type u}
+    {context : Iykyk.Metatheory.Context World}
+    {meaning : LeanExprMeaning World context}
+    {trace : TracedDataInstance} (checked : CheckedCoreTrace trace)
+    (evidence : ProductionEvidenceMeaning meaning) (root : String) :
+    Completes context (checked.rootedInspection evidence root).data
+      (ProductionTupleHolds.ground meaning) :=
+  (checked.rootedInspection evidence root).sound
+    (ProductionTupleHolds.ground meaning)
+    (rootedStructuralTuples_sound checked.structural evidence root)
+    (proofTraceTuples_sound checked.proofs evidence)
+
+end CheckedCoreTrace
 
 end SpytialLean.Metatheory

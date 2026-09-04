@@ -339,8 +339,8 @@ public abbrev StructurallyAgrees {World : Type u} {SemanticType : Type v}
 
 /-- Two independently produced instances agree when each is isomorphic to
     the same reference structure. This algebraic helper does not prove that
-    either producer realizes the reference; the computation/proof bridge must
-    establish those producer-specific facts. -/
+    either producer realizes the reference; a producer-specific theorem must
+    establish those facts. -/
 public theorem structurallyAgrees_of_common_reference {World : Type u}
     {SemanticType : Type v} {context : Iykyk.Metatheory.Context World}
     {signature : RelationalSignature SemanticType} {Carrier : SemanticType → Type w}

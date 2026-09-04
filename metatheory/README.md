@@ -120,8 +120,9 @@ The following comparisons are useful:
 
 - `rootStruct(D)` keeps the direct constructor-field and projection tuples
   belonging to the inspected root;
-- `D1 <= D2` means that every tuple in `D1` is represented in `D2` by a typed,
-  denotation-preserving atom map; and
+- `D1 <= D2` means that every tuple in `D1` occurs in `D2` after one
+  consistent renaming of generated atom identifiers. It does not require an
+  inverse renaming; and
 - `D1 ~= D2` means that the two instances have the same typed relational
   structure after renaming generated atom identifiers and reordering tuples.
 
@@ -129,7 +130,7 @@ These are the relations used below.
 
 ## The main theorems
 
-The formalization now proves four headline results. Each semantic theorem is
+The formalization now proves three headline results. Each semantic theorem is
 parametric in an interpretation of Lean expressions. That interpretation is
 the trust boundary for Lean typing, definitional equality, proof checking, and
 the meaning of Lean's `Eq` proposition.
@@ -154,58 +155,36 @@ from its caller.
 This result is important for partial programs and proof-constrained values:
 inspection may omit information, but it must not invent information.
 
-### 2. Inspection agrees with ordinary relationalization on values
-
-```text
-the root walk selects every ordinary atom and tuple
-atom names may differ but decode to the same typed atoms
---------------------------------------------------------
-rootStruct(inspect(empty, v)) ~= relationalize(v)
-```
-
-`computed_value_agreement` proves this conservativity result. The atom map is
-not required to be the identity, so independently generated identifiers may
-differ.
-
-### 3. Proof refinement agrees with computation
-
-The partial form is:
+### 2. Relational inspection is independent of the source of knowledge
 
 ```text
 Gamma proves e = v
-the equality is an actual retained Afaik fact
-the root walk selects a structurally closed part of relationalize(v)
-inspection atom names decode back to their typed computed atoms
------------------------------------------------------------------
+the rooted inspection reports every supported computed atom and tuple
+---------------------------------------------------------------------
+             rootStruct(inspect(Gamma, e)) ~= relationalize(v)
+```
+
+This is the main result, `RelationalInspection.knowledge_source_independence`.
+The inspected and computed instances come from actual checked production
+traces. The retained `Afaik` equality proves that the inspected root and the
+computed term denote the same value. A two-way correspondence between their
+checked structural tuples then proves that their typed relational structures
+are isomorphic. Generated atom identifiers and tuple order may differ.
+
+The partial result is:
+
+```text
+Gamma proves e = v
+the root walk may stop before reporting every computed tuple
+-------------------------------------------------------------
 rootStruct(inspect(Gamma, e)) <= relationalize(v)
 ```
 
-Even if inspection stops early, every reported structural tuple agrees with
-the computed value.
-
-`ProductionRefinement.partial_bridge` proves this statement. The equality may
-be written as either `e = v` or `v = e`, matching the production refinement
-finder.
-
-The complete form adds field coverage:
-
-```text
-Gamma proves e = v
-the equality is an actual retained Afaik fact
-every ordinary atom and structural tuple is selected
-inspection atom names decode back to their typed computed atoms
-----------------------------------------------------------------
-rootStruct(inspect(Gamma, e)) ~= relationalize(v)
-```
-
-`ProductionRefinement.full_bridge` proves this computation/proof bridge. It
-constructs both directions of the typed atom map, proves that denotations are
-preserved, proves tuple preservation, and proves the two maps are inverse on
-the active atoms. `ProductionRefinement.full_inspect_bridge` packages this
-agreement together with denotational equality and soundness of the inspected
-root tuples. Its checked structural certificate proves relationalization
-soundness; `full_inspect_bridge` no longer accepts that conclusion as a
-premise.
+`RelationalInspection.agrees_with_computation` proves this one-way result. It
+says that inspection agrees with computation on everything that inspection
+reports. It does not say that every computed tuple was reported, or that two
+different inspection atoms remain different after their identifiers are
+renamed.
 
 The theorem compares `rootStruct(inspect(Gamma, e))`, not the full contextual
 instance. The context may legitimately add predicates and relationships that
@@ -217,7 +196,7 @@ Two supporting results remain important:
   their shared witness; and
 - deleting tuples or stopping after a justified prefix preserves soundness.
 
-### 4. Semantic relations project to Spytial relations by name
+### 3. Semantic relations project to Spytial relations by name
 
 The semantic layer keeps the full Lean relation head and hidden parameters.
 The display layer intentionally keeps only the short relation name:
@@ -260,8 +239,9 @@ reconstruct the original Lean head from JSON.
 
 An unrestricted `SpytialIdentity` classifier may intentionally merge different
 values for presentation. That merge can be useful in a diagram, but it is not
-covered by the bridge. `AtomRenaming.decode_encode` states the exact supported
-condition: two ordinary semantic atoms cannot collapse to one inspected atom.
+covered by the comparison theorem. `RelationalInspection.CompleteCoverage`
+states the exact supported condition: computation has no additional tuple and
+the identifier renamings are inverse on the active atoms of both results.
 
 Bounded observations, tabulated functions, synthetic representation edges,
 and custom relationalizers require separate soundness conditions. They should
@@ -326,11 +306,14 @@ this way is an actual tuple in the erased production instance. Structure found
 while processing an unrelated fact is excluded unless it is structurally
 reachable from the selected root.
 
-At the semantic level, a `StructuralSelection` keeps the corresponding typed
-atoms and tuples. `AtomRenaming` records how the inspection identifiers decode
-to the atoms of ordinary relationalization. Interpreting the rooted production
-trace supplies these two objects. The production walker does not manufacture a
-second certificate or run a second relationalizer.
+At the semantic level, `rootedStructuralTuples` interprets the reachable
+origins directly. `RelationalInspection.ReportedStructure` records a concrete
+renaming of generated atom identifiers and checks that every reported tuple
+occurs in the computed trace after that renaming. `CompleteCoverage` adds the
+reverse direction and requires the two renamings to be inverse on active atoms.
+The semantic homomorphism and isomorphism are derived from these syntactic
+facts; they are not fields of the production correspondence. The public walker
+does not run a second relationalizer.
 
 The actual Lean expressions matter. JSON names such as `lt` are not unique
 relation symbols. JSON type labels also do not account for definitional
@@ -354,8 +337,9 @@ parameters, terms, and Lean type expressions.
 - **Meaning of Lean expressions.**
   [LeanExprMeaning.lean](SpytialLeanMetatheory/LeanExprMeaning.lean) defines the
   interpretation boundary for actual Lean terms, types, definitional equality,
-  proof checking, and Lean equality. The bridge derives equality of denotations
-  from one checked `Eq` fact; individual bridge calls do not assume that result.
+  proof checking, and Lean equality. The knowledge-source theorem derives
+  equality of denotations from one checked `Eq` fact; individual theorem calls
+  do not assume that result.
 
 - **Production relation meaning.**
   [ProductionRelationSemantics.lean](SpytialLeanMetatheory/ProductionRelationSemantics.lean)
@@ -409,15 +393,17 @@ parameters, terms, and Lean type expressions.
 
 - **Computation/proof agreement.**
   [InspectionAgreement.lean](SpytialLeanMetatheory/InspectionAgreement.lean)
-  proves conservativity for computed values, the partial equality-refinement
-  embedding, and the complete isomorphism theorem. The final theorem obtains
-  relationalization soundness from a checked structural certificate instead
-  of taking it as a premise. Its `ProductionRefinement` contains an actual fact
-  from the production `Afaik` result.
+  proves `RelationalInspection.agrees_with_computation` for partial results and
+  `RelationalInspection.knowledge_source_independence` for complete results.
+  The latter is the paper-facing theorem: a value has the same root relational
+  structure whether Lean obtains it by computation or by a checked equality.
+  Its `ProductionRefinement` contains an actual fact from the production
+  `Afaik` result.
 
 - **Root extraction from the real trace.**
   [RootedTrace.lean](SpytialLeanMetatheory/RootedTrace.lean) defines reachability
-  through checked structural origins and proves that the root slice contains
+  through checked structural origins, constructs the typed semantic inspection
+  of that root, and proves it sound. It also proves that the root slice contains
   no tuple absent from the production output.
 
 - **Shared witnesses.**
@@ -463,7 +449,7 @@ soundness of the extracted facts.
 
 Spytial Lean combines computation and IYKYK facts into relational data. It
 owns proposition decoding, constructor walking, tuple origins, atom sharing,
-and the computation/proof bridge.
+and agreement between computation-guided and proof-guided inspection.
 
 Spytial consumes the relational instance. It owns the spatial specification,
 diagram refinement, layout, and rendering.

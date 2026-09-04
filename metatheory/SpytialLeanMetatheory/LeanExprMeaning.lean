@@ -123,7 +123,7 @@ public structure ExprAtom {World : Type u}
 namespace ExprAtom
 
 /-- Interpret an expression-backed atom at its indexed semantic type. -/
-public def denote {World : Type u}
+@[expose] public def denote {World : Type u}
     {context : Iykyk.Metatheory.Context World}
     {meaning : LeanExprMeaning World context} {type : meaning.TypeCode}
     (atom : ExprAtom meaning type) (world : World) (compatible : context world) :
