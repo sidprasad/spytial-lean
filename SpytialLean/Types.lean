@@ -33,12 +33,64 @@ public structure JsonDataInstance where
   relations : Array JsonRelation
   deriving ToJson, FromJson, Inhabited
 
+/-- Opaque evidence that Lean accepted `term` at `type`. The token has no safe
+    constructor. Production checkers mint it only after asking Lean's
+    elaborator, and semantic models state what such a successful check means. -/
+public opaque CheckedHasType (_term _type : Expr) : Type
+
+private meta unsafe def checkedHasTypeTokenImpl (term type : Expr) :
+    Option (CheckedHasType term type) :=
+  some (unsafeCast ())
+
+@[implemented_by checkedHasTypeTokenImpl]
+private meta opaque checkedHasTypeToken? (term type : Expr) :
+  Option (CheckedHasType term type)
+
+namespace CheckedHasType
+
+/-- Ask Lean to check that `term` has `type`, returning an opaque token only
+    after the check succeeds. -/
+public meta def check (term type : Expr) : MetaM (CheckedHasType term type) := do
+  let inferred ← Meta.inferType term
+  unless ← Meta.isDefEq inferred type do
+    throwError "spytial: a term does not have its claimed type"
+  let some token := checkedHasTypeToken? term type
+    | throwError "spytial: checked-type token is unavailable"
+  return token
+
+end CheckedHasType
+
+/-- Opaque evidence that Lean accepted two expressions as definitionally
+    equal. It is produced only by `CheckedDefEq.check`. -/
+public opaque CheckedDefEq (_left _right : Expr) : Type
+
+private meta unsafe def checkedDefEqTokenImpl (left right : Expr) :
+    Option (CheckedDefEq left right) :=
+  some (unsafeCast ())
+
+@[implemented_by checkedDefEqTokenImpl]
+private meta opaque checkedDefEqToken? (left right : Expr) :
+  Option (CheckedDefEq left right)
+
+namespace CheckedDefEq
+
+/-- Ask Lean to check definitional equality and retain the successful check. -/
+public meta def check (left right : Expr) : MetaM (CheckedDefEq left right) := do
+  unless ← Meta.isDefEq left right do
+    throwError "spytial: expressions are not definitionally equal"
+  let some token := checkedDefEqToken? left right
+    | throwError "spytial: checked-definitional-equality token is unavailable"
+  return token
+
+end CheckedDefEq
+
 /-- Evidence returned after Lean has inferred the type of one tuple column.
-    The private constructor keeps unchecked expressions out of production
-    semantic traces. -/
+    Its opaque token, rather than constructor privacy, keeps unchecked
+    expressions out of production semantic traces. -/
 public structure CheckedColumn (term : Expr) (_atom : String) where
   private mk ::
   type : Expr
+  hasType : CheckedHasType term type
 
 /-- Column evidence indexed by the exact term and atom-ID lists that it checks. -/
 public inductive CheckedColumns : List Expr → List String → Type where
@@ -61,8 +113,9 @@ public meta def check : (terms : List Expr) → (atoms : List String) →
   | [], [] => pure (some .nil)
   | term :: terms, _atom :: atoms => do
       let type ← Meta.inferType term
+      let hasType ← CheckedHasType.check term type
       let some tail ← check terms atoms | return none
-      return some (.cons (.mk type) tail)
+      return some (.cons (.mk type hasType) tail)
   | _, _ => pure none
 
 end CheckedColumns

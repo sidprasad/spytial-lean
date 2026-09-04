@@ -1802,9 +1802,24 @@ public inductive CheckedStructuralKind where
   /-- A named structure projection whose result is definitionally equal to the child. -/
   | projection (field : Name) (application : Expr)
 
+/-- Opaque evidence that the production classifier recognized `source` and
+    `child` as the stated constructor field or structure projection. -/
+public opaque CheckedStructuralShape (_relation : String)
+    (_kind : CheckedStructuralKind) (_source _child : Expr) (_terms : Array Expr) : Type
+
+private meta unsafe def checkedStructuralShapeTokenImpl (relation : String)
+    (kind : CheckedStructuralKind) (source child : Expr) (terms : Array Expr) :
+    Option (CheckedStructuralShape relation kind source child terms) :=
+  some (unsafeCast ())
+
+@[implemented_by checkedStructuralShapeTokenImpl]
+private meta opaque checkedStructuralShapeToken? (relation : String)
+    (kind : CheckedStructuralKind) (source child : Expr) (terms : Array Expr) :
+    Option (CheckedStructuralShape relation kind source child terms)
+
 /-- A checked constructor-field or structure-projection origin from the real
-    computed-value trace. The constructor is private so these values can only
-    be obtained through `checkedStructuralOrigins`. -/
+    computed-value trace. Its columns and structural classification contain
+    opaque evidence indexed by the exact expressions that were checked. -/
 public structure CheckedStructuralOrigin where
   private mk ::
   emission : TupleEmission
@@ -1815,8 +1830,19 @@ public structure CheckedStructuralOrigin where
   kind : CheckedStructuralKind
   source : Expr
   child : Expr
+  shape : CheckedStructuralShape relation kind source child terms
   sourceAtom : String
   childAtom : String
+
+namespace CheckedStructuralOrigin
+
+/-- The Lean relation head distinguished by this structural origin. -/
+@[expose] public def head (origin : CheckedStructuralOrigin) : Expr :=
+  match origin.kind with
+  | .constructorField _ _ => origin.source.getAppFn
+  | .projection _ application => application.getAppFn
+
+end CheckedStructuralOrigin
 
 private meta def termNamesAtom (provenance : Provenance) (evidence : SelectorEvidence)
     (term : Expr) (atom : String) : Bool :=
@@ -1858,6 +1884,8 @@ private meta def checkStructuralEmission (provenance : Provenance)
       let some columns ← CheckedColumns.check terms.toList emission.tuple.atoms.toList
         | throwError "spytial: a structural origin is not aligned with its tuple columns"
       let (kind, source, child) ← classifyStructuralOrigin emission terms
+      let some shape := checkedStructuralShapeToken? emission.relation kind source child terms
+        | throwError "spytial: checked-structural-shape token is unavailable"
       let sourceAtom := emission.tuple.atoms[0]!
       let childAtom := emission.tuple.atoms[1]!
       unless termNamesAtom provenance evidence source sourceAtom do
@@ -1876,6 +1904,7 @@ private meta def checkStructuralEmission (provenance : Provenance)
         kind
         source
         child
+        shape
         sourceAtom
         childAtom }
   | _ => return none
@@ -1919,10 +1948,8 @@ public meta def validateFirstOrderConstructorCoverage (cfg : WalkConfig)
               | .projection .. => false do
         throwError "spytial: a represented constructor field has no structural tuple"
 
-/-- The result of checking both the meaning-independent shape of every direct
-    structural origin and first-order constructor-field coverage. Its private
-    constructor prevents callers from marking an unchecked origin list as a
-    checked production trace. -/
+/-- The origins returned after checking both the meaning-independent shape of
+    every direct structural origin and first-order constructor-field coverage. -/
 public structure CheckedStructuralTrace (trace : TracedDataInstance) where
   private mk ::
   origins : Array CheckedStructuralOrigin

@@ -109,13 +109,14 @@ public theorem adequate {World : Type u}
       (signature := meaning.signature)
       (Entry := (meaning.instanceOfTuples tuples).Atom)}
     {checked : CheckedStructuralTrace trace}
-    (certificate : ComputedStructuralCertificate meaning trace tuples required checked) :
+    (certificate : ComputedStructuralCertificate meaning trace tuples required checked)
+    (evidence : ProductionEvidenceMeaning meaning) :
     Completes context (meaning.instanceOfTuples tuples)
       (ProductionTupleHolds.ground meaning) := by
   intro world compatible tuple present
   obtain ⟨origin, originMem, emissionMem, represented⟩ :=
     certificate.output_has_checked_origin tuple present
-  exact ProductionTupleHolds.structuralTupleHolds
+  exact ProductionTupleHolds.structuralTupleHolds evidence
     (certificate.tuple_realization origin originMem emissionMem tuple represented)
     world compatible
 
@@ -151,11 +152,12 @@ public theorem adequate_and_structurallyComplete {World : Type u}
       (signature := meaning.signature)
       (Entry := (meaning.instanceOfTuples tuples).Atom)}
     {checked : CheckedStructuralTrace trace}
-    (certificate : ComputedStructuralCertificate meaning trace tuples required checked) :
+    (certificate : ComputedStructuralCertificate meaning trace tuples required checked)
+    (evidence : ProductionEvidenceMeaning meaning) :
     Completes context (meaning.instanceOfTuples tuples)
         (ProductionTupleHolds.ground meaning) ∧
       StructurallyComplete (meaning.instanceOfTuples tuples) required :=
-  ⟨certificate.adequate, certificate.structurallyComplete⟩
+  ⟨certificate.adequate evidence, certificate.structurallyComplete⟩
 
 end ComputedStructuralCertificate
 

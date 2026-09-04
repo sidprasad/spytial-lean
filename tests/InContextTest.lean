@@ -1,6 +1,7 @@
 module
 
 meta import SpytialLean.InContext
+meta import SpytialLean.StructuralCorrespondence
 meta import WalkCanon
 
 open SpytialLean Lean Meta
@@ -104,6 +105,7 @@ private meta def sameStructuralMeanings
   unless trace.wellFormedTrace do
     throwError "computed tree: malformed production trace"
   let checked ← checkedStructuralOrigins trace provenance evidence
+  let checkedTrace ← checkStructuralTrace {} trace provenance evidence
   unless checked.size == 4 && checked.all fun origin =>
       match origin.kind with
       | .constructorField .. => true
@@ -120,20 +122,29 @@ private meta def sameStructuralMeanings
       | .structural terms => terms.size == emission.tuple.atoms.size
       | _ => false do
     throwError "computed tree: expected a column-aligned structural origin"
+  let (otherTrace, otherProvenance, otherEvidence) ←
+    relationalizeWithTrace (node (leaf 1) (leaf 3))
+  let other ← checkStructuralTrace {} otherTrace otherProvenance otherEvidence
+  let mismatchRejected ← try
+    let _ ← CheckedStructuralIso.check checkedTrace other
+    pure false
+  catch _ => pure true
+  unless mismatchRejected do
+    throwError "computed tree: structural correspondence accepted a different value"
 
 #eval show Lean.Elab.TermElabM Unit from do
   let value := node (leaf 1) (leaf 2)
   let view ← viewOf "consumer.computedValue" value
-  let known ← inspectKnownValue view.afaik
-  match known.source with
+  let compared ← CheckedFreshRelationalization.inspect view.afaik
+  match compared.inspection.source with
   | ⟨_, .computation _⟩ => pure ()
   | ⟨_, .proof _⟩ => throwError "consumer.computedValue: expected computation evidence"
 
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `t tree fun t => do
     let view ← viewOf "consumer.partialValue" t
-    let known ← inspectKnownValue view.afaik
-    match known.source with
+    let compared ← CheckedFreshRelationalization.inspect view.afaik
+    match compared.inspection.source with
     | ⟨_, .computation _⟩ => pure ()
     | ⟨_, .proof _⟩ => throwError "consumer.partialValue: expected computation evidence"
 
@@ -151,6 +162,8 @@ private opaque opaqueBox : OpaqueBox := ⟨1⟩
       | .constructorField .. => false do
     throwError "opaque structure: expected one checked projection origin; got \
       {checked.size} checked origins from {trace.emissions.size} emissions"
+  let view ← viewOf "consumer.opaqueBoxCorrespondence" (mkConst ``opaqueBox)
+  let _ ← CheckedFreshRelationalization.inspect view.afaik
 
 namespace FirstPredicate
 
@@ -184,7 +197,8 @@ end SecondPredicate
     let structural ← checkedStructuralOrigins view.trace view.prov view.evidence
     unless structural.size == 4 do
       throwError "consumer.refinement: contextual inspection lost computed structure"
-    let known ← inspectKnownValue view.afaik
+    let compared ← CheckedFreshRelationalization.inspect view.afaik
+    let known := compared.inspection
     unless known.run.computedTerm.equal value do
       throwError "consumer.refinement: checked inspection retained the wrong computed value"
     match known.source with

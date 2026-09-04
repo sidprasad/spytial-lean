@@ -87,10 +87,11 @@ public theorem production_sound {World : Type u} {Root : Type v}
     (structural : ComputedStructuralCertificate meaning trace
       inspection.structuralTuples required checkedStructure)
     (proofs : ProductionProofRealization meaning knowledge
-      inspection.provedTuples trace checkedProofs) :
+      inspection.provedTuples trace checkedProofs)
+    (evidence : ProductionEvidenceMeaning meaning) :
     Completes context inspection.data (ProductionTupleHolds.ground meaning) :=
-  inspection.sound (ProductionTupleHolds.ground meaning) structural.adequate
-    proofs.sound
+  inspection.sound (ProductionTupleHolds.ground meaning) (structural.adequate evidence)
+    (proofs.sound evidence)
 
 end Inspection
 

@@ -1,13 +1,12 @@
 module
 
 public import SpytialLeanMetatheory.ProductionTraceInstance
-public import SpytialLeanMetatheory.SemanticIsomorphism
-public meta import SpytialLean.InContext
+public import SpytialLeanMetatheory.FreshStructuralCorrespondence
 
 public section
 
 /-!
-# Agreement between proof-guided inspection and computation
+# Agreement between proof-guided inspection and fresh relationalization
 
 An equality retained by IYKYK can expose a value that computation alone cannot
 obtain from the selected term. The production inspector passes that value to
@@ -18,32 +17,29 @@ of the knowledge does not change the resulting structural interface.
 
 namespace SpytialLean.Metatheory
 
-open Lean
+open Lean SpytialLean
 
-universe u v w x y
-
-/-- Two relational descriptions have the same typed structure when they are
-    isomorphic after generated atom names and tuple order are ignored. -/
-public abbrev SameRelationalStructure {World : Type u} {SemanticType : Type v}
-    {context : Iykyk.Metatheory.Context World}
-    {signature : RelationalSignature SemanticType} {Carrier : SemanticType → Type w}
-    (left : SemanticInstance.{u, v, w, x} context signature Carrier)
-    (right : SemanticInstance.{u, v, w, y} context signature Carrier) : Prop :=
-  StructurallyAgrees left right
+universe u v
 
 namespace RelationalInspection
 
 /-- The semantic interpretation of one checked production inspection. The
-    only run-specific evidence is the opaque result of `inspectKnownValue`;
-    typing, proof checking, and definitional equality are interpreted once by
-    `ProductionEvidenceMeaning`. -/
+    fresh field is produced by rerunning the actual ordinary relationalizer
+    on the value retained by `inspectKnownValue`. -/
 public structure KnownValue {World : Type u}
     {context : Iykyk.Metatheory.Context World}
     (meaning : LeanExprMeaning.{u, v} World context) (knowledge : Iykyk.Afaik) where
-  checked : SpytialLean.CheckedKnownValueInspection knowledge
+  production : CheckedFreshRelationalization knowledge
   evidence : ProductionEvidenceMeaning meaning
 
 namespace KnownValue
+
+/-- The checked proof-guided phase of the paired production run. -/
+public abbrev checked {World : Type u}
+    {context : Iykyk.Metatheory.Context World}
+    {meaning : LeanExprMeaning.{u, v} World context} {knowledge : Iykyk.Afaik}
+    (known : KnownValue meaning knowledge) : CheckedKnownValueInspection knowledge :=
+  known.production.inspection
 
 /-- Whether this inspection obtained its structural value by computation or proof. -/
 public abbrev source {World : Type u}
@@ -82,24 +78,6 @@ public abbrev source {World : Type u}
     structuralTraceTuples known.checked.run.structuralChecked known.evidence
   provedTuples := proofTraceTuples known.checked.run.proofsChecked known.evidence
 
-/-- The root structure produced before the inspector adds contextual facts. -/
-@[expose] public noncomputable def rootStructure {World : Type u}
-    {context : Iykyk.Metatheory.Context World}
-    {meaning : LeanExprMeaning.{u, v} World context} {knowledge : Iykyk.Afaik}
-    (known : KnownValue meaning knowledge) :
-    SemanticInstance context meaning.signature meaning.Carrier :=
-  meaning.instanceOfTuples
-    (structuralTraceTuples known.checked.run.computedChecked known.evidence)
-
-/-- Ordinary semantic relationalization reconstructed from the actual checked
-    computation phase retained by the production inspector. -/
-@[expose] public noncomputable def computation {World : Type u}
-    {context : Iykyk.Metatheory.Context World}
-    {meaning : LeanExprMeaning.{u, v} World context} {knowledge : Iykyk.Afaik}
-    (known : KnownValue meaning knowledge) :
-    SemanticInstance context meaning.signature meaning.Carrier :=
-  known.rootStructure
-
 /-- Computation or a retained equality identifies the inspected root with the
     expression represented by the production structural walk. -/
 public theorem denotes_same_value {World : Type u}
@@ -126,8 +104,8 @@ public theorem sound {World : Type u}
 end KnownValue
 
 /-- The semantic content of knowledge-source independence. Computation or a
-    checked equality identifies the two roots as values, while the relational
-    isomorphism identifies the structure reported by the common root walk. -/
+    checked equality identifies the two roots as values, while a checked
+    two-way correspondence relates the retained and fresh structural walks. -/
 public structure KnowledgeSourceIndependent {World : Type u}
     {context : Iykyk.Metatheory.Context World}
     {meaning : LeanExprMeaning.{u, v} World context} {knowledge : Iykyk.Afaik}
@@ -135,34 +113,40 @@ public structure KnowledgeSourceIndependent {World : Type u}
   same_value : ∀ world (compatible : context world),
     known.rootTerm.denote world compatible =
       known.computedTerm.denote world compatible
-  same_structure : SameRelationalStructure known.rootStructure known.computation
+  root_structure_retained : RootStructureRetained meaning
+    known.checked.run.computedChecked known.checked.run.structuralChecked
+  same_structure : SameProductionStructure meaning known.checked.run.computedChecked
+    known.production.checked
 
-/-- **Knowledge-source independence.** Whether Lean obtains the walked value
-    by computation or by a retained equality, the inspected term and computed
-    expression denote the same value, and proof-guided inspection has exactly
-    that computed root structure. This holds for the finite result actually
-    produced; it does not require an unbounded walk. -/
+/-- Whether Lean obtains the walked value by computation or by a retained
+    equality, a fresh ordinary relationalization has the same typed relational
+    structure as the root phase of proof-guided inspection. -/
 public theorem knowledge_source_independence {World : Type u}
     {context : Iykyk.Metatheory.Context World}
     {meaning : LeanExprMeaning.{u, v} World context} {knowledge : Iykyk.Afaik}
     (known : KnownValue meaning knowledge) :
     KnowledgeSourceIndependent known where
   same_value := known.denotes_same_value
-  same_structure := by
-    exact ⟨SemanticIso.refl known.rootStructure⟩
+  root_structure_retained := inspection_retains_root_structure
+    known.production known.evidence
+  same_structure := fresh_relationalization_agrees_with_inspection_root
+    known.production known.evidence
 
-/-- **Proof-guided inspection agrees with computation.** The actual checked
-    result returned by `inspectKnownValue` has the same root value and the same
-    finite structural relational instance as its retained computation phase.
-    Proof-derived tuples may add facts, but they do not replace that common
-    structural interface. -/
-public theorem proof_guided_inspection_agrees_with_computation {World : Type u}
+/-- **Proof-guided inspection agrees with fresh relationalization.** For every
+    checked inspection and every successful fresh production rerun, Lean
+    identifies the selected root with the walked value, retains that root
+    structure in the completed inspection, and proves that a fresh structural
+    trace has the same relation heads, rules, typed terms, and graph
+    connectivity up to fresh atom names. -/
+public theorem proof_guided_inspection_agrees_with_fresh_relationalization
+    {World : Type u}
     {context : Iykyk.Metatheory.Context World}
     {meaning : LeanExprMeaning.{u, v} World context} {knowledge : Iykyk.Afaik}
-    (checked : SpytialLean.CheckedKnownValueInspection knowledge)
+    (production : CheckedFreshRelationalization knowledge)
     (evidence : ProductionEvidenceMeaning meaning) :
-    KnowledgeSourceIndependent ({ checked, evidence } : KnownValue meaning knowledge) :=
-  knowledge_source_independence { checked, evidence }
+    KnowledgeSourceIndependent
+      ({ production, evidence } : KnownValue meaning knowledge) :=
+  knowledge_source_independence { production, evidence }
 
 end RelationalInspection
 

@@ -44,6 +44,24 @@ public structure PropositionTupleShape where
   parameters : Array Expr
   arguments : Array Expr
 
+/-- Opaque evidence that the production proposition decoder returned the
+    stated relation description and column terms. -/
+public opaque CheckedPropositionShape (_proposition : Expr)
+    (_kind : PropositionTupleKind) (_relation : String) (_head : Expr)
+    (_parameters _arguments : Array Expr) : Type
+
+private meta unsafe def checkedPropositionShapeTokenImpl (proposition : Expr)
+    (kind : PropositionTupleKind) (relation : String) (head : Expr)
+    (parameters arguments : Array Expr) :
+    Option (CheckedPropositionShape proposition kind relation head parameters arguments) :=
+  some (unsafeCast ())
+
+@[implemented_by checkedPropositionShapeTokenImpl]
+private meta opaque checkedPropositionShapeToken? (proposition : Expr)
+    (kind : PropositionTupleKind) (relation : String) (head : Expr)
+    (parameters arguments : Array Expr) :
+    Option (CheckedPropositionShape proposition kind relation head parameters arguments)
+
 private meta def relationParametersOf (application : Expr) : MetaM (Array Expr) := do
   let arguments := application.getAppArgs
   let dataIndexes ← dataArgumentIndexesOf application
@@ -217,11 +235,45 @@ private meta def contextArgument (cfg : WalkConfig) (argument : Expr) :
 private meta def displayedProposition (fact : Iykyk.KnownFact) : MetaM Expr :=
   do instantiateMVars (← inferType fact.proof)
 
+/-- Opaque evidence that Lean's kernel accepted `proof` at `proposition`.
+    Production code can obtain it only after `Iykyk.checkEvidence` succeeds. -/
+public opaque CheckedProof (_proposition _proof : Expr) : Type
+
+private meta unsafe def checkedProofTokenImpl (proposition proof : Expr) :
+    Option (CheckedProof proposition proof) :=
+  some (unsafeCast ())
+
+@[implemented_by checkedProofTokenImpl]
+private meta opaque checkedProofToken? (proposition proof : Expr) :
+  Option (CheckedProof proposition proof)
+
+namespace CheckedProof
+
+/-- Recheck a Lean proof and retain the successful kernel check. -/
+public meta def check (proposition proof : Expr) : MetaM (CheckedProof proposition proof) := do
+  Iykyk.checkEvidence proposition proof
+  let some token := checkedProofToken? proposition proof
+    | throwError "spytial: checked-proof token is unavailable"
+  return token
+
+end CheckedProof
+
+/-- Opaque evidence that an actual Lean equality has the stated type, root,
+    and value, in either orientation. -/
+public opaque CheckedEqualityShape (_proposition _type _root _value : Expr) : Type
+
+private meta unsafe def checkedEqualityShapeTokenImpl (proposition type root value : Expr) :
+    Option (CheckedEqualityShape proposition type root value) :=
+  some (unsafeCast ())
+
+@[implemented_by checkedEqualityShapeTokenImpl]
+private meta opaque checkedEqualityShapeToken? (proposition type root value : Expr) :
+  Option (CheckedEqualityShape proposition type root value)
+
 /-- An equality retained by IYKYK and checked against the refined expression
-    represented by the computation phase of proof-guided inspection. The constructor
-    is private; `CheckedEqualityRefinement.check` checks the proof, equality
-    shape, term types, and definitional equality of the retained value and
-    computed expression. -/
+    represented by the computation phase of proof-guided inspection. Its
+    fields contain opaque evidence for the proof, equality shape, term types,
+    and definitional equality of the retained value and computed expression. -/
 public structure CheckedEqualityRefinement (knowledge : Iykyk.Afaik)
     (_computed : Expr) where
   private mk ::
@@ -229,6 +281,12 @@ public structure CheckedEqualityRefinement (knowledge : Iykyk.Afaik)
   proposition : Expr
   type : Expr
   value : Expr
+  rootHasType : CheckedHasType knowledge.root type
+  valueHasType : CheckedHasType value type
+  computedHasType : CheckedHasType _computed type
+  proofChecked : CheckedProof proposition knowledge.facts[factIndex].proof
+  equalityShape : CheckedEqualityShape proposition type knowledge.root value
+  valueEqualsComputed : CheckedDefEq value _computed
 
 namespace CheckedEqualityRefinement
 
@@ -253,8 +311,16 @@ private meta partial def find? (knowledge : Iykyk.Afaik) (computed : Expr)
         let computedType ← inferType computed
         if (← isDefEq rootType type) && (← isDefEq valueType type) &&
             (← isDefEq computedType type) && (← isDefEq value computed) then
-          Iykyk.checkEvidence proposition fact.proof
-          return some (.mk ⟨index, inBounds⟩ proposition type value)
+          let rootHasType ← CheckedHasType.check knowledge.root type
+          let valueHasType ← CheckedHasType.check value type
+          let computedHasType ← CheckedHasType.check computed type
+          let proofChecked ← CheckedProof.check proposition fact.proof
+          let valueEqualsComputed ← CheckedDefEq.check value computed
+          let some equalityShape :=
+              checkedEqualityShapeToken? proposition type knowledge.root value
+            | throwError "spytial: checked-equality-shape token is unavailable"
+          return some (.mk ⟨index, inBounds⟩ proposition type value rootHasType
+            valueHasType computedHasType proofChecked equalityShape valueEqualsComputed)
     find? knowledge computed (index + 1)
   else
     return none
@@ -275,6 +341,9 @@ public structure CheckedComputedValue (knowledge : Iykyk.Afaik)
     (_computed : Expr) where
   private mk ::
   type : Expr
+  rootHasType : CheckedHasType knowledge.root type
+  computedHasType : CheckedHasType _computed type
+  equal : CheckedDefEq knowledge.root _computed
 
 namespace CheckedComputedValue
 
@@ -284,7 +353,10 @@ private meta def check? (knowledge : Iykyk.Afaik) (computed : Expr) :
   let computedType ← inferType computed
   unless ← isDefEq rootType computedType do return none
   unless ← isDefEq knowledge.root computed do return none
-  return some (.mk rootType)
+  let rootHasType ← CheckedHasType.check knowledge.root rootType
+  let computedHasType ← CheckedHasType.check computed rootType
+  let equal ← CheckedDefEq.check knowledge.root computed
+  return some (.mk rootType rootHasType computedHasType equal)
 
 end CheckedComputedValue
 
@@ -404,9 +476,9 @@ private meta def walkFact (cfg : WalkConfig)
   modify fun state => state.addTupleWithOrigin relation types tuple origin
   return anchors
 
-/-- The checked information retained for one production `proved` origin.
-    The constructor is private: values come from `checkedProvedOrigins`, which
-    rechecks the proof, decoder, types, and term-to-atom links. -/
+/-- The checked information retained for one production `proved` origin. It
+    includes opaque evidence from rechecking the proof, decoder, and column
+    types; `checkedProvedOrigins` also checks the term-to-atom links. -/
 public structure CheckedProvedOrigin where
   private mk ::
   emission : TupleEmission
@@ -418,6 +490,9 @@ public structure CheckedProvedOrigin where
   proof : Expr
   terms : Array Expr
   origin_eq : emission.origin = .proved proposition proof terms
+  proofChecked : CheckedProof proposition proof
+  shapeChecked :
+    CheckedPropositionShape proposition kind relation head parameters terms
   columns : CheckedColumns terms.toList emission.tuple.atoms.toList
 
 namespace CheckedProvedOrigin
@@ -441,7 +516,7 @@ private meta def checkProvedEmission (emission : TupleEmission)
     (evidence? : Option SelectorEvidence) : MetaM (Option CheckedProvedOrigin) := do
   match originEq : emission.origin with
   | .proved proposition proof terms => do
-      Iykyk.checkEvidence proposition proof
+      let proofChecked ← CheckedProof.check proposition proof
       let some shape ← propositionTupleShape? proposition
         | throwError "spytial: a proof origin has no supported relational decoding"
       unless shape.name == emission.relation do
@@ -459,6 +534,9 @@ private meta def checkProvedEmission (emission : TupleEmission)
         for (term, atom) in terms.zip emission.tuple.atoms do
           unless selectorEvidenceNames evidence term atom do
             throwError "spytial: a proof-origin term does not name its recorded atom"
+      let some shapeChecked := checkedPropositionShapeToken? proposition shape.kind
+          shape.name shape.head shape.parameters terms
+        | throwError "spytial: checked-proposition-shape token is unavailable"
       return some {
         emission
         origin_eq := originEq
@@ -469,6 +547,8 @@ private meta def checkProvedEmission (emission : TupleEmission)
         proposition
         proof
         terms
+        proofChecked
+        shapeChecked
         columns }
   | _ => return none
 
@@ -535,6 +615,8 @@ public meta structure InspectedValue where
     The public JSON result remains `trace.data`. -/
 public meta structure ProofGuidedTrace (_knowledge : Iykyk.Afaik) where
   private mk ::
+  baseConfig : WalkConfig
+  observations : Array Expr
   trace : TracedDataInstance
   provenance : Provenance
   /-- The refined expression represented by the ordinary structural walk. -/
@@ -678,6 +760,8 @@ private meta def relationalizeAfaikInspectionWithTrace (afaik : Iykyk.Afaik)
     let structuralChecked ← checkStructuralTrace config trace state.provenance evidence
     let proofsChecked ← checkProofTrace trace evidence
     return {
+      baseConfig
+      observations
       trace
       provenance := state.provenance
       computedTerm := datum
@@ -699,8 +783,8 @@ public meta def relationalizeAfaikWithPhaseTrace (afaik : Iykyk.Afaik)
   relationalizeAfaikInspectionWithTrace afaik baseConfig observations
 
 /-- A proof-guided inspection whose structural value is justified by
-    computation or by a retained, kernel-checked equality. The private
-    constructor prevents a caller from pairing a run with unrelated evidence. -/
+    computation or by a retained, kernel-checked equality. The source contains
+    opaque tokens indexed by the root and the value in this run. -/
 public meta structure CheckedKnownValueInspection (knowledge : Iykyk.Afaik) where
   private mk ::
   run : ProofGuidedTrace knowledge

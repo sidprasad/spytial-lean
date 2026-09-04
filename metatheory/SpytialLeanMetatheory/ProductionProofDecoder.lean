@@ -82,11 +82,12 @@ public theorem source_sound {World : Type u} {Root : Type v}
     {trace : TracedDataInstance}
     {checked : CheckedProofTrace trace}
     (realization : ProductionProofRealization meaning knowledge tuples trace checked)
+    (evidence : ProductionEvidenceMeaning meaning)
     {tuple} (present : tuple ∈ tuples) :
     Iykyk.Metatheory.Entails context (realization.source tuple) := by
-  let tupleRealization := realization.tuple_realization tuple present
   rw [realization.source_is_proposition tuple present]
-  exact meaning.proofChecks_sound tupleRealization.proof_checked
+  exact meaning.proofChecks_sound
+    (evidence.proved_origin_checks (realization.origin tuple present))
 
 /-- A completed realization of checked `proved` origins instantiates the
     abstract `ProofDecoding` interface. -/
@@ -98,7 +99,8 @@ public def toProofDecoding {World : Type u} {Root : Type v}
       (LeanExprMeaning.ExprAtom meaning))}
     {trace : TracedDataInstance}
     {checked : CheckedProofTrace trace}
-    (realization : ProductionProofRealization meaning knowledge tuples trace checked) :
+    (realization : ProductionProofRealization meaning knowledge tuples trace checked)
+    (evidence : ProductionEvidenceMeaning meaning) :
     ProofDecoding knowledge (meaning.instanceOfTuples tuples)
       (ProductionTupleHolds.ground meaning) where
   source := realization.source
@@ -110,7 +112,7 @@ public def toProofDecoding {World : Type u} {Root : Type v}
         (realization.origin tuple present).proposition world := by
       rw [← realization.source_is_proposition tuple present]
       exact sourceHolds
-    exact ProductionTupleHolds.provedTupleHolds tupleRealization world compatible
+    exact ProductionTupleHolds.provedTupleHolds evidence tupleRealization world compatible
       propositionHolds
 
 /-- Therefore every proof-derived production tuple is true in every compatible
@@ -123,11 +125,12 @@ public theorem sound {World : Type u} {Root : Type v}
       (LeanExprMeaning.ExprAtom meaning))}
     {trace : TracedDataInstance}
     {checked : CheckedProofTrace trace}
-    (realization : ProductionProofRealization meaning knowledge tuples trace checked) :
+    (realization : ProductionProofRealization meaning knowledge tuples trace checked)
+    (evidence : ProductionEvidenceMeaning meaning) :
     Completes context (meaning.instanceOfTuples tuples)
       (ProductionTupleHolds.ground meaning) := by
   intro world compatible tuple present
-  exact ProductionTupleHolds.checkedProvedTupleHolds
+  exact ProductionTupleHolds.checkedProvedTupleHolds evidence
     (realization.tuple_realization tuple present) world compatible
 
 end ProductionProofRealization

@@ -113,7 +113,7 @@ public theorem rootedStructuralTuples_sound {World : Type u}
       (ProductionTupleHolds.ground meaning) := by
   intro world compatible tuple present
   obtain ⟨origin, _, rfl⟩ := List.mem_map.mp present
-  exact ProductionTupleHolds.structuralTupleHolds
+  exact ProductionTupleHolds.structuralTupleHolds evidence
     (structuralOriginTuple_realizes evidence origin) world compatible
 
 namespace CheckedCoreTrace

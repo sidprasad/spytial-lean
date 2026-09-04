@@ -12,6 +12,7 @@ public meta import SpytialLean.TypeShape
 public meta import SpytialLean.SelectorElab
 public meta import SpytialLean.Relationalizer
 public meta import SpytialLean.InContext
+public meta import SpytialLean.StructuralCorrespondence
 public meta import SpytialLean.LeanSelector
 public meta import SpytialLean.Widget
 public meta import SpytialLean.Attr
