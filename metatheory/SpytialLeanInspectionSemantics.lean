@@ -14,11 +14,14 @@ It is not a correctness proof of the production relationalizer. The connection b
 atoms and Lean expressions is left abstract, and Lean's reduction is replaced by a small
 operational semantics whose rules the model is assumed to validate.
 
-* `Relational` defines typed positive relational instances and their possible-world meaning.
+* `Relational` defines typed positive relational instances as extensional finite sets and gives
+  them a possible-world meaning.
 * `Structural` defines the core fragment's terms, their evaluation, the fixed meaning of generated
   field relations, and the recursive structural relationalizer.
-* `Trace` tags every tuple with its origin, so a structural walk remembers whether evaluation or
-  proof exposed the value it walked.
-* `Inspection` defines exposure by evaluation or proof and the inspection judgment.
-* `Correctness` proves soundness and agreement between evaluation- and proof-exposed structure.
+* `Trace` associates every unique tuple with all of its origins, so a structural walk remembers
+  whether evaluation or proof exposed the value it walked without duplicating presentation rows.
+* `Inspection` defines exposure by evaluation or normalized proof refinement, the permissive
+  fragment judgment, and canonical assembly from a complete finite inspection plan.
+* `Correctness` proves soundness, conservative containment for canonical inspection, and agreement
+  between independently normalized evaluation- and proof-exposed structure.
 -/

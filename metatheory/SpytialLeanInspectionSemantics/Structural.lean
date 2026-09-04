@@ -100,7 +100,8 @@ namespace Arguments
 
 /-- `args.At position entry`: the argument at `position` is `entry`. -/
 public inductive At {Ty : Type u} {Entry : Ty → Type v} :
-    {sorts : List Ty} → Arguments Entry sorts → Nat → {sort : Ty} → Entry sort → Prop where
+    {sorts : List Ty} → Arguments Entry sorts → Nat →
+      {sort : Ty} → Entry sort → Prop where
   | here {sort sorts} {head : Entry sort} {tail : Arguments Entry sorts} :
       At (.cons head tail) 0 head
   | there {sort sorts} {head : Entry sort} {tail : Arguments Entry sorts} {position : Nat}
@@ -255,8 +256,8 @@ arguments from their own denotations. Arguments with any other `BinderRole` are 
   | _, .op _ _, root => Instance.ofAtom root
 /-- Walk the arguments of `C` starting at `position`, owned by `owner`. -/
 @[expose] public def walkFields (sem : Semantics World L base context) (C : L.Constructor) :
-    Nat → Atom context sem.model (L.result C) → {sorts : List Ty} → Arguments (Term L) sorts →
-    Instance context sem.model
+    Nat → Atom context sem.model (L.result C) →
+      {sorts : List Ty} → Arguments (Term L) sorts → Instance context sem.model
   | _, _, _, .nil => Instance.empty
   | position, owner, _, .cons head tail =>
       let here :=
@@ -340,31 +341,34 @@ public theorem walkFrom_tuples (sem : Semantics World L base context) :
         (owner : Atom context sem.model (L.result C)) (child : Atom context sem.model sort'),
         L.role C position = .data ∧ tuple = sem.fieldTuple C position owner child
   | _, .var _, _, _, present => by
-      simp [walkFrom, Instance.ofAtom] at present
+      simp only [walkFrom, Instance.ofAtom, FiniteSet.mem_empty] at present
   | _, .con C args, root, tuple, present => by
-      simp only [walkFrom, Instance.union, Instance.ofAtom, List.nil_append] at present
+      simp only [walkFrom, Instance.union, Instance.ofAtom, FiniteSet.mem_union,
+        FiniteSet.mem_empty, false_or] at present
       exact sem.walkFields_tuples C 0 root args tuple present
   | _, .op _ _, _, _, present => by
-      simp [walkFrom, Instance.ofAtom] at present
+      simp only [walkFrom, Instance.ofAtom, FiniteSet.mem_empty] at present
 /-- Every tuple emitted by the argument walk is a field tuple at a `data` position. -/
 public theorem walkFields_tuples (sem : Semantics World L base context) (C : L.Constructor) :
     ∀ (position : Nat) (owner : Atom context sem.model (L.result C)) {sorts : List Ty}
-      (args : Arguments (Term L) sorts) (tuple : Tuple (base.withFields L) (Atom context sem.model)),
+      (args : Arguments (Term L) sorts)
+      (tuple : Tuple (base.withFields L) (Atom context sem.model)),
       tuple ∈ (sem.walkFields C position owner args).tuples →
       ∃ (C' : L.Constructor) (position' : Nat) (sort' : Ty)
         (owner' : Atom context sem.model (L.result C')) (child : Atom context sem.model sort'),
         L.role C' position' = .data ∧ tuple = sem.fieldTuple C' position' owner' child
   | _, _, _, .nil, _, present => by
-      simp [walkFields, Instance.empty] at present
+      simp only [walkFields, Instance.empty, FiniteSet.mem_empty] at present
   | position, owner, _, .cons head tail, tuple, present => by
-      simp only [walkFields, Instance.union, List.mem_append] at present
+      simp only [walkFields, Instance.union, FiniteSet.mem_union] at present
       rcases present with here | there
       · split at here
-        · simp only [Instance.ofTuple, List.mem_append, List.mem_singleton] at here
+        · simp only [Instance.ofTuple, FiniteSet.mem_union, FiniteSet.mem_singleton] at here
           rcases here with rfl | inner
-          · exact ⟨C, position, _, owner, sem.denote head, ‹L.role C position = .data›, rfl⟩
+          · exact ⟨C, position, _, owner, sem.denote head,
+              ‹L.role C position = .data›, rfl⟩
           · exact sem.walkFrom_tuples head (sem.denote head) tuple inner
-        · simp [Instance.empty] at here
+        · simp only [Instance.empty, FiniteSet.mem_empty] at here
       · exact sem.walkFields_tuples C (position + 1) owner tail tuple there
 end
 
