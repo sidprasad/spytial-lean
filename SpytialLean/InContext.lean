@@ -268,14 +268,6 @@ private meta def walkFact (cfg : WalkConfig)
   let proposition ← displayedProposition fact
   let some (relation, rawArguments) ← propTupleShape? proposition
     | return initialAnchors
-  -- Predicates that differ only past their short name land in one relation; a
-  -- tuple of another width would corrupt it, so the colliding fact stays
-  -- undrawn instead.
-  if let some (declaredTypes, _) := (← get).relations.get? relation then
-    if declaredTypes.size != rawArguments.size then
-      logWarning m!"spytial: '{relation}' names relations of arity \
-        {declaredTypes.size} and {rawArguments.size}; the second is not drawn"
-      return initialAnchors
   let mut anchors := initialAnchors
   let mut atomIds := #[]
   let mut types := #[]

@@ -230,12 +230,21 @@ public meta def WalkState.addTupleOrigin (s : WalkState) (relName : String)
     (tuple : JsonTuple) (origin : TupleOrigin) : WalkState :=
   { s with emissions := s.emissions.push { relation := relName, tuple, origin } }
 
-/-- Add a tuple and its origin to a relation, creating the relation if needed. -/
+/-- Add a tuple and its origin to a display relation, creating it if needed.
+    Same-name tuples are deliberately unioned. If their widths differ, clear
+    the relation-level type summary; every tuple retains its own column types. -/
 public meta def WalkState.addTupleWithOrigin (s : WalkState) (relName : String)
     (types : Array String) (tuple : JsonTuple) (origin : TupleOrigin) : WalkState :=
-  let existing := s.relations.getD relName (types, #[])
-  { s.addTupleOrigin relName tuple origin with
-    relations := s.relations.insert relName (existing.1, existing.2.push tuple) }
+  if !tuple.columnsAligned then s
+  else
+    let existing := s.relations.getD relName (types, #[])
+    let summary :=
+      if existing.2.isEmpty then
+        if existing.1.size == tuple.atoms.size then existing.1 else tuple.types
+      else if existing.1.size == tuple.atoms.size then existing.1
+      else #[]
+    { s.addTupleOrigin relName tuple origin with
+      relations := s.relations.insert relName (summary, existing.2.push tuple) }
 
 /-- Add a tuple from an unrestricted custom relationalizer. Production code
     should use `addTupleWithOrigin` to make its semantic case explicit. -/
