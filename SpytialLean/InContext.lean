@@ -213,7 +213,8 @@ private meta def addWitnesses (afaik : Iykyk.Afaik) (recordObservationTerms : Bo
 private meta def walkFact (cfg : WalkConfig)
     (fact : Iykyk.KnownFact) (initialAnchors : Array (Expr × String)) :
     StateT WalkState MetaM (Array (Expr × String)) := do
-  let some (relation, rawArguments) ← propTupleShape? (← displayedProposition fact)
+  let proposition ← displayedProposition fact
+  let some (relation, rawArguments) ← propTupleShape? proposition
     | return initialAnchors
   -- Predicates that differ only past their short name land in one relation; a
   -- tuple of another width would corrupt it, so the colliding fact stays
@@ -250,12 +251,40 @@ private meta def walkFact (cfg : WalkConfig)
     types := types.push (← sigOfType (← inferType argument))
     -- Keep the source term even if a proved equality refined this endpoint.
     modify fun state => state.rememberSelectorTerm rawArgument atomId
+  let tuple := { atoms := atomIds, types }
+  let origin := .proved proposition fact.proof rawArguments
   -- An observation may already have emitted the graph point established by
-  -- this equation. Relations contain tuples, not one copy per justification.
-  unless ((← get).relations.get? relation).any (fun (_, tuples) =>
-      tuples.any (·.atoms == atomIds)) do
-    modify fun state => state.addTuple relation types { atoms := atomIds, types }
+  -- this equation. Relations contain one tuple but the trace retains both
+  -- justifications.
+  if ((← get).relations.get? relation).any (fun (_, tuples) =>
+      tuples.any (·.atoms == atomIds)) then
+    modify fun state => state.addTupleOrigin relation tuple origin
+  else
+    modify fun state => state.addTupleWithOrigin relation types tuple origin
   return anchors
+
+/-- Check the IYKYK-to-Spytial boundary for every proof-derived tuple. IYKYK's
+    sealed `Afaik` construction is the source of proof validity; the local
+    evidence check is defensive. This checker primarily establishes that
+    Spytial decoded the proposition into the recorded relation and columns. -/
+public meta def validateProvedOrigins (trace : TracedDataInstance) : MetaM Unit := do
+  for emission in trace.emissions do
+    match emission.origin with
+    | .proved proposition proof terms =>
+      Iykyk.checkEvidence proposition proof
+      let some (relation, decodedTerms) ← propTupleShape? proposition
+        | throwError "spytial: a proof origin has no supported relational decoding"
+      unless relation == emission.relation do
+        throwError "spytial: a proof origin changed relation name"
+      unless decodedTerms.size == terms.size &&
+          (decodedTerms.zip terms).all fun (decoded, recorded) => decoded.equal recorded do
+        throwError "spytial: a proof origin changed its relational arguments"
+      let inferredTypes ← terms.mapM fun term => do sigOfType (← inferType term)
+      unless inferredTypes == emission.tuple.types do
+        throwError "spytial: a proof origin changed its relational column types"
+      unless terms.size == emission.tuple.atoms.size do
+        throwError "spytial: a proof origin is not aligned with its tuple columns"
+    | _ => pure ()
 
 private meta def contextWalkConfig (afaik : Iykyk.Afaik) (baseConfig : WalkConfig)
     (observations : Array Expr) : MetaM WalkConfig := do
@@ -342,10 +371,11 @@ private meta def prepareContextObservations (afaik : Iykyk.Afaik) (config : Walk
     behind each atom (see `Provenance`) and the datum a raw Lean selector's
     `Spytial.Sel` form receives — the root with its known refinements
     substituted, closed exactly when the context determines the value. -/
-private meta def relationalizeAfaikInspection (afaik : Iykyk.Afaik)
+private meta def relationalizeAfaikInspectionWithTrace (afaik : Iykyk.Afaik)
     (baseConfig : WalkConfig := {}) (observations : Array Expr := #[])
     (selectedRoot? : Option Expr := none) :
-    MetaM (JsonDataInstance × Provenance × Expr × InspectedValue × SelectorEvidence) :=
+    MetaM (TracedDataInstance × Provenance × Expr × InspectedValue ×
+      SelectorEvidence) :=
   withoutModifyingEnv do
     let mut config ← contextWalkConfig afaik
       { baseConfig with recordSelectorTerms := true } observations
@@ -393,24 +423,65 @@ private meta def relationalizeAfaikInspection (afaik : Iykyk.Afaik)
       return (← ppExpr (← displayedProposition fact)).pretty
     let inspection : InspectedValue := {
       root := rootId, term := (← ppExpr afaik.root).pretty, facts }
-    return (state.toDataInstance, state.provenance,
+    let trace := state.toTracedDataInstance
+    unless trace.wellFormedTrace do
+      throwError "spytial: internal error: malformed proof-context tuple trace"
+    validateProvedOrigins trace
+    return (trace, state.provenance,
       substituteKnown refinements 8 afaik.root, inspection, {
         terms := state.selectorTerms
         proofs := afaik.facts.map (·.proof) ++
           config.observationResults.toArray.filterMap (·.2.proof?) })
 
+/-- Translate context knowledge while retaining the exact origin of every
+    tuple as well as the evidence consumed by Lean selectors. -/
+public meta def relationalizeAfaikWithTrace (afaik : Iykyk.Afaik)
+    (baseConfig : WalkConfig := {}) (observations : Array Expr := #[]) :
+    MetaM (TracedDataInstance × Provenance × Expr × InspectedValue ×
+      SelectorEvidence) :=
+  relationalizeAfaikInspectionWithTrace afaik baseConfig observations
+
+/-- Compatibility projection that erases per-tuple origins. -/
+public meta def relationalizeAfaikWithEvidence (afaik : Iykyk.Afaik)
+    (baseConfig : WalkConfig := {}) (observations : Array Expr := #[]) :
+    MetaM (JsonDataInstance × Provenance × Expr × InspectedValue × SelectorEvidence) := do
+  let (trace, provenance, datum, inspection, evidence) ←
+    relationalizeAfaikWithTrace afaik baseConfig observations
+  return (trace.data, provenance, datum, inspection, evidence)
+
+/-- The established proof-context evidence API is exactly the traced producer
+    followed by tuple-origin erasure. -/
+theorem relationalizeAfaikWithEvidence_eq_trace_erasure (afaik : Iykyk.Afaik)
+    (cfg : WalkConfig := {}) (observations : Array Expr := #[]) :
+    relationalizeAfaikWithEvidence afaik cfg observations = do
+      let (trace, provenance, datum, inspection, evidence) ←
+        relationalizeAfaikWithTrace afaik cfg observations
+      return (trace.data, provenance, datum, inspection, evidence) := by
+  rfl
+
 /-- Translate context knowledge, preserving the original data/provenance API. -/
 public meta def relationalizeAfaikWithProvenance (afaik : Iykyk.Afaik)
     (baseConfig : WalkConfig := {}) (observations : Array Expr := #[]) :
     MetaM (JsonDataInstance × Provenance × Expr) := do
-  let (data, prov, datum, _, _) ← relationalizeAfaikInspection afaik baseConfig observations
+  let (data, prov, datum, _, _) ← relationalizeAfaikWithEvidence afaik baseConfig observations
   return (data, prov, datum)
 
 /-- `relationalizeAfaikWithProvenance`, data only. -/
 public meta def relationalizeAfaik (afaik : Iykyk.Afaik)
     (baseConfig : WalkConfig := {}) (observations : Array Expr := #[]) :
-    MetaM JsonDataInstance :=
-  return (← relationalizeAfaikWithProvenance afaik baseConfig observations).1
+    MetaM JsonDataInstance := do
+  let (data, _, _, _, _) ← relationalizeAfaikWithEvidence afaik baseConfig observations
+  return data
+
+/-- The data-only proof-context API is the evidence-producing translation
+    followed by erasure. Kept here so its proof can unfold the private worker
+    without exposing the worker's implementation details. -/
+theorem relationalizeAfaik_eq_evidence_erasure (afaik : Iykyk.Afaik)
+    (cfg : WalkConfig := {}) (observations : Array Expr := #[]) :
+    relationalizeAfaik afaik cfg observations = do
+      let (data, _, _, _, _) ← relationalizeAfaikWithEvidence afaik cfg observations
+      return data := by
+  rfl
 
 /-- The status Spytial needs in addition to a successful relational payload. -/
 public meta structure ContextViewStatus where
@@ -421,6 +492,8 @@ public meta structure ContextViewStatus where
 /-- One successful IYKYK extraction together with Spytial's observation of it. -/
 public meta structure ContextView where
   afaik : Iykyk.Afaik
+  /-- The evidence-bearing instance produced before JSON erasure. -/
+  trace : TracedDataInstance
   data : JsonDataInstance
   /-- The subterm behind each atom, for raw Lean selectors. -/
   prov : Provenance
@@ -566,10 +639,12 @@ public meta def wdykInContext (subject : Expr) (walkConfig : WalkConfig := {})
       let afaik ← if wdykConfig.rootOnly && !(← isProp (← inferType subject)) then
         projectToRepresentation afaik walkConfig observations
       else pure afaik
-      let (data, prov, datum, inspection, evidence) ←
-        relationalizeAfaikInspection afaik walkConfig observations (some subject)
+      let (trace, prov, datum, inspection, evidence) ←
+        relationalizeAfaikInspectionWithTrace afaik walkConfig observations (some subject)
+      let data := trace.data
       let inspection := { inspection with term := (← ppExpr subject).pretty }
-      return ({ truncated := afaik.truncated }, some { afaik, data, prov, datum, inspection, evidence })
+      return ({ truncated := afaik.truncated },
+        some { afaik, trace, data, prov, datum, inspection, evidence })
 
 private meta def isWitnessTerm (afaik : Iykyk.Afaik) (expression : Expr) : Bool :=
   afaik.witnesses.any fun witness => witness.term.equal expression

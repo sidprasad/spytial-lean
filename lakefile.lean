@@ -7,7 +7,7 @@ package spytialLean where
   releaseRepo := "https://github.com/sidprasad/spytial-lean"
 
 require iykyk from
-  git "https://github.com/sidprasad/iykyk" @ "v0.2.0"
+  git "https://github.com/sidprasad/iykyk" @ "v0.2.1"
 
 /-! ## JS build targets
 
@@ -141,6 +141,10 @@ lean_lib SpytialTests where
              `LeanSelectorTest, `IdentityTest, `IdentityWalkTest, `RelationShapeTest,
              `InContextTest, `ContextInspectionTest, `KnowledgeSelectorFixture,
              `KnowledgeSelectorTest]
+
+/-- Metatheory for computation- and proof-derived relational instances. -/
+lean_lib SpytialLeanMetatheory where
+  srcDir := "metatheory"
 
 require proofwidgets from
   git "https://github.com/leanprover-community/ProofWidgets4" @ "v0.0.105"

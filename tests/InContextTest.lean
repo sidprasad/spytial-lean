@@ -18,6 +18,8 @@ private meta def viewOf (label : String) (root : Expr) (config : Iykyk.Config :=
   let (status, view?) ← wdykInContext root {} config observations
   if status.inconsistent then throwError "{label}: unexpectedly inconsistent"
   let some view := view? | throwError "{label}: no context view"
+  unless view.trace.wellFormedTrace do
+    throwError "{label}: malformed production trace"
   return view
 
 /-! ## Positive and connected facts -/
@@ -28,6 +30,18 @@ private meta def viewOf (label : String) (root : Expr) (config : Iykyk.Config :=
   withLocalDeclD `h (← mkAppM ``LT.lt #[x, y]) fun _ => do
     let view ← viewOf "consumer.lt" x
     assertCanon "consumer.lt" view.data "Nat|x\nNat|y\nlt[Nat,Nat]:0,1"
+    let some emission := view.trace.emissions.find? fun emission =>
+        emission.relation == "lt" &&
+          match emission.origin with
+          | .proved .. => true
+          | _ => false
+      | throwError "consumer.lt: the IYKYK tuple has no proof origin"
+    match emission.origin with
+    | .proved proposition proof terms =>
+      Iykyk.checkEvidence proposition proof
+      unless terms.size == emission.tuple.atoms.size do
+        throwError "consumer.lt: proof-origin terms are not column-aligned"
+    | _ => throwError "consumer.lt: expected a proof origin"
 
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `α (mkSort Level.one) fun α => do
@@ -55,6 +69,16 @@ private meta def leaf (value : Nat) : Expr :=
 
 private meta def node (left right : Expr) : Expr :=
   mkApp2 (mkConst ``Tree.node) left right
+
+#eval show Lean.Elab.TermElabM Unit from do
+  let (trace, _, _) ← relationalizeWithTrace (node (leaf 1) (leaf 2))
+  unless trace.wellFormedTrace do
+    throwError "computed tree: malformed production trace"
+  unless trace.emissions.any fun emission =>
+      match emission.origin with
+      | .structural terms => terms.size == emission.tuple.atoms.size
+      | _ => false do
+    throwError "computed tree: expected a column-aligned structural origin"
 
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `t tree fun t => do
