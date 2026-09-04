@@ -28,17 +28,17 @@ Both sources use one typed relational interface. Spytial does not need a
 different specification or renderer for a computed value, a partial program,
 or a value whose structure is known through a proof.
 
-## Scope of the paper
+## Scope
 
-The contribution ends at the relational instance.
+This model ends at the relational instance.
 
 - IYKYK finds proof-backed knowledge in a Lean context.
 - Spytial Lean combines computed structure and decoded proof facts.
 - Spytial consumes the resulting relations and produces a diagram.
 
-The PLDI Spytial work already gives semantics to specifications, spatial
-constraints, and diagrams. This development explains how Lean produces the
-relational input to that system.
+Spytial already gives meaning to specifications, spatial constraints, and
+diagrams. This development explains how Lean produces the relational input to
+that system.
 
 It is not a verification of Lean's kernel, evaluator, or metaprogramming
 runtime. It also does not attempt to certify arbitrary custom relationalizers.
@@ -147,7 +147,7 @@ inspect(Gamma, e)       = relationalize(v) + proved facts
 Gamma                   entails every tuple in inspect(Gamma, e)
 ```
 
-The paper-facing combined theorem is
+The combined theorem is
 `Inspection.soundly_refines_computed_relationalization`. Given a computed
 result and sound IYKYK knowledge, it proves all three statements at once.
 
@@ -163,7 +163,7 @@ union exactly. `same_spytial_specification_for_computation_and_proof` proves
 that any specification applied to the structural presentation receives the
 same data whether computation or proof supplied the resolved value.
 
-This is the paper's practical conclusion:
+The practical consequence is:
 
 > The same Spytial specification can display a concrete value, a partially
 > computed value, and a proof-constrained value without a domain-specific
@@ -210,9 +210,8 @@ is correct. Lean's kernel remains the trusted checker for Lean proof terms.
 
 ## Deliberate boundaries
 
-The first theorem covers ordinary structural relationalization and direct
-proof-derived relations. The following can be added independently if the paper
-needs them:
+The current semantics covers ordinary structural relationalization and direct
+proof-derived relations. The following can be handled independently:
 
 - proof-producing observations;
 - finite function tabulation;
@@ -222,27 +221,3 @@ needs them:
 Unrestricted custom relationalizers remain outside the generic soundness claim.
 Short JSON relation names are presentation identifiers; semantic relation
 symbols remain distinct before projection.
-
-## Evaluation
-
-The evaluation should use one relational vocabulary and one Spytial
-specification in three states: a computed value, a partial program, and a
-proof-constrained value.
-
-The three main domains should be:
-
-1. AVL rotation, for recursive structure and proof-established invariants;
-2. an abstract machine or heap, for environments, stores, and aliasing; and
-3. an automaton or transition system, for cyclic relations and facts that are
-   not constructor fields.
-
-For each domain, report:
-
-- whether the exact same Spytial specification is reused;
-- which tuples come from structure and which come from proofs;
-- which useful facts remain unsupported;
-- the amount of domain-specific adapter and renderer code; and
-- extraction, relationalization, and rendering time.
-
-This evaluates expressiveness, reuse, and integration cost. It does not require
-a user study or claim improved human comprehension.

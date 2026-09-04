@@ -127,8 +127,8 @@ public theorem values_eq {World : Type u} {Value : Type v}
 end Resolution
 
 /-- The existing ordinary relationalizer, stated at the semantic boundary used
-    by this paper. Its structural soundness is the prior component on which
-    proof-aware inspection builds. -/
+    here. Its structural soundness is the prior component on which proof-aware
+    inspection builds. -/
 public structure StructuralRelationalizer {World : Type u}
     {SemanticType : Type v}
     (context : Iykyk.Metatheory.Context World)

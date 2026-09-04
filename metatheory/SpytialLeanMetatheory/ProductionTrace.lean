@@ -8,9 +8,9 @@ public section
 # Connection to production traces
 
 The production walkers retain an origin for every emitted tuple and erase
-those origins before returning the existing JSON format. This file proves the
-small structural fact needed by the paper: a trace accepted by the executable
-checker accounts for exactly the tuples in the real output.
+those origins before returning the existing JSON format. This file proves that
+a trace accepted by the executable checker accounts for exactly the tuples in
+the real output.
 
 It does not assign semantics to arbitrary Lean expressions or custom
 relationalizers.

@@ -33,7 +33,7 @@ public structure JsonDataInstance where
   relations : Array JsonRelation
   deriving ToJson, FromJson, Inhabited
 
-/-- Why the production relationalizer emitted one tuple. The core paper claim
+/-- Why the production relationalizer emitted one tuple. The core semantics
     interprets `structural` and `proved`. All other built-in features remain
     visible as `other` without acquiring semantic obligations here. -/
 public inductive TupleOrigin where
