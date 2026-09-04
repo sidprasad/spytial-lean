@@ -18,6 +18,101 @@ namespace SpytialLean.Semantics
 
 universe u v w
 
+/-- A finite set presented extensionally. The list is only a finiteness certificate: membership is
+the predicate, so an element has one identity even if a witness list happens to repeat it. -/
+public structure FiniteSet (α : Type u) where
+  contains : α → Prop
+  finite : ∃ items : List α, ∀ item, contains item ↔ item ∈ items
+
+instance {α : Type u} : Membership α (FiniteSet α) := ⟨FiniteSet.contains⟩
+
+namespace FiniteSet
+
+/-- Two finite sets are equal when they have the same members. -/
+@[ext] public theorem ext {α : Type u} {left right : FiniteSet α}
+    (same : ∀ item, item ∈ left ↔ item ∈ right) : left = right := by
+  cases left with
+  | mk leftContains leftFinite =>
+    cases right with
+    | mk rightContains rightFinite =>
+      have containsEq : leftContains = rightContains :=
+        funext fun item => propext (same item)
+      subst rightContains
+      rfl
+
+/-- The empty finite set. -/
+@[expose] public def empty {α : Type u} : FiniteSet α where
+  contains := fun _ => False
+  finite := ⟨[], by simp⟩
+
+/-- A singleton finite set. -/
+@[expose] public def singleton {α : Type u} (item : α) : FiniteSet α where
+  contains := fun candidate => candidate = item
+  finite := ⟨[item], by simp⟩
+
+/-- The finite set represented by a list. Repeated list entries still denote one member. -/
+@[expose] public def ofList {α : Type u} (items : List α) : FiniteSet α where
+  contains := fun item => item ∈ items
+  finite := ⟨items, by simp⟩
+
+/-- Set union. Membership is disjunction, so union is deduplicating by definition. -/
+@[expose] public def union {α : Type u} (left right : FiniteSet α) : FiniteSet α where
+  contains := fun item => item ∈ left ∨ item ∈ right
+  finite := by
+    obtain ⟨leftItems, leftFinite⟩ := left.finite
+    obtain ⟨rightItems, rightFinite⟩ := right.finite
+    refine ⟨leftItems ++ rightItems, fun item => ?_⟩
+    constructor
+    · rintro (present | present)
+      · exact List.mem_append_left _ ((leftFinite item).mp present)
+      · exact List.mem_append_right _ ((rightFinite item).mp present)
+    · intro present
+      rcases List.mem_append.mp present with fromLeft | fromRight
+      · exact Or.inl ((leftFinite item).mpr fromLeft)
+      · exact Or.inr ((rightFinite item).mpr fromRight)
+
+/-- Map a finite set through a function. -/
+@[expose] public def image {α : Type u} {β : Type v} (transform : α → β)
+    (source : FiniteSet α) : FiniteSet β where
+  contains := fun target => ∃ item, item ∈ source ∧ transform item = target
+  finite := by
+    obtain ⟨items, sourceFinite⟩ := source.finite
+    refine ⟨items.map transform, fun target => ?_⟩
+    constructor
+    · rintro ⟨item, present, rfl⟩
+      exact List.mem_map.mpr ⟨item, (sourceFinite item).mp present, rfl⟩
+    · intro present
+      obtain ⟨item, itemPresent, rfl⟩ := List.mem_map.mp present
+      exact ⟨item, (sourceFinite item).mpr itemPresent, rfl⟩
+
+@[simp] public theorem mem_empty {α : Type u} (item : α) : item ∉ (empty : FiniteSet α) := by
+  simp [Membership.mem, empty]
+
+@[simp] public theorem mem_singleton {α : Type u} {item candidate : α} :
+    candidate ∈ singleton item ↔ candidate = item := by
+  rfl
+
+@[simp] public theorem mem_ofList {α : Type u} {item : α} {items : List α} :
+    item ∈ ofList items ↔ item ∈ items := by
+  rfl
+
+@[simp] public theorem mem_union {α : Type u} {item : α} {left right : FiniteSet α} :
+    item ∈ left.union right ↔ item ∈ left ∨ item ∈ right := by
+  rfl
+
+@[simp] public theorem mem_image {α : Type u} {β : Type v} {target : β} {transform : α → β}
+    {source : FiniteSet α} :
+    target ∈ source.image transform ↔
+      ∃ item, item ∈ source ∧ transform item = target := by
+  rfl
+
+public theorem union_self {α : Type u} (data : FiniteSet α) : data.union data = data := by
+  apply ext
+  intro item
+  simp [mem_union]
+
+end FiniteSet
+
 /-- A typed relational vocabulary. -/
 public structure Signature (Ty : Type u) where
   Relation : Type v
@@ -81,35 +176,48 @@ public abbrev Atom {World : Type u} {Ty : Type v} (context : Iykyk.Metatheory.Co
     {signature : Signature Ty} (model : Model World signature) (sort : Ty) :=
   ∀ world, context world → model.Carrier sort
 
-/-- A finite positive relational instance. Every tuple refers only to listed atoms. -/
+/-- A finite positive relational instance. Atoms and tuples are extensional finite sets, so union
+cannot duplicate a semantic atom or relational row. Every tuple refers only to listed atoms. -/
 public structure Instance {World : Type u} {Ty : Type v}
     (context : Iykyk.Metatheory.Context World) {signature : Signature Ty}
     (model : Model World signature) where
-  atoms : List (TypedAtom (Atom context model))
-  tuples : List (Tuple signature (Atom context model))
+  atoms : FiniteSet (TypedAtom (Atom context model))
+  tuples : FiniteSet (Tuple signature (Atom context model))
   tuplesUseAtoms : ∀ tuple, tuple ∈ tuples → ∀ atom, atom ∈ tuple.atoms → atom ∈ atoms
 
 namespace Instance
+
+/-- The instance with no atoms and no relational claims. -/
+@[expose] public def empty {World : Type u} {Ty : Type v}
+    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {model : Model World signature} : Instance context model where
+  atoms := FiniteSet.empty
+  tuples := FiniteSet.empty
+  tuplesUseAtoms := by
+    intro tuple present
+    exact False.elim present
 
 /-- An instance containing one atom and no relational claims. -/
 @[expose] public def ofAtom {World : Type u} {Ty : Type v}
     {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
     {model : Model World signature} {sort : Ty} (atom : Atom context model sort) :
     Instance context model where
-  atoms := [⟨sort, atom⟩]
-  tuples := []
-  tuplesUseAtoms := by simp
+  atoms := FiniteSet.singleton ⟨sort, atom⟩
+  tuples := FiniteSet.empty
+  tuplesUseAtoms := by
+    intro tuple present
+    exact False.elim present
 
 /-- An instance containing one tuple and exactly the atoms used by that tuple. -/
 @[expose] public def ofTuple {World : Type u} {Ty : Type v}
     {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
     {model : Model World signature} (tuple : Tuple signature (Atom context model)) :
     Instance context model where
-  atoms := tuple.atoms
-  tuples := [tuple]
+  atoms := .ofList tuple.atoms
+  tuples := .singleton tuple
   tuplesUseAtoms := by
     intro candidate present atom atomPresent
-    simp only [List.mem_singleton] at present
+    simp only [FiniteSet.mem_singleton] at present
     subst candidate
     exact atomPresent
 
@@ -118,13 +226,13 @@ namespace Instance
     {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
     {model : Model World signature} (left right : Instance context model) :
     Instance context model where
-  atoms := left.atoms ++ right.atoms
-  tuples := left.tuples ++ right.tuples
+  atoms := left.atoms.union right.atoms
+  tuples := left.tuples.union right.tuples
   tuplesUseAtoms := by
     intro tuple present atom atomPresent
-    rcases List.mem_append.mp present with fromLeft | fromRight
-    · exact List.mem_append_left _ (left.tuplesUseAtoms tuple fromLeft atom atomPresent)
-    · exact List.mem_append_right _ (right.tuplesUseAtoms tuple fromRight atom atomPresent)
+    rcases present with fromLeft | fromRight
+    · exact Or.inl (left.tuplesUseAtoms tuple fromLeft atom atomPresent)
+    · exact Or.inr (right.tuplesUseAtoms tuple fromRight atom atomPresent)
 
 /-- `larger` retains every atom and tuple reported by `smaller`. -/
 public structure ContainedIn {World : Type u} {Ty : Type v}
@@ -138,8 +246,33 @@ public theorem containedIn_union_left {World : Type u} {Ty : Type v}
     {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
     {model : Model World signature} (left right : Instance context model) :
     ContainedIn left (left.union right) where
-  atoms _ present := List.mem_append_left _ present
-  tuples _ present := List.mem_append_left _ present
+  atoms _ present := Or.inl present
+  tuples _ present := Or.inl present
+
+/-- Combining an instance with itself is exactly idempotent, including its atom collection. -/
+public theorem union_self {World : Type u} {Ty : Type v}
+    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {model : Model World signature} (data : Instance context model) :
+    data.union data = data := by
+  cases data with
+  | mk atoms tuples uses =>
+    have atomsEq : atoms.union atoms = atoms := FiniteSet.union_self atoms
+    have tuplesEq : tuples.union tuples = tuples := FiniteSet.union_self tuples
+    simp only [union, atomsEq, tuplesEq]
+
+/-- Encountering the same typed atom twice still allocates one semantic atom. -/
+public theorem ofAtom_union_self {World : Type u} {Ty : Type v}
+    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {model : Model World signature} {sort : Ty} (atom : Atom context model sort) :
+    (ofAtom atom).union (ofAtom atom) = ofAtom atom :=
+  union_self _
+
+/-- Encountering the same typed tuple twice still emits one relational row. -/
+public theorem ofTuple_union_self {World : Type u} {Ty : Type v}
+    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {model : Model World signature} (tuple : Tuple signature (Atom context model)) :
+    (ofTuple tuple).union (ofTuple tuple) = ofTuple tuple :=
+  union_self _
 
 end Instance
 
@@ -171,16 +304,25 @@ public theorem Instance.sound_union {World : Type u} {Ty : Type v}
     {model : Model World signature} {left right : Instance context model}
     (leftSound : left.Sound) (rightSound : right.Sound) : (left.union right).Sound := by
   intro tuple present world compatible
-  rcases List.mem_append.mp present with fromLeft | fromRight
+  rcases present with fromLeft | fromRight
   · exact leftSound tuple fromLeft world compatible
   · exact rightSound tuple fromRight world compatible
+
+/-- The empty instance makes no relational claim and is therefore sound. -/
+public theorem Instance.sound_empty {World : Type u} {Ty : Type v}
+    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {model : Model World signature} :
+    (Instance.empty (context := context) (model := model)).Sound := by
+  intro tuple present
+  exact False.elim present
 
 /-- An atom alone makes no relational claim and is therefore sound. -/
 public theorem Instance.sound_ofAtom {World : Type u} {Ty : Type v}
     {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
     {model : Model World signature} {sort : Ty} (atom : Atom context model sort) :
     (Instance.ofAtom atom).Sound := by
-  simp [Instance.Sound, Instance.ofAtom]
+  intro tuple present
+  exact False.elim present
 
 /-- A singleton tuple instance is sound exactly when its tuple holds. -/
 public theorem Instance.sound_ofTuple {World : Type u} {Ty : Type v}
@@ -189,7 +331,7 @@ public theorem Instance.sound_ofTuple {World : Type u} {Ty : Type v}
     (holds : ∀ world (compatible : context world), tuple.Holds world compatible) :
     (Instance.ofTuple tuple).Sound := by
   intro candidate present world compatible
-  simp only [Instance.ofTuple, List.mem_singleton] at present
+  simp only [Instance.ofTuple, FiniteSet.mem_singleton] at present
   subst candidate
   exact holds world compatible
 
