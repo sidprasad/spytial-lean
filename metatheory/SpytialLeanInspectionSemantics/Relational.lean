@@ -91,6 +91,14 @@ public structure Instance {World : Type u} {Ty : Type v}
 
 namespace Instance
 
+/-- The instance with no atoms and no relational claims. -/
+@[expose] public def empty {World : Type u} {Ty : Type v}
+    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {model : Model World signature} : Instance context model where
+  atoms := []
+  tuples := []
+  tuplesUseAtoms := by simp
+
 /-- An instance containing one atom and no relational claims. -/
 @[expose] public def ofAtom {World : Type u} {Ty : Type v}
     {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
@@ -174,6 +182,12 @@ public theorem Instance.sound_union {World : Type u} {Ty : Type v}
   rcases List.mem_append.mp present with fromLeft | fromRight
   · exact leftSound tuple fromLeft world compatible
   · exact rightSound tuple fromRight world compatible
+
+/-- The empty instance makes no relational claim and is therefore sound. -/
+public theorem Instance.sound_empty {World : Type u} {Ty : Type v}
+    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {model : Model World signature} : (Instance.empty (context := context) (model := model)).Sound := by
+  simp [Instance.Sound, Instance.empty]
 
 /-- An atom alone makes no relational claim and is therefore sound. -/
 public theorem Instance.sound_ofAtom {World : Type u} {Ty : Type v}
