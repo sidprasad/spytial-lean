@@ -452,7 +452,6 @@ public meta structure ContextView where
   inspection : InspectedValue
   /-- Terms and certified evidence interpreting the atoms in `data`. -/
   evidence : SelectorEvidence
-  deriving Inhabited
 
 /-- Local names and their definitions have one spelling for relevance
     matching. This does not unfold observed functions or change their proofs. -/
