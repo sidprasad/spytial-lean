@@ -11,6 +11,7 @@ public meta import SpytialLean.Spec
 public meta import SpytialLean.TypeShape
 public meta import SpytialLean.SelectorElab
 public meta import SpytialLean.Relationalizer
+public meta import SpytialLean.Reify
 public meta import SpytialLean.InContext
 public meta import SpytialLean.LeanSelector
 public meta import SpytialLean.Widget

@@ -314,6 +314,10 @@ public meta inductive WalkMode where
       "as written" is a property of a whole term — until a `Viewed` shifts
       back. -/
   | asWritten
+  /-- No instance consultation and no `Raw`/`Viewed` shifts. Every occurrence
+      stays fresh throughout the subtree. This mode is for consumers that must
+      reconstruct the walked value rather than apply visualization semantics. -/
+  | fidelity
   deriving BEq, Repr, Inhabited
 
 /-- Per-subtree walk context: threaded as an argument, so subtree scoping of
@@ -398,6 +402,7 @@ public meta def isClosedValue (e : Expr) : Bool :=
     wrappers themselves; peeling recurses so the innermost wrapper wins
     (`Raw (Viewed τ)` walks `declared`). -/
 private meta partial def shiftForWrappers (mode : WalkMode) (ty : Expr) : MetaM WalkMode := do
+  if mode == .fidelity then return .fidelity
   let ty ← whnfR ty
   if ty.isAppOfArity ``Raw 1 then
     shiftForWrappers .asWritten ty.appArg!
