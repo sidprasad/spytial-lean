@@ -11,7 +11,8 @@ A trace is a relational instance together with a finite tuple set and an origin 
 occurs once even when several sources justify it; the origin relation retains all of those sources.
 An origin does not change what a tuple means, so a trace is sound exactly when the instance
 obtained by erasing its origins is sound. The structural walk of an exposed representation is
-tagged with whether the exposure came from evaluation or from a checked proof.
+tagged with whether the exposure came from evaluation or from a checked proof; computed operation
+graphs and decoded knowledge have their own origins.
 -/
 
 namespace SpytialLean.Semantics
@@ -27,6 +28,7 @@ public inductive Exposure where
 /-- Where a reported tuple came from. -/
 public inductive Origin where
   | structural (exposure : Exposure)
+  | computation
   | knowledge
   deriving DecidableEq
 
@@ -43,6 +45,15 @@ namespace Trace
 
 variable {World : Type u} {Ty : Type v} {context : Iykyk.Metatheory.Context World}
   {signature : Signature Ty} {model : Model World signature}
+
+/-- Every tuple in a trace carries arguments indexed by its declared relation columns. This is
+the explicit type-correctness statement obtained from the intrinsic representation. -/
+public theorem type_correct (trace : Trace context model) :
+    ∀ tuple, tuple ∈ trace.tuples →
+      ∃ arguments : Arguments (Atom context model) (signature.columns tuple.relation),
+        tuple.arguments = arguments := by
+  intro tuple _
+  exact ⟨tuple.arguments, rfl⟩
 
 /-- The trace with no atoms, tuples, or origins. -/
 @[expose] public def empty : Trace context model where

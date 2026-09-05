@@ -64,6 +64,9 @@ public meta structure WalkState where
   atoms : Array JsonAtom := #[]
   /-- Map from relation name to accumulated tuples. -/
   relations : Std.HashMap String (Array String × Array JsonTuple) := {}
+  /-- Exact Lean heads behind checked context relations. A short display-name collision never
+      authorizes merging propositions headed by different constants or local relations. -/
+  knowledgeRelationHeads : Std.HashMap String ExprStructEq := {}
   nextId : Nat := 0
   /-- Hole atoms, one per metavariable: occurrences of one `?m` are one hole
       under every mode — substitution structure, not identity policy. -/

@@ -133,6 +133,51 @@ namespace Arguments
   | _, .nil => .nil
   | _, .cons head tail => .cons (transform head) (map transform tail)
 
+/-- Concatenate two typed argument lists. -/
+@[expose] public def append {Ty : Type u} {Entry : Ty → Type v} :
+    {left right : List Ty} → Arguments Entry left → Arguments Entry right →
+      Arguments Entry (left ++ right)
+  | [], _, .nil, right => right
+  | _ :: _, _, .cons head tail, right => .cons head (append tail right)
+
+@[simp] public theorem map_append {Ty : Type u} {Source : Ty → Type v}
+    {Target : Ty → Type w} (transform : ∀ {sort}, Source sort → Target sort) :
+    ∀ {left right : List Ty} (first : Arguments Source left)
+      (second : Arguments Source right),
+      (first.append second).map transform =
+        (first.map transform).append (second.map transform)
+  | [], _, .nil, _ => rfl
+  | _ :: _, _, .cons _ tail, second => by
+      simp only [append, map, map_append transform tail second]
+
+/-- Remove the final argument from a nonempty typed argument list. -/
+@[expose] public def init {Ty : Type u} {Entry : Ty → Type v} {finalSort : Ty} :
+    {sorts : List Ty} → Arguments Entry (sorts ++ [finalSort]) → Arguments Entry sorts
+  | [], .cons _ .nil => .nil
+  | _ :: _, .cons head tail => .cons head (init tail)
+
+/-- Select the final argument from a nonempty typed argument list. -/
+@[expose] public def last {Ty : Type u} {Entry : Ty → Type v} {finalSort : Ty} :
+    {sorts : List Ty} → Arguments Entry (sorts ++ [finalSort]) → Entry finalSort
+  | [], .cons result .nil => result
+  | _ :: _, .cons _ tail => last tail
+
+@[simp] public theorem init_append_singleton {Ty : Type u} {Entry : Ty → Type v}
+    {finalSort : Ty} : ∀ {sorts : List Ty} (arguments : Arguments Entry sorts)
+      (result : Entry finalSort),
+      init (arguments.append (.cons result .nil)) = arguments
+  | [], .nil, _ => rfl
+  | _ :: _, .cons _ tail, result => by
+      simp only [append, init, init_append_singleton tail result]
+
+@[simp] public theorem last_append_singleton {Ty : Type u} {Entry : Ty → Type v}
+    {finalSort : Ty} : ∀ {sorts : List Ty} (arguments : Arguments Entry sorts)
+      (result : Entry finalSort),
+      last (arguments.append (.cons result .nil)) = result
+  | [], .nil, _ => rfl
+  | _ :: _, .cons _ tail, result => by
+      simp only [append, last, last_append_singleton tail result]
+
 end Arguments
 
 /-- An atom packaged with its semantic type. -/
@@ -240,6 +285,24 @@ public structure ContainedIn {World : Type u} {Ty : Type v}
     {model : Model World signature} (smaller larger : Instance context model) : Prop where
   atoms : ∀ atom, atom ∈ smaller.atoms → atom ∈ larger.atoms
   tuples : ∀ tuple, tuple ∈ smaller.tuples → tuple ∈ larger.tuples
+
+/-- Identity isomorphism for canonical semantic atoms: both instances contain the same typed
+atoms and tuples. Runtime atom IDs are presentation names for these semantic atoms, so this is the
+typed relational isomorphism relevant after origin erasure. -/
+public structure TypedIsomorphic {World : Type u} {Ty : Type v}
+    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {model : Model World signature} (left right : Instance context model) : Prop where
+  forward : ContainedIn left right
+  backward : ContainedIn right left
+
+/-- Equality of canonical typed instances induces a typed relational isomorphism. -/
+public theorem typedIsomorphic_of_eq {World : Type u} {Ty : Type v}
+    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {model : Model World signature} {left right : Instance context model}
+    (equal : left = right) : TypedIsomorphic left right := by
+  subst right
+  exact ⟨⟨fun _ present => present, fun _ present => present⟩,
+    ⟨fun _ present => present, fun _ present => present⟩⟩
 
 /-- Adding information by union retains the left instance. -/
 public theorem containedIn_union_left {World : Type u} {Ty : Type v}
