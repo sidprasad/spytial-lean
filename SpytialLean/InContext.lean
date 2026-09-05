@@ -25,22 +25,29 @@ private meta def isNegation (proposition : Expr) : Bool :=
   | .forallE _ _ body _ => !body.hasLooseBVar 0 && body.isConstOf ``False
   | _ => false
 
+/-- The implementation output corresponding to the metatheory's checked `Proposition` boundary.
+    `head` retains declaration/free-variable identity even when two heads share a display name. -/
+public meta structure PropTupleShape where
+  relation : String
+  head : Expr
+  arguments : Array Expr
+
 /-- The positive relation represented by a known proposition. Equations with a
     named application become function-graph tuples. Negative and disjunctive
     knowledge does not produce an unconditional tuple. -/
-public meta def propTupleShape? (proposition : Expr) : MetaM (Option (String × Array Expr)) := do
+public meta def propTupleShape? (proposition : Expr) : MetaM (Option PropTupleShape) := do
   unless ← isProp proposition do return none
   if proposition.isAppOfArity ``Or 2 then return none
   if let some (_, domain, result) := proposition.eq? then
     if let some (name, args) ← graphSide? domain then
-      return some (name, args.push result)
+      return some { relation := name, head := domain.getAppFn, arguments := args.push result }
     if let some (name, args) ← graphSide? result then
-      return some (name, args.push domain)
+      return some { relation := name, head := result.getAppFn, arguments := args.push domain }
   if isNegation proposition then return none
   let some name ← propRelName? proposition.getAppFn | return none
   let args ← dataArgsOf proposition
   if args.isEmpty then return none
-  return some (name, args)
+  return some { relation := name, head := proposition.getAppFn, arguments := args }
 
 /-- An equality that supplies visible structure for a local variable. An
     equation involving a named application remains a relation instead. -/
@@ -213,16 +220,31 @@ private meta def addWitnesses (afaik : Iykyk.Afaik) (recordObservationTerms : Bo
 private meta def walkFact (cfg : WalkConfig)
     (fact : Iykyk.KnownFact) (initialAnchors : Array (Expr × String)) :
     StateT WalkState MetaM (Array (Expr × String)) := do
-  let some (relation, rawArguments) ← propTupleShape? (← displayedProposition fact)
+  let some shape ← propTupleShape? (← displayedProposition fact)
     | return initialAnchors
-  -- Predicates that differ only past their short name land in one relation; a
-  -- tuple of another width would corrupt it, so the colliding fact stays
-  -- undrawn instead.
+  let relation := shape.relation
+  let rawArguments := shape.arguments
+  let sourceHead := (⟨shape.head⟩ : ExprStructEq)
+  let rawTypes ← rawArguments.mapM fun argument => do
+    sigOfType (← inferType argument)
+  -- A display-name collision must agree on every retained column, not merely
+  -- arity, before its tuple may join the existing relation.
   if let some (declaredTypes, _) := (← get).relations.get? relation then
-    if declaredTypes.size != rawArguments.size then
+    if declaredTypes.size != rawTypes.size then
       logWarning m!"spytial: '{relation}' names relations of arity \
-        {declaredTypes.size} and {rawArguments.size}; the second is not drawn"
+        {declaredTypes.size} and {rawTypes.size}; the second is not drawn"
       return initialAnchors
+    if declaredTypes != rawTypes then
+      logWarning m!"spytial: incompatible checked proposition columns for '{relation}'; \
+        the colliding fact is not drawn"
+      return initialAnchors
+  if let some declaredHead := (← get).knowledgeRelationHeads[relation]? then
+    if declaredHead != sourceHead then
+      logWarning m!"spytial: '{relation}' names distinct proposition heads; \
+        the colliding fact is not drawn"
+      return initialAnchors
+  modify fun state => { state with
+    knowledgeRelationHeads := state.knowledgeRelationHeads.insert relation sourceHead }
   let mut anchors := initialAnchors
   let mut atomIds := #[]
   let mut types := #[]
@@ -247,7 +269,7 @@ private meta def walkFact (cfg : WalkConfig)
         anchors := anchors.push (argument, atomId)
         pure atomId
     atomIds := atomIds.push atomId
-    types := types.push (← sigOfType (← inferType argument))
+    types := types.push rawTypes[types.size]!
     -- Keep the source term even if a proved equality refined this endpoint.
     modify fun state => state.rememberSelectorTerm rawArgument atomId
   -- An observation may already have emitted the graph point established by
@@ -611,9 +633,9 @@ public meta def scopeForAfaik (afaik : Iykyk.Afaik) (base : SelScope)
     relations := relations ++ observationRelations
     heads := heads ++ observationHeads
   for fact in afaik.facts do
-    if let some (name, arguments) ← propTupleShape? (← displayedProposition fact) then
-      relations := relations.push (name, arguments.size)
-      for argument in arguments do
+    if let some shape ← propTupleShape? (← displayedProposition fact) then
+      relations := relations.push (shape.relation, shape.arguments.size)
+      for argument in shape.arguments do
         heads := heads.push (← typeHead? (← inferType argument))
         let (argumentRelations, argumentHeads) ← functionGraphScopeEntries afaik cfg argument
         relations := relations ++ argumentRelations

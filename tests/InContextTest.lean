@@ -42,6 +42,72 @@ private meta def viewOf (label : String) (root : Expr) (config : Iykyk.Config :=
     assertCanon "consumer.connected" view.data
       "α|x\nα|y\nα|z\nR[α,α]:0,1\nS[α,α]:1,2"
 
+/-! ## Checked decoder boundary -/
+
+/- The Lean-expression boundary recognizes both graph orientations and refuses to turn negative
+   or unresolved disjunctive knowledge into positive tuples. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `R (← mkArrow (mkConst ``Nat) (mkSort Level.zero)) fun R => do
+  withLocalDeclD `next (← mkArrow (mkConst ``Nat) (mkConst ``Nat)) fun next => do
+  withLocalDeclD `x (mkConst ``Nat) fun x => do
+  withLocalDeclD `y (mkConst ``Nat) fun y => do
+    let direct := mkApp R x
+    let some directShape ← propTupleShape? direct
+      | throwError "direct predicate was rejected"
+    unless directShape.head.equal R && directShape.arguments == #[x] do
+      throwError "direct predicate lost its checked head or arguments"
+    let application := mkApp next x
+    let some forward ← propTupleShape? (← mkEq application y)
+      | throwError "forward graph equation was rejected"
+    let some symmetric ← propTupleShape? (← mkEq y application)
+      | throwError "symmetric graph equation was rejected"
+    unless forward.head.equal next && symmetric.head.equal next &&
+        forward.arguments == #[x, y] && symmetric.arguments == #[x, y] do
+      throwError "equation orientations decoded to different graph points"
+    let negative ← mkAppM ``Not #[direct]
+    if (← propTupleShape? negative).isSome then
+      throwError "negative proposition decoded as a positive tuple"
+    let disjunction ← mkAppM ``Or #[direct, direct]
+    if (← propTupleShape? disjunction).isSome then
+      throwError "unresolved disjunction decoded as a positive tuple"
+
+namespace InContextTestFirstHead
+
+def linked (_left _right : Nat) : Prop := True
+
+end InContextTestFirstHead
+
+namespace InContextTestSecondHead
+
+def linked (_left _right : Nat) : Prop := True
+
+end InContextTestSecondHead
+
+/- Distinct declarations with one short display name are not one relation. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x (mkConst ``Nat) fun x => do
+  withLocalDeclD `y (mkConst ``Nat) fun y => do
+  withLocalDeclD `z (mkConst ``Nat) fun z => do
+  withLocalDeclD `first (mkApp2 (mkConst ``InContextTestFirstHead.linked) x y) fun _ => do
+  withLocalDeclD `second (mkApp2 (mkConst ``InContextTestSecondHead.linked) x z) fun _ => do
+    let view ← viewOf "consumer.relationHeadMismatch" x { rootOnly := false }
+    assertCanon "consumer.relationHeadMismatch" view.data
+      "Nat|x\nNat|y\nlinked[Nat,Nat]:0,1"
+
+private def polymorphicRelation {Type_ : Type} (_value : Type_) : Prop := True
+
+/- One polymorphic head cannot change the checked column types of an existing relation. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x (mkConst ``Nat) fun x => do
+  withLocalDeclD `flag (mkConst ``Bool) fun flag => do
+  withLocalDeclD `first
+      (mkApp2 (mkConst ``polymorphicRelation) (mkConst ``Nat) x) fun _ => do
+  withLocalDeclD `second
+      (mkApp2 (mkConst ``polymorphicRelation) (mkConst ``Bool) flag) fun _ => do
+    let view ← viewOf "consumer.relationTypeMismatch" x { rootOnly := false }
+    assertCanon "consumer.relationTypeMismatch" view.data
+      "Nat|x\npolymorphicRelation[Nat]:0"
+
 /-! ## Equalities refine structure -/
 
 private inductive Tree where
