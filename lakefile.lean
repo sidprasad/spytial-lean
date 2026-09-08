@@ -140,7 +140,7 @@ lean_lib SpytialTests where
   roots := #[`WalkCanon, `TypeShapeTest, `CoverageTest, `TacticTest, `SelectorTest,
              `LeanSelectorTest, `IdentityTest, `IdentityWalkTest, `RelationShapeTest,
              `InContextTest, `ContextInspectionTest, `KnowledgeSelectorFixture,
-             `KnowledgeSelectorTest]
+             `KnowledgeSelectorTest, `ReifyTest]
 
 /-- The semantic core of relational inspection by computation and proof. -/
 lean_lib SpytialLeanInspectionSemantics where
