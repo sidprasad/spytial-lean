@@ -2,7 +2,7 @@ module
 
 public import Lean
 meta import Lean.Elab.Tactic.Omega
-public meta import SpytialLean.Types
+public meta import SpytialLean.RelationalizerCore
 public meta import SpytialLean.TypeShape
 public meta import SpytialLean.Identity
 
@@ -140,10 +140,14 @@ public meta structure WalkState where
       chain of applications from rescanning every suffix. -/
   observationDependencyCache : ExprStructMap Bool := {}
 
+/-- Project the environment-independent graph state from the expression walker's metadata. -/
+public meta def WalkState.toGraph (state : WalkState) : RelationalizerCore.Graph :=
+  { atoms := state.atoms, relations := state.relations, nextId := state.nextId }
+
 /-- Generate a fresh atom ID. -/
 public meta def WalkState.freshId (s : WalkState) : String × WalkState :=
-  let id := s!"atom_{s.nextId}"
-  (id, { s with nextId := s.nextId + 1 })
+  let (id, graph) := s.toGraph.freshId
+  (id, { s with nextId := graph.nextId })
 
 private meta def subscriptDigit : Char → String
   | '0' => "₀"
@@ -203,7 +207,8 @@ public meta partial def WalkState.freshAnonymousLabel (s : WalkState) :
 
 /-- Register an atom in the state. -/
 public meta def WalkState.addAtom (s : WalkState) (atom : JsonAtom) : WalkState :=
-  { s with atoms := s.atoms.push atom }
+  let graph := s.toGraph.addAtom atom
+  { s with atoms := graph.atoms }
 
 /-- Record an expression at its actual drawn atom, retaining aliases without
     duplicating the same term-to-atom association. -/
@@ -229,20 +234,24 @@ private meta def rememberObservationTerm (enabled : Bool) (term : Expr) (atomId 
 /-- Add a tuple to a relation, creating the relation if needed. -/
 public meta def WalkState.addTuple (s : WalkState) (relName : String) (types : Array String)
     (tuple : JsonTuple) : WalkState :=
-  let existing := s.relations.getD relName (types, #[])
-  { s with relations := s.relations.insert relName (existing.1, existing.2.push tuple) }
+  let graph := s.toGraph.addTuple relName types tuple
+  { s with relations := graph.relations }
+
+/-- Add an ordinary constructor or structure field through the pure graph core. -/
+public meta def WalkState.addField (s : WalkState)
+    (name owner ownerType child childType : String) : WalkState :=
+  let graph := s.toGraph.addField name owner ownerType child childType
+  { s with relations := graph.relations }
 
 /-- Register a relation with no tuples, so an empty extension still appears. -/
 public meta def WalkState.addRelation (s : WalkState) (relName : String)
     (types : Array String) : WalkState :=
-  if s.relations.contains relName then s
-  else { s with relations := s.relations.insert relName (types, #[]) }
+  let graph := s.toGraph.addRelation relName types
+  { s with relations := graph.relations }
 
 /-- Convert accumulated state to ordinary extracted data. -/
 public meta def WalkState.toDataInstance (s : WalkState) : JsonDataInstance :=
-  let relations := s.relations.toArray.map fun (name, types, tuples) =>
-    { id := name, name := name, types := types, tuples := tuples : JsonRelation }
-  { atoms := s.atoms, relations := relations }
+  s.toGraph.toDataInstance
 
 /-- Configuration for the expression walker. -/
 public meta structure WalkConfig where
@@ -1531,9 +1540,8 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
             let fieldName := fieldRelName ctorShortName binderNames i
             unless ← tabulate? cfg recurse fieldName typeName atomId arg do
               let childId ← recurse arg
-              let types := #[typeName, ← columnSig typeName arg]
-              let tuple := { atoms := #[atomId, childId], types := types }
-              modify fun state => state.addTuple fieldName types tuple
+              let childType ← columnSig typeName arg
+              modify fun state => state.addField fieldName atomId typeName childId childType
       -- stuck match (iota can't fire on a hole/hypothesis discriminant):
       -- ternary scrutinee edges; motive and alternatives are plumbing
       else if let some minfo := getMatcherInfoCore? env fnName then
@@ -1567,9 +1575,8 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
             let fn := fieldName.toString (escape := false)
             unless ← tabulate? cfg recurse fn typeName atomId projReduced do
               let childId ← recurse projReduced
-              let types := #[typeName, ← columnSig typeName projReduced]
-              modify fun s => s.addTuple fn types
-                { atoms := #[atomId, childId], types := types }
+              let childType ← columnSig typeName projReduced
+              modify fun state => state.addField fn atomId typeName childId childType
       else do
         unless ← emitFunctionGraph? cfg recurse e typeName atomId do
           -- Generic function application or unknown — leaf atom

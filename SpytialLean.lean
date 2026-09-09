@@ -10,6 +10,7 @@ public meta import SpytialLean.Selector
 public meta import SpytialLean.Spec
 public meta import SpytialLean.TypeShape
 public meta import SpytialLean.SelectorElab
+public import SpytialLean.RelationalizerCore
 public meta import SpytialLean.Relationalizer
 public import SpytialLean.ReifyCore
 public meta import SpytialLean.Reify
