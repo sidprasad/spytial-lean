@@ -1748,6 +1748,24 @@ public meta def addActiveDomainObservations (cfg : WalkConfig)
       let some application ← liftM <| instantiateObservationAt? observation value | continue
       addObservation cfg application application #[value] #[(value, atomId)]
 
+private meta def relationalizeRootedWithEvidence (e : Expr) (cfg : WalkConfig := {})
+    (observations : Array Expr := #[]) :
+    MetaM (RootedJsonDataInstance × Provenance × SelectorEvidence) :=
+  withoutModifyingEnv do
+    let mut observationAwareConfig := { cfg with observations, recordSelectorTerms := true }
+    unless observations.isEmpty do
+      let (_, discovery) ← (walkExpr observationAwareConfig e).run {}
+      observationAwareConfig ← prepareObservations observationAwareConfig
+        (discovery.observationTerms.map (·.1))
+    let (root, state) ← StateT.run (s := {}) do
+      let root ← walkExpr observationAwareConfig e
+      let observationConfig := { observationAwareConfig with functionGraphs := true }
+      addActiveDomainObservations observationConfig observations
+      return root
+    return (⟨root, state.toDataInstance⟩, state.provenance, {
+      terms := state.selectorTerms
+      proofs := observationAwareConfig.observationResults.toArray.filterMap (·.2.proof?) })
+
 /-- Walk an expression and produce a complete data instance, keeping the
     subterm each atom was walked from (see `Provenance`).
 
@@ -1757,20 +1775,9 @@ public meta def addActiveDomainObservations (cfg : WalkConfig)
     nothing outlives the rollback. -/
 public meta def relationalizeWithEvidence (e : Expr) (cfg : WalkConfig := {})
     (observations : Array Expr := #[]) :
-    MetaM (JsonDataInstance × Provenance × SelectorEvidence) :=
-  withoutModifyingEnv do
-    let mut observationAwareConfig := { cfg with observations, recordSelectorTerms := true }
-    unless observations.isEmpty do
-      let (_, discovery) ← (walkExpr observationAwareConfig e).run {}
-      observationAwareConfig ← prepareObservations observationAwareConfig
-        (discovery.observationTerms.map (·.1))
-    let (_, state) ← StateT.run (s := {}) do
-      let _ ← walkExpr observationAwareConfig e
-      let observationConfig := { observationAwareConfig with functionGraphs := true }
-      addActiveDomainObservations observationConfig observations
-    return (state.toDataInstance, state.provenance, {
-      terms := state.selectorTerms
-      proofs := observationAwareConfig.observationResults.toArray.filterMap (·.2.proof?) })
+    MetaM (JsonDataInstance × Provenance × SelectorEvidence) := do
+  let (rooted, provenance, evidence) ← relationalizeRootedWithEvidence e cfg observations
+  return (rooted.data, provenance, evidence)
 
 /-- Compatibility projection for callers that only need value provenance. -/
 public meta def relationalizeWithProvenance (e : Expr) (cfg : WalkConfig := {})
@@ -1782,6 +1789,11 @@ public meta def relationalizeWithProvenance (e : Expr) (cfg : WalkConfig := {})
 public meta def relationalize (e : Expr) (cfg : WalkConfig := {})
     (observations : Array Expr := #[]) : MetaM JsonDataInstance := do
   return (← relationalizeWithProvenance e cfg observations).1
+
+/-- Walk an expression and preserve the distinguished atom returned for the input expression. -/
+public meta def relationalizeRooted (e : Expr) (cfg : WalkConfig := {})
+    (observations : Array Expr := #[]) : MetaM RootedJsonDataInstance := do
+  return (← relationalizeRootedWithEvidence e cfg observations).1
 
 /-! ## Two-pass reference implementation
 

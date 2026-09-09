@@ -1,0 +1,461 @@
+module
+
+public import SpytialLean.ReifyCore
+public meta import SpytialLean.TypeShape
+public meta import Lean.Elab.Deriving.Basic
+public meta import Lean.Elab.Deriving.Util
+
+namespace SpytialLean.SpytialReify.Deriving
+
+open Lean Meta Elab Command Term
+open Lean.Elab.Deriving
+open Lean.Parser.Term
+
+private meta structure FieldPlan where
+  type : Term
+  relation : String
+  recursive : Bool
+  deriving Inhabited
+
+private meta structure CtorPlan where
+  name : Name
+  label : String
+  numParams : Nat
+  fields : Array FieldPlan
+
+private meta structure Plan where
+  declName : Name
+  indVal : InductiveVal
+  argNames : Array Name
+  ctors : Array CtorPlan
+
+private meta structure DecoderNames where
+  reifyAt : Name
+  representsAt : Name
+  complete : Name
+  tier1Instance : Name
+
+private meta def unsupported (declName : Name) (message : MessageData) : TermElabM α :=
+  throwError "cannot derive `SpytialReify` for `{.ofConstName declName}`: {message}"
+
+/-- Render a first-order field type in generated decoder code. Only datatype parameters may occur
+free; dependencies on earlier constructor fields are Tier 2. -/
+private meta partial def renderFieldType (declName : Name)
+    (params : Array (FVarId × Ident)) : Expr → TermElabM Term
+  | .fvar id =>
+    match params.findSome? (fun (param, name) => if param == id then some name else none) with
+    | some name => pure name
+    | none => unsupported declName m!"a constructor field depends on an earlier field"
+  | .const name _ => `(@$(mkCIdent name):ident)
+  | .lit (.natVal value) => pure (quote value)
+  | .lit (.strVal value) => pure (quote value)
+  | expression@(.app ..) => do
+    let arguments ← expression.getAppArgs.mapM (renderFieldType declName params)
+    match expression.getAppFn with
+    | .const name _ => `(@$(mkCIdent name):ident $arguments:term*)
+    | .fvar id =>
+      let function ← renderFieldType declName params (.fvar id)
+      `($function $arguments:term*)
+    | function => unsupported declName m!"unsupported field type head{indentExpr function}"
+  | .mdata _ expression => renderFieldType declName params expression
+  | expression => unsupported declName m!"unsupported field type{indentExpr expression}"
+
+private meta def mkPlan (declName : Name) : TermElabM Plan := do
+  let indVal ← getConstInfoInduct declName
+  unless indVal.all.length == 1 do
+    unsupported declName m!"mutually recursive inductives are outside Tier 1"
+  unless indVal.numIndices == 0 do
+    unsupported declName m!"indexed inductive families are Tier 2"
+  if indVal.isNested then
+    unsupported declName m!"nested recursion is not yet supported"
+  let argNames ← mkInductArgNames indVal
+  let mut ctors := #[]
+  for constructor in indVal.ctors do
+    let info ← getConstInfoCtor constructor
+    let binderNames := ctorDataBinderNames info
+    let fields ← forallTelescopeReducing info.type fun variables _ => do
+      let constructorParams := variables.extract 0 info.numParams
+      let params := constructorParams.mapIdx fun index parameter =>
+        (parameter.fvarId!, mkIdent argNames[index]!)
+      let mut fields := #[]
+      for index in [:info.numFields] do
+        let field := variables[info.numParams + index]!
+        let declaration ← field.fvarId!.getDecl
+        unless declaration.binderInfo.isExplicit do
+          unsupported declName
+            m!"constructor `{shortName constructor}` has a non-explicit data field; \
+              Tier 1 requires explicit constructor fields"
+        let type ← whnf declaration.type
+        if ← isProp type then
+          unsupported declName m!"proof fields are outside Tier 1"
+        if type.isSort then
+          unsupported declName m!"`Sort`-valued fields are outside Tier 1"
+        if type.isForall then
+          unsupported declName m!"function fields are outside Tier 1"
+        let recursive := type.isAppOf declName
+        if type.getUsedConstants.contains declName && !recursive then
+          unsupported declName m!"nested recursion is not yet supported"
+        if recursive then
+          let arguments := type.getAppArgs
+          unless arguments.size == constructorParams.size do
+            unsupported declName m!"non-regular recursive occurrence"
+          for argument in arguments, parameter in constructorParams do
+            unless ← isDefEq argument parameter do
+              unsupported declName
+                m!"recursive occurrences must use the datatype's parameters unchanged"
+        let relation := fieldRelName (shortName constructor) binderNames index
+        -- Relation tuples are unordered: one owner and one relation name cannot encode which
+        -- constructor position supplied each of two distinct targets.
+        if fields.any fun field => field.relation == relation then
+          unsupported declName
+            m!"constructor `{shortName constructor}` maps more than one field to \
+              relation `{relation}`"
+        fields := fields.push {
+          type := ← renderFieldType declName params type
+          relation
+          recursive
+        }
+      return fields
+    ctors := ctors.push {
+      name := constructor
+      label := shortName constructor
+      numParams := info.numParams
+      fields
+    }
+  return { declName, indVal, argNames, ctors }
+
+private meta def mkNames (plan : Plan) : TermElabM DecoderNames := do
+  let reifyInstance ← mkInstName ``SpytialReify plan.declName
+  return {
+    reifyAt := reifyInstance.appendAfter "_decodeAt"
+    representsAt := reifyInstance.appendAfter "_representsAt"
+    complete := reifyInstance.appendAfter "_decodeAt_complete"
+    tier1Instance := reifyInstance.appendAfter "_tier1"
+  }
+
+open TSyntax.Compat in
+private meta def mkBinders (plan : Plan) (includeTier1 : Bool := false) :
+    TermElabM (Array (TSyntax ``bracketedBinder)) := do
+  let mut binders := #[]
+  for binder in ← mkImplicitBinders plan.argNames do
+    binders := binders.push binder
+  for binder in ← mkInstImplicitBinders ``SpytialReify plan.indVal plan.argNames do
+    binders := binders.push binder
+  if includeTier1 then
+    for binder in ←
+        mkInstImplicitBinders ``SpytialLean.Tier1Reification plan.indVal plan.argNames do
+      binders := binders.push binder
+  return binders
+
+private meta def mkCtorBody (names : DecoderNames) (constructor : CtorPlan)
+    (datum root fuel : Ident) : TermElabM Term := do
+  let mut fields : Array Ident := #[]
+  for _ in constructor.fields do
+    fields := fields.push (mkIdent (← mkFreshUserName `field))
+  let value ← `($(mkCIdent constructor.name) $fields:term*)
+  let mut body ← `(Except.ok $value)
+  for index in (List.range constructor.fields.size).reverse do
+    let field := fields[index]!
+    let decodeError := mkIdent (← mkFreshUserName `error)
+    let fieldPlan := constructor.fields[index]!
+    let child := mkIdent (← mkFreshUserName `child)
+    let decodeChild ← if fieldPlan.recursive then
+      `(fun $child:ident => $(mkIdent names.reifyAt) $datum:ident $child:ident $fuel:ident)
+    else
+      `(fun $child:ident => SpytialLean.SpytialReify.decodeAt (α := $(fieldPlan.type))
+        $datum:ident $child:ident $fuel:ident)
+    let decode ← `(SpytialLean.JsonDataInstance.decodeChildWith
+      $datum:ident $root:ident $(quote fieldPlan.relation) $decodeChild:term)
+    body ← `(match $decode:term with
+      | Except.error $decodeError:ident => Except.error $decodeError:ident
+      | Except.ok $field:ident => $body:term)
+  return body
+
+open TSyntax.Compat in
+private meta def mkDecoder (plan : Plan) (names : DecoderNames) :
+    TermElabM (TSyntax `command) := do
+  let indApp ← mkInductiveApp plan.indVal plan.argNames
+  let binders ← mkBinders plan
+  let datum := mkIdent (← mkFreshUserName `datum)
+  let root := mkIdent (← mkFreshUserName `root)
+  let fuel := mkIdent (← mkFreshUserName `fuel)
+  let nextFuel := mkIdent (← mkFreshUserName `fuel)
+  let atom := mkIdent (← mkFreshUserName `atom)
+  let error := mkIdent (← mkFreshUserName `error)
+
+  let mut labelAlts : Array (TSyntax ``matchAlt) := #[]
+  for constructor in plan.ctors do
+    let body ← mkCtorBody names constructor datum root nextFuel
+    labelAlts := labelAlts.push
+      (← `(matchAltExpr| | $(quote constructor.label) => $body:term))
+  labelAlts := labelAlts.push
+    (← `(matchAltExpr| | _ => SpytialLean.reifyError "reify: unknown constructor"))
+  let labelMatch ← `(match ($atom:ident).label with $labelAlts:matchAlt*)
+  let atomMatch ← `(match SpytialLean.JsonDataInstance.expectAtom
+      $datum:ident $root:ident $(quote (shortName plan.declName)) with
+    | Except.error $error:ident => Except.error $error:ident
+    | Except.ok $atom:ident => $labelMatch:term)
+  let body ← `(match $fuel:ident with
+    | 0 => SpytialLean.reifyError "reify: decoder fuel exhausted"
+    | $nextFuel:ident + 1 => $atomMatch:term)
+  if plan.indVal.isRec then
+    `(def $(mkIdent names.reifyAt):ident $binders:bracketedBinder*
+        ($datum:ident : SpytialLean.JsonDataInstance) ($root:ident : String) ($fuel:ident : Nat) :
+        Except SpytialLean.ReifyError $indApp := $body:term
+      termination_by $fuel:ident)
+  else
+    `(def $(mkIdent names.reifyAt):ident $binders:bracketedBinder*
+        ($datum:ident : SpytialLean.JsonDataInstance) ($root:ident : String) ($fuel:ident : Nat) :
+        Except SpytialLean.ReifyError $indApp := $body:term)
+
+private meta def mkFieldRepresentation (names : DecoderNames) (fieldPlan : FieldPlan)
+    (datum root fuel field : Ident) : TermElabM Term := do
+  let child := mkIdent (← mkFreshUserName `child)
+  let value := mkIdent (← mkFreshUserName `value)
+  let represents ← if fieldPlan.recursive then
+    `(fun $child:ident $value:ident =>
+      $(mkIdent names.representsAt) $datum:ident $child:ident $fuel:ident $value:ident)
+  else
+    `(fun $child:ident $value:ident =>
+      SpytialLean.Tier1Reification.representsAt (α := $(fieldPlan.type))
+        $datum:ident $child:ident $fuel:ident $value:ident)
+  `(SpytialLean.JsonDataInstance.childRepresentsWith
+    $datum:ident $root:ident $(quote fieldPlan.relation) $represents:term $field:ident)
+
+private meta def mkCtorRepresentation (names : DecoderNames) (plan : Plan)
+    (constructor : CtorPlan) (datum root fuel : Ident) : TermElabM (TSyntax ``matchAlt) := do
+  let mut fields : Array Ident := #[]
+  for _ in constructor.fields do
+    fields := fields.push (mkIdent (← mkFreshUserName `field))
+  let mut fieldChecks ← `(true)
+  for index in (List.range constructor.fields.size).reverse do
+    let check ← mkFieldRepresentation names constructor.fields[index]!
+      datum root fuel fields[index]!
+    fieldChecks ← `($check:term && $fieldChecks:term)
+  let body ← `(SpytialLean.JsonDataInstance.constructorRepresents
+    $datum:ident $root:ident $(quote (shortName plan.declName))
+      $(quote constructor.label) $fieldChecks:term)
+  `(matchAltExpr| | $(mkCIdent constructor.name) $fields:term* => $body:term)
+
+open TSyntax.Compat in
+private meta def mkRepresentsAt (plan : Plan) (names : DecoderNames) :
+    TermElabM (TSyntax `command) := do
+  let indApp ← mkInductiveApp plan.indVal plan.argNames
+  let binders ← mkBinders plan true
+  let datum := mkIdent (← mkFreshUserName `datum)
+  let root := mkIdent (← mkFreshUserName `root)
+  let fuel := mkIdent (← mkFreshUserName `fuel)
+  let nextFuel := mkIdent (← mkFreshUserName `fuel)
+  let value := mkIdent (← mkFreshUserName `value)
+  let mut alternatives := #[]
+  for constructor in plan.ctors do
+    alternatives := alternatives.push
+      (← mkCtorRepresentation names plan constructor datum root nextFuel)
+  let valueMatch ← `(match $value:ident with $alternatives:matchAlt*)
+  let body ← `(match $fuel:ident with
+    | 0 => false
+    | $nextFuel:ident + 1 => $valueMatch:term)
+  if plan.indVal.isRec then
+    `(@[expose] def $(mkIdent names.representsAt):ident $binders:bracketedBinder*
+        ($datum:ident : SpytialLean.JsonDataInstance) ($root:ident : String)
+        ($fuel:ident : Nat) ($value:ident : $indApp) : Bool := $body:term
+      termination_by $fuel:ident)
+  else
+    `(@[expose] def $(mkIdent names.representsAt):ident $binders:bracketedBinder*
+        ($datum:ident : SpytialLean.JsonDataInstance) ($root:ident : String)
+        ($fuel:ident : Nat) ($value:ident : $indApp) : Bool := $body:term)
+
+private meta def andComponent (conjunction : Ident) (index : Nat) : TermElabM Term := do
+  let mut component : Term := conjunction
+  for _ in [:index] do
+    component ← `(($component:term).2)
+  `(($component:term).1)
+
+private abbrev SimpArg := TSyntax
+  [`Lean.Parser.Tactic.simpStar, `Lean.Parser.Tactic.simpErase, `Lean.Parser.Tactic.simpLemma]
+
+private meta def mkSimpArg (term : Term) : TermElabM SimpArg :=
+  `(Lean.Parser.Tactic.simpLemma| $term:term)
+
+private meta def mkFieldDecoder (names : DecoderNames) (fieldPlan : FieldPlan)
+    (datum fuel : Ident) : TermElabM Term := do
+  let child := mkIdent (← mkFreshUserName `child)
+  if fieldPlan.recursive then
+    `(fun $child:ident => $(mkIdent names.reifyAt) $datum:ident $child:ident $fuel:ident)
+  else
+    `(fun $child:ident => SpytialLean.SpytialReify.decodeAt (α := $(fieldPlan.type))
+      $datum:ident $child:ident $fuel:ident)
+
+private meta def mkFieldComplete (fieldPlan : FieldPlan)
+    (datum field inductionHypothesis childHypothesis : Ident) : TermElabM Term := do
+  let child := mkIdent (← mkFreshUserName `child)
+  if fieldPlan.recursive then
+    `(fun $child:ident $childHypothesis:ident =>
+      $inductionHypothesis:ident $datum:ident $child:ident $field:ident $childHypothesis:ident)
+  else
+    `(fun _ $childHypothesis:ident =>
+      SpytialLean.Tier1Reification.decodeAt_complete (α := $(fieldPlan.type))
+        $childHypothesis:ident)
+
+private meta def mkCtorCompleteAlt (names : DecoderNames) (plan : Plan)
+    (constructor : CtorPlan) (datum root fuel inductionHypothesis hypothesis : Ident) :
+    TermElabM (TSyntax ``Lean.Parser.Tactic.inductionAlt) := do
+  let mut fields : Array Ident := #[]
+  for _ in constructor.fields do
+    fields := fields.push (mkIdent (← mkFreshUserName `field))
+  let atomEquation := mkIdent (← mkFreshUserName `atomEquation)
+  let atom := mkIdent (← mkFreshUserName `atom)
+  let error := mkIdent (← mkFreshUserName `error)
+  let labelProof ← andComponent hypothesis 0
+  let mut decodedFields : Array Ident := #[]
+  for _ in constructor.fields do
+    decodedFields := decodedFields.push (mkIdent (← mkFreshUserName `decodedField))
+
+  let mut fieldTactics : Array (TSyntax `tactic) := #[]
+  for index in List.range constructor.fields.size do
+    let fieldPlan := constructor.fields[index]!
+    let field := fields[index]!
+    let decoded := decodedFields[index]!
+    let decoder ← mkFieldDecoder names fieldPlan datum fuel
+    let decode ← `(SpytialLean.JsonDataInstance.decodeChildWith
+      $datum:ident $root:ident $(quote fieldPlan.relation) $decoder:term)
+    let childHypothesis := mkIdent (← mkFreshUserName `childHypothesis)
+    let complete ← mkFieldComplete fieldPlan datum field inductionHypothesis
+      childHypothesis
+    let fieldEvidence ← andComponent hypothesis (index + 1)
+    let proof ← `(SpytialLean.JsonDataInstance.decodeChildWith_complete
+      $complete:term $fieldEvidence:term)
+    let haveField ← `(tactic| have $decoded:ident :
+      $decode:term = Except.ok $field:ident := $proof:term)
+    fieldTactics := fieldTactics.push haveField
+
+  let caseName := mkIdent constructor.name.getString!.toName
+  let currentNamespace ← getCurrNamespace
+  let representsAt := mkIdentFrom (← getRef) (currentNamespace ++ names.representsAt)
+  let reifyAt := mkIdentFrom (← getRef) (currentNamespace ++ names.reifyAt)
+  let representsAtArg ← mkSimpArg representsAt
+  let mut decoderArgs : Array SimpArg := #[
+    ← mkSimpArg reifyAt, ← mkSimpArg atomEquation, ← mkSimpArg labelProof
+  ]
+  for decodedField in decodedFields do
+    decoderArgs := decoderArgs.push (← mkSimpArg decodedField)
+  let constructorArg ←
+    mkSimpArg (mkIdent ``SpytialLean.JsonDataInstance.constructorRepresents)
+  let atomEquationArg ← mkSimpArg atomEquation
+  if fieldTactics.isEmpty then
+    `(Lean.Parser.Tactic.inductionAlt| | $caseName:ident $fields:ident* =>
+      cases $atomEquation:ident : SpytialLean.JsonDataInstance.expectAtom
+          $datum:ident $root:ident $(quote (shortName plan.declName)) with
+      | error $error:ident =>
+          simp [$representsAtArg, $constructorArg, $atomEquationArg] at $hypothesis:ident
+      | ok $atom:ident =>
+          simp only [$representsAtArg, $constructorArg, $atomEquationArg,
+            Bool.and_eq_true, beq_iff_eq] at $hypothesis:ident
+          simp [$decoderArgs,*])
+  else
+    `(Lean.Parser.Tactic.inductionAlt| | $caseName:ident $fields:ident* =>
+      cases $atomEquation:ident : SpytialLean.JsonDataInstance.expectAtom
+          $datum:ident $root:ident $(quote (shortName plan.declName)) with
+      | error $error:ident =>
+          simp [$representsAtArg, $constructorArg, $atomEquationArg] at $hypothesis:ident
+      | ok $atom:ident =>
+          simp only [$representsAtArg, $constructorArg, $atomEquationArg,
+            Bool.and_eq_true, beq_iff_eq] at $hypothesis:ident
+          $fieldTactics:tactic*
+          simp [$decoderArgs,*])
+
+open TSyntax.Compat in
+private meta def mkComplete (plan : Plan) (names : DecoderNames) :
+    TermElabM (TSyntax `command) := do
+  let indApp ← mkInductiveApp plan.indVal plan.argNames
+  let binders ← mkBinders plan true
+  let datum := mkIdent (← mkFreshUserName `datum)
+  let root := mkIdent (← mkFreshUserName `root)
+  let fuel := mkIdent (← mkFreshUserName `fuel)
+  let nextFuel := mkIdent (← mkFreshUserName `fuel)
+  let value := mkIdent (← mkFreshUserName `value)
+  let hypothesis := mkIdent (← mkFreshUserName `represents)
+  let inductionHypothesis := mkIdent (← mkFreshUserName `inductionHypothesis)
+  let representsAt := mkIdentFrom (← getRef) ((← getCurrNamespace) ++ names.representsAt)
+  let mut constructorAlts := #[]
+  for constructor in plan.ctors do
+    constructorAlts := constructorAlts.push
+      (← mkCtorCompleteAlt names plan constructor datum root nextFuel
+        inductionHypothesis hypothesis)
+  let proof ← if plan.indVal.isRec then
+    `(by
+      intro $datum:ident $root:ident $fuel:ident
+      induction $fuel:ident generalizing $datum:ident $root:ident with
+      | zero =>
+          intro $value:ident $hypothesis:ident
+          simp [$representsAt:ident] at $hypothesis:ident
+      | succ $nextFuel:ident $inductionHypothesis:ident =>
+          intro $value:ident $hypothesis:ident
+          cases $value:ident with $constructorAlts:inductionAlt*)
+  else
+    `(by
+      intro $datum:ident $root:ident $fuel:ident $value:ident $hypothesis:ident
+      cases $fuel:ident with
+      | zero => simp [$representsAt:ident] at $hypothesis:ident
+      | succ $nextFuel:ident =>
+          cases $value:ident with $constructorAlts:inductionAlt*)
+  `(theorem $(mkIdent names.complete):ident $binders:bracketedBinder* :
+      ∀ ($datum:ident : SpytialLean.JsonDataInstance) ($root:ident : String)
+          ($fuel:ident : Nat) ($value:ident : $indApp),
+        $(mkIdent names.representsAt) $datum:ident $root:ident $fuel:ident $value:ident = true →
+          $(mkIdent names.reifyAt) $datum:ident $root:ident $fuel:ident = Except.ok $value:ident :=
+      $proof:term)
+
+open TSyntax.Compat in
+private meta def mkInstance (plan : Plan) (names : DecoderNames) :
+    TermElabM (TSyntax `command) := do
+  let indApp ← mkInductiveApp plan.indVal plan.argNames
+  let binders ← mkBinders plan
+  let instanceName ← mkInstName ``SpytialReify plan.declName
+  `(instance $(mkIdent instanceName):ident $binders:bracketedBinder* :
+      SpytialLean.SpytialReify $indApp where
+    reifyAt := $(mkIdent names.reifyAt))
+
+open TSyntax.Compat in
+private meta def mkTier1Instance (plan : Plan) (names : DecoderNames) :
+    TermElabM (TSyntax `command) := do
+  let indApp ← mkInductiveApp plan.indVal plan.argNames
+  let binders ← mkBinders plan true
+  `(instance $(mkIdent names.tier1Instance):ident $binders:bracketedBinder* :
+      SpytialLean.Tier1Reification $indApp where
+    representsAt := $(mkIdent names.representsAt)
+    reifyAt_complete := $(mkIdent names.complete))
+
+/-- Derive a graph decoder, an independent structural checker, and their completeness proof for a
+Tier 1 algebraic datatype: one regular, first-order, non-indexed inductive declaration, including a
+structure. Constructor data fields must be explicit, and the field-relation names computed by the
+existing relationalizer must be pairwise distinct within each constructor.
+
+The generated decoder uses exactly the constructor labels and field-relation names emitted by the
+existing relationalizer's default constructor walk. Type parameters are supported when they have
+`SpytialReify` and `Tier1Reification` instances, and direct regular recursion is bounded by the
+datum's atom count.
+
+Non-explicit or relation-name-colliding fields, dependent/indexed families, mutual and nested
+recursion, and proof-, type-, or function-valued fields are rejected with a diagnostic. A type with
+a custom relationalizer must provide a matching manual `SpytialReify` instance instead of deriving
+this one. -/
+public meta def mkSpytialReifyHandler (declNames : Array Name) : CommandElabM Bool := do
+  unless declNames.size > 0 do return false
+  let env ← getEnv
+  unless declNames.all fun name => (env.find? name) matches some (.inductInfo _) do return false
+  for declName in declNames do
+    withoutExposeFromCtors declName do
+      let plan ← liftTermElabM <| mkPlan declName
+      let names ← liftTermElabM <| mkNames plan
+      elabCommand (← liftTermElabM <| mkDecoder plan names)
+      elabCommand (← liftTermElabM <| mkInstance plan names)
+      elabCommand (← liftTermElabM <| mkRepresentsAt plan names)
+      elabCommand (← liftTermElabM <| mkComplete plan names)
+      elabCommand (← liftTermElabM <| mkTier1Instance plan names)
+  return true
+
+meta initialize
+  registerDerivingHandler ``SpytialReify mkSpytialReifyHandler
+
+end SpytialLean.SpytialReify.Deriving
