@@ -33,4 +33,13 @@ public structure JsonDataInstance where
   relations : Array JsonRelation
   deriving ToJson, FromJson, Inhabited
 
+/-- A relational data instance together with the ID of its distinguished root atom.
+
+The underlying relational instance may contain many values and is not inherently rooted. This
+wrapper records which atom denotes the host-language value being transported. -/
+public structure RootedJsonDataInstance where
+  root : String
+  data : JsonDataInstance
+  deriving ToJson, FromJson, Inhabited
+
 end SpytialLean

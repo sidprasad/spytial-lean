@@ -14,12 +14,12 @@ open Lean Elab Meta Term
 
 The pure `SpytialReify` class is a decoder only. This module connects it to the actual
 expression-level relationalizer used by `#spytial` and the `spytial` tactic. It returns the same
-ordinary `JsonDataInstance` already consumed by Spytial; no parallel encoder or evidence registry
-is involved.
+ordinary `JsonDataInstance` already consumed by Spytial, paired with the root atom ID returned by
+that same walk; no parallel encoder or evidence registry is involved.
 
 `MetaM` belongs only at this adapter boundary: quoting a host value, reducing an elaborated
-expression, and discovering its instances require Lean's environment. The result is the ordinary
-`JsonDataInstance` consumed by Spytial; decoding it with `reify` is pure and typed.
+expression, and discovering its instances require Lean's environment. Decoding the resulting
+`RootedJsonDataInstance` with `reify` is pure and typed.
 -/
 
 /-- Quote a fully instantiated host value and pass it to Spytial's existing relationalizer.
@@ -27,11 +27,11 @@ expression, and discovering its instances require Lean's environment. The result
 The `ToExpr` instance performs only the host-to-expression boundary. In particular, the returned
 datum contains no copy of `value` for the decoder to retrieve. -/
 public meta def relationalizeValue {α : Type u} [ToExpr α]
-    (value : α) (config : WalkConfig := {}) : MetaM JsonDataInstance := do
+    (value : α) (config : WalkConfig := {}) : MetaM RootedJsonDataInstance := do
   let expression := toExpr value
   unless isClosedValue expression do
     throwError "spytial reify: expected a closed value"
-  SpytialLean.relationalize expression config
+  SpytialLean.relationalizeRooted expression config
 
 public meta instance : ToExpr JsonAtom where
   toTypeExpr := mkConst ``JsonAtom
@@ -52,10 +52,15 @@ public meta instance : ToExpr JsonDataInstance where
   toExpr data := mkApp2 (mkConst ``JsonDataInstance.mk) (toExpr data.atoms)
     (toExpr data.relations)
 
+public meta instance : ToExpr RootedJsonDataInstance where
+  toTypeExpr := mkConst ``RootedJsonDataInstance
+  toExpr datum := mkApp2 (mkConst ``RootedJsonDataInstance.mk)
+    (toExpr datum.root) (toExpr datum.data)
+
 public section
 
-/-- Relationalize a closed, fully elaborated term during elaboration and embed the resulting plain
-`JsonDataInstance` in a kernel-checked declaration.
+/-- Relationalize a closed, fully elaborated term during elaboration and embed the resulting
+`RootedJsonDataInstance` in a kernel-checked declaration.
 
 For example, a concrete Tier 1 round trip can be stated directly as:
 
@@ -67,8 +72,9 @@ theorem example :
 ```
 
 The `%` form is the bridge across the unavoidable `MetaM` boundary: the existing relationalizer
-runs while the declaration is elaborated, then only its ordinary data result remains in the
-theorem. Open terms, metavariables, universe parameters, and terms containing `sorry` are rejected.
+runs while the declaration is elaborated, then only its root ID and ordinary data result remain in
+the theorem. Open terms, metavariables, universe parameters, and terms containing `sorry` are
+rejected.
 -/
 syntax:max "relationalize% " term:67 : term
 
@@ -80,7 +86,7 @@ elab_rules : term
       unless isClosedValue valueExpression do
         throwErrorAt value
           "`relationalize%` requires a closed, fully instantiated value without `sorry`"
-      return toExpr (← SpytialLean.relationalize valueExpression)
+      return toExpr (← SpytialLean.relationalizeRooted valueExpression)
 
 /-- A concrete theorem through the actual relationalizer. The general proof used here is
 `reify_of_tier1Represents`; `decide_cbv` kernel-checks that this elaboration-time datum has the

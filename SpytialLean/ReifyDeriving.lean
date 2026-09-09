@@ -164,7 +164,7 @@ private meta def mkCtorBody (names : DecoderNames) (constructor : CtorPlan)
     else
       `(fun $child:ident => SpytialLean.SpytialReify.decodeAt (α := $(fieldPlan.type))
         $datum:ident $child:ident $fuel:ident)
-    let decode ← `(SpytialLean.ReifyDatum.decodeChildWith
+    let decode ← `(SpytialLean.JsonDataInstance.decodeChildWith
       $datum:ident $root:ident $(quote fieldPlan.relation) $decodeChild:term)
     body ← `(match $decode:term with
       | Except.error $decodeError:ident => Except.error $decodeError:ident
@@ -191,7 +191,7 @@ private meta def mkDecoder (plan : Plan) (names : DecoderNames) :
   labelAlts := labelAlts.push
     (← `(matchAltExpr| | _ => SpytialLean.reifyError "reify: unknown constructor"))
   let labelMatch ← `(match ($atom:ident).label with $labelAlts:matchAlt*)
-  let atomMatch ← `(match SpytialLean.ReifyDatum.expectAtom
+  let atomMatch ← `(match SpytialLean.JsonDataInstance.expectAtom
       $datum:ident $root:ident $(quote (shortName plan.declName)) with
     | Except.error $error:ident => Except.error $error:ident
     | Except.ok $atom:ident => $labelMatch:term)
@@ -200,12 +200,12 @@ private meta def mkDecoder (plan : Plan) (names : DecoderNames) :
     | $nextFuel:ident + 1 => $atomMatch:term)
   if plan.indVal.isRec then
     `(def $(mkIdent names.reifyAt):ident $binders:bracketedBinder*
-        ($datum:ident : SpytialLean.ReifyDatum) ($root:ident : String) ($fuel:ident : Nat) :
+        ($datum:ident : SpytialLean.JsonDataInstance) ($root:ident : String) ($fuel:ident : Nat) :
         Except SpytialLean.ReifyError $indApp := $body:term
       termination_by $fuel:ident)
   else
     `(def $(mkIdent names.reifyAt):ident $binders:bracketedBinder*
-        ($datum:ident : SpytialLean.ReifyDatum) ($root:ident : String) ($fuel:ident : Nat) :
+        ($datum:ident : SpytialLean.JsonDataInstance) ($root:ident : String) ($fuel:ident : Nat) :
         Except SpytialLean.ReifyError $indApp := $body:term)
 
 private meta def mkFieldRepresentation (names : DecoderNames) (fieldPlan : FieldPlan)
@@ -219,7 +219,7 @@ private meta def mkFieldRepresentation (names : DecoderNames) (fieldPlan : Field
     `(fun $child:ident $value:ident =>
       SpytialLean.Tier1Reification.representsAt (α := $(fieldPlan.type))
         $datum:ident $child:ident $fuel:ident $value:ident)
-  `(SpytialLean.ReifyDatum.childRepresentsWith
+  `(SpytialLean.JsonDataInstance.childRepresentsWith
     $datum:ident $root:ident $(quote fieldPlan.relation) $represents:term $field:ident)
 
 private meta def mkCtorRepresentation (names : DecoderNames) (plan : Plan)
@@ -232,7 +232,7 @@ private meta def mkCtorRepresentation (names : DecoderNames) (plan : Plan)
     let check ← mkFieldRepresentation names constructor.fields[index]!
       datum root fuel fields[index]!
     fieldChecks ← `($check:term && $fieldChecks:term)
-  let body ← `(SpytialLean.ReifyDatum.constructorRepresents
+  let body ← `(SpytialLean.JsonDataInstance.constructorRepresents
     $datum:ident $root:ident $(quote (shortName plan.declName))
       $(quote constructor.label) $fieldChecks:term)
   `(matchAltExpr| | $(mkCIdent constructor.name) $fields:term* => $body:term)
@@ -257,12 +257,12 @@ private meta def mkRepresentsAt (plan : Plan) (names : DecoderNames) :
     | $nextFuel:ident + 1 => $valueMatch:term)
   if plan.indVal.isRec then
     `(@[expose] def $(mkIdent names.representsAt):ident $binders:bracketedBinder*
-        ($datum:ident : SpytialLean.ReifyDatum) ($root:ident : String)
+        ($datum:ident : SpytialLean.JsonDataInstance) ($root:ident : String)
         ($fuel:ident : Nat) ($value:ident : $indApp) : Bool := $body:term
       termination_by $fuel:ident)
   else
     `(@[expose] def $(mkIdent names.representsAt):ident $binders:bracketedBinder*
-        ($datum:ident : SpytialLean.ReifyDatum) ($root:ident : String)
+        ($datum:ident : SpytialLean.JsonDataInstance) ($root:ident : String)
         ($fuel:ident : Nat) ($value:ident : $indApp) : Bool := $body:term)
 
 private meta def andComponent (conjunction : Ident) (index : Nat) : TermElabM Term := do
@@ -317,13 +317,13 @@ private meta def mkCtorCompleteAlt (names : DecoderNames) (plan : Plan)
     let field := fields[index]!
     let decoded := decodedFields[index]!
     let decoder ← mkFieldDecoder names fieldPlan datum fuel
-    let decode ← `(SpytialLean.ReifyDatum.decodeChildWith
+    let decode ← `(SpytialLean.JsonDataInstance.decodeChildWith
       $datum:ident $root:ident $(quote fieldPlan.relation) $decoder:term)
     let childHypothesis := mkIdent (← mkFreshUserName `childHypothesis)
     let complete ← mkFieldComplete fieldPlan datum field inductionHypothesis
       childHypothesis
     let fieldEvidence ← andComponent hypothesis (index + 1)
-    let proof ← `(SpytialLean.ReifyDatum.decodeChildWith_complete
+    let proof ← `(SpytialLean.JsonDataInstance.decodeChildWith_complete
       $complete:term $fieldEvidence:term)
     let haveField ← `(tactic| have $decoded:ident :
       $decode:term = Except.ok $field:ident := $proof:term)
@@ -340,11 +340,11 @@ private meta def mkCtorCompleteAlt (names : DecoderNames) (plan : Plan)
   for decodedField in decodedFields do
     decoderArgs := decoderArgs.push (← mkSimpArg decodedField)
   let constructorArg ←
-    mkSimpArg (mkIdent ``SpytialLean.ReifyDatum.constructorRepresents)
+    mkSimpArg (mkIdent ``SpytialLean.JsonDataInstance.constructorRepresents)
   let atomEquationArg ← mkSimpArg atomEquation
   if fieldTactics.isEmpty then
     `(Lean.Parser.Tactic.inductionAlt| | $caseName:ident $fields:ident* =>
-      cases $atomEquation:ident : SpytialLean.ReifyDatum.expectAtom
+      cases $atomEquation:ident : SpytialLean.JsonDataInstance.expectAtom
           $datum:ident $root:ident $(quote (shortName plan.declName)) with
       | error $error:ident =>
           simp [$representsAtArg, $constructorArg, $atomEquationArg] at $hypothesis:ident
@@ -354,7 +354,7 @@ private meta def mkCtorCompleteAlt (names : DecoderNames) (plan : Plan)
           simp [$decoderArgs,*])
   else
     `(Lean.Parser.Tactic.inductionAlt| | $caseName:ident $fields:ident* =>
-      cases $atomEquation:ident : SpytialLean.ReifyDatum.expectAtom
+      cases $atomEquation:ident : SpytialLean.JsonDataInstance.expectAtom
           $datum:ident $root:ident $(quote (shortName plan.declName)) with
       | error $error:ident =>
           simp [$representsAtArg, $constructorArg, $atomEquationArg] at $hypothesis:ident
@@ -400,7 +400,7 @@ private meta def mkComplete (plan : Plan) (names : DecoderNames) :
       | succ $nextFuel:ident =>
           cases $value:ident with $constructorAlts:inductionAlt*)
   `(theorem $(mkIdent names.complete):ident $binders:bracketedBinder* :
-      ∀ ($datum:ident : SpytialLean.ReifyDatum) ($root:ident : String)
+      ∀ ($datum:ident : SpytialLean.JsonDataInstance) ($root:ident : String)
           ($fuel:ident : Nat) ($value:ident : $indApp),
         $(mkIdent names.representsAt) $datum:ident $root:ident $fuel:ident $value:ident = true →
           $(mkIdent names.reifyAt) $datum:ident $root:ident $fuel:ident = Except.ok $value:ident :=
