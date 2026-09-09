@@ -31,6 +31,9 @@ private meta structure Plan where
 
 private meta structure DecoderNames where
   reifyAt : Name
+  representsAt : Name
+  complete : Name
+  tier1Instance : Name
 
 private meta def unsupported (declName : Name) (message : MessageData) : TermElabM α :=
   throwError "cannot derive `SpytialReify` for `{.ofConstName declName}`: {message}"
@@ -111,46 +114,50 @@ private meta def mkPlan (declName : Name) : TermElabM Plan := do
   return { declName, indVal, argNames, ctors }
 
 private meta def mkNames (plan : Plan) : TermElabM DecoderNames := do
-  let instanceName ← mkInstName ``SpytialReify plan.declName
-  return { reifyAt := instanceName ++ `reifyAt }
+  let reifyInstance ← mkInstName ``SpytialReify plan.declName
+  return {
+    reifyAt := reifyInstance.appendAfter "_decodeAt"
+    representsAt := reifyInstance.appendAfter "_representsAt"
+    complete := reifyInstance.appendAfter "_decodeAt_complete"
+    tier1Instance := reifyInstance.appendAfter "_tier1"
+  }
 
 open TSyntax.Compat in
-private meta def mkBinders (plan : Plan) :
+private meta def mkBinders (plan : Plan) (includeTier1 : Bool := false) :
     TermElabM (Array (TSyntax ``bracketedBinder)) := do
   let mut binders := #[]
   for binder in ← mkImplicitBinders plan.argNames do
     binders := binders.push binder
   for binder in ← mkInstImplicitBinders ``SpytialReify plan.indVal plan.argNames do
     binders := binders.push binder
+  if includeTier1 then
+    for binder in ←
+        mkInstImplicitBinders ``SpytialLean.Tier1Reification plan.indVal plan.argNames do
+      binders := binders.push binder
   return binders
 
 private meta def mkCtorBody (names : DecoderNames) (constructor : CtorPlan)
     (datum root fuel : Ident) : TermElabM Term := do
   let mut fields : Array Ident := #[]
-  let mut children : Array Ident := #[]
   for _ in constructor.fields do
     fields := fields.push (mkIdent (← mkFreshUserName `field))
-    children := children.push (mkIdent (← mkFreshUserName `child))
   let value ← `($(mkCIdent constructor.name) $fields:term*)
   let mut body ← `(Except.ok $value)
   for index in (List.range constructor.fields.size).reverse do
     let field := fields[index]!
-    let child := children[index]!
-    let lookupError := mkIdent (← mkFreshUserName `error)
     let decodeError := mkIdent (← mkFreshUserName `error)
     let fieldPlan := constructor.fields[index]!
-    let decode ← if fieldPlan.recursive then
-      `($(mkIdent names.reifyAt) $datum:ident $child:ident $fuel:ident)
+    let child := mkIdent (← mkFreshUserName `child)
+    let decodeChild ← if fieldPlan.recursive then
+      `(fun $child:ident => $(mkIdent names.reifyAt) $datum:ident $child:ident $fuel:ident)
     else
-      `(SpytialLean.SpytialReify.decodeAt (α := $(fieldPlan.type))
+      `(fun $child:ident => SpytialLean.SpytialReify.decodeAt (α := $(fieldPlan.type))
         $datum:ident $child:ident $fuel:ident)
-    body ← `(match SpytialLean.ReifyDatum.child
-        $datum:ident $root:ident $(quote fieldPlan.relation) with
-      | Except.error $lookupError:ident => Except.error $lookupError:ident
-      | Except.ok $child:ident =>
-        match $decode:term with
-        | Except.error $decodeError:ident => Except.error $decodeError:ident
-        | Except.ok $field:ident => $body:term)
+    let decode ← `(SpytialLean.ReifyDatum.decodeChildWith
+      $datum:ident $root:ident $(quote fieldPlan.relation) $decodeChild:term)
+    body ← `(match $decode:term with
+      | Except.error $decodeError:ident => Except.error $decodeError:ident
+      | Except.ok $field:ident => $body:term)
   return body
 
 open TSyntax.Compat in
@@ -190,6 +197,204 @@ private meta def mkDecoder (plan : Plan) (names : DecoderNames) :
         ($datum:ident : SpytialLean.ReifyDatum) ($root:ident : String) ($fuel:ident : Nat) :
         Except SpytialLean.ReifyError $indApp := $body:term)
 
+private meta def mkFieldRepresentation (names : DecoderNames) (fieldPlan : FieldPlan)
+    (datum root fuel field : Ident) : TermElabM Term := do
+  let child := mkIdent (← mkFreshUserName `child)
+  let value := mkIdent (← mkFreshUserName `value)
+  let represents ← if fieldPlan.recursive then
+    `(fun $child:ident $value:ident =>
+      $(mkIdent names.representsAt) $datum:ident $child:ident $fuel:ident $value:ident)
+  else
+    `(fun $child:ident $value:ident =>
+      SpytialLean.Tier1Reification.representsAt (α := $(fieldPlan.type))
+        $datum:ident $child:ident $fuel:ident $value:ident)
+  `(SpytialLean.ReifyDatum.childRepresentsWith
+    $datum:ident $root:ident $(quote fieldPlan.relation) $represents:term $field:ident)
+
+private meta def mkCtorRepresentation (names : DecoderNames) (plan : Plan)
+    (constructor : CtorPlan) (datum root fuel : Ident) : TermElabM (TSyntax ``matchAlt) := do
+  let mut fields : Array Ident := #[]
+  for _ in constructor.fields do
+    fields := fields.push (mkIdent (← mkFreshUserName `field))
+  let mut fieldChecks ← `(true)
+  for index in (List.range constructor.fields.size).reverse do
+    let check ← mkFieldRepresentation names constructor.fields[index]!
+      datum root fuel fields[index]!
+    fieldChecks ← `($check:term && $fieldChecks:term)
+  let body ← `(SpytialLean.ReifyDatum.constructorRepresents
+    $datum:ident $root:ident $(quote (shortName plan.declName))
+      $(quote constructor.label) $fieldChecks:term)
+  `(matchAltExpr| | $(mkCIdent constructor.name) $fields:term* => $body:term)
+
+open TSyntax.Compat in
+private meta def mkRepresentsAt (plan : Plan) (names : DecoderNames) :
+    TermElabM (TSyntax `command) := do
+  let indApp ← mkInductiveApp plan.indVal plan.argNames
+  let binders ← mkBinders plan true
+  let datum := mkIdent (← mkFreshUserName `datum)
+  let root := mkIdent (← mkFreshUserName `root)
+  let fuel := mkIdent (← mkFreshUserName `fuel)
+  let nextFuel := mkIdent (← mkFreshUserName `fuel)
+  let value := mkIdent (← mkFreshUserName `value)
+  let mut alternatives := #[]
+  for constructor in plan.ctors do
+    alternatives := alternatives.push
+      (← mkCtorRepresentation names plan constructor datum root nextFuel)
+  let valueMatch ← `(match $value:ident with $alternatives:matchAlt*)
+  let body ← `(match $fuel:ident with
+    | 0 => false
+    | $nextFuel:ident + 1 => $valueMatch:term)
+  if plan.indVal.isRec then
+    `(@[expose] def $(mkIdent names.representsAt):ident $binders:bracketedBinder*
+        ($datum:ident : SpytialLean.ReifyDatum) ($root:ident : String)
+        ($fuel:ident : Nat) ($value:ident : $indApp) : Bool := $body:term
+      termination_by $fuel:ident)
+  else
+    `(@[expose] def $(mkIdent names.representsAt):ident $binders:bracketedBinder*
+        ($datum:ident : SpytialLean.ReifyDatum) ($root:ident : String)
+        ($fuel:ident : Nat) ($value:ident : $indApp) : Bool := $body:term)
+
+private meta def andComponent (conjunction : Ident) (index : Nat) : TermElabM Term := do
+  let mut component : Term := conjunction
+  for _ in [:index] do
+    component ← `(($component:term).2)
+  `(($component:term).1)
+
+private abbrev SimpArg := TSyntax
+  [`Lean.Parser.Tactic.simpStar, `Lean.Parser.Tactic.simpErase, `Lean.Parser.Tactic.simpLemma]
+
+private meta def mkSimpArg (term : Term) : TermElabM SimpArg :=
+  `(Lean.Parser.Tactic.simpLemma| $term:term)
+
+private meta def mkFieldDecoder (names : DecoderNames) (fieldPlan : FieldPlan)
+    (datum fuel : Ident) : TermElabM Term := do
+  let child := mkIdent (← mkFreshUserName `child)
+  if fieldPlan.recursive then
+    `(fun $child:ident => $(mkIdent names.reifyAt) $datum:ident $child:ident $fuel:ident)
+  else
+    `(fun $child:ident => SpytialLean.SpytialReify.decodeAt (α := $(fieldPlan.type))
+      $datum:ident $child:ident $fuel:ident)
+
+private meta def mkFieldComplete (fieldPlan : FieldPlan)
+    (datum field inductionHypothesis childHypothesis : Ident) : TermElabM Term := do
+  let child := mkIdent (← mkFreshUserName `child)
+  if fieldPlan.recursive then
+    `(fun $child:ident $childHypothesis:ident =>
+      $inductionHypothesis:ident $datum:ident $child:ident $field:ident $childHypothesis:ident)
+  else
+    `(fun _ $childHypothesis:ident =>
+      SpytialLean.Tier1Reification.decodeAt_complete (α := $(fieldPlan.type))
+        $childHypothesis:ident)
+
+private meta def mkCtorCompleteAlt (names : DecoderNames) (plan : Plan)
+    (constructor : CtorPlan) (datum root fuel inductionHypothesis hypothesis : Ident) :
+    TermElabM (TSyntax ``Lean.Parser.Tactic.inductionAlt) := do
+  let mut fields : Array Ident := #[]
+  for _ in constructor.fields do
+    fields := fields.push (mkIdent (← mkFreshUserName `field))
+  let atomEquation := mkIdent (← mkFreshUserName `atomEquation)
+  let atom := mkIdent (← mkFreshUserName `atom)
+  let error := mkIdent (← mkFreshUserName `error)
+  let labelProof ← andComponent hypothesis 0
+  let mut decodedFields : Array Ident := #[]
+  for _ in constructor.fields do
+    decodedFields := decodedFields.push (mkIdent (← mkFreshUserName `decodedField))
+
+  let mut fieldTactics : Array (TSyntax `tactic) := #[]
+  for index in List.range constructor.fields.size do
+    let fieldPlan := constructor.fields[index]!
+    let field := fields[index]!
+    let decoded := decodedFields[index]!
+    let decoder ← mkFieldDecoder names fieldPlan datum fuel
+    let decode ← `(SpytialLean.ReifyDatum.decodeChildWith
+      $datum:ident $root:ident $(quote fieldPlan.relation) $decoder:term)
+    let childHypothesis := mkIdent (← mkFreshUserName `childHypothesis)
+    let complete ← mkFieldComplete fieldPlan datum field inductionHypothesis
+      childHypothesis
+    let fieldEvidence ← andComponent hypothesis (index + 1)
+    let proof ← `(SpytialLean.ReifyDatum.decodeChildWith_complete
+      $complete:term $fieldEvidence:term)
+    let haveField ← `(tactic| have $decoded:ident :
+      $decode:term = Except.ok $field:ident := $proof:term)
+    fieldTactics := fieldTactics.push haveField
+
+  let caseName := mkIdent constructor.name.getString!.toName
+  let currentNamespace ← getCurrNamespace
+  let representsAt := mkIdentFrom (← getRef) (currentNamespace ++ names.representsAt)
+  let reifyAt := mkIdentFrom (← getRef) (currentNamespace ++ names.reifyAt)
+  let representsAtArg ← mkSimpArg representsAt
+  let mut decoderArgs : Array SimpArg := #[
+    ← mkSimpArg reifyAt, ← mkSimpArg atomEquation, ← mkSimpArg labelProof
+  ]
+  for decodedField in decodedFields do
+    decoderArgs := decoderArgs.push (← mkSimpArg decodedField)
+  let constructorArg ←
+    mkSimpArg (mkIdent ``SpytialLean.ReifyDatum.constructorRepresents)
+  let atomEquationArg ← mkSimpArg atomEquation
+  if fieldTactics.isEmpty then
+    `(Lean.Parser.Tactic.inductionAlt| | $caseName:ident $fields:ident* =>
+      cases $atomEquation:ident : SpytialLean.ReifyDatum.expectAtom
+          $datum:ident $root:ident $(quote (shortName plan.declName)) with
+      | error $error:ident =>
+          simp [$representsAtArg, $constructorArg, $atomEquationArg] at $hypothesis:ident
+      | ok $atom:ident =>
+          simp only [$representsAtArg, $constructorArg, $atomEquationArg,
+            Bool.and_eq_true, beq_iff_eq] at $hypothesis:ident
+          simp [$decoderArgs,*])
+  else
+    `(Lean.Parser.Tactic.inductionAlt| | $caseName:ident $fields:ident* =>
+      cases $atomEquation:ident : SpytialLean.ReifyDatum.expectAtom
+          $datum:ident $root:ident $(quote (shortName plan.declName)) with
+      | error $error:ident =>
+          simp [$representsAtArg, $constructorArg, $atomEquationArg] at $hypothesis:ident
+      | ok $atom:ident =>
+          simp only [$representsAtArg, $constructorArg, $atomEquationArg,
+            Bool.and_eq_true, beq_iff_eq] at $hypothesis:ident
+          $fieldTactics:tactic*
+          simp [$decoderArgs,*])
+
+open TSyntax.Compat in
+private meta def mkComplete (plan : Plan) (names : DecoderNames) :
+    TermElabM (TSyntax `command) := do
+  let indApp ← mkInductiveApp plan.indVal plan.argNames
+  let binders ← mkBinders plan true
+  let datum := mkIdent (← mkFreshUserName `datum)
+  let root := mkIdent (← mkFreshUserName `root)
+  let fuel := mkIdent (← mkFreshUserName `fuel)
+  let nextFuel := mkIdent (← mkFreshUserName `fuel)
+  let value := mkIdent (← mkFreshUserName `value)
+  let hypothesis := mkIdent (← mkFreshUserName `represents)
+  let inductionHypothesis := mkIdent (← mkFreshUserName `inductionHypothesis)
+  let representsAt := mkIdentFrom (← getRef) ((← getCurrNamespace) ++ names.representsAt)
+  let mut constructorAlts := #[]
+  for constructor in plan.ctors do
+    constructorAlts := constructorAlts.push
+      (← mkCtorCompleteAlt names plan constructor datum root nextFuel
+        inductionHypothesis hypothesis)
+  let proof ← if plan.indVal.isRec then
+    `(by
+      intro $datum:ident $root:ident $fuel:ident
+      induction $fuel:ident generalizing $datum:ident $root:ident with
+      | zero =>
+          intro $value:ident $hypothesis:ident
+          simp [$representsAt:ident] at $hypothesis:ident
+      | succ $nextFuel:ident $inductionHypothesis:ident =>
+          intro $value:ident $hypothesis:ident
+          cases $value:ident with $constructorAlts:inductionAlt*)
+  else
+    `(by
+      intro $datum:ident $root:ident $fuel:ident $value:ident $hypothesis:ident
+      cases $fuel:ident with
+      | zero => simp [$representsAt:ident] at $hypothesis:ident
+      | succ $nextFuel:ident =>
+          cases $value:ident with $constructorAlts:inductionAlt*)
+  `(theorem $(mkIdent names.complete):ident $binders:bracketedBinder* :
+      ∀ ($datum:ident : SpytialLean.ReifyDatum) ($root:ident : String)
+          ($fuel:ident : Nat) ($value:ident : $indApp),
+        $(mkIdent names.representsAt) $datum:ident $root:ident $fuel:ident $value:ident = true →
+          $(mkIdent names.reifyAt) $datum:ident $root:ident $fuel:ident = Except.ok $value:ident :=
+      $proof:term)
+
 open TSyntax.Compat in
 private meta def mkInstance (plan : Plan) (names : DecoderNames) :
     TermElabM (TSyntax `command) := do
@@ -200,12 +405,24 @@ private meta def mkInstance (plan : Plan) (names : DecoderNames) :
       SpytialLean.SpytialReify $indApp where
     reifyAt := $(mkIdent names.reifyAt))
 
-/-- Derive a graph decoder for a Tier 1 algebraic datatype: one regular, first-order, non-indexed
-inductive declaration, including a structure.
+open TSyntax.Compat in
+private meta def mkTier1Instance (plan : Plan) (names : DecoderNames) :
+    TermElabM (TSyntax `command) := do
+  let indApp ← mkInductiveApp plan.indVal plan.argNames
+  let binders ← mkBinders plan true
+  `(instance $(mkIdent names.tier1Instance):ident $binders:bracketedBinder* :
+      SpytialLean.Tier1Reification $indApp where
+    representsAt := $(mkIdent names.representsAt)
+    reifyAt_complete := $(mkIdent names.complete))
+
+/-- Derive a graph decoder, an independent structural checker, and their completeness proof for a
+Tier 1 algebraic datatype: one regular, first-order, non-indexed inductive declaration, including a
+structure.
 
 The generated decoder uses exactly the constructor labels and field-relation names emitted by the
 existing relationalizer's default constructor walk. Type parameters are supported when they have
-`SpytialReify` instances, and direct regular recursion is bounded by the datum's atom count.
+`SpytialReify` and `Tier1Reification` instances, and direct regular recursion is bounded by the
+datum's atom count.
 
 Dependent/indexed families, mutual and nested recursion, and proof-, type-, or function-valued
 fields are rejected with a diagnostic. A type with a custom relationalizer must provide a matching
@@ -220,6 +437,9 @@ public meta def mkSpytialReifyHandler (declNames : Array Name) : CommandElabM Bo
       let names ← liftTermElabM <| mkNames plan
       elabCommand (← liftTermElabM <| mkDecoder plan names)
       elabCommand (← liftTermElabM <| mkInstance plan names)
+      elabCommand (← liftTermElabM <| mkRepresentsAt plan names)
+      elabCommand (← liftTermElabM <| mkComplete plan names)
+      elabCommand (← liftTermElabM <| mkTier1Instance plan names)
   return true
 
 meta initialize

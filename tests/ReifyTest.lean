@@ -65,23 +65,127 @@ private structure CoarsePair where
 
 /- The deriving boundary is enforced, rather than silently emitting a decoder for data the
 existing constructor walk cannot invert. -/
-/-- error: cannot derive `SpytialReify` for `ReifyIndexedFixture`: indexed inductive families are Tier 2 -/
+/--
+error: cannot derive `SpytialReify` for `ReifyIndexedFixture`: indexed inductive families are Tier 2
+-/
 #guard_msgs in
 inductive ReifyIndexedFixture : Nat → Type where
   | zero : ReifyIndexedFixture 0
   deriving SpytialReify
 
-/-- error: cannot derive `SpytialReify` for `ReifyNestedFixture`: nested recursion is not yet supported -/
+/--
+error: cannot derive `SpytialReify` for `ReifyNestedFixture`: nested recursion is not yet supported
+-/
 #guard_msgs in
 inductive ReifyNestedFixture where
   | node : List ReifyNestedFixture → ReifyNestedFixture
   deriving SpytialReify
 
-/-- error: cannot derive `SpytialReify` for `ReifyFunctionFixture`: function fields are outside Tier 1 -/
+/--
+error: cannot derive `SpytialReify` for `ReifyFunctionFixture`: function fields are outside Tier 1
+-/
 #guard_msgs in
 structure ReifyFunctionFixture where
   run : Nat → Nat
   deriving SpytialReify
+
+/-- error: `relationalize%` requires a closed, fully instantiated value without `sorry` -/
+#guard_msgs in
+example (value : Nat) : JsonDataInstance := relationalize% value
+
+/- These declarations are the kernel-checked part of the test. `relationalize%` runs the existing
+relationalizer once, during elaboration, and embeds only its `JsonDataInstance`. The representation
+certificate is computed independently of `reify`; the universal theorem then gives structural
+equality with the original closed value. -/
+
+private def closedString : String := "a\"b\nλ"
+private def closedStringData : JsonDataInstance := relationalize% closedString
+
+private theorem closedStringRepresents : Tier1Represents closedStringData closedString := by
+  decide_cbv
+
+private theorem closedStringRoundTrip :
+    reify closedStringData = Except.ok closedString :=
+  reify_of_tier1Represents closedStringRepresents
+
+private def closedOption : Option Nat := some 1000
+private def closedOptionData : JsonDataInstance := relationalize% closedOption
+
+private theorem closedOptionRepresents : Tier1Represents closedOptionData closedOption := by
+  decide_cbv
+
+private theorem closedOptionRoundTrip :
+    reify closedOptionData = Except.ok closedOption :=
+  reify_of_tier1Represents closedOptionRepresents
+
+private def closedTree : Tree := .node (.leaf 1) (.node (.leaf 1) (.leaf 2))
+private def closedTreeData : JsonDataInstance := relationalize% closedTree
+
+private theorem closedTreeRepresents : Tier1Represents closedTreeData closedTree := by
+  decide_cbv
+
+private theorem closedTreeRoundTrip : reify closedTreeData = Except.ok closedTree :=
+  reify_of_tier1Represents closedTreeRepresents
+
+private def closedOccurrenceTree : OccurrenceTree := .node (.leaf 1) (.leaf 1)
+private def closedOccurrenceTreeData : JsonDataInstance := relationalize% closedOccurrenceTree
+
+private theorem closedOccurrenceTreeRepresents :
+    Tier1Represents closedOccurrenceTreeData closedOccurrenceTree := by
+  decide_cbv
+
+private theorem closedOccurrenceTreeRoundTrip :
+    reify closedOccurrenceTreeData = Except.ok closedOccurrenceTree :=
+  reify_of_tier1Represents closedOccurrenceTreeRepresents
+
+private def closedPerson : Person := ⟨"Ada", 37⟩
+private def closedPersonData : JsonDataInstance := relationalize% closedPerson
+
+private theorem closedPersonRepresents : Tier1Represents closedPersonData closedPerson := by
+  decide_cbv
+
+private theorem closedPersonRoundTrip : reify closedPersonData = Except.ok closedPerson :=
+  reify_of_tier1Represents closedPersonRepresents
+
+private theorem closedPersonRepr :
+    reifyRepr (α := Person) closedPersonData = Except.ok (reprStr closedPerson) :=
+  reifyRepr_of_tier1Represents closedPersonRepresents
+
+private def closedBinTree : BinTree String := .branch (.leaf "left") (.leaf "right")
+private def closedBinTreeData : JsonDataInstance := relationalize% closedBinTree
+
+private theorem closedBinTreeRepresents : Tier1Represents closedBinTreeData closedBinTree := by
+  decide_cbv
+
+private theorem closedBinTreeRoundTrip : reify closedBinTreeData = Except.ok closedBinTree :=
+  reify_of_tier1Represents closedBinTreeRepresents
+
+private def closedMixed : Mixed := ⟨some 42, none, (7, "seven")⟩
+private def closedMixedData : JsonDataInstance := relationalize% closedMixed
+
+private theorem closedMixedRepresents : Tier1Represents closedMixedData closedMixed := by
+  decide_cbv
+
+private theorem closedMixedRoundTrip : reify closedMixedData = Except.ok closedMixed :=
+  reify_of_tier1Represents closedMixedRepresents
+
+private def closedTrafficLight : TrafficLight := .amber
+private def closedTrafficLightData : JsonDataInstance := relationalize% closedTrafficLight
+
+private theorem closedTrafficLightRepresents :
+    Tier1Represents closedTrafficLightData closedTrafficLight := by
+  decide_cbv
+
+private theorem closedTrafficLightRoundTrip :
+    reify closedTrafficLightData = Except.ok closedTrafficLight :=
+  reify_of_tier1Represents closedTrafficLightRepresents
+
+private def closedCoarsePair : CoarsePair := ⟨⟨1⟩, ⟨2⟩⟩
+private def closedCoarsePairData : JsonDataInstance := relationalize% closedCoarsePair
+
+private theorem closedCoarsePairIsLossy :
+    ¬ Tier1Represents closedCoarsePairData closedCoarsePair := by
+  decide_cbv
 
 private meta def throughJson (data : JsonDataInstance) : MetaM JsonDataInstance := do
   let json ← match Json.parse (toJson data).compress with
@@ -97,10 +201,12 @@ private meta def child (datum : ReifyDatum) (owner field : String) : MetaM Strin
   | .error error => throwError "{error}"
 
 private meta def assertRoundTrip {α : Type}
-    [ToExpr α] [Repr α] [DecidableEq α] [SpytialReify α]
+    [ToExpr α] [Repr α] [DecidableEq α] [SpytialReify α] [Tier1Reification α]
     (label : String) (original : α)
     (config : WalkConfig := {}) : MetaM JsonDataInstance := do
   let data ← throughJson (← SpytialLean.Reify.relationalizeValue original config)
+  unless tier1Represents data original do
+    throwError "{label}: the relational datum does not structurally represent the original"
   let reconstructed ← match reify data with
     | .ok value => pure value
     | .error error => throwError "{label}: decoder rejected the datum: {error}"
@@ -234,6 +340,8 @@ evidence containing the original value. -/
 #eval show MetaM Unit from do
   let original : CoarsePair := ⟨⟨1⟩, ⟨2⟩⟩
   let data ← SpytialLean.Reify.relationalizeValue original
+  unless tier1Represents data original == false do
+    throwError "coarse identity: the Tier 1 predicate accepted a lossy datum"
   let reconstructed ← match reify data with
     | .ok value => pure value
     | .error error => throwError "coarse identity: decoder rejected the datum: {error}"
