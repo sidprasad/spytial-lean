@@ -19,6 +19,27 @@ private def sample : RootedJsonDataInstance :=
   let graph := graph.addRelation "empty" #["Box", "Nat"]
   { root, data := graph.toDataInstance }
 
+private def identityAllocations : Array Allocation :=
+  let engine : Engine String String := Engine.empty
+  let (first, engine) := engine.intern (.keyed "Nat" "1")
+  let (same, engine) := engine.intern (.keyed "Nat" "1")
+  let (otherType, engine) := engine.intern (.keyed "OtherNat" "1")
+  let (writtenOnce, engine) := engine.intern .asWritten
+  let (writtenTwice, _) := engine.intern .asWritten
+  #[first, same, otherType, writtenOnce, writtenTwice]
+
+private def sharedFields : RootedJsonDataInstance :=
+  relationalize <| .value .asWritten "Pair" "mk" [
+    ("first", .value (.keyed "Nat" "one") "Nat" "1" []),
+    ("second", .value (.keyed "Nat" "one") "Nat" "1" [])
+  ]
+
+private def writtenFields : RootedJsonDataInstance :=
+  relationalize (.value .asWritten "Pair" "mk" [
+    ("first", .value .asWritten "Nat" "1" []),
+    ("second", .value .asWritten "Nat" "1" [])
+  ] : Node String String)
+
 example : sample.root = "atom_0" := by native_decide
 example : sample.data.atoms.map (fun atom => atom.id) = #["atom_0", "atom_1", "atom_2"] := by
   native_decide
@@ -33,5 +54,18 @@ example : (sample.data.relations.any fun relation =>
 example : (sample.data.relations.any fun relation =>
     relation.name == "empty" && relation.tuples.isEmpty) = true := by
   native_decide
+
+example : identityAllocations = #[
+    .fresh "atom_0",
+    .reused "atom_0",
+    .fresh "atom_1",
+    .fresh "atom_2",
+    .fresh "atom_3"
+  ] := by
+  native_decide
+
+example : sharedFields.data.atoms.size = 2 := by native_decide
+
+example : writtenFields.data.atoms.size = 3 := by native_decide
 
 end RelationalizerCoreTest

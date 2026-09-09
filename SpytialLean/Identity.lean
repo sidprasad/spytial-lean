@@ -221,6 +221,11 @@ public def SpytialIdentity.runtimeKey? {α : Type u} [SpytialIdentity α] (a : �
 @[reducible] public def SpytialIdentity.asWritten {α : Type u} : SpytialIdentity α :=
   { via := .asWritten }
 
+/-- The `asWritten` policy supplies no reuse key to a pure relationalization engine. -/
+@[simp] public theorem SpytialIdentity.runtimeKey?_asWritten {α : Type u} (a : α) :
+    @SpytialIdentity.runtimeKey? α SpytialIdentity.asWritten a = none := by
+  rfl
+
 /-- Normalize, then use the underlying identity: `base` pulled back along `n`,
     with `n` the display representative. The `norm?` law holds exactly when
     `n` is idempotent. -/

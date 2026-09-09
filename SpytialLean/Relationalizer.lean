@@ -144,6 +144,20 @@ public meta structure WalkState where
 public meta def WalkState.toGraph (state : WalkState) : RelationalizerCore.Graph :=
   { atoms := state.atoms, relations := state.relations, nextId := state.nextId }
 
+/-- Project the structural-identity engine from the expression walker's metadata. -/
+public meta def WalkState.toEngine (state : WalkState) :
+    RelationalizerCore.Engine ExprStructEq IdentityKey :=
+  { graph := state.toGraph, identities := state.identityAtoms }
+
+/-- Replace the pure graph and structural-identity state without touching adapter metadata. -/
+public meta def WalkState.withEngine (state : WalkState)
+    (engine : RelationalizerCore.Engine ExprStructEq IdentityKey) : WalkState :=
+  { state with
+    atoms := engine.graph.atoms
+    relations := engine.graph.relations
+    nextId := engine.graph.nextId
+    identityAtoms := engine.identities }
+
 /-- Generate a fresh atom ID. -/
 public meta def WalkState.freshId (s : WalkState) : String × WalkState :=
   let (id, graph) := s.toGraph.freshId
@@ -604,14 +618,12 @@ private meta def hasOpaqueBarrier (e : Expr) : MetaM Bool := do
   return false
 
 private meta inductive IdVerdict where
-  /-- Merged into an existing atom: reuse its id, do not walk children. -/
+  /-- Structural, classifier, or as-written identity handled by the reusable core. -/
+  | core (identity : RelationalizerCore.Identity ExprStructEq IdentityKey)
+  /-- A custom-equivalence group already has an atom: reuse it without walking children. -/
   | reuse (id : String)
-  /-- First occurrence of a keyed identity: allocate, then `registerIdentity`. -/
-  | keyed (tyKey : Expr) (k : IdentityKey)
-  /-- First member of a new `.eqv` group: allocate, then `registerIdentity`. -/
+  /-- First member of a new custom-equivalence group. -/
   | grouped (tyKey : Expr)
-  /-- No identity participation: fresh atom. -/
-  | fresh
 
 /-- Normalize local aliases and natural-literal encodings for contextual
     references, without unfolding observation functions. IYKYK's simplifier
@@ -639,13 +651,13 @@ private meta def symbolicValueKey? (cfg : WalkConfig) (mode : WalkMode) (e tyKey
   | .structural | .classifier _ => return some (← normalizeReferenceTerm e)
   | .noInstance | .eqvRel _ => return none
 
-/-- Decide how a closed, `declared`-mode subterm participates in identity.
-    Pure lookup/eval + memoization; allocation and registration are the
-    caller's (so the fused walker and the reference merge pass share exactly
-    this decision procedure). -/
+/-- Resolve the frontend-specific part of identity for a closed, declared-mode subterm.
+
+Structural keys, classifier keys, and fresh occurrences become requests for the reusable core.
+Only arbitrary `.eqv` comparisons remain here because they require evaluating Lean expressions. -/
 private meta def identityVerdict (tyKey e : Expr) : StateT WalkState MetaM IdVerdict := do
   match ← resolveRoute tyKey with
-  | .noInstance => return .fresh
+  | .noInstance => return .core .asWritten
   | .structural =>
     let k? ← do
       match ← structuralKey? e with
@@ -669,10 +681,8 @@ private meta def identityVerdict (tyKey e : Expr) : StateT WalkState MetaM IdVer
         else pure none
     match k? with
     | some k =>
-      if let some id := (← get).identityAtoms[((⟨tyKey⟩ : ExprStructEq), k)]? then
-        return .reuse id
-      return .keyed tyKey k
-    | none => return .fresh
+      return .core (.keyed ⟨tyKey⟩ k)
+    | none => return .core .asWritten
   | .classifier f =>
     let w ← whnf e
     let k? ← do
@@ -684,10 +694,8 @@ private meta def identityVerdict (tyKey e : Expr) : StateT WalkState MetaM IdVer
         pure r
     match k? with
     | some k =>
-      if let some id := (← get).identityAtoms[((⟨tyKey⟩ : ExprStructEq), k)]? then
-        return .reuse id
-      return .keyed tyKey k
-    | none => return .fresh
+      return .core (.keyed ⟨tyKey⟩ k)
+    | none => return .core .asWritten
   | .eqvRel r =>
     let w ← whnf e
     -- `eqvSeen` and the group scan both assume the decider is reflexive. A
@@ -703,7 +711,7 @@ private meta def identityVerdict (tyKey e : Expr) : StateT WalkState MetaM IdVer
         let b := (← evalBool? (mkApp2 r w w)) != some false
         modify fun s => { s with eqvRefl := s.eqvRefl.insert ⟨w⟩ b }
         pure b
-    unless refl do return .fresh
+    unless refl do return .core .asWritten
     if let some id := (← get).eqvSeen[(⟨w⟩ : ExprStructEq)]? then
       return .reuse id
     for (rep, gid) in (← get).eqvGroups[(⟨tyKey⟩ : ExprStructEq)]?.getD #[] do
@@ -714,16 +722,18 @@ private meta def identityVerdict (tyKey e : Expr) : StateT WalkState MetaM IdVer
       | some false => pure ()
       | none =>
         -- eval failure ⇒ fresh atom, representative pool untouched
-        return .fresh
+        return .core .asWritten
     return .grouped tyKey
 
-/-- Record the verdict's registration for a newly allocated atom. -/
+/-- Register a pre-allocated atom while running the two-pass reference implementation.
+
+The production walker calls `Engine.intern` instead. The custom `.eqv` case remains
+adapter-local. -/
 private meta def registerIdentity (v : IdVerdict) (e : Expr) (atomId : String) :
     StateT WalkState MetaM Unit := do
   match v with
-  | .keyed tyKey k =>
-    modify fun s =>
-      { s with identityAtoms := s.identityAtoms.insert (⟨tyKey⟩, k) atomId }
+  | .core identity =>
+    modify fun state => state.withEngine (state.toEngine.register identity atomId)
   | .grouped tyKey => do
     let w ← whnf e
     modify fun s =>
@@ -732,6 +742,25 @@ private meta def registerIdentity (v : IdVerdict) (e : Expr) (atomId : String) :
           ((s.eqvGroups[(⟨tyKey⟩ : ExprStructEq)]?.getD #[]).push (w, atomId))
         eqvSeen := s.eqvSeen.insert ⟨w⟩ atomId }
   | _ => pure ()
+
+/-- Allocate or reuse an atom through the reusable identity engine.
+
+Custom equivalence has already done its lookup in `identityVerdict`; a miss asks the core for an
+as-written allocation and is then recorded in the adapter's equivalence-group table. -/
+private meta def internIdentity (v : IdVerdict) : StateT WalkState MetaM
+    RelationalizerCore.Allocation := do
+  match v with
+  | .reuse id => return .reused id
+  | .core identity =>
+      let state ← get
+      let (allocation, engine) := state.toEngine.intern identity
+      set (state.withEngine engine)
+      return allocation
+  | .grouped _ =>
+      let state ← get
+      let (allocation, engine) := state.toEngine.intern .asWritten
+      set (state.withEngine engine)
+      return allocation
 
 /-! ## The walk -/
 
@@ -1660,12 +1689,14 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
   -- The identity decision (declared mode, closed subterms only).
   let verdict ←
     if !isFunctionGraph && mode == .declared && isClosedValue e then identityVerdict tyKey e
-    else pure .fresh
-  if let .reuse id := verdict then
+    else pure (.core .asWritten)
+  let allocation ← internIdentity verdict
+  if let .reused id := allocation then
     rememberObservationTerm (cfg.recordTerms || !cfg.observations.isEmpty) e id
     return id
+  let .fresh atomId := allocation
+    | unreachable!
   let s ← get
-  let (atomId, s) := s.freshId
   set { s with
     provenance := s.provenance.insert atomId e
     observationTerms := if cfg.recordTerms || !cfg.observations.isEmpty then
@@ -1676,7 +1707,8 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
   -- Register before walking children, so a re-occurrence inside the subtree
   -- (sharing, or a quotient collapsing a child into its parent) resolves to
   -- this atom.
-  registerIdentity verdict e atomId
+  if let .grouped _ := verdict then
+    registerIdentity verdict e atomId
   emitNode cfg (fun c => walkExpr cfg c { mode, ancestors := ctx.ancestors.push (e, atomId) })
     e ty tyKey origName atomId sourceFunctionGraph
   return atomId
@@ -1880,8 +1912,13 @@ public meta partial def referenceRelationalize (e : Expr) (cfg : WalkConfig := {
       if !rec.functionGraph && rec.mode == .declared && isClosedValue rec.expr then
         match ← identityVerdict rec.tyKey rec.expr with
         | .reuse id => union := union.insert rec.atomId id
-        | .fresh => pure ()
-        | v => registerIdentity v rec.expr rec.atomId
+        | .core identity =>
+            if let some id := (← get).toEngine.find? identity then
+              union := union.insert rec.atomId id
+            else
+              modify fun state =>
+                state.withEngine (state.toEngine.register identity rec.atomId)
+        | verdict@(.grouped _) => registerIdentity verdict rec.expr rec.atomId
     pure union
   let mapId := fun a => union.getD a a
   let di := s.toDataInstance

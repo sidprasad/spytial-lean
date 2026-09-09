@@ -23,6 +23,38 @@ public structure Graph where
   relations : Std.HashMap String (Array String × Array JsonTuple) := {}
   nextId : Nat := 0
 
+/-- An identity request supplied by a frontend after it has chosen the policy and computed keys. -/
+public inductive Identity (typeKey : Type u) (valueKey : Type v) where
+  /-- Allocate a distinct atom for this occurrence. -/
+  | asWritten
+  /-- Reuse the atom with this type-and-value key, if one has already been allocated. -/
+  | keyed (type : typeKey) (value : valueKey)
+
+/-- Whether identity resolution allocated an atom or reused an existing one. -/
+public inductive Allocation where
+  | fresh (id : String)
+  | reused (id : String)
+  deriving Repr, BEq, DecidableEq
+
+/-- A frontend-neutral structural value presented to the relationalization engine. -/
+public inductive Node (typeKey : Type u) (valueKey : Type v) where
+  | value
+      (identity : Identity typeKey valueKey)
+      (type label : String)
+      (fields : List (String × Node typeKey valueKey))
+
+/-- The identity-aware state shared by structural relationalization frontends. -/
+public structure Engine (typeKey : Type u) (valueKey : Type v)
+    [BEq typeKey] [Hashable typeKey] [BEq valueKey] [Hashable valueKey] where
+  graph : Graph
+  identities : Std.HashMap (typeKey × valueKey) String
+
+/-- An empty identity-aware relationalization engine. -/
+@[expose] public def Engine.empty [BEq typeKey] [Hashable typeKey]
+    [BEq valueKey] [Hashable valueKey] :
+    Engine typeKey valueKey :=
+  { graph := {}, identities := {} }
+
 /-- Generate the next atom ID and advance the allocator. -/
 @[expose] public def Graph.freshId (graph : Graph) : String × Graph :=
   let id := s!"atom_{graph.nextId}"
@@ -55,5 +87,72 @@ public structure Graph where
   let relations := graph.relations.toArray.map fun (name, types, tuples) =>
     { id := name, name, types, tuples : JsonRelation }
   { atoms := graph.atoms, relations }
+
+/-- Look up the atom selected by an identity request. `asWritten` never selects one. -/
+@[expose] public def Engine.find? [BEq typeKey] [Hashable typeKey]
+    [BEq valueKey] [Hashable valueKey] (engine : Engine typeKey valueKey) :
+    Identity typeKey valueKey → Option String
+  | .asWritten => none
+  | .keyed type value => engine.identities[(type, value)]?
+
+/-- Register a freshly allocated atom under a structural identity request. -/
+@[expose] public def Engine.register [BEq typeKey] [Hashable typeKey]
+    [BEq valueKey] [Hashable valueKey] (engine : Engine typeKey valueKey)
+    (identity : Identity typeKey valueKey) (id : String) : Engine typeKey valueKey :=
+  match identity with
+  | .asWritten => engine
+  | .keyed type value =>
+      { engine with identities := engine.identities.insert (type, value) id }
+
+/-- Registering an identity never changes the relational graph. -/
+@[simp] public theorem Engine.register_graph [BEq typeKey] [Hashable typeKey]
+    [BEq valueKey] [Hashable valueKey] (engine : Engine typeKey valueKey)
+    (identity : Identity typeKey valueKey) (id : String) :
+    (engine.register identity id).graph = engine.graph := by
+  cases identity <;> rfl
+
+/-- Resolve identity and allocate exactly when this is a new occurrence. -/
+@[expose] public def Engine.intern [BEq typeKey] [Hashable typeKey]
+    [BEq valueKey] [Hashable valueKey] (engine : Engine typeKey valueKey)
+    (identity : Identity typeKey valueKey) : Allocation × Engine typeKey valueKey :=
+  match engine.find? identity with
+  | some id => (.reused id, engine)
+  | none =>
+      let (id, graph) := engine.graph.freshId
+      let engine := { engine with graph }
+      (.fresh id, engine.register identity id)
+
+mutual
+  /-- Relationalize one structural node, reusing or allocating its atom according to identity. -/
+  @[expose] public def Engine.addNode [BEq typeKey] [Hashable typeKey]
+      [BEq valueKey] [Hashable valueKey] (engine : Engine typeKey valueKey) :
+      Node typeKey valueKey → String × Engine typeKey valueKey
+    | .value identity type label fields =>
+        match engine.intern identity with
+        | (.reused id, engine) => (id, engine)
+        | (.fresh id, engine) =>
+            let graph := engine.graph.addAtom { id, type, label }
+            let engine := { engine with graph }
+            (id, engine.addFields id type fields)
+
+  /-- Relationalize a node's fields from left to right. -/
+  @[expose] public def Engine.addFields [BEq typeKey] [Hashable typeKey]
+      [BEq valueKey] [Hashable valueKey] (engine : Engine typeKey valueKey)
+      (owner ownerType : String) :
+      List (String × Node typeKey valueKey) → Engine typeKey valueKey
+    | [] => engine
+    | (name, child) :: fields =>
+        let (childId, engine) := engine.addNode child
+        let childType := match child with | .value _ type _ _ => type
+        let graph := engine.graph.addField name owner ownerType childId childType
+        { engine with graph }.addFields owner ownerType fields
+end
+
+/-- Run the pure identity-aware engine from one distinguished structural node. -/
+@[expose] public def relationalize [BEq typeKey] [Hashable typeKey]
+    [BEq valueKey] [Hashable valueKey]
+    (node : Node typeKey valueKey) : RootedJsonDataInstance :=
+  let (root, engine) := (Engine.empty : Engine typeKey valueKey).addNode node
+  { root, data := engine.graph.toDataInstance }
 
 end SpytialLean.RelationalizerCore

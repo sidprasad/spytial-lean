@@ -9,8 +9,10 @@ open Lean
 /-!
 # Typed decoding of Spytial data
 
-The existing relationalizer remains the only producer of atoms and relations. It decides identity,
-sharing, field names, and labels. This module supplies the inverse boundary for types that opt in:
+Spytial has two frontends for producing atoms and relations. The existing `MetaM` adapter inspects
+elaborated `Lean.Expr` values, while the typed Tier 1 frontend exposes runtime values as structural
+nodes. Both feed the same relationalization core, which owns identity interning and graph updates.
+This module supplies the inverse boundary for types that opt in:
 
 ```text
 RootedJsonDataInstance --reify (α := α)--> Except ReifyError α
@@ -159,15 +161,6 @@ end Tier1Reification
 
 /-- Reconstruct a typed value from a Spytial datum with an explicit root atom.
 
-For example, if `x : Tree` is a closed constructor value and `Tree` derives `SpytialReify`, the
-integration property exercised by this package is:
-
-```lean
-let data ← SpytialLean.Reify.relationalizeValue x
-unless reify (α := Tree) data = .ok x do
-  throwError "round trip failed"
-```
-
 The expected type is explicit at the type level because Spytial's display-oriented type names are
 not a complete encoding of Lean types. The root is an atom ID carried alongside the underlying
 relational instance; atom-array order has no semantic role. `reify` reconstructs constructor fields
@@ -181,13 +174,11 @@ Default structural identity and `SpytialIdentity.asWritten` both preserve this p
 identity used in the walked subtree must not merge structurally unequal values.
 
 `Tier1Represents data x` is the pure structural relation between a datum and a value, and
-`reify_of_tier1Represents` proves the universal reconstruction direction. The production
-relationalizer itself is a `MetaM` program, so it cannot be applied to a quantified runtime `x`
-inside a kernel term. `Reify.relationalize%` handles the closed-value case without introducing a
-second encoder: it runs that same relationalizer during elaboration and embeds only the resulting
-rooted datum. Concrete equalities such as `reify (relationalize% x) = .ok x` are then ordinary
-kernel theorems. `ReifyTest` contains such theorems for each Tier 1 shape and broader generated
-checks. -/
+`reify_of_tier1Represents` proves the universal reconstruction direction. For a certified typed
+frontend, `Tier1.reify_relationalize` specializes this to
+`reify (Tier1.relationalize x) = .ok x`. The `MetaM` adapter cannot be applied to a quantified
+runtime `x` inside a kernel term; `Reify.relationalize%` remains the bridge for closed elaborated
+terms and embeds its resulting rooted datum. -/
 public def reify {α : Type u} [SpytialReify α]
     (datum : RootedJsonDataInstance) : Except ReifyError α :=
   SpytialReify.decodeAt datum.data datum.root (datum.data.atoms.size + 1)
@@ -228,18 +219,8 @@ public theorem reifyRepr_of_tier1Represents
   rw [reifyRepr, reify_of_tier1Represents h]
   rfl
 
-@[expose] public def decimalDigit? : Char → Option Nat
-  | '0' => some 0
-  | '1' => some 1
-  | '2' => some 2
-  | '3' => some 3
-  | '4' => some 4
-  | '5' => some 5
-  | '6' => some 6
-  | '7' => some 7
-  | '8' => some 8
-  | '9' => some 9
-  | _ => none
+@[expose] public def decimalDigit? (character : Char) : Option Nat :=
+  if character.isDigit then some (character.toNat - '0'.toNat) else none
 
 @[expose] public def parseNatDigits (accumulator : Nat) : List Char → Option Nat
   | [] => some accumulator
@@ -256,6 +237,47 @@ public theorem reifyRepr_of_tier1Represents
       match decimalDigit? character with
       | none => none
       | some digit => parseNatDigits digit characters
+
+private theorem parseNatDigits_eq_ofDigitChars (accumulator : Nat) (characters : List Char)
+    (digits : ∀ character ∈ characters, character.isDigit) :
+    parseNatDigits accumulator characters =
+      some (Nat.ofDigitChars 10 characters accumulator) := by
+  induction characters generalizing accumulator with
+  | nil => simp [parseNatDigits]
+  | cons character characters inductionHypothesis =>
+      have headDigit : character.isDigit := digits character (by simp)
+      have tailDigits : ∀ tail ∈ characters, tail.isDigit := by
+        intro tail member
+        exact digits tail (by simp [member])
+      simp [parseNatDigits, decimalDigit?, headDigit, Nat.ofDigitChars_cons,
+        inductionHypothesis _ tailDigits]
+
+/-- The transparent parser accepts every `Nat` label emitted by relationalization. -/
+@[simp] public theorem parseNatLabel?_repr (value : Nat) :
+    parseNatLabel? value.repr = some value := by
+  unfold parseNatLabel?
+  rw [Nat.toList_repr]
+  cases digitsEquation : Nat.toDigits 10 value with
+  | nil => exact False.elim (Nat.toDigits_ne_nil digitsEquation)
+  | cons character characters =>
+      have headMember : character ∈ Nat.toDigits 10 value := by
+        rw [digitsEquation]
+        simp
+      have headDigit : character.isDigit :=
+        Nat.isDigit_of_mem_toDigits (b := 10) (n := value) (by decide) (by decide) headMember
+      have tailDigits : ∀ tail ∈ characters, tail.isDigit := by
+        intro tail member
+        have tailMember : tail ∈ Nat.toDigits 10 value := by
+          rw [digitsEquation]
+          simp [member]
+        exact Nat.isDigit_of_mem_toDigits (b := 10) (n := value)
+          (by decide) (by decide) tailMember
+      simp only [decimalDigit?, headDigit, ↓reduceIte]
+      rw [parseNatDigits_eq_ofDigitChars _ _ tailDigits]
+      apply congrArg some
+      have emitted := Nat.ofDigitChars_ten_toDigits (n := value)
+      rw [digitsEquation, Nat.ofDigitChars_cons] at emitted
+      simpa using emitted
 
 @[expose] public def unquoteLabel? (label : String) : Option String :=
   match label.toList with
