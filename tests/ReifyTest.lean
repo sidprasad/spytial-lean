@@ -89,6 +89,30 @@ structure ReifyFunctionFixture where
   run : Nat → Nat
   deriving SpytialReify
 
+/--
+error: cannot derive `SpytialReify` for `ReifyImplicitFieldFixture`: constructor `mk` has a non-explicit data field; Tier 1 requires explicit constructor fields
+-/
+#guard_msgs in
+inductive ReifyImplicitFieldFixture where
+  | mk {hidden : Nat} (visible : String)
+  deriving SpytialReify
+
+/--
+error: cannot derive `SpytialReify` for `ReifyDuplicateFieldFixture`: constructor `mk` maps more than one field to relation `value`
+-/
+#guard_msgs in
+inductive ReifyDuplicateFieldFixture where
+  | mk (value : Nat) (value : Nat)
+  deriving SpytialReify
+
+/--
+error: cannot derive `SpytialReify` for `ReifyFallbackCollisionFixture`: constructor `mk` maps more than one field to relation `mk_1`
+-/
+#guard_msgs in
+inductive ReifyFallbackCollisionFixture where
+  | mk (mk_1 : Nat) (_ : Nat)
+  deriving SpytialReify
+
 /-- error: `relationalize%` requires a closed, fully instantiated value without `sorry` -/
 #guard_msgs in
 example (value : Nat) : JsonDataInstance := relationalize% value

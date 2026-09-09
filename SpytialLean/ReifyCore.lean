@@ -191,11 +191,12 @@ not a complete encoding of Lean types. `reify` reads the first atom as the root,
 constructor fields by following the existing relationalizer's relations; it does not recover a
 stored copy of `x`.
 
-The tested Tier 1 boundary is closed, constructor-reducible values made from `Nat` and `String`
-literals and regular first-order, non-indexed inductive types (structures included) whose fields
-also implement `SpytialReify`. Default structural identity and `SpytialIdentity.asWritten` both
-preserve this property. Any custom identity used in the walked subtree must not merge structurally
-unequal values.
+The tested Tier 1 boundary is closed, constructor-reducible values made from supported primitives
+and regular first-order, non-indexed inductive types (structures included). Constructor data fields
+must be explicit; within each constructor, their computed Spytial field-relation names must be
+pairwise distinct. Datatype parameters require `SpytialReify` and `Tier1Reification` instances.
+Default structural identity and `SpytialIdentity.asWritten` both preserve this property. Any custom
+identity used in the walked subtree must not merge structurally unequal values.
 
 `Tier1Represents data x` is the pure structural relation between a datum and a value, and
 `reify_of_tier1Represents` proves the universal reconstruction direction. The production

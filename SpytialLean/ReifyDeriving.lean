@@ -81,6 +81,10 @@ private meta def mkPlan (declName : Name) : TermElabM Plan := do
       for index in [:info.numFields] do
         let field := variables[info.numParams + index]!
         let declaration ← field.fvarId!.getDecl
+        unless declaration.binderInfo.isExplicit do
+          unsupported declName
+            m!"constructor `{shortName constructor}` has a non-explicit data field; \
+              Tier 1 requires explicit constructor fields"
         let type ← whnf declaration.type
         if ← isProp type then
           unsupported declName m!"proof fields are outside Tier 1"
@@ -99,9 +103,16 @@ private meta def mkPlan (declName : Name) : TermElabM Plan := do
             unless ← isDefEq argument parameter do
               unsupported declName
                 m!"recursive occurrences must use the datatype's parameters unchanged"
+        let relation := fieldRelName (shortName constructor) binderNames index
+        -- Relation tuples are unordered: one owner and one relation name cannot encode which
+        -- constructor position supplied each of two distinct targets.
+        if fields.any fun field => field.relation == relation then
+          unsupported declName
+            m!"constructor `{shortName constructor}` maps more than one field to \
+              relation `{relation}`"
         fields := fields.push {
           type := ← renderFieldType declName params type
-          relation := fieldRelName (shortName constructor) binderNames index
+          relation
           recursive
         }
       return fields
@@ -417,16 +428,18 @@ private meta def mkTier1Instance (plan : Plan) (names : DecoderNames) :
 
 /-- Derive a graph decoder, an independent structural checker, and their completeness proof for a
 Tier 1 algebraic datatype: one regular, first-order, non-indexed inductive declaration, including a
-structure.
+structure. Constructor data fields must be explicit, and the field-relation names computed by the
+existing relationalizer must be pairwise distinct within each constructor.
 
 The generated decoder uses exactly the constructor labels and field-relation names emitted by the
 existing relationalizer's default constructor walk. Type parameters are supported when they have
 `SpytialReify` and `Tier1Reification` instances, and direct regular recursion is bounded by the
 datum's atom count.
 
-Dependent/indexed families, mutual and nested recursion, and proof-, type-, or function-valued
-fields are rejected with a diagnostic. A type with a custom relationalizer must provide a matching
-manual `SpytialReify` instance instead of deriving this one. -/
+Non-explicit or relation-name-colliding fields, dependent/indexed families, mutual and nested
+recursion, and proof-, type-, or function-valued fields are rejected with a diagnostic. A type with
+a custom relationalizer must provide a matching manual `SpytialReify` instance instead of deriving
+this one. -/
 public meta def mkSpytialReifyHandler (declNames : Array Name) : CommandElabM Bool := do
   unless declNames.size > 0 do return false
   let env ← getEnv
