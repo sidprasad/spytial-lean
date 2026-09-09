@@ -1,10 +1,14 @@
 module
 
 public import SpytialLean.Tier1Relationalizer
+meta import SpytialLean.Tier1Relationalizer
 public import SpytialLean.ReifyInstances
+public import Lean.ToExpr
+meta import SpytialLean.Relationalizer
 
 open SpytialLean
 open SpytialLean.Tier1
+open Lean
 
 namespace Tier1RelationalizerTest
 
@@ -16,6 +20,16 @@ example (value : String) : reify (relationalize value) = Except.ok value := by
 
 example (value : Nat) : Tier1Represents (relationalize value) value := by
   exact relationalize_represents value
+
+private meta def assertMatchesMeta (expression : Lean.Expr)
+    (typed : RootedJsonDataInstance) : Lean.MetaM Unit := do
+  let elaborated ← SpytialLean.relationalizeRooted expression
+  unless (toJson elaborated).compress == (toJson typed).compress do
+    throwError "typed and expression frontends emitted different data"
+
+#eval show Lean.MetaM Unit from do
+  assertMatchesMeta (Lean.toExpr (42 : Nat)) (relationalize 42)
+  assertMatchesMeta (Lean.toExpr "a\"b\nλ") (relationalize "a\"b\nλ")
 
 private inductive TrafficLight where
   | red
