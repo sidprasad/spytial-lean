@@ -1,6 +1,6 @@
 module
 
-public import SpytialLean.ReifyCore
+public import SpytialLean.Tier1Exposure
 public meta import SpytialLean.TypeShape
 public meta import Lean.Elab.Deriving.Basic
 public meta import Lean.Elab.Deriving.Util
@@ -443,13 +443,169 @@ private meta def mkTier1Instance (plan : Plan) (names : DecoderNames) :
     representsAt := $(mkIdent names.representsAt)
     reifyAt_complete := $(mkIdent names.complete))
 
-/-- Derive a graph decoder, an independent structural checker, and their completeness proof for a
-Tier 1 algebraic datatype: one regular, first-order, non-indexed inductive declaration, including a
-structure. Constructor data fields must be explicit, and the field-relation names computed by the
-existing relationalizer must be pairwise distinct within each constructor.
+private meta structure ExposureNames where
+  expose : Name
+  instanceName : Name
 
-The generated decoder uses exactly the constructor labels and field-relation names emitted by the
-existing relationalizer's default constructor walk. Type parameters are supported when they have
+private meta def mkExposureNames (plan : Plan) : TermElabM ExposureNames := do
+  let instanceName ← mkInstName ``Tier1Exposure plan.declName
+  return { expose := instanceName.appendAfter "_expose", instanceName }
+
+open TSyntax.Compat in
+private meta def mkExposureBinders (plan : Plan) :
+    TermElabM (Array (TSyntax ``bracketedBinder)) := do
+  let mut binders := #[]
+  for binder in ← mkImplicitBinders plan.argNames do
+    binders := binders.push binder
+  for className in #[``SpytialReify, ``Tier1Reification, ``ValueIdentity,
+      ``Tier1Exposure] do
+    for binder in ← mkInstImplicitBinders className plan.indVal plan.argNames do
+      binders := binders.push binder
+  let indApp ← mkInductiveApp plan.indVal plan.argNames
+  binders := binders.push (← `(bracketedBinderF| [ValueIdentity $indApp]))
+  return binders
+
+private meta def mkExposureCtorAlternative (plan : Plan) (names : ExposureNames)
+    (constructor : CtorPlan) : TermElabM (TSyntax ``matchAlt) := do
+  let mut patternArguments : Array Term := #[]
+  for _ in [:constructor.numParams] do
+    patternArguments := patternArguments.push (← `(_))
+  let mut fields : Array Ident := #[]
+  let mut exposedFields : Array Term := #[]
+  for fieldPlan in constructor.fields do
+    let field := mkIdent (← mkFreshUserName `field)
+    fields := fields.push field
+    patternArguments := patternArguments.push field
+    let child ← if fieldPlan.recursive then
+      `(($(mkIdent names.expose) $field:ident).withIdentity
+        (IdentityKey.ofString $(quote plan.declName.toString)) $field:ident)
+    else
+      `(Tier1Exposure.nodeOf $field:ident)
+    exposedFields := exposedFields.push
+      (← `(Prod.mk $(quote fieldPlan.relation) $child:term))
+  let pattern ← `(@$(mkCIdent constructor.name):ident $patternArguments:term*)
+  let body ← `({
+    typeName := $(quote (shortName plan.declName))
+    label := $(quote constructor.label)
+    fields := [$exposedFields,*]
+  })
+  `(matchAltExpr| | $pattern:term => $body:term)
+
+open TSyntax.Compat in
+private meta def mkExposure (plan : Plan) (names : ExposureNames) :
+    TermElabM (TSyntax `command) := do
+  let indApp ← mkInductiveApp plan.indVal plan.argNames
+  let binders ← mkExposureBinders plan
+  let value := mkIdent (← mkFreshUserName `value)
+  let alternatives ← plan.ctors.mapM (mkExposureCtorAlternative plan names)
+  let body ← `(match $value:ident with $alternatives:matchAlt*)
+  if plan.indVal.isRec then
+    `(def $(mkIdent names.expose):ident $binders:bracketedBinder*
+        ($value:ident : $indApp) : ExposedValue := $body:term
+      termination_by $value:ident)
+  else
+    `(def $(mkIdent names.expose):ident $binders:bracketedBinder*
+      ($value:ident : $indApp) : ExposedValue := $body:term)
+
+private meta def mkExposedFieldComplete (fieldPlan : FieldPlan)
+    (datum fuel field inductionHypothesis : Ident) : TermElabM Term := do
+  let child := mkIdent (← mkFreshUserName `child)
+  let represented := mkIdent (← mkFreshUserName `represented)
+  let fieldRepresented := mkIdent (← mkFreshUserName `fieldRepresented)
+  let complete ← if fieldPlan.recursive then
+    `(fun $child:ident $represented:ident =>
+      $inductionHypothesis:ident $child:ident $field:ident $represented:ident)
+  else
+    `(fun $child:ident $represented:ident =>
+      Tier1Exposure.representsAt_of_node
+        (datum := $datum:ident) (root := $child:ident) (fuel := $fuel:ident)
+        (value := $field:ident) $represented:ident)
+  `(fun $fieldRepresented:ident =>
+    JsonDataInstance.childRepresentsWith_mono $complete:term $fieldRepresented:ident)
+
+private meta partial def mkExposedFieldsComplete
+    (constructor : CtorPlan) (fields : Array Ident)
+    (datum fuel inductionHypothesis : Ident) (index : Nat := 0) : TermElabM Term := do
+  let represented := mkIdent (← mkFreshUserName `represented)
+  if h : index < constructor.fields.size then
+    let left ← mkExposedFieldComplete constructor.fields[index] datum fuel fields[index]!
+      inductionHypothesis
+    let right ← mkExposedFieldsComplete constructor fields datum fuel inductionHypothesis
+      (index + 1)
+    `(fun $represented:ident =>
+      JsonDataInstance.boolAnd_eq_true_mono $left:term $right:term $represented:ident)
+  else
+    `(fun _ => rfl)
+
+private meta def mkExposureCompleteAlt
+    (constructor : CtorPlan) (exposeArg representsArg : SimpArg)
+    (datum fuel inductionHypothesis represented : Ident) :
+    TermElabM (TSyntax ``Lean.Parser.Tactic.inductionAlt) := do
+  let mut fields : Array Ident := #[]
+  for _ in constructor.fields do
+    fields := fields.push (mkIdent (← mkFreshUserName `field))
+  let fieldsComplete ←
+    mkExposedFieldsComplete constructor fields datum fuel inductionHypothesis
+  let caseName := mkIdent constructor.name.getString!.toName
+  `(Lean.Parser.Tactic.inductionAlt| | $caseName:ident $fields:ident* =>
+    simp only [$exposeArg, $representsArg, ExposedValue.withIdentity,
+      Tier1Structural.Node.representsAt, List.all_cons, List.all_nil]
+      at $represented:ident ⊢
+    exact JsonDataInstance.constructorRepresents_mono
+      $fieldsComplete:term $represented:ident)
+
+open TSyntax.Compat in
+private meta def mkExposureInstance (plan : Plan) (decoderNames : DecoderNames)
+    (names : ExposureNames) : TermElabM (TSyntax `command) := do
+  let indApp ← mkInductiveApp plan.indVal plan.argNames
+  let binders ← mkExposureBinders plan
+  let value := mkIdent (← mkFreshUserName `value)
+  let datum := mkIdent (← mkFreshUserName `datum)
+  let root := mkIdent (← mkFreshUserName `root)
+  let fuel := mkIdent (← mkFreshUserName `fuel)
+  let represented := mkIdent (← mkFreshUserName `represented)
+  let inductionHypothesis := mkIdent (← mkFreshUserName `inductionHypothesis)
+  let currentNamespace ← getCurrNamespace
+  let exposeRef := mkIdentFrom (← getRef) (currentNamespace ++ names.expose)
+  let representsRef := mkIdentFrom (← getRef) (currentNamespace ++ decoderNames.representsAt)
+  let exposeArg ← mkSimpArg exposeRef
+  let representsArg ← mkSimpArg representsRef
+  let structuralCompleteAlts ← plan.ctors.mapM fun constructor =>
+    mkExposureCompleteAlt constructor exposeArg representsArg datum fuel
+      inductionHypothesis represented
+  let wellFormedProof ← `(by
+    induction $value:ident <;>
+      simp_all [$exposeArg, ExposedValue.withIdentity,
+        Tier1Structural.Node.WellFormed, Tier1Structural.Node.FieldsWellFormed,
+        Tier1Exposure.nodeOf_wellFormed])
+  let structuralCompleteProof ← `(by
+    change $representsRef:ident $datum:ident $root:ident $fuel:ident $value:ident = true
+    induction $fuel:ident generalizing $root:ident $value:ident with
+    | zero =>
+        simp [$exposeArg, $representsArg, ExposedValue.withIdentity,
+          Tier1Structural.Node.representsAt] at $represented:ident
+    | succ $fuel:ident $inductionHypothesis:ident =>
+        cases $value:ident with $structuralCompleteAlts:inductionAlt*)
+  `(instance $(mkIdent names.instanceName):ident $binders:bracketedBinder* :
+      Tier1Exposure $indApp where
+    typeKey := IdentityKey.ofString $(quote plan.declName.toString)
+    expose := $(mkIdent names.expose)
+    wellFormed $value:ident := $wellFormedProof:term
+    structuralComplete $datum:ident $root:ident $fuel:ident $value:ident $represented:ident :=
+      $structuralCompleteProof:term)
+
+/-- Derive both sides of the Tier 1 structural boundary for an algebraic datatype.
+
+The handler generates a graph decoder, an independent structural checker, their completeness proof,
+and a typed exposure consumed by the shared relationalization engine. There is no second
+relationalizer and no second deriving clause.
+
+Tier 1 consists of one regular, first-order, non-indexed inductive declaration, including a
+structure. Constructor data fields must be explicit, and the field-relation names computed by the
+existing expression adapter must be pairwise distinct within each constructor.
+
+The generated decoder and typed exposure use exactly the constructor labels and field-relation
+names emitted by the expression adapter's default constructor handling. Type parameters require
 `SpytialReify` and `Tier1Reification` instances, and direct regular recursion is bounded by the
 datum's atom count.
 
@@ -464,13 +620,16 @@ public meta def mkSpytialReifyHandler (declNames : Array Name) : CommandElabM Bo
   for declName in declNames do
     withoutExposeFromCtors declName do
       let plan ← liftTermElabM <| mkPlan declName
-      let names ← liftTermElabM <| mkNames plan
-      elabCommand (← liftTermElabM <| mkDecoder plan names)
-      elabCommand (← liftTermElabM <| mkInstance plan names)
-      elabCommand (← liftTermElabM <| mkRepresentsAt plan names)
-      elabCommand (← liftTermElabM <| mkComplete plan names)
-      elabCommand (← liftTermElabM <| mkTier1Instance plan names)
-      let checkerName := (← getCurrNamespace) ++ names.representsAt
+      let decoderNames ← liftTermElabM <| mkNames plan
+      let exposureNames ← liftTermElabM <| mkExposureNames plan
+      elabCommand (← liftTermElabM <| mkDecoder plan decoderNames)
+      elabCommand (← liftTermElabM <| mkInstance plan decoderNames)
+      elabCommand (← liftTermElabM <| mkRepresentsAt plan decoderNames)
+      elabCommand (← liftTermElabM <| mkComplete plan decoderNames)
+      elabCommand (← liftTermElabM <| mkTier1Instance plan decoderNames)
+      elabCommand (← liftTermElabM <| mkExposure plan exposureNames)
+      elabCommand (← liftTermElabM <| mkExposureInstance plan decoderNames exposureNames)
+      let checkerName := (← getCurrNamespace) ++ decoderNames.representsAt
       modifyEnv (derivedRepresentsExt.addEntry · (declName, checkerName))
   return true
 

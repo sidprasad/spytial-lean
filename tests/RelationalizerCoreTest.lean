@@ -29,13 +29,13 @@ private def identityAllocations : Array Allocation :=
   #[first, same, otherType, writtenOnce, writtenTwice]
 
 private def sharedFields : RootedJsonDataInstance :=
-  relationalize <| .value .asWritten "Pair" "mk" [
+  walk <| .value .asWritten "Pair" "mk" [
     ("first", .value (.keyed "Nat" "one") "Nat" "1" []),
     ("second", .value (.keyed "Nat" "one") "Nat" "1" [])
   ]
 
 private def writtenFields : RootedJsonDataInstance :=
-  relationalize (.value .asWritten "Pair" "mk" [
+  walk (.value .asWritten "Pair" "mk" [
     ("first", .value .asWritten "Nat" "1" []),
     ("second", .value .asWritten "Nat" "1" [])
   ] : Node String String)

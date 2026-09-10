@@ -14,9 +14,9 @@ open SpytialLean.RelationalizerCore
 
 This module proves that the existing `RelationalizerCore.Engine` represents every well-formed
 structural node when identity is set to `asWritten`. The small `Graph.addFreshNode` traversal below
-is a proof specification, not a second public relationalizer: `Engine.addNode_asWritten` proves that
-the production engine computes exactly that traversal, and the exported theorem is stated directly
-about `RelationalizerCore.relationalize`.
+is a proof specification, not a second graph builder: `Engine.addNode_asWritten` proves that the
+production engine computes exactly that traversal, and the exported theorem is stated directly
+about `RelationalizerCore.walk`.
 
 The proof accounts for generated atom IDs, atom and relation lookup, unique field ownership,
 relation accumulation, recursion fuel, and preservation of earlier graph entries. The public API is
@@ -865,21 +865,21 @@ mutual
         cases child <;> rfl
 end
 
-theorem relationalize_asWritten_eq [BEq typeKey] [Hashable typeKey]
+theorem walk_asWritten_eq [BEq typeKey] [Hashable typeKey]
     [BEq valueKey] [Hashable valueKey] (node : Node typeKey valueKey) :
-    RelationalizerCore.relationalize (Node.asWritten node) =
+    RelationalizerCore.walk (Node.asWritten node) =
       let (root, graph) := SpytialLean.Tier1Structural.Graph.addFreshNode ({} : Graph) node
       { root, data := graph.toDataInstance } := by
-  unfold RelationalizerCore.relationalize
+  unfold RelationalizerCore.walk
   rw [Engine.addNode_asWritten]
   rfl
 
-public theorem relationalize_asWritten_represents [BEq typeKey] [Hashable typeKey]
+public theorem walk_asWritten_represents [BEq typeKey] [Hashable typeKey]
     [BEq valueKey] [Hashable valueKey] (node : Node typeKey valueKey)
     (wellFormed : Node.WellFormed node) :
-    let datum := RelationalizerCore.relationalize (Node.asWritten node)
+    let datum := RelationalizerCore.walk (Node.asWritten node)
     Node.representsAt datum.data datum.root (datum.data.atoms.size + 1) node = true := by
-  rw [relationalize_asWritten_eq]
+  rw [walk_asWritten_eq]
   generalize run : SpytialLean.Tier1Structural.Graph.addFreshNode ({} : Graph) node = result
   rcases result with ⟨root, graph⟩
   have facts := Graph.addFreshNode_correct Graph.Valid.empty wellFormed

@@ -10,10 +10,11 @@ namespace SpytialLean
 
 open Lean Meta
 
-/-! # The relationalizer
+/-! # The expression adapter for relationalization
 
-Walks an elaborated expression into atoms and relations: give every subterm a
-fresh atom, then merge occurrences with the same identity — declared per type
+This module exposes elaborated `Lean.Expr` terms to the shared graph-building state in
+`RelationalizerCore`. It is the `MetaM` adapter, not a second graph engine. It gives every subterm a
+fresh atom, then merges occurrences with the same identity — declared per type
 by `SpytialIdentity`, the atom table keyed on `(type, identity)` under
 confirmed structural equality, never bare `Expr.hash`. No instance ⇒ the
 walker derives one; `asWritten` declines. The `Raw`/`Viewed` wrappers shift the

@@ -9,10 +9,10 @@ open Lean
 /-!
 # Typed decoding of Spytial data
 
-Spytial has two frontends for producing atoms and relations. The existing `MetaM` adapter inspects
-elaborated `Lean.Expr` values, while the typed Tier 1 frontend exposes runtime values as structural
-nodes. Both feed the same relationalization core, which owns identity interning and graph updates.
-This module supplies the inverse boundary for types that opt in:
+Spytial has one graph walker with two ways to expose input to it. The existing `MetaM` adapter
+discovers structure from elaborated `Lean.Expr` values. For the Tier 1 fragment,
+`deriving SpytialReify` generates ordinary pattern matching that exposes a typed value as the same
+structural nodes. This module supplies the inverse boundary for those nodes:
 
 ```text
 RootedJsonDataInstance --reify (α := α)--> Except ReifyError α
@@ -20,9 +20,9 @@ RootedJsonDataInstance --reify (α := α)--> Except ReifyError α
 
 `SpytialReify α` is deliberately independent of `SpytialIdentity α`. A graph decoder follows field
 relations, so the same decoder handles both merged values and `asWritten` occurrences. A custom
-identity that merges structurally different values can make a raw graph lossy. The certified typed
-frontend detects that case with the independent checker and uses an occurrence-preserving run of
-the same relationalization engine; arbitrary graphs and the `MetaM` adapter carry no such guarantee.
+identity that merges structurally different values can make a raw graph lossy. Certified typed
+exposure detects that case with the independent checker and asks the shared walker to preserve
+occurrences; arbitrary graphs and the `MetaM` adapter carry no such guarantee.
 -/
 
 /-- A checked failure to reconstruct a typed value from relational data. -/
@@ -204,14 +204,14 @@ The tested Tier 1 boundary is closed, constructor-reducible values made from sup
 and regular first-order, non-indexed inductive types (structures included). Constructor data fields
 must be explicit; within each constructor, their computed Spytial field-relation names must be
 pairwise distinct. Datatype parameters require `SpytialReify` and `Tier1Reification` instances.
-The certified typed relationalizer retains a default or custom identity-aware result when this
-checker accepts it, and otherwise emits the same structure occurrence-by-occurrence. Therefore its
+The typed exposure path retains a default or custom identity-aware result when this checker accepts
+it, and otherwise asks the shared walker to emit the same structure occurrence-by-occurrence. Its
 round-trip theorem does not require a law on custom identity. A datum obtained through another
-frontend must establish `Tier1Represents data x` separately.
+adapter must establish `Tier1Represents data x` separately.
 
 `Tier1Represents data x` is the pure structural relation between a datum and a value, and
-`reify_of_tier1Represents` proves the universal reconstruction direction. For a certified typed
-frontend, `Tier1.reify_relationalize` specializes this to
+`reify_of_tier1Represents` proves the universal reconstruction direction. For certified typed
+exposure, `Tier1.reify_relationalize` specializes this to
 `reify (Tier1.relationalize x) = .ok x`. The `MetaM` adapter cannot be applied to a quantified
 runtime `x` inside a kernel term; `Reify.relationalize%` remains the bridge for closed elaborated
 terms and embeds its resulting rooted datum. -/

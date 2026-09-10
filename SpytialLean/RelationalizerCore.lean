@@ -5,15 +5,16 @@ public import SpytialLean.Types
 namespace SpytialLean.RelationalizerCore
 
 /-!
-# Pure relational data construction
+# Shared relationalization engine
 
-This module is the environment-independent part of relationalization. It owns atom allocation,
-relation accumulation, and conversion to `JsonDataInstance`. It does not inspect `Lean.Expr`,
-evaluate values, choose an identity policy, or retain selector evidence; those are responsibilities
-of the `MetaM` adapter in `Relationalizer`.
+This is the environment-independent graph-building state machine. It owns atom allocation,
+identity interning, relation accumulation, and conversion to `JsonDataInstance`.
 
-Keeping these transitions pure gives a typed Tier 1 frontend one engine to target. It must use this
-state rather than implement a second path from values to relational data.
+`walk` traverses an already-exposed structural `Node`. The expression adapter instead drives the
+same `Engine` and `Graph` transitions incrementally while it discovers `Lean.Expr` structure, since
+it must also retain expression provenance and selector evidence. Typed Tier 1 exposure materializes
+the structural node through generated pattern matching and calls `walk`. Neither adapter owns a
+second graph builder.
 -/
 
 /-- The graph state shared by relationalization frontends. -/
@@ -148,11 +149,17 @@ mutual
         { engine with graph }.addFields owner ownerType fields
 end
 
-/-- Run the pure identity-aware engine from one distinguished structural node. -/
-@[expose] public def relationalize [BEq typeKey] [Hashable typeKey]
+/-- Walk one distinguished structural node with the shared identity-aware engine. -/
+@[expose] public def walk [BEq typeKey] [Hashable typeKey]
     [BEq valueKey] [Hashable valueKey]
     (node : Node typeKey valueKey) : RootedJsonDataInstance :=
   let (root, engine) := (Engine.empty : Engine typeKey valueKey).addNode node
   { root, data := engine.graph.toDataInstance }
+
+/-- Compatibility name for callers of the original extracted graph core. -/
+@[expose] public def relationalize [BEq typeKey] [Hashable typeKey]
+    [BEq valueKey] [Hashable valueKey]
+    (node : Node typeKey valueKey) : RootedJsonDataInstance :=
+  walk node
 
 end SpytialLean.RelationalizerCore

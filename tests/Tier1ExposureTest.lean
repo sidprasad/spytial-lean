@@ -1,8 +1,7 @@
 module
 
-public import SpytialLean.Tier1Relationalizer
-meta import SpytialLean.Tier1Relationalizer
-public meta import SpytialLean.Tier1RelationalizerDeriving
+public import SpytialLean.Tier1Exposure
+public meta import SpytialLean.ReifyDeriving
 public import SpytialLean.ReifyInstances
 public import Lean.ToExpr
 meta import SpytialLean.Relationalizer
@@ -11,7 +10,7 @@ open SpytialLean
 open SpytialLean.Tier1
 open Lean
 
-namespace Tier1RelationalizerTest
+namespace Tier1ExposureTest
 
 example (value : Nat) : reify (relationalize value) = Except.ok value := by
   exact reify_relationalize value
@@ -21,8 +20,6 @@ example (value : String) : reify (relationalize value) = Except.ok value := by
 
 example (value : Nat) : Tier1Represents (relationalize value) value := by
   exact relationalize_represents value
-
-deriving instance Tier1Relationalizer for Bool, Option
 
 example (value : Bool) : reify (relationalize value) = Except.ok value := by
   exact reify_relationalize value
@@ -44,7 +41,7 @@ public inductive TrafficLight where
   | red
   | amber
   | green
-  deriving DecidableEq, SpytialIdentity, SpytialReify, Tier1Relationalizer
+  deriving DecidableEq, SpytialIdentity, SpytialReify
 
 example (value : TrafficLight) : reify (relationalize value) = Except.ok value := by
   exact reify_relationalize value
@@ -52,7 +49,7 @@ example (value : TrafficLight) : reify (relationalize value) = Except.ok value :
 public structure Person where
   name : String
   age : Nat
-  deriving DecidableEq, ToExpr, SpytialIdentity, SpytialReify, Tier1Relationalizer
+  deriving DecidableEq, ToExpr, SpytialIdentity, SpytialReify
 
 example (value : Person) : reify (relationalize value) = Except.ok value := by
   exact reify_relationalize value
@@ -63,21 +60,21 @@ example (value : Person) : reify (relationalize value) = Except.ok value := by
 
 public structure NoDeclaredIdentity where
   value : Nat
-  deriving DecidableEq, SpytialReify, Tier1Relationalizer
+  deriving DecidableEq, SpytialReify
 
 example (value : NoDeclaredIdentity) : reify (relationalize value) = Except.ok value := by
   exact reify_relationalize value
 
 public inductive Empty where
-  deriving SpytialReify, Tier1Relationalizer
+  deriving SpytialReify
 
 public inductive Tree (alpha : Type u) where
   | leaf (value : alpha)
   | branch (left right : Tree alpha)
-  deriving DecidableEq, SpytialIdentity, SpytialReify, Tier1Relationalizer
+  deriving DecidableEq, SpytialIdentity, SpytialReify
 
 example {alpha : Type u} [SpytialReify alpha] [Tier1Reification alpha]
-    [Tier1Identity alpha] [Tier1Relationalizer alpha] (value : Tree alpha) :
+    [ValueIdentity alpha] [Tier1Exposure alpha] (value : Tree alpha) :
     reify (relationalize value) = Except.ok value := by
   exact reify_relationalize value
 
@@ -88,12 +85,10 @@ public structure CoarseLeaf where
 public instance coarseLeafIdentity : SpytialIdentity CoarseLeaf where
   via := .identity fun _ => .ofNat 0
 
-deriving instance Tier1Relationalizer for CoarseLeaf
-
 public structure CoarsePair where
   left : CoarseLeaf
   right : CoarseLeaf
-  deriving DecidableEq, SpytialIdentity, SpytialReify, Tier1Relationalizer
+  deriving DecidableEq, SpytialIdentity, SpytialReify
 
 private def unequalCoarsePair : CoarsePair := ⟨⟨1⟩, ⟨2⟩⟩
 private def equalCoarsePair : CoarsePair := ⟨⟨1⟩, ⟨1⟩⟩
@@ -125,10 +120,10 @@ private def isAsWritten : RelationalizerCore.Identity IdentityKey IdentityKey �
   | .asWritten => true
   | .keyed _ _ => false
 
-/-- The typed frontend observes an explicit `SpytialIdentity.asWritten` policy. -/
+/-- Typed exposure passes an explicit `SpytialIdentity.asWritten` policy to the walker. -/
 example :
-    isAsWritten (tier1Identity (IdentityKey.ofString "WrittenNat") (⟨1⟩ : WrittenNat)) =
+    isAsWritten (valueIdentity (IdentityKey.ofString "WrittenNat") (⟨1⟩ : WrittenNat)) =
       true := by
-  simp [isAsWritten, tier1Identity, Tier1Identity.key?]
+  simp [isAsWritten, valueIdentity, ValueIdentity.key?]
 
-end Tier1RelationalizerTest
+end Tier1ExposureTest
