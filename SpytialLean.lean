@@ -14,6 +14,7 @@ public import SpytialLean.RelationalizerCore
 public meta import SpytialLean.Relationalizer
 public import SpytialLean.ReifyCore
 public import SpytialLean.Tier1Relationalizer
+public meta import SpytialLean.Tier1RelationalizerDeriving
 public meta import SpytialLean.Reify
 public meta import SpytialLean.InContext
 public meta import SpytialLean.LeanSelector

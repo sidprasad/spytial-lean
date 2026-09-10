@@ -20,9 +20,9 @@ RootedJsonDataInstance --reify (α := α)--> Except ReifyError α
 
 `SpytialReify α` is deliberately independent of `SpytialIdentity α`. A graph decoder follows field
 relations, so the same decoder handles both merged values and `asWritten` occurrences. A custom
-identity that merges structurally different values may be lossy and therefore cannot in general
-satisfy a round trip; such an identity is outside the reconstruction claim unless it retains enough
-additional data.
+identity that merges structurally different values can make a raw graph lossy. The certified typed
+frontend detects that case with the independent checker and uses an occurrence-preserving run of
+the same relationalization engine; arbitrary graphs and the `MetaM` adapter carry no such guarantee.
 -/
 
 /-- A checked failure to reconstruct a typed value from relational data. -/
@@ -53,21 +53,19 @@ does not reinterpret the existing relationalizer's relation-level naming or sche
     Except ReifyError String := do
   let ownerAtom ← datum.atom owner
   let mut children : Array String := #[]
-  for relation in datum.relations do
-    if relation.name == field then
-      for tuple in relation.tuples do
-        if tuple.atoms[0]? == some owner then
-          unless tuple.atoms.size == 2 do
-            return ← reifyError s!"reify: relation '{field}' is not a binary field relation"
-          unless tuple.types.size == 2 do
-            return ← reifyError s!"reify: relation '{field}' has an invalid type signature"
-          let child := tuple.atoms[1]!
-          let childAtom ← datum.atom child
-          unless tuple.types[0]! == ownerAtom.type && tuple.types[1]! == childAtom.type do
-            return ← reifyError
-              s!"reify: relation '{field}' has tuple types that disagree with its atoms"
-          unless children.contains child do
-            children := children.push child
+  for relation in datum.relations.toList.filter (fun relation => relation.name == field) do
+    for tuple in relation.tuples.toList.filter (fun tuple => tuple.atoms[0]? == some owner) do
+      unless tuple.atoms.size == 2 do
+        return ← reifyError s!"reify: relation '{field}' is not a binary field relation"
+      unless tuple.types.size == 2 do
+        return ← reifyError s!"reify: relation '{field}' has an invalid type signature"
+      let child := tuple.atoms[1]!
+      let childAtom ← datum.atom child
+      unless tuple.types[0]! == ownerAtom.type && tuple.types[1]! == childAtom.type do
+        return ← reifyError
+          s!"reify: relation '{field}' has tuple types that disagree with its atoms"
+      unless children.contains child do
+        children := children.push child
   match children.toList with
   | [child] => .ok child
   | [] => reifyError s!"reify: atom '{owner}' has no '{field}' field"
@@ -86,6 +84,29 @@ public def decodeChildWith (datum : JsonDataInstance) (owner field : String)
   match datum.child owner field with
   | .error _ => false
   | .ok child => represents child value
+
+/-- Lift a pointwise implication between structural checkers through a field lookup. -/
+public theorem childRepresentsWith_mono
+    {datum : JsonDataInstance} {owner field : String}
+    {source : String → α → Bool} {target : String → β → Bool}
+    {sourceValue : α} {targetValue : β}
+    (complete : ∀ child, source child sourceValue = true → target child targetValue = true)
+    (represented : datum.childRepresentsWith owner field source sourceValue = true) :
+    datum.childRepresentsWith owner field target targetValue = true := by
+  unfold childRepresentsWith at represented ⊢
+  cases hc : datum.child owner field with
+  | error error => simp [hc] at represented
+  | ok child =>
+      simp only [hc] at represented ⊢
+      exact complete child represented
+
+/-- Conjunction preserves pointwise implications between Boolean checks. -/
+public theorem boolAnd_eq_true_mono {leftSource rightSource leftTarget rightTarget : Bool}
+    (leftComplete : leftSource = true → leftTarget = true)
+    (rightComplete : rightSource = true → rightTarget = true)
+    (represented : (leftSource && rightSource) = true) :
+    (leftTarget && rightTarget) = true := by
+  cases leftSource <;> cases rightSource <;> simp_all
 
 /-- A structurally represented child is successfully decoded. -/
 public theorem decodeChildWith_complete
@@ -116,6 +137,19 @@ public theorem decodeChildWith_complete
   match datum.expectAtom root expectedType with
   | .error _ => false
   | .ok atom => atom.label == label && fieldsRepresent
+
+/-- Changing field checks by implication preserves constructor representation. -/
+public theorem constructorRepresents_mono
+    {datum : JsonDataInstance} {root expectedType label : String}
+    {source target : Bool} (complete : source = true → target = true)
+    (represented : datum.constructorRepresents root expectedType label source = true) :
+    datum.constructorRepresents root expectedType label target = true := by
+  unfold constructorRepresents at represented ⊢
+  cases atom : datum.expectAtom root expectedType with
+  | error error => simp [atom] at represented
+  | ok value =>
+      simp only [atom, Bool.and_eq_true] at represented ⊢
+      exact ⟨represented.1, complete represented.2⟩
 
 end JsonDataInstance
 
@@ -170,8 +204,10 @@ The tested Tier 1 boundary is closed, constructor-reducible values made from sup
 and regular first-order, non-indexed inductive types (structures included). Constructor data fields
 must be explicit; within each constructor, their computed Spytial field-relation names must be
 pairwise distinct. Datatype parameters require `SpytialReify` and `Tier1Reification` instances.
-Default structural identity and `SpytialIdentity.asWritten` both preserve this property. Any custom
-identity used in the walked subtree must not merge structurally unequal values.
+The certified typed relationalizer retains a default or custom identity-aware result when this
+checker accepts it, and otherwise emits the same structure occurrence-by-occurrence. Therefore its
+round-trip theorem does not require a law on custom identity. A datum obtained through another
+frontend must establish `Tier1Represents data x` separately.
 
 `Tier1Represents data x` is the pure structural relation between a datum and a value, and
 `reify_of_tier1Represents` proves the universal reconstruction direction. For a certified typed
