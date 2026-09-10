@@ -204,20 +204,22 @@ The tested Tier 1 boundary is closed, constructor-reducible values made from sup
 and regular first-order, non-indexed inductive types (structures included). Constructor data fields
 must be explicit; within each constructor, their computed Spytial field-relation names must be
 pairwise distinct. Datatype parameters require `SpytialReify` and `Tier1Reification` instances.
-The typed exposure path retains a default or custom identity-aware result when this checker accepts
-it, and otherwise asks the shared walker to emit the same structure occurrence-by-occurrence. Its
-round-trip theorem does not require a law on custom identity. A datum obtained through another
-adapter must establish `Tier1Represents data x` separately.
+The supplied foundations are `Nat` and `String`, with derived instances for `Bool`, `PUnit`, `Int`,
+`Option`, `Prod`, `Sum`, and `List`. Dependent/indexed families, mutual, nested, or non-regular
+recursion, and proof-, type-, or function-valued fields are outside this derivation fragment.
 
-`Tier1Represents data x` is the pure structural relation between a datum and a value, and
-`reify_of_tier1Represents` proves the universal reconstruction direction. For certified typed
-exposure, `Tier1.reify_relationalize` specializes this to
-`reify (Tier1.relationalize x) = .ok x`. The `MetaM` adapter cannot be applied to a quantified
-runtime `x` inside a kernel term; `Reify.relationalize%` remains the bridge for closed elaborated
-terms and embeds its resulting rooted datum. Opt-in `spytial.certifyReification` checks this
-structural premise for the actual output of `#spytial` and `relationalize%` and kernel-checks the
-resulting equality proof. It never substitutes a different graph or changes the identity policy;
-it certifies successful closed invocations, not the expression adapter universally. -/
+The scoped capability is lossless import under a lossless identity policy: if a datum reconstructs
+`x`, applying any pure value inspector to that result reproduces its output on `x`. For example,
+`reifyRepr` reconstructs the value before applying Lean's `reprStr`; no saved printout is needed.
+
+`reify_of_tier1Represents` proves reconstruction for any structurally representing datum. For types
+with `Tier1Lossless`, `Tier1.reify_relationalize_of_lossless` proves the full typed round trip
+through the shared engine for every value, without changing the selected identity policy.
+`relationalize%` exposes that pure computation for compatible closed expressions. Separately,
+opt-in `spytial.certifyReification` kernel-checks reconstruction of the exact datum emitted by
+`#spytial` or `relationalize%`. The integration needs the generated instances and executable host
+code (a `meta import` for imported definitions). These are setup requirements for the capability,
+not a claim that every expression or inspection mode is handled by the proved route. -/
 public def reify {α : Type u} [SpytialReify α]
     (datum : RootedJsonDataInstance) : Except ReifyError α :=
   SpytialReify.decodeAt datum.data datum.root (datum.data.atoms.size + 1)
@@ -249,6 +251,14 @@ public theorem reify_of_tier1Represents
 public def reifyRepr { α : Type u } [SpytialReify α] [Repr α]
     (datum : RootedJsonDataInstance) : Except ReifyError String :=
   (reify (α := α) datum).map reprStr
+
+/-- Any proof of value reconstruction also proves preservation of its `Repr` output. -/
+public theorem reifyRepr_of_reify
+    {α : Type u} [SpytialReify α] [Repr α]
+    {datum : RootedJsonDataInstance} {value : α} (h : reify datum = Except.ok value) :
+    reifyRepr (α := α) datum = Except.ok (reprStr value) := by
+  rw [reifyRepr, h]
+  rfl
 
 /-- Structural reconstruction is sufficient to reproduce the host value's `Repr` output. -/
 public theorem reifyRepr_of_tier1Represents

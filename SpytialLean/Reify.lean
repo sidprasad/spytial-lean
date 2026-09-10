@@ -5,6 +5,7 @@ public import SpytialLean.ReifyInstances
 public import SpytialLean.Tier1Exposure
 public meta import SpytialLean.ReifyOptions
 public meta import SpytialLean.Relationalizer
+public meta import SpytialLean.ClosedValue
 public meta import Lean.ToExpr
 public meta import Lean.Meta.Tactic.Cbv
 
@@ -15,10 +16,12 @@ open Lean Elab Meta Term
 /-!
 # Adapter for the existing relationalizer
 
-The pure `SpytialReify` class is a decoder only. This module connects it to the actual
-expression-level relationalizer used by `#spytial` and the `spytial` tactic. It returns the same
-ordinary `JsonDataInstance` already consumed by Spytial, paired with the root atom ID returned by
-that same walk; no parallel encoder or evidence registry is involved.
+The pure `SpytialReify` class is a decoder only. Ordinary closed values with an available
+`Tier1Lossless` certificate can now use the proved typed exposure and shared engine directly at
+the `#spytial` and `relationalize%` boundaries. `ClosedValue` attaches provenance and selector
+aliases by reading that datum, without building another graph. Other cases retain the existing
+expression adapter; contextual tactics are unchanged. Both routes return the same ordinary
+`JsonDataInstance` format paired with an explicit root atom ID.
 
 `MetaM` belongs only at this adapter boundary: quoting a host value, reducing an elaborated
 expression, and discovering its instances require Lean's environment. Decoding the resulting
@@ -31,15 +34,18 @@ per-invocation guarantee; it is not a universal proof of the expression adapter.
 `spytial` tactic remains unchanged and is not certified by this option.
 -/
 
-/-- Quote a fully instantiated host value and pass it to Spytial's existing relationalizer.
+/-- Quote a fully instantiated host value and use Spytial's closed-value production route.
 
 The `ToExpr` instance performs only the host-to-expression boundary. In particular, the returned
-datum contains no copy of `value` for the decoder to retrieve. -/
+datum contains no copy of `value` for the decoder to retrieve. Compatible certified values use the
+proved typed pipeline; otherwise the expression adapter retains its existing semantics. -/
 public meta def relationalizeValue {α : Type u} [ToExpr α]
     (value : α) (config : WalkConfig := {}) : MetaM RootedJsonDataInstance := do
   let expression := toExpr value
   unless isClosedValue expression do
     throwError "spytial reify: expected a closed value"
+  if let some result ← ClosedValue.relationalize? expression config then
+    return result.datum
   SpytialLean.relationalizeRooted expression config
 
 public meta instance : ToExpr JsonAtom where
@@ -100,6 +106,18 @@ public meta def certifyReificationIfRequested (value : Expr) (datum : RootedJson
   if spytial.certifyReification.get (← getOptions) then
     discard <| certifyReification value datum
 
+/-- Command boundary: certified ordinary closed values use the proved typed pipeline; other
+inspection modes retain the expression adapter. Certification, when requested, still checks the
+exact emitted datum rather than trusting the compiled evaluation of the pure program. -/
+public meta def relationalizeWithEvidence (value : Expr) (config : WalkConfig := {})
+    (observations : Array Expr := #[]) :
+    MetaM (RootedJsonDataInstance × Provenance × SelectorEvidence) := do
+  let result ← match ← ClosedValue.relationalize? value config observations with
+    | some result => pure (result.datum, result.provenance, result.evidence)
+    | none => SpytialLean.relationalizeRootedWithEvidence value config observations
+  certifyReificationIfRequested value result.1
+  return result
+
 public section
 
 /-- Relationalize a closed, fully elaborated term during elaboration and embed the resulting
@@ -114,11 +132,12 @@ theorem example :
   decide_cbv
 ```
 
-The `%` form is the bridge across the unavoidable `MetaM` boundary: the existing relationalizer
-runs while the declaration is elaborated, then only its root ID and ordinary data result remain in
-the theorem. Open terms, metavariables, universe parameters, and terms containing `sorry` are
-rejected. With `spytial.certifyReification` enabled, the exact embedded datum must additionally
-pass the reconstruction certificate; an unsupported or lossy result is rejected.
+With an available `Tier1Lossless` certificate and compatible ordinary inspection semantics, `%`
+elaborates directly to the proved pure `Tier1.relationalizeCandidate` application. Its round trip
+then follows from `Tier1.reify_relationalize_of_lossless`, without checking a particular datum.
+Other closed values retain the expression adapter and embed its rooted datum. Open terms,
+metavariables, universe parameters, and terms containing `sorry` are rejected. Optional
+`spytial.certifyReification` additionally checks the concrete datum produced during elaboration.
 -/
 syntax:max "relationalize% " term:67 : term
 
@@ -130,6 +149,9 @@ elab_rules : term
       unless isClosedValue valueExpression do
         throwErrorAt value
           "`relationalize%` requires a closed, fully instantiated value without `sorry`"
+      if let some result ← ClosedValue.relationalize? valueExpression then
+        certifyReificationIfRequested valueExpression result.datum
+        return result.program
       let datum ← SpytialLean.relationalizeRooted valueExpression
       certifyReificationIfRequested valueExpression datum
       return toExpr datum
