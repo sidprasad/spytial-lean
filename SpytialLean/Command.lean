@@ -503,8 +503,7 @@ private meta def elabRelationalized (t : Syntax) (cfg : WalkConfig := {})
     TermElabM (Expr × Array Expr × JsonDataInstance × Provenance × SelectorEvidence) := do
   let e ← elabTermInstantiated t
   let observations ← resolveObservationTerms observerSyntaxes
-  let (datum, prov, evidence) ← relationalizeRootedWithEvidence e cfg observations
-  Reify.certifyReificationIfRequested e datum
+  let (datum, prov, evidence) ← Reify.relationalizeWithEvidence e cfg observations
   return (e, observations, datum.data, prov, evidence)
 
 /-- Elaborate a use-site `with [...]` for `e`. Without `..` the list replaces
