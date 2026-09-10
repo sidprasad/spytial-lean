@@ -107,6 +107,24 @@ public theorem IdentityKey.ofNat_injective : Function.Injective IdentityKey.ofNa
 @[simp] public theorem IdentityKey.ofNat_inj {a b : Nat} :
     ofNat a = ofNat b ↔ a = b := ofNat_injective.eq_iff
 
+public theorem IdentityKey.ofList_injective : Function.Injective IdentityKey.ofList := by
+  intro a b equal
+  have reps := KeyRep.node.inj (congrArg IdentityKey.rep equal)
+  have keys := congrArg (List.map IdentityKey.mk) reps
+  have eta : (fun key : IdentityKey => IdentityKey.mk key.rep) = id := rfl
+  simpa only [List.map_map, Function.comp_def, eta, List.map_id] using keys
+
+@[simp] public theorem IdentityKey.ofList_inj {a b : List IdentityKey} :
+    ofList a = ofList b ↔ a = b := ofList_injective.eq_iff
+
+@[simp] public theorem IdentityKey.ofString_ne_ofList (s : String) (ks : List IdentityKey) :
+    ofString s ≠ ofList ks := by
+  intro equal
+  cases congrArg IdentityKey.rep equal
+
+@[simp] public theorem IdentityKey.ofList_ne_ofString (ks : List IdentityKey) (s : String) :
+    ofList ks ≠ ofString s := Ne.symm (ofString_ne_ofList s ks)
+
 /-- Key for a deliberately-opaque leaf (`@[irreducible]` / `opaque` head), from
     its spelling — the walker's opacity gate. A distinct constructor underneath,
     so a spelling key never collides with any `ofString`/`ofNat`/`ofList` key a
@@ -145,6 +163,9 @@ public instance : ToIdentityKey String where
 
 public instance : ToIdentityKey Bool where
   toKey b := .ofNat b.toNat
+
+@[simp] public theorem bool_toNat_inj (a b : Bool) : a.toNat = b.toNat ↔ a = b := by
+  cases a <;> cases b <;> decide
 
 public instance : ToIdentityKey Char where
   toKey c := .ofNat c.toNat
@@ -264,7 +285,7 @@ public class SpytialIdentity (α : Type u) where
 
 /-- The compiled classifier of `α`'s instance, when it presents one — the
     walker's eval fallback and the tests' runtime oracle. -/
-public def SpytialIdentity.runtimeKey? {α : Type u} [SpytialIdentity α] (a : α) :
+@[expose] public def SpytialIdentity.runtimeKey? {α : Type u} [SpytialIdentity α] (a : α) :
     Option IdentityKey :=
   (SpytialIdentity.viaOf α).classifier? |>.map (· a)
 
@@ -277,7 +298,7 @@ public def SpytialIdentity.runtimeKey? {α : Type u} [SpytialIdentity α] (a : �
 /-- Opt out of the derive-on-demand default: `α` draws as written, one atom per
     occurrence. Declaring this is what stops the walker supplying an identity,
     and it silences the decline warning for a type that cannot have one. -/
-@[reducible] public def SpytialIdentity.asWritten {α : Type u} : SpytialIdentity α :=
+@[expose, reducible] public def SpytialIdentity.asWritten {α : Type u} : SpytialIdentity α :=
   { via := .asWritten }
 
 /-- The `asWritten` policy supplies no reuse key to a pure relationalization engine. -/
@@ -687,7 +708,10 @@ private meta def mkAuxFn (ctx : DerivCtx) (m : MemberPlan) (i : Nat) (forKey : B
   if ctx.usePartial then
     `(@[no_expose] partial def $fnName:ident $binders:bracketedBinder* : $retTy := $body)
   else
-    `(@[no_expose] def $fnName:ident $binders:bracketedBinder* : $retTy := $body)
+    let exposureAttribute ← if forKey && !isPrivateName m.indVal.name &&
+        !m.indVal.ctors.any isPrivateName then
+      `(attr| expose) else `(attr| no_expose)
+    `(@[$exposureAttribute:attr] def $fnName:ident $binders:bracketedBinder* : $retTy := $body)
 
 open TSyntax.Compat in
 private meta def mkInstanceCmd (ctx : DerivCtx) (declName : Name) :
@@ -731,11 +755,23 @@ private meta def mkInstanceCmd (ctx : DerivCtx) (declName : Name) :
       let alts := #[← `(matchAltExpr| | $[$somePats:term],* => $someRhs),
                     ← `(matchAltExpr| | $[$underPats:term],* => $elseRhs)]
       `(match $[$discrs],* with $alts:matchAlt*)
-  -- `@[no_expose]`, like the aux functions: this body dispatches on each field
-  -- type's own instance, so it must elaborate with private constants visible.
-  -- Lean's `Repr` handler gets this for free by keeping every instance
-  -- reference inside its aux function; our presentation match cannot.
-  `(@[no_expose] instance $(mkIdent instName):ident $binders:bracketedBinder* :
+  -- Make structural equations available to downstream proofs only when doing so preserves
+  -- instance selection. A private/local dependency must keep private elaboration visibility.
+  let canExpose ← withExporting (isExporting := false) do
+    if ctx.usePartial || isPrivateName declName || indVal.ctors.any isPrivateName then
+      return false
+    let telescope ← Term.elabType (← `(∀ $binders:bracketedBinder*, True))
+    forallTelescope telescope fun _ _ => do
+      for dependency in ctx.deps do
+        let type ← Term.elabType dependency.type
+        let cls := match dependency.path with
+          | .identity => ``SpytialIdentity
+          | .encoding => ``ToIdentityKey
+        let inst ← synthInstance (← mkAppM cls #[type])
+        if inst.getUsedConstants.any isPrivateName then return false
+      return true
+  let exposureAttribute ← if canExpose then `(attr| expose) else `(attr| no_expose)
+  `(@[$exposureAttribute:attr] instance $(mkIdent instName):ident $binders:bracketedBinder* :
       SpytialIdentity $indApp := SpytialIdentity.mk $viaTerm Option.none)
 
 /-- The key and eqv families each go in their own `mutual` block: members of a

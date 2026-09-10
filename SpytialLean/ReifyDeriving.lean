@@ -507,12 +507,27 @@ private meta def mkExposure (plan : Plan) (names : ExposureNames) :
   let value := mkIdent (← mkFreshUserName `value)
   let alternatives ← plan.ctors.mapM (mkExposureCtorAlternative plan names)
   let body ← `(match $value:ident with $alternatives:matchAlt*)
+  -- Public equations let downstream losslessness derivation inspect this pattern matcher.
+  -- Do not force public elaboration when a field captures a private/local identity instance:
+  -- that would silently select a different field exposure from the completeness proof below.
+  let canExpose ← withExporting (isExporting := false) do
+    if isPrivateName plan.declName || plan.indVal.ctors.any isPrivateName then return false
+    let telescope ← elabType (← `(∀ $binders:bracketedBinder*, True))
+    forallTelescope telescope fun _ _ => do
+      for constructor in plan.ctors do
+        for field in constructor.fields do
+          unless field.recursive do
+            let type ← elabType field.type
+            let node ← mkAppOptM ``Tier1Exposure.nodeOf #[some type, none, none, none, none]
+            if node.getUsedConstants.any isPrivateName then return false
+      return true
+  let exposureAttribute ← if canExpose then `(attr| expose) else `(attr| no_expose)
   if plan.indVal.isRec then
-    `(def $(mkIdent names.expose):ident $binders:bracketedBinder*
+    `(@[$exposureAttribute:attr] def $(mkIdent names.expose):ident $binders:bracketedBinder*
         ($value:ident : $indApp) : ExposedValue := $body:term
       termination_by $value:ident)
   else
-    `(def $(mkIdent names.expose):ident $binders:bracketedBinder*
+    `(@[$exposureAttribute:attr] def $(mkIdent names.expose):ident $binders:bracketedBinder*
       ($value:ident : $indApp) : ExposedValue := $body:term)
 
 private meta def mkExposedFieldComplete (fieldPlan : FieldPlan)
