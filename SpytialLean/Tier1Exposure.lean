@@ -4,6 +4,7 @@ public import SpytialLean.Identity
 public import SpytialLean.RelationalizerCore
 public import SpytialLean.ReifyCore
 public import SpytialLean.Tier1Structural
+public import SpytialLean.Tier1Sharing
 
 namespace SpytialLean
 
@@ -25,7 +26,13 @@ The typed entry point is consequently just composition with the shared walker:
 α --Tier1Exposure.expose--> Node --RelationalizerCore.walk--> rooted datum
 ```
 
-It first keeps the normal identity-aware result when that result structurally represents the input.
+`reify_relationalizeCandidate_of_coherent` proves that this unchecked composition round-trips when
+reuse keys reflect constructor/field structure at every reachable occurrence. This is an input
+identity law, not an assumption that the output datum already represents the value. The shared
+engine's preservation proof establishes that intermediate fact.
+
+The convenience function `Tier1.relationalize` first keeps the normal identity-aware result when
+that result structurally represents the input.
 If a custom identity merges structurally different values, it sends the same exposed nodes through
 the same walker with occurrence-preserving identity. This yields the universal round trip:
 
@@ -80,7 +87,8 @@ public structure ExposedValue where
 
 Instances are generated automatically by `deriving SpytialReify` for the Tier 1 fragment. The
 laws certify that field lookup is unambiguous and that the generic node interpretation implies the
-independently generated reification checker. -/
+independently generated reification checker. They do not certify the chosen identity policy;
+`Tier1Structural.Node.Coherent` is the separate hypothesis for unchecked shared reconstruction. -/
 public class Tier1Exposure (alpha : Type u) [SpytialReify alpha]
     [Tier1Reification alpha] [ValueIdentity alpha] where
   typeKey : IdentityKey
@@ -128,6 +136,34 @@ namespace Tier1
     [Tier1Exposure alpha]
     (value : alpha) : RootedJsonDataInstance :=
   RelationalizerCore.walk (Tier1Exposure.nodeOf value)
+
+/-- Reconstruction through the unchecked identity-aware walk. The identity law concerns the
+input structure alone: equal reuse keys must denote the same full constructor/field tree,
+including occurrences below the root. No runtime representation check or fallback is used. -/
+public theorem reify_relationalizeCandidate {alpha : Type u}
+    [SpytialReify alpha] [Tier1Reification alpha] [ValueIdentity alpha]
+    [Tier1Exposure alpha] (value : alpha)
+    (meaning : IdentityKey × IdentityKey → RelationalizerCore.Node IdentityKey IdentityKey)
+    (sound : Tier1Structural.Node.IdentitySound meaning (Tier1Exposure.nodeOf value)) :
+    reify (relationalizeCandidate value) = Except.ok value := by
+  apply reify_of_tier1Represents
+  unfold Tier1Represents tier1Represents relationalizeCandidate
+  apply Tier1Exposure.representsAt_of_node
+  exact Tier1Structural.walk_sharing_represents _ meaning
+    (Tier1Exposure.nodeOf_wellFormed value) sound
+
+/-- The usual structural identity law suffices: any two reachable occurrences with the same
+reuse key have equal constructor/field structure. The conclusion uses the unchecked walk. -/
+public theorem reify_relationalizeCandidate_of_coherent {alpha : Type u}
+    [SpytialReify alpha] [Tier1Reification alpha] [ValueIdentity alpha]
+    [Tier1Exposure alpha] (value : alpha)
+    (coherent : Tier1Structural.Node.Coherent (Tier1Exposure.nodeOf value)) :
+    reify (relationalizeCandidate value) = Except.ok value := by
+  apply reify_of_tier1Represents
+  unfold Tier1Represents tier1Represents relationalizeCandidate
+  apply Tier1Exposure.representsAt_of_node
+  exact Tier1Structural.walk_coherent_represents _
+    (Tier1Exposure.nodeOf_wellFormed value) coherent
 
 /-- Send the same exposure through the same walk with occurrence-preserving identity. -/
 @[expose] public def relationalizeAsWritten {alpha : Type u}
@@ -239,5 +275,15 @@ public instance [ValueIdentity String] : Tier1Exposure String where
             simpa [stringRepresentsAt, Tier1Structural.Node.representsAt,
               ExposedValue.withIdentity, JsonDataInstance.constructorRepresents,
               atom] using represented
+
+/-- Every primitive Nat survives the unchecked shared walk, for any selected identity policy. -/
+public theorem Tier1.reify_relationalizeCandidate_nat [ValueIdentity Nat] (value : Nat) :
+    reify (relationalizeCandidate value) = Except.ok value :=
+  reify_relationalizeCandidate_of_coherent value (Tier1Structural.Node.coherent_leaf _ _ _)
+
+/-- Every primitive String survives the unchecked shared walk, for any selected identity policy. -/
+public theorem Tier1.reify_relationalizeCandidate_string [ValueIdentity String] (value : String) :
+    reify (relationalizeCandidate value) = Except.ok value :=
+  reify_relationalizeCandidate_of_coherent value (Tier1Structural.Node.coherent_leaf _ _ _)
 
 end SpytialLean
