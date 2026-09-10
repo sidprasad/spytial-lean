@@ -31,6 +31,10 @@ reuse keys reflect constructor/field structure at every reachable occurrence. Th
 identity law, not an assumption that the output datum already represents the value. The shared
 engine's preservation proof establishes that intermediate fact.
 
+The optional `deriving Tier1Lossless` handler proves this identity hypothesis automatically for
+concrete supported types. Its round-trip theorem applies to `relationalizeCandidate` below, not
+to the checked convenience wrapper.
+
 The convenience function `Tier1.relationalize` first keeps the normal identity-aware result when
 that result structurally represents the input.
 If a custom identity merges structurally different values, it sends the same exposed nodes through

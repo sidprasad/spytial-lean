@@ -129,6 +129,26 @@ public theorem coherent_leaf (identity : Identity T V) (type label : String) :
       | field member _ => simp at member
   | field member _ => simp at member
 
+@[expose] public def fields : Node T V → List (String × Node T V)
+  | .value _ _ _ children => children
+
+/-- A family closed under immediate fields covers every reachable occurrence. It suffices to
+check key compatibility between members of that family, including members of different types.
+Automatic losslessness derivation uses the finite family of reachable instantiated field types. -/
+public theorem coherent_of_closed (P : Node T V → Prop) (root : Node T V)
+    (root_mem : P root)
+    (closed : ∀ node, P node → ∀ name child, (name, child) ∈ fields node → P child)
+    (compatible : ∀ a b key, P a → P b → key? a = some key → key? b = some key →
+      asWritten a = asWritten b) : Coherent root := by
+  have covered : ∀ node, Occurs node root → P node := by
+    intro node occurs
+    induction occurs with
+    | here => exact root_mem
+    | field member inside ih =>
+        exact ih (closed _ root_mem _ _ member)
+  intro a b key occursA occursB keyA keyB
+  exact compatible a b key (covered a occursA) (covered b occursB) keyA keyB
+
 mutual
   @[simp] theorem depth_asWritten (node : Node T V) : depth (asWritten node) = depth node := by
     cases node with
