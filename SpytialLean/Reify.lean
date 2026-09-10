@@ -2,8 +2,11 @@ module
 
 public import SpytialLean.ReifyCore
 public import SpytialLean.ReifyInstances
+public import SpytialLean.Tier1Exposure
+public meta import SpytialLean.ReifyOptions
 public meta import SpytialLean.Relationalizer
 public meta import Lean.ToExpr
+public meta import Lean.Meta.Tactic.Cbv
 
 namespace SpytialLean.Reify
 
@@ -20,6 +23,12 @@ that same walk; no parallel encoder or evidence registry is involved.
 `MetaM` belongs only at this adapter boundary: quoting a host value, reducing an elaborated
 expression, and discovering its instances require Lean's environment. Decoding the resulting
 `RootedJsonDataInstance` with `reify` is pure and typed.
+
+`set_option spytial.certifyReification true` enables kernel-checked reconstruction at the
+`#spytial` command and `relationalize%` boundaries. The exact datum already produced by the walk is
+checked, without rerunning relationalization or changing its identity policy. This is an opt-in
+per-invocation guarantee; it is not a universal proof of the expression adapter. The contextual
+`spytial` tactic remains unchanged and is not certified by this option.
 -/
 
 /-- Quote a fully instantiated host value and pass it to Spytial's existing relationalizer.
@@ -57,6 +66,40 @@ public meta instance : ToExpr RootedJsonDataInstance where
   toExpr datum := mkApp2 (mkConst ``RootedJsonDataInstance.mk)
     (toExpr datum.root) (toExpr datum.data)
 
+/-- Prove reconstruction of this exact output of the production walk by establishing
+`Tier1Represents datum value` and applying the universal reconstruction theorem. Checking the
+structural relation avoids imposing an irrelevant ordering on the datum's relation array.
+
+This certifies a successful invocation, not universal correctness or termination of the `MetaM`
+adapter. It works with occurrence-preserving or merged graphs. Lossy custom identities fail;
+there is no identity fallback, second walk, replacement datum, or native-evaluation proof axiom. -/
+public meta def certifyReification (value : Expr) (datum : RootedJsonDataInstance) : MetaM Expr := do
+  unless isClosedValue value do
+    throwError "spytial reify: certification requires a closed, fully instantiated value"
+  try
+    let type ← whnf (← inferType value)
+    let proposition ← mkAppOptM ``tier1Represents
+      #[some type, none, none, some (toExpr datum), some value]
+    let proposition ← mkEq proposition (mkConst ``Bool.true)
+    let goal ← mkFreshExprMVar proposition
+    let [decideGoal] ← goal.mvarId!.applyConst ``of_decide_eq_true
+      | throwError "could not create the representation proof obligation"
+    Lean.Meta.Tactic.Cbv.cbvDecideGoal decideGoal
+    let represented ← instantiateMVars goal
+    let proof ← mkAppM ``reify_of_tier1Represents #[represented]
+    let proof ← instantiateMVars proof
+    checkWithKernel proof
+    return proof
+  catch error =>
+    throwError "spytial reify: could not certify the emitted datum; the value may be unsupported, \
+      irreducible, or lose structure under its identity policy\n{error.toMessageData}"
+
+/-- Check the opted-in guarantee without altering the already-emitted datum or its metadata. -/
+public meta def certifyReificationIfRequested (value : Expr) (datum : RootedJsonDataInstance) :
+    MetaM Unit := do
+  if spytial.certifyReification.get (← getOptions) then
+    discard <| certifyReification value datum
+
 public section
 
 /-- Relationalize a closed, fully elaborated term during elaboration and embed the resulting
@@ -74,7 +117,8 @@ theorem example :
 The `%` form is the bridge across the unavoidable `MetaM` boundary: the existing relationalizer
 runs while the declaration is elaborated, then only its root ID and ordinary data result remain in
 the theorem. Open terms, metavariables, universe parameters, and terms containing `sorry` are
-rejected.
+rejected. With `spytial.certifyReification` enabled, the exact embedded datum must additionally
+pass the reconstruction certificate; an unsupported or lossy result is rejected.
 -/
 syntax:max "relationalize% " term:67 : term
 
@@ -86,7 +130,9 @@ elab_rules : term
       unless isClosedValue valueExpression do
         throwErrorAt value
           "`relationalize%` requires a closed, fully instantiated value without `sorry`"
-      return toExpr (← SpytialLean.relationalizeRooted valueExpression)
+      let datum ← SpytialLean.relationalizeRooted valueExpression
+      certifyReificationIfRequested valueExpression datum
+      return toExpr datum
 
 /-- A concrete theorem through the actual relationalizer. The general proof used here is
 `reify_of_tier1Represents`; `decide_cbv` kernel-checks that this elaboration-time datum has the

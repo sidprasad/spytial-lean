@@ -86,10 +86,6 @@ example {alpha : Type u} [SpytialReify alpha] [Tier1Reification alpha]
     reify (relationalizeAsWritten value) = Except.ok value :=
   reify_relationalizeAsWritten value
 
-example (value : Tree Nat) (datum : RootedJsonDataInstance)
-    (sameDatum : datum = relationalizeAsWritten value) : reify datum = Except.ok value :=
-  reify_of_eq_relationalizeAsWritten value sameDatum
-
 public structure CoarseLeaf where
   value : Nat
   deriving DecidableEq, SpytialReify

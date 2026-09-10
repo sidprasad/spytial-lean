@@ -141,7 +141,7 @@ lean_lib SpytialTests where
              `LeanSelectorTest, `IdentityTest, `IdentityWalkTest, `RelationShapeTest,
              `InContextTest, `ContextInspectionTest, `KnowledgeSelectorFixture,
              `KnowledgeSelectorTest, `ReifyTest, `RelationalizerCoreTest,
-             `Tier1ExposureTest]
+             `Tier1ExposureTest, `ReifyCertificationTest]
 
 /-- The semantic core of relational inspection by computation and proof. -/
 lean_lib SpytialLeanInspectionSemantics where

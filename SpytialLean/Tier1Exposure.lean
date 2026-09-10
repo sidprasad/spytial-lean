@@ -155,16 +155,6 @@ public theorem relationalizeAsWritten_represents {alpha : Type u}
     reify (relationalizeAsWritten value) = Except.ok value :=
   reify_of_tier1Represents (relationalizeAsWritten_represents value)
 
-/-- Transfer the universal theorem to an actual emitted datum once its equality to the shared
-occurrence-preserving computation has been checked. The adapter must supply this equality; using
-the same traversal helpers is not itself a proof that expression exposure is faithful. -/
-public theorem reify_of_eq_relationalizeAsWritten {alpha : Type u}
-    [SpytialReify alpha] [Tier1Reification alpha] [ValueIdentity alpha]
-    [Tier1Exposure alpha] {datum : RootedJsonDataInstance} (value : alpha)
-    (sameDatum : datum = relationalizeAsWritten value) : reify datum = Except.ok value := by
-  rw [sameDatum]
-  exact reify_relationalizeAsWritten value
-
 /-- Relationalize a typed value by exposing it to the shared structural walk.
 
 The identity-aware result is retained whenever the independent reification checker accepts it.

@@ -214,7 +214,10 @@ adapter must establish `Tier1Represents data x` separately.
 exposure, `Tier1.reify_relationalize` specializes this to
 `reify (Tier1.relationalize x) = .ok x`. The `MetaM` adapter cannot be applied to a quantified
 runtime `x` inside a kernel term; `Reify.relationalize%` remains the bridge for closed elaborated
-terms and embeds its resulting rooted datum. -/
+terms and embeds its resulting rooted datum. Opt-in `spytial.certifyReification` checks this
+structural premise for the actual output of `#spytial` and `relationalize%` and kernel-checks the
+resulting equality proof. It never substitutes a different graph or changes the identity policy;
+it certifies successful closed invocations, not the expression adapter universally. -/
 public def reify {α : Type u} [SpytialReify α]
     (datum : RootedJsonDataInstance) : Except ReifyError α :=
   SpytialReify.decodeAt datum.data datum.root (datum.data.atoms.size + 1)

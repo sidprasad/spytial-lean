@@ -11,6 +11,7 @@ public meta import SpytialLean.Spec
 public meta import SpytialLean.Selector
 public meta import SpytialLean.SelectorElab
 public meta import SpytialLean.Relationalizer
+public meta import SpytialLean.Reify
 public meta import SpytialLean.InContext
 public meta import SpytialLean.LeanSelector
 public meta import SpytialLean.Widget
@@ -502,8 +503,9 @@ private meta def elabRelationalized (t : Syntax) (cfg : WalkConfig := {})
     TermElabM (Expr × Array Expr × JsonDataInstance × Provenance × SelectorEvidence) := do
   let e ← elabTermInstantiated t
   let observations ← resolveObservationTerms observerSyntaxes
-  let (di, prov, evidence) ← relationalizeWithEvidence e cfg observations
-  return (e, observations, di, prov, evidence)
+  let (datum, prov, evidence) ← relationalizeRootedWithEvidence e cfg observations
+  Reify.certifyReificationIfRequested e datum
+  return (e, observations, datum.data, prov, evidence)
 
 /-- Elaborate a use-site `with [...]` for `e`. Without `..` the list replaces
     `e`'s attached spec; a `..` element splices the attached spec at that

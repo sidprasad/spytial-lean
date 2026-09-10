@@ -1797,7 +1797,9 @@ public meta def addActiveDomainObservations (cfg : WalkConfig)
       let some application ← liftM <| instantiateObservationAt? observation value | continue
       addObservation cfg application application #[value] #[(value, atomId)]
 
-private meta def relationalizeRootedWithEvidence (e : Expr) (cfg : WalkConfig := {})
+/-- The production walk, retaining its root as well as selector/provenance metadata. Consumers
+that certify reconstruction must check this exact datum, rather than running a second walk. -/
+public meta def relationalizeRootedWithEvidence (e : Expr) (cfg : WalkConfig := {})
     (observations : Array Expr := #[]) :
     MetaM (RootedJsonDataInstance × Provenance × SelectorEvidence) :=
   withoutModifyingEnv do
