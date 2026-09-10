@@ -851,10 +851,10 @@ mutual
           graph := SpytialLean.Tier1Structural.Graph.addFreshFields
             engine.graph owner ownerType fields } := by
     cases fields with
-    | nil => rfl
+    | nil => simp [Node.asWrittenFields, Graph.addFreshFields]
     | cons field fields =>
         rcases field with ⟨name, child⟩
-        simp only [Node.asWrittenFields, Engine.addFields]
+        simp only [Node.asWrittenFields, Engine.addFields_cons]
         rw [Engine.addNode_asWritten]
         generalize childRun :
           SpytialLean.Tier1Structural.Graph.addFreshNode engine.graph child = childResult

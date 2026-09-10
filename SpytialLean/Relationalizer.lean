@@ -1514,6 +1514,20 @@ private meta def leafLabel (e tyKey : Expr) : StateT WalkState MetaM String := d
         pure ()
   ppLabel e
 
+/-- Adapt deferred expression-field exposure to the common structural traversal. Keeping exposure
+deferred preserves proof filtering, function tabulation, and child type inspection in walk order. -/
+private meta def emitStructure (recurse : Expr → StateT WalkState MetaM String)
+    (atom : JsonAtom) (fields : List (StateT WalkState MetaM (Option (String × Expr)))) :
+    StateT WalkState MetaM Unit :=
+  RelationalizerCore.emitStructure
+    (fun atom => modify fun state => state.addAtom atom) atom <|
+    RelationalizerCore.visitFields id
+      (fun child => return ⟨← recurse child⟩)
+      (fun child => return ⟨← columnSig atom.type child⟩)
+      (fun name owner ownerType child childType =>
+        modify fun state => state.addField name owner ownerType child childType)
+      atom.id atom.type fields
+
 /-- Emit the atom for `e` (already whnf'd; id already allocated) and walk its
     children through `recurse` — the display dispatch shared by the fused
     walker and the two-pass reference. `recurse` closes over the child walk
@@ -1531,11 +1545,11 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
   match e with
   -- Nat literal
   | .lit (.natVal n) =>
-    modify fun s => s.addAtom { id := atomId, type := "Nat", label := toString n }
+    emitStructure recurse { id := atomId, type := "Nat", label := toString n } []
 
   -- String literal
   | .lit (.strVal str) =>
-    modify fun s => s.addAtom { id := atomId, type := "String", label := s!"\"{str}\"" }
+    emitStructure recurse { id := atomId, type := "String", label := s!"\"{str}\"" } []
 
   -- Lambda — tabulate over an enumerable domain, otherwise labeled node
   | .lam binderName _ _ _ => do
@@ -1558,20 +1572,17 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
       -- Is it a constructor?
       if let some (.ctorInfo ci) := env.find? fnName then
         let ctorShortName := shortName fnName
-        modify fun s => s.addAtom { id := atomId, type := typeName, label := ctorShortName }
         let binderNames := ctorDataBinderNames ci
         -- Process data arguments (skip type and proof parameters)
         let args := e.getAppArgs
         let dataArgs := args.extract ci.numParams args.size
-        for i in [:dataArgs.size] do
-          let arg := dataArgs[i]!
-          let isProof ← if cfg.filterProofs then isProofArg arg else pure false
-          unless isProof do
+        emitStructure recurse { id := atomId, type := typeName, label := ctorShortName } <|
+          dataArgs.toList.zipIdx.map fun (arg, i) => do
+            let isProof ← if cfg.filterProofs then isProofArg arg else pure false
+            if isProof then return none
             let fieldName := fieldRelName ctorShortName binderNames i
-            unless ← tabulate? cfg recurse fieldName typeName atomId arg do
-              let childId ← recurse arg
-              let childType ← columnSig typeName arg
-              modify fun state => state.addField fieldName atomId typeName childId childType
+            if ← tabulate? cfg recurse fieldName typeName atomId arg then return none
+            return some (fieldName, arg)
       -- stuck match (iota can't fire on a hole/hypothesis discriminant):
       -- ternary scrutinee edges; motive and alternatives are plumbing
       else if let some minfo := getMatcherInfoCore? env fnName then
@@ -1596,17 +1607,15 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
         -- Walk all structure fields
         let tyConst := (← typeHead? ty).getD .anonymous
         let fields := getStructureFields env tyConst
-        modify fun s => s.addAtom { id := atomId, type := typeName, label := typeName }
-        for fieldName in fields do
-          let proj ← Meta.mkProjection e fieldName
-          let isProof ← if cfg.filterProofs then isProofArg proj else pure false
-          unless isProof do
+        emitStructure recurse { id := atomId, type := typeName, label := typeName } <|
+          fields.toList.map fun fieldName => do
+            let proj ← Meta.mkProjection e fieldName
+            let isProof ← if cfg.filterProofs then isProofArg proj else pure false
+            if isProof then return none
             let projReduced ← Meta.whnf proj
             let fn := fieldName.toString (escape := false)
-            unless ← tabulate? cfg recurse fn typeName atomId projReduced do
-              let childId ← recurse projReduced
-              let childType ← columnSig typeName projReduced
-              modify fun state => state.addField fn atomId typeName childId childType
+            if ← tabulate? cfg recurse fn typeName atomId projReduced then return none
+            return some (fn, projReduced)
       else do
         unless ← emitFunctionGraph? cfg recurse e typeName atomId do
           -- Generic function application or unknown — leaf atom

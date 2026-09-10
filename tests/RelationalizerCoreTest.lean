@@ -68,4 +68,42 @@ example : sharedFields.data.atoms.size = 2 := by native_decide
 
 example : writtenFields.data.atoms.size = 3 := by native_decide
 
+private def traversalEvents : Array String :=
+  let record (event : String) : StateM (Array String) Unit :=
+    modify (·.push event)
+  let fields := visitFields
+    (fun name => do
+      record s!"expose:{name}"
+      return if name == "skip" then none else some (name, name))
+    (fun child => do
+      record s!"visit:{child}"
+      return ⟨s!"id:{child}"⟩)
+    (fun child => do
+      record s!"type:{child}"
+      return ⟨"Nat"⟩)
+    (fun name owner ownerType child childType =>
+      record s!"edge:{name}:{owner}:{ownerType}:{child}:{childType}")
+    "root" "Pair" ["left", "skip", "right"]
+  (emitStructure (fun atom => record s!"atom:{atom.id}")
+    { id := "root", type := "Pair", label := "mk" } fields).run #[] |>.2
+
+/-- Effects remain depth-first and left-to-right; skipped fields never recurse or emit edges. -/
+example : traversalEvents = #[
+    "atom:root", "expose:left", "visit:left", "type:left",
+    "edge:left:root:Pair:id:left:Nat", "expose:skip",
+    "expose:right", "visit:right", "type:right", "edge:right:root:Pair:id:right:Nat"] := by
+  decide_cbv
+
+/-- Reuse must not visit an otherwise different descendant: custom identity semantics are unchanged. -/
+private def reusedSubtree : RootedJsonDataInstance :=
+  walk (.value .asWritten "Pair" "mk" [
+    ("left", .value (.keyed "Box" "same") "Box" "mk"
+      [("value", .value .asWritten "Nat" "1" [])]),
+    ("right", .value (.keyed "Box" "same") "Box" "mk"
+      [("value", .value .asWritten "Nat" "2" [])])
+  ] : Node String String)
+
+example : reusedSubtree.data.atoms.map (·.label) = #["mk", "mk", "1"] := by
+  native_decide
+
 end RelationalizerCoreTest
