@@ -137,6 +137,34 @@ namespace Tier1
   RelationalizerCore.walk
     (Tier1Structural.Node.asWritten (Tier1Exposure.nodeOf value))
 
+/-- Occurrence-preserving traversal represents every certified typed exposure. No identity
+classifier, runtime representation check, or fallback is needed for this theorem. -/
+public theorem relationalizeAsWritten_represents {alpha : Type u}
+    [SpytialReify alpha] [Tier1Reification alpha] [ValueIdentity alpha]
+    [Tier1Exposure alpha] (value : alpha) :
+    Tier1Represents (relationalizeAsWritten value) value := by
+  unfold Tier1Represents tier1Represents relationalizeAsWritten
+  apply Tier1Exposure.representsAt_of_node
+  exact Tier1Structural.walk_asWritten_represents
+    (Tier1Exposure.nodeOf value) (Tier1Exposure.nodeOf_wellFormed value)
+
+/-- Universal round trip for occurrence-preserving traversal of supported typed values. -/
+@[simp] public theorem reify_relationalizeAsWritten {alpha : Type u}
+    [SpytialReify alpha] [Tier1Reification alpha] [ValueIdentity alpha]
+    [Tier1Exposure alpha] (value : alpha) :
+    reify (relationalizeAsWritten value) = Except.ok value :=
+  reify_of_tier1Represents (relationalizeAsWritten_represents value)
+
+/-- Transfer the universal theorem to an actual emitted datum once its equality to the shared
+occurrence-preserving computation has been checked. The adapter must supply this equality; using
+the same traversal helpers is not itself a proof that expression exposure is faithful. -/
+public theorem reify_of_eq_relationalizeAsWritten {alpha : Type u}
+    [SpytialReify alpha] [Tier1Reification alpha] [ValueIdentity alpha]
+    [Tier1Exposure alpha] {datum : RootedJsonDataInstance} (value : alpha)
+    (sameDatum : datum = relationalizeAsWritten value) : reify datum = Except.ok value := by
+  rw [sameDatum]
+  exact reify_relationalizeAsWritten value
+
 /-- Relationalize a typed value by exposing it to the shared structural walk.
 
 The identity-aware result is retained whenever the independent reification checker accepts it.
@@ -164,10 +192,7 @@ public theorem relationalize_represents {alpha : Type u}
       (if Tier1Represents (relationalizeCandidate value) value then
         relationalizeCandidate value else relationalizeAsWritten value) value
     rw [if_neg represented]
-    unfold Tier1Represents tier1Represents relationalizeAsWritten
-    apply Tier1Exposure.representsAt_of_node
-    exact Tier1Structural.walk_asWritten_represents
-      (Tier1Exposure.nodeOf value) (Tier1Exposure.nodeOf_wellFormed value)
+    exact relationalizeAsWritten_represents value
 
 /-- Universal round trip for every type with certified Tier 1 exposure. -/
 @[simp] public theorem reify_relationalize {alpha : Type u}

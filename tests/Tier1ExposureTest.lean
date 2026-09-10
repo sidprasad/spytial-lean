@@ -21,6 +21,9 @@ example (value : String) : reify (relationalize value) = Except.ok value := by
 example (value : Nat) : Tier1Represents (relationalize value) value := by
   exact relationalize_represents value
 
+example (value : Nat) : reify (relationalizeAsWritten value) = Except.ok value :=
+  reify_relationalizeAsWritten value
+
 example (value : Bool) : reify (relationalize value) = Except.ok value := by
   exact reify_relationalize value
 
@@ -77,6 +80,15 @@ example {alpha : Type u} [SpytialReify alpha] [Tier1Reification alpha]
     [ValueIdentity alpha] [Tier1Exposure alpha] (value : Tree alpha) :
     reify (relationalize value) = Except.ok value := by
   exact reify_relationalize value
+
+example {alpha : Type u} [SpytialReify alpha] [Tier1Reification alpha]
+    [ValueIdentity alpha] [Tier1Exposure alpha] (value : Tree alpha) :
+    reify (relationalizeAsWritten value) = Except.ok value :=
+  reify_relationalizeAsWritten value
+
+example (value : Tree Nat) (datum : RootedJsonDataInstance)
+    (sameDatum : datum = relationalizeAsWritten value) : reify datum = Except.ok value :=
+  reify_of_eq_relationalizeAsWritten value sameDatum
 
 public structure CoarseLeaf where
   value : Nat
