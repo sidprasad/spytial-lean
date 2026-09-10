@@ -10,10 +10,11 @@ namespace SpytialLean
 
 open Lean Meta
 
-/-! # The relationalizer
+/-! # The expression adapter for relationalization
 
-Walks an elaborated expression into atoms and relations: give every subterm a
-fresh atom, then merge occurrences with the same identity — declared per type
+This module exposes elaborated `Lean.Expr` terms to the shared graph-building state in
+`RelationalizerCore`. It is the `MetaM` adapter, not a second graph engine. It gives every subterm a
+fresh atom, then merges occurrences with the same identity — declared per type
 by `SpytialIdentity`, the atom table keyed on `(type, identity)` under
 confirmed structural equality, never bare `Expr.hash`. No instance ⇒ the
 walker derives one; `asWritten` declines. The `Raw`/`Viewed` wrappers shift the
@@ -143,6 +144,20 @@ public meta structure WalkState where
 /-- Project the environment-independent graph state from the expression walker's metadata. -/
 public meta def WalkState.toGraph (state : WalkState) : RelationalizerCore.Graph :=
   { atoms := state.atoms, relations := state.relations, nextId := state.nextId }
+
+/-- Project the structural-identity engine from the expression walker's metadata. -/
+public meta def WalkState.toEngine (state : WalkState) :
+    RelationalizerCore.Engine ExprStructEq IdentityKey :=
+  { graph := state.toGraph, identities := state.identityAtoms }
+
+/-- Replace the pure graph and structural-identity state without touching adapter metadata. -/
+public meta def WalkState.withEngine (state : WalkState)
+    (engine : RelationalizerCore.Engine ExprStructEq IdentityKey) : WalkState :=
+  { state with
+    atoms := engine.graph.atoms
+    relations := engine.graph.relations
+    nextId := engine.graph.nextId
+    identityAtoms := engine.identities }
 
 /-- Generate a fresh atom ID. -/
 public meta def WalkState.freshId (s : WalkState) : String × WalkState :=
@@ -604,14 +619,12 @@ private meta def hasOpaqueBarrier (e : Expr) : MetaM Bool := do
   return false
 
 private meta inductive IdVerdict where
-  /-- Merged into an existing atom: reuse its id, do not walk children. -/
+  /-- Structural, classifier, or as-written identity handled by the reusable core. -/
+  | core (identity : RelationalizerCore.Identity ExprStructEq IdentityKey)
+  /-- A custom-equivalence group already has an atom: reuse it without walking children. -/
   | reuse (id : String)
-  /-- First occurrence of a keyed identity: allocate, then `registerIdentity`. -/
-  | keyed (tyKey : Expr) (k : IdentityKey)
-  /-- First member of a new `.eqv` group: allocate, then `registerIdentity`. -/
+  /-- First member of a new custom-equivalence group. -/
   | grouped (tyKey : Expr)
-  /-- No identity participation: fresh atom. -/
-  | fresh
 
 /-- Normalize local aliases and natural-literal encodings for contextual
     references, without unfolding observation functions. IYKYK's simplifier
@@ -639,13 +652,13 @@ private meta def symbolicValueKey? (cfg : WalkConfig) (mode : WalkMode) (e tyKey
   | .structural | .classifier _ => return some (← normalizeReferenceTerm e)
   | .noInstance | .eqvRel _ => return none
 
-/-- Decide how a closed, `declared`-mode subterm participates in identity.
-    Pure lookup/eval + memoization; allocation and registration are the
-    caller's (so the fused walker and the reference merge pass share exactly
-    this decision procedure). -/
+/-- Resolve the frontend-specific part of identity for a closed, declared-mode subterm.
+
+Structural keys, classifier keys, and fresh occurrences become requests for the reusable core.
+Only arbitrary `.eqv` comparisons remain here because they require evaluating Lean expressions. -/
 private meta def identityVerdict (tyKey e : Expr) : StateT WalkState MetaM IdVerdict := do
   match ← resolveRoute tyKey with
-  | .noInstance => return .fresh
+  | .noInstance => return .core .asWritten
   | .structural =>
     let k? ← do
       match ← structuralKey? e with
@@ -669,10 +682,8 @@ private meta def identityVerdict (tyKey e : Expr) : StateT WalkState MetaM IdVer
         else pure none
     match k? with
     | some k =>
-      if let some id := (← get).identityAtoms[((⟨tyKey⟩ : ExprStructEq), k)]? then
-        return .reuse id
-      return .keyed tyKey k
-    | none => return .fresh
+      return .core (.keyed ⟨tyKey⟩ k)
+    | none => return .core .asWritten
   | .classifier f =>
     let w ← whnf e
     let k? ← do
@@ -684,10 +695,8 @@ private meta def identityVerdict (tyKey e : Expr) : StateT WalkState MetaM IdVer
         pure r
     match k? with
     | some k =>
-      if let some id := (← get).identityAtoms[((⟨tyKey⟩ : ExprStructEq), k)]? then
-        return .reuse id
-      return .keyed tyKey k
-    | none => return .fresh
+      return .core (.keyed ⟨tyKey⟩ k)
+    | none => return .core .asWritten
   | .eqvRel r =>
     let w ← whnf e
     -- `eqvSeen` and the group scan both assume the decider is reflexive. A
@@ -703,7 +712,7 @@ private meta def identityVerdict (tyKey e : Expr) : StateT WalkState MetaM IdVer
         let b := (← evalBool? (mkApp2 r w w)) != some false
         modify fun s => { s with eqvRefl := s.eqvRefl.insert ⟨w⟩ b }
         pure b
-    unless refl do return .fresh
+    unless refl do return .core .asWritten
     if let some id := (← get).eqvSeen[(⟨w⟩ : ExprStructEq)]? then
       return .reuse id
     for (rep, gid) in (← get).eqvGroups[(⟨tyKey⟩ : ExprStructEq)]?.getD #[] do
@@ -714,16 +723,18 @@ private meta def identityVerdict (tyKey e : Expr) : StateT WalkState MetaM IdVer
       | some false => pure ()
       | none =>
         -- eval failure ⇒ fresh atom, representative pool untouched
-        return .fresh
+        return .core .asWritten
     return .grouped tyKey
 
-/-- Record the verdict's registration for a newly allocated atom. -/
+/-- Register a pre-allocated atom while running the two-pass reference implementation.
+
+The production walker calls `Engine.intern` instead. The custom `.eqv` case remains
+adapter-local. -/
 private meta def registerIdentity (v : IdVerdict) (e : Expr) (atomId : String) :
     StateT WalkState MetaM Unit := do
   match v with
-  | .keyed tyKey k =>
-    modify fun s =>
-      { s with identityAtoms := s.identityAtoms.insert (⟨tyKey⟩, k) atomId }
+  | .core identity =>
+    modify fun state => state.withEngine (state.toEngine.register identity atomId)
   | .grouped tyKey => do
     let w ← whnf e
     modify fun s =>
@@ -732,6 +743,25 @@ private meta def registerIdentity (v : IdVerdict) (e : Expr) (atomId : String) :
           ((s.eqvGroups[(⟨tyKey⟩ : ExprStructEq)]?.getD #[]).push (w, atomId))
         eqvSeen := s.eqvSeen.insert ⟨w⟩ atomId }
   | _ => pure ()
+
+/-- Allocate or reuse an atom through the reusable identity engine.
+
+Custom equivalence has already done its lookup in `identityVerdict`; a miss asks the core for an
+as-written allocation and is then recorded in the adapter's equivalence-group table. -/
+private meta def internIdentity (v : IdVerdict) : StateT WalkState MetaM
+    RelationalizerCore.Allocation := do
+  match v with
+  | .reuse id => return .reused id
+  | .core identity =>
+      let state ← get
+      let (allocation, engine) := state.toEngine.intern identity
+      set (state.withEngine engine)
+      return allocation
+  | .grouped _ =>
+      let state ← get
+      let (allocation, engine) := state.toEngine.intern .asWritten
+      set (state.withEngine engine)
+      return allocation
 
 /-! ## The walk -/
 
@@ -1484,6 +1514,20 @@ private meta def leafLabel (e tyKey : Expr) : StateT WalkState MetaM String := d
         pure ()
   ppLabel e
 
+/-- Adapt deferred expression-field exposure to the common structural traversal. Keeping exposure
+deferred preserves proof filtering, function tabulation, and child type inspection in walk order. -/
+private meta def emitStructure (recurse : Expr → StateT WalkState MetaM String)
+    (atom : JsonAtom) (fields : List (StateT WalkState MetaM (Option (String × Expr)))) :
+    StateT WalkState MetaM Unit :=
+  RelationalizerCore.emitStructure
+    (fun atom => modify fun state => state.addAtom atom) atom <|
+    RelationalizerCore.visitFields id
+      (fun child => return ⟨← recurse child⟩)
+      (fun child => return ⟨← columnSig atom.type child⟩)
+      (fun name owner ownerType child childType =>
+        modify fun state => state.addField name owner ownerType child childType)
+      atom.id atom.type fields
+
 /-- Emit the atom for `e` (already whnf'd; id already allocated) and walk its
     children through `recurse` — the display dispatch shared by the fused
     walker and the two-pass reference. `recurse` closes over the child walk
@@ -1501,11 +1545,11 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
   match e with
   -- Nat literal
   | .lit (.natVal n) =>
-    modify fun s => s.addAtom { id := atomId, type := "Nat", label := toString n }
+    emitStructure recurse { id := atomId, type := "Nat", label := toString n } []
 
   -- String literal
   | .lit (.strVal str) =>
-    modify fun s => s.addAtom { id := atomId, type := "String", label := s!"\"{str}\"" }
+    emitStructure recurse { id := atomId, type := "String", label := s!"\"{str}\"" } []
 
   -- Lambda — tabulate over an enumerable domain, otherwise labeled node
   | .lam binderName _ _ _ => do
@@ -1528,20 +1572,17 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
       -- Is it a constructor?
       if let some (.ctorInfo ci) := env.find? fnName then
         let ctorShortName := shortName fnName
-        modify fun s => s.addAtom { id := atomId, type := typeName, label := ctorShortName }
         let binderNames := ctorDataBinderNames ci
         -- Process data arguments (skip type and proof parameters)
         let args := e.getAppArgs
         let dataArgs := args.extract ci.numParams args.size
-        for i in [:dataArgs.size] do
-          let arg := dataArgs[i]!
-          let isProof ← if cfg.filterProofs then isProofArg arg else pure false
-          unless isProof do
+        emitStructure recurse { id := atomId, type := typeName, label := ctorShortName } <|
+          dataArgs.toList.zipIdx.map fun (arg, i) => do
+            let isProof ← if cfg.filterProofs then isProofArg arg else pure false
+            if isProof then return none
             let fieldName := fieldRelName ctorShortName binderNames i
-            unless ← tabulate? cfg recurse fieldName typeName atomId arg do
-              let childId ← recurse arg
-              let childType ← columnSig typeName arg
-              modify fun state => state.addField fieldName atomId typeName childId childType
+            if ← tabulate? cfg recurse fieldName typeName atomId arg then return none
+            return some (fieldName, arg)
       -- stuck match (iota can't fire on a hole/hypothesis discriminant):
       -- ternary scrutinee edges; motive and alternatives are plumbing
       else if let some minfo := getMatcherInfoCore? env fnName then
@@ -1566,17 +1607,15 @@ private meta def emitNode (cfg : WalkConfig) (recurse : Expr → StateT WalkStat
         -- Walk all structure fields
         let tyConst := (← typeHead? ty).getD .anonymous
         let fields := getStructureFields env tyConst
-        modify fun s => s.addAtom { id := atomId, type := typeName, label := typeName }
-        for fieldName in fields do
-          let proj ← Meta.mkProjection e fieldName
-          let isProof ← if cfg.filterProofs then isProofArg proj else pure false
-          unless isProof do
+        emitStructure recurse { id := atomId, type := typeName, label := typeName } <|
+          fields.toList.map fun fieldName => do
+            let proj ← Meta.mkProjection e fieldName
+            let isProof ← if cfg.filterProofs then isProofArg proj else pure false
+            if isProof then return none
             let projReduced ← Meta.whnf proj
             let fn := fieldName.toString (escape := false)
-            unless ← tabulate? cfg recurse fn typeName atomId projReduced do
-              let childId ← recurse projReduced
-              let childType ← columnSig typeName projReduced
-              modify fun state => state.addField fn atomId typeName childId childType
+            if ← tabulate? cfg recurse fn typeName atomId projReduced then return none
+            return some (fn, projReduced)
       else do
         unless ← emitFunctionGraph? cfg recurse e typeName atomId do
           -- Generic function application or unknown — leaf atom
@@ -1660,12 +1699,14 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
   -- The identity decision (declared mode, closed subterms only).
   let verdict ←
     if !isFunctionGraph && mode == .declared && isClosedValue e then identityVerdict tyKey e
-    else pure .fresh
-  if let .reuse id := verdict then
+    else pure (.core .asWritten)
+  let allocation ← internIdentity verdict
+  if let .reused id := allocation then
     rememberObservationTerm (cfg.recordTerms || !cfg.observations.isEmpty) e id
     return id
+  let .fresh atomId := allocation
+    | unreachable!
   let s ← get
-  let (atomId, s) := s.freshId
   set { s with
     provenance := s.provenance.insert atomId e
     observationTerms := if cfg.recordTerms || !cfg.observations.isEmpty then
@@ -1676,7 +1717,8 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
   -- Register before walking children, so a re-occurrence inside the subtree
   -- (sharing, or a quotient collapsing a child into its parent) resolves to
   -- this atom.
-  registerIdentity verdict e atomId
+  if let .grouped _ := verdict then
+    registerIdentity verdict e atomId
   emitNode cfg (fun c => walkExpr cfg c { mode, ancestors := ctx.ancestors.push (e, atomId) })
     e ty tyKey origName atomId sourceFunctionGraph
   return atomId
@@ -1755,7 +1797,9 @@ public meta def addActiveDomainObservations (cfg : WalkConfig)
       let some application ← liftM <| instantiateObservationAt? observation value | continue
       addObservation cfg application application #[value] #[(value, atomId)]
 
-private meta def relationalizeRootedWithEvidence (e : Expr) (cfg : WalkConfig := {})
+/-- The production walk, retaining its root as well as selector/provenance metadata. Consumers
+that certify reconstruction must check this exact datum, rather than running a second walk. -/
+public meta def relationalizeRootedWithEvidence (e : Expr) (cfg : WalkConfig := {})
     (observations : Array Expr := #[]) :
     MetaM (RootedJsonDataInstance × Provenance × SelectorEvidence) :=
   withoutModifyingEnv do
@@ -1880,8 +1924,13 @@ public meta partial def referenceRelationalize (e : Expr) (cfg : WalkConfig := {
       if !rec.functionGraph && rec.mode == .declared && isClosedValue rec.expr then
         match ← identityVerdict rec.tyKey rec.expr with
         | .reuse id => union := union.insert rec.atomId id
-        | .fresh => pure ()
-        | v => registerIdentity v rec.expr rec.atomId
+        | .core identity =>
+            if let some id := (← get).toEngine.find? identity then
+              union := union.insert rec.atomId id
+            else
+              modify fun state =>
+                state.withEngine (state.toEngine.register identity rec.atomId)
+        | verdict@(.grouped _) => registerIdentity verdict rec.expr rec.atomId
     pure union
   let mapId := fun a => union.getD a a
   let di := s.toDataInstance

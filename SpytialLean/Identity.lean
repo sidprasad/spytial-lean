@@ -30,7 +30,38 @@ private inductive KeyRep where
   | nat (n : Nat)
   | node (ks : List KeyRep)
   | spelling (s : String)
-  deriving BEq, Hashable, Repr, Inhabited
+  deriving Hashable, Repr, Inhabited
+
+-- The generic nested-inductive BEq handler emits a partial definition. Use the same structural
+-- comparison as a total function so its equality laws are available to the interning proof.
+mutual
+  private def KeyRep.equal : KeyRep → KeyRep → Bool
+    | .str a, .str b => a == b
+    | .nat a, .nat b => a == b
+    | .node a, .node b => KeyRep.equalList a b
+    | .spelling a, .spelling b => a == b
+    | _, _ => false
+
+  private def KeyRep.equalList : List KeyRep → List KeyRep → Bool
+    | [], [] => true
+    | a :: as, b :: bs => KeyRep.equal a b && KeyRep.equalList as bs
+    | _, _ => false
+end
+
+mutual
+  private theorem KeyRep.equal_iff (a b : KeyRep) : KeyRep.equal a b = true ↔ a = b := by
+    cases a <;> cases b <;> simp [KeyRep.equal, KeyRep.equalList_iff]
+
+  private theorem KeyRep.equalList_iff (as bs : List KeyRep) :
+      KeyRep.equalList as bs = true ↔ as = bs := by
+    cases as <;> cases bs <;> simp [KeyRep.equalList, KeyRep.equal_iff, KeyRep.equalList_iff]
+end
+
+private instance : BEq KeyRep := ⟨KeyRep.equal⟩
+
+private instance : LawfulBEq KeyRep where
+  eq_of_beq := KeyRep.equal_iff _ _ |>.mp
+  rfl := KeyRep.equal_iff _ _ |>.mpr rfl
 
 /-- Opaque identity token. Guaranteed properties: decidable equality, hashable,
     and injective tupling from string/number leaves — `ofList [ofString "leaf",
@@ -41,12 +72,58 @@ public structure IdentityKey where
   private rep : KeyRep
   deriving BEq, Hashable, Repr, Inhabited
 
+public instance : LawfulBEq IdentityKey where
+  eq_of_beq := by
+    intro a b equal
+    rcases a with ⟨a⟩
+    rcases b with ⟨b⟩
+    change KeyRep.equal a b = true at equal
+    exact congrArg IdentityKey.mk ((KeyRep.equal_iff a b).mp equal)
+  rfl := by
+    intro a
+    rcases a with ⟨a⟩
+    exact (KeyRep.equal_iff a a).mpr rfl
+
 public def IdentityKey.ofString (s : String) : IdentityKey := ⟨.str s⟩
 
 public def IdentityKey.ofNat (n : Nat) : IdentityKey := ⟨.nat n⟩
 
 public def IdentityKey.ofList (ks : List IdentityKey) : IdentityKey :=
   ⟨.node (ks.map (·.rep))⟩
+
+public theorem IdentityKey.ofString_injective : Function.Injective IdentityKey.ofString := by
+  intro a b equal
+  cases equal
+  rfl
+
+public theorem IdentityKey.ofNat_injective : Function.Injective IdentityKey.ofNat := by
+  intro a b equal
+  cases equal
+  rfl
+
+@[simp] public theorem IdentityKey.ofString_inj {a b : String} :
+    ofString a = ofString b ↔ a = b := ofString_injective.eq_iff
+
+@[simp] public theorem IdentityKey.ofNat_inj {a b : Nat} :
+    ofNat a = ofNat b ↔ a = b := ofNat_injective.eq_iff
+
+public theorem IdentityKey.ofList_injective : Function.Injective IdentityKey.ofList := by
+  intro a b equal
+  have reps := KeyRep.node.inj (congrArg IdentityKey.rep equal)
+  have keys := congrArg (List.map IdentityKey.mk) reps
+  have eta : (fun key : IdentityKey => IdentityKey.mk key.rep) = id := rfl
+  simpa only [List.map_map, Function.comp_def, eta, List.map_id] using keys
+
+@[simp] public theorem IdentityKey.ofList_inj {a b : List IdentityKey} :
+    ofList a = ofList b ↔ a = b := ofList_injective.eq_iff
+
+@[simp] public theorem IdentityKey.ofString_ne_ofList (s : String) (ks : List IdentityKey) :
+    ofString s ≠ ofList ks := by
+  intro equal
+  cases congrArg IdentityKey.rep equal
+
+@[simp] public theorem IdentityKey.ofList_ne_ofString (ks : List IdentityKey) (s : String) :
+    ofList ks ≠ ofString s := Ne.symm (ofString_ne_ofList s ks)
 
 /-- Key for a deliberately-opaque leaf (`@[irreducible]` / `opaque` head), from
     its spelling — the walker's opacity gate. A distinct constructor underneath,
@@ -86,6 +163,9 @@ public instance : ToIdentityKey String where
 
 public instance : ToIdentityKey Bool where
   toKey b := .ofNat b.toNat
+
+@[simp] public theorem bool_toNat_inj (a b : Bool) : a.toNat = b.toNat ↔ a = b := by
+  cases a <;> cases b <;> decide
 
 public instance : ToIdentityKey Char where
   toKey c := .ofNat c.toNat
@@ -205,7 +285,7 @@ public class SpytialIdentity (α : Type u) where
 
 /-- The compiled classifier of `α`'s instance, when it presents one — the
     walker's eval fallback and the tests' runtime oracle. -/
-public def SpytialIdentity.runtimeKey? {α : Type u} [SpytialIdentity α] (a : α) :
+@[expose] public def SpytialIdentity.runtimeKey? {α : Type u} [SpytialIdentity α] (a : α) :
     Option IdentityKey :=
   (SpytialIdentity.viaOf α).classifier? |>.map (· a)
 
@@ -218,8 +298,13 @@ public def SpytialIdentity.runtimeKey? {α : Type u} [SpytialIdentity α] (a : �
 /-- Opt out of the derive-on-demand default: `α` draws as written, one atom per
     occurrence. Declaring this is what stops the walker supplying an identity,
     and it silences the decline warning for a type that cannot have one. -/
-@[reducible] public def SpytialIdentity.asWritten {α : Type u} : SpytialIdentity α :=
+@[expose, reducible] public def SpytialIdentity.asWritten {α : Type u} : SpytialIdentity α :=
   { via := .asWritten }
+
+/-- The `asWritten` policy supplies no reuse key to a pure relationalization engine. -/
+@[simp] public theorem SpytialIdentity.runtimeKey?_asWritten {α : Type u} (a : α) :
+    @SpytialIdentity.runtimeKey? α SpytialIdentity.asWritten a = none := by
+  rfl
 
 /-- Normalize, then use the underlying identity: `base` pulled back along `n`,
     with `n` the display representative. The `norm?` law holds exactly when
@@ -623,7 +708,10 @@ private meta def mkAuxFn (ctx : DerivCtx) (m : MemberPlan) (i : Nat) (forKey : B
   if ctx.usePartial then
     `(@[no_expose] partial def $fnName:ident $binders:bracketedBinder* : $retTy := $body)
   else
-    `(@[no_expose] def $fnName:ident $binders:bracketedBinder* : $retTy := $body)
+    let exposureAttribute ← if forKey && !isPrivateName m.indVal.name &&
+        !m.indVal.ctors.any isPrivateName then
+      `(attr| expose) else `(attr| no_expose)
+    `(@[$exposureAttribute:attr] def $fnName:ident $binders:bracketedBinder* : $retTy := $body)
 
 open TSyntax.Compat in
 private meta def mkInstanceCmd (ctx : DerivCtx) (declName : Name) :
@@ -667,11 +755,23 @@ private meta def mkInstanceCmd (ctx : DerivCtx) (declName : Name) :
       let alts := #[← `(matchAltExpr| | $[$somePats:term],* => $someRhs),
                     ← `(matchAltExpr| | $[$underPats:term],* => $elseRhs)]
       `(match $[$discrs],* with $alts:matchAlt*)
-  -- `@[no_expose]`, like the aux functions: this body dispatches on each field
-  -- type's own instance, so it must elaborate with private constants visible.
-  -- Lean's `Repr` handler gets this for free by keeping every instance
-  -- reference inside its aux function; our presentation match cannot.
-  `(@[no_expose] instance $(mkIdent instName):ident $binders:bracketedBinder* :
+  -- Make structural equations available to downstream proofs only when doing so preserves
+  -- instance selection. A private/local dependency must keep private elaboration visibility.
+  let canExpose ← withExporting (isExporting := false) do
+    if ctx.usePartial || isPrivateName declName || indVal.ctors.any isPrivateName then
+      return false
+    let telescope ← Term.elabType (← `(∀ $binders:bracketedBinder*, True))
+    forallTelescope telescope fun _ _ => do
+      for dependency in ctx.deps do
+        let type ← Term.elabType dependency.type
+        let cls := match dependency.path with
+          | .identity => ``SpytialIdentity
+          | .encoding => ``ToIdentityKey
+        let inst ← synthInstance (← mkAppM cls #[type])
+        if inst.getUsedConstants.any isPrivateName then return false
+      return true
+  let exposureAttribute ← if canExpose then `(attr| expose) else `(attr| no_expose)
+  `(@[$exposureAttribute:attr] instance $(mkIdent instName):ident $binders:bracketedBinder* :
       SpytialIdentity $indApp := SpytialIdentity.mk $viaTerm Option.none)
 
 /-- The key and eqv families each go in their own `mutual` block: members of a
