@@ -465,6 +465,13 @@ private meta def mkExposureBinders (plan : Plan) :
   binders := binders.push (← `(bracketedBinderF| [ValueIdentity $indApp]))
   return binders
 
+private meta def mkExposureTypeKey (plan : Plan) : TermElabM Term := do
+  let name ← `(IdentityKey.ofString $(quote plan.declName.toString))
+  if plan.argNames.isEmpty then return name
+  let arguments ← plan.argNames.mapM fun argument =>
+    `(Tier1Exposure.typeKey (alpha := $(mkIdent argument)))
+  `(IdentityKey.ofList [$name, $arguments,*])
+
 private meta def mkExposureCtorAlternative (plan : Plan) (names : ExposureNames)
     (constructor : CtorPlan) : TermElabM (TSyntax ``matchAlt) := do
   let mut patternArguments : Array Term := #[]
@@ -472,13 +479,14 @@ private meta def mkExposureCtorAlternative (plan : Plan) (names : ExposureNames)
     patternArguments := patternArguments.push (← `(_))
   let mut fields : Array Ident := #[]
   let mut exposedFields : Array Term := #[]
+  let typeKey ← mkExposureTypeKey plan
   for fieldPlan in constructor.fields do
     let field := mkIdent (← mkFreshUserName `field)
     fields := fields.push field
     patternArguments := patternArguments.push field
     let child ← if fieldPlan.recursive then
       `(($(mkIdent names.expose) $field:ident).withIdentity
-        (IdentityKey.ofString $(quote plan.declName.toString)) $field:ident)
+        $typeKey $field:ident)
     else
       `(Tier1Exposure.nodeOf $field:ident)
     exposedFields := exposedFields.push
@@ -586,9 +594,10 @@ private meta def mkExposureInstance (plan : Plan) (decoderNames : DecoderNames)
           Tier1Structural.Node.representsAt] at $represented:ident
     | succ $fuel:ident $inductionHypothesis:ident =>
         cases $value:ident with $structuralCompleteAlts:inductionAlt*)
+  let typeKey ← mkExposureTypeKey plan
   `(instance $(mkIdent names.instanceName):ident $binders:bracketedBinder* :
       Tier1Exposure $indApp where
-    typeKey := IdentityKey.ofString $(quote plan.declName.toString)
+    typeKey := $typeKey
     expose := $(mkIdent names.expose)
     wellFormed $value:ident := $wellFormedProof:term
     structuralComplete $datum:ident $root:ident $fuel:ident $value:ident $represented:ident :=

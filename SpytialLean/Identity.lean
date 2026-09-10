@@ -30,7 +30,38 @@ private inductive KeyRep where
   | nat (n : Nat)
   | node (ks : List KeyRep)
   | spelling (s : String)
-  deriving BEq, Hashable, Repr, Inhabited
+  deriving Hashable, Repr, Inhabited
+
+-- The generic nested-inductive BEq handler emits a partial definition. Use the same structural
+-- comparison as a total function so its equality laws are available to the interning proof.
+mutual
+  private def KeyRep.equal : KeyRep → KeyRep → Bool
+    | .str a, .str b => a == b
+    | .nat a, .nat b => a == b
+    | .node a, .node b => KeyRep.equalList a b
+    | .spelling a, .spelling b => a == b
+    | _, _ => false
+
+  private def KeyRep.equalList : List KeyRep → List KeyRep → Bool
+    | [], [] => true
+    | a :: as, b :: bs => KeyRep.equal a b && KeyRep.equalList as bs
+    | _, _ => false
+end
+
+mutual
+  private theorem KeyRep.equal_iff (a b : KeyRep) : KeyRep.equal a b = true ↔ a = b := by
+    cases a <;> cases b <;> simp [KeyRep.equal, KeyRep.equalList_iff]
+
+  private theorem KeyRep.equalList_iff (as bs : List KeyRep) :
+      KeyRep.equalList as bs = true ↔ as = bs := by
+    cases as <;> cases bs <;> simp [KeyRep.equalList, KeyRep.equal_iff, KeyRep.equalList_iff]
+end
+
+private instance : BEq KeyRep := ⟨KeyRep.equal⟩
+
+private instance : LawfulBEq KeyRep where
+  eq_of_beq := KeyRep.equal_iff _ _ |>.mp
+  rfl := KeyRep.equal_iff _ _ |>.mpr rfl
 
 /-- Opaque identity token. Guaranteed properties: decidable equality, hashable,
     and injective tupling from string/number leaves — `ofList [ofString "leaf",
@@ -41,12 +72,40 @@ public structure IdentityKey where
   private rep : KeyRep
   deriving BEq, Hashable, Repr, Inhabited
 
+public instance : LawfulBEq IdentityKey where
+  eq_of_beq := by
+    intro a b equal
+    rcases a with ⟨a⟩
+    rcases b with ⟨b⟩
+    change KeyRep.equal a b = true at equal
+    exact congrArg IdentityKey.mk ((KeyRep.equal_iff a b).mp equal)
+  rfl := by
+    intro a
+    rcases a with ⟨a⟩
+    exact (KeyRep.equal_iff a a).mpr rfl
+
 public def IdentityKey.ofString (s : String) : IdentityKey := ⟨.str s⟩
 
 public def IdentityKey.ofNat (n : Nat) : IdentityKey := ⟨.nat n⟩
 
 public def IdentityKey.ofList (ks : List IdentityKey) : IdentityKey :=
   ⟨.node (ks.map (·.rep))⟩
+
+public theorem IdentityKey.ofString_injective : Function.Injective IdentityKey.ofString := by
+  intro a b equal
+  cases equal
+  rfl
+
+public theorem IdentityKey.ofNat_injective : Function.Injective IdentityKey.ofNat := by
+  intro a b equal
+  cases equal
+  rfl
+
+@[simp] public theorem IdentityKey.ofString_inj {a b : String} :
+    ofString a = ofString b ↔ a = b := ofString_injective.eq_iff
+
+@[simp] public theorem IdentityKey.ofNat_inj {a b : Nat} :
+    ofNat a = ofNat b ↔ a = b := ofNat_injective.eq_iff
 
 /-- Key for a deliberately-opaque leaf (`@[irreducible]` / `opaque` head), from
     its spelling — the walker's opacity gate. A distinct constructor underneath,
