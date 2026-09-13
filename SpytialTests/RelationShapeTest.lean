@@ -4,7 +4,7 @@ public import SpytialLean.Identity
 meta import SpytialLean.Identity
 public meta import SpytialLean.MetaEncode
 meta import SpytialLean.Relationalizer
-meta import WalkCanon
+meta import SpytialTests.WalkCanon
 
 open SpytialLean Lean Meta
 

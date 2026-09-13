@@ -1,6 +1,6 @@
 module
 
-public import ClosedValueTest
+public import SpytialTests.ClosedValueTest
 
 open Lean Meta SpytialLean ClosedValueTest
 

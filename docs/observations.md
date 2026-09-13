@@ -162,5 +162,5 @@ Arithmetic derives consequences; it does not invent AVL preconditions.
 - `with [attribute height]` changes presentation, not the observation or proof
   process.
 
-Regressions live in `tests/ContextInspectionTest.lean`,
-`tests/InContextTest.lean`, and `tests/TacticTest.lean`.
+Regressions live in `SpytialTests/ContextInspectionTest.lean`,
+`SpytialTests/InContextTest.lean`, and `SpytialTests/TacticTest.lean`.

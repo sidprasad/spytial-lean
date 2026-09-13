@@ -40,10 +40,10 @@ lake update
 lake build
 ```
 
-Open a file in `demos/` and place your cursor on a `#spytial` line. The infoview panel will show the diagram.
+Open a file in `Demos/` and place your cursor on a `#spytial` line. The infoview panel will show the diagram.
 
-For proof-local inspection, [demos/AVL.lean](demos/AVL.lean) draws the bounds that let a subtree
-change sides during rotation. [demos/UnionFind.lean](demos/UnionFind.lean) inspects the pointer
+For proof-local inspection, [Demos/AVL.lean](Demos/AVL.lean) draws the bounds that let a subtree
+change sides during rotation. [Demos/UnionFind.lean](Demos/UnionFind.lean) inspects the pointer
 needed to finish a recursive lookup proof, and the roots found before a union links them.
 
 ### Nix dev shell
@@ -212,7 +212,7 @@ code. Selection is by value, and by default equal values draw as one node, so
 a value names exactly the node it picks.
 
 [docs/lean-selectors.md](docs/lean-selectors.md) is the guide, including what
-does not work. [demos/LeanSelectors.lean](demos/LeanSelectors.lean) is a
+does not work. [Demos/LeanSelectors.lean](Demos/LeanSelectors.lean) is a
 worked example.
 
 The grammar (EBNF), the raw-Lean rules, the integer/value typing rules, and
@@ -230,21 +230,26 @@ Ops go in a bracketed, comma-separated list after `spytial_spec <Type>` or
 | `orientation <sel> <dir>+` | Position edge targets relative to sources |
 | `align <sel> horizontal\|vertical` | Align selected pairs |
 | `cyclic <sel> [clockwise\|counterclockwise]` | Arrange elements in a circle |
-| `group <sel> <name> [(addEdge <dir> [(lineStyle …)])]` | Group elements with a bounding box |
+| `group <sel> <name> [(addEdge <dir> [(lineStyle …)])] [(textStyle …)]` | Group elements with a bounding box |
 | `hideAtom <sel>` | Hide elements matching the selector |
-| `size <sel> <width> <height>` | Set node dimensions |
+| `size [<sel>] <width> <height>` | Set node dimensions |
+
+Every constraint but `size` and `hideAtom` takes `hold: always|never`.
 
 ### Visual directives
 
 | Operation | Description |
 |-----------|-------------|
-| `atomStyle <sel> <block>+ [labels\|noLabels]` | Style nodes |
-| `edgeStyle <field> (lineStyle …) [labels\|noLabels]` | Style a relation's edges |
+| `atomStyle [<sel>] <block>* [labels\|noLabels]` | Style nodes |
+| `edgeStyle <field> [(lineStyle …)] [(textStyle …)] [labels\|noLabels] [hidden: true]` | Style a relation's edges |
 | `hideField <field>` | Hide all edges for a relation |
 | `attribute <field>` | Display a relation as a node label instead of an edge |
 | `tag <sel> <name> <value>` | Add computed attributes to nodes |
-| `inferredEdge <name> <sel> [(lineStyle …)]` | Add edges that don't exist in the data |
-| `flag <name>` | Set a boolean flag (e.g., `hideDisconnected`) |
+| `inferredEdge <name> <sel> [(lineStyle …)] [(textStyle …)] [draw: "…"]` | Add edges that don't exist in the data |
+| `flag hideDisconnected\|hideDisconnectedBuiltIns` | Set a boolean flag |
+
+`edgeStyle`, `attribute` and `hideField` also take `selector: <sel>` and
+`filter: <sel>` to scope the relation's edges.
 
 Style ops take parenthesized blocks, matching the rest of the Spytial
 ecosystem; block arguments are order-free (a string is the color or path, an
@@ -255,6 +260,7 @@ ident the pattern or placement, a numeral the width or weight):
 - `(iconStyle <path> [full\|badge])` — node icon; `full` fills the box,
   `badge` is a corner marker; `labels`/`noLabels` controls the node label
 - `(lineStyle <css-color> [solid\|dashed\|dotted] [<weight>])` — edge lines
+- `(textStyle [small\|normal\|large] [<css-color>])` — label text
 - `(addEdge togroup\|fromgroup [(lineStyle …)])` — a drawn edge between a
   group and its key
 
@@ -316,7 +322,7 @@ SpytialLean/
   Attr.lean           -- Environment extensions (specs, opt-outs)
   Command.lean        -- #spytial, spytial_spec, the op DSL, tactics
   Coverage.lean       -- #spytial.coverage build-time coverage check
-tests/
+SpytialTests/
   TypeShapeTest.lean  -- Naming + walker unit tests
   SelectorTest.lean   -- Golden lowering + checker diagnostics tests
   CoverageTest.lean   -- #spytial.coverage diagnostics tests

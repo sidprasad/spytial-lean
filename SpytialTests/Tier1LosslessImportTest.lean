@@ -1,6 +1,6 @@
 module
 
-public import Tier1LosslessTest
+public import SpytialTests.Tier1LosslessTest
 public meta import SpytialLean.Tier1LosslessDeriving
 public meta import Lean.Util.CollectAxioms
 

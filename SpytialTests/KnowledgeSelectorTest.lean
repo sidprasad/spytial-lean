@@ -1,7 +1,7 @@
 module
 
-public import KnowledgeSelectorFixture
-public meta import KnowledgeSelectorFixture
+public import SpytialTests.KnowledgeSelectorFixture
+public meta import SpytialTests.KnowledgeSelectorFixture
 
 public section
 

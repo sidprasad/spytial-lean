@@ -2,100 +2,44 @@ module
 
 public import Lean
 public meta import SpytialLean.Selector
+public meta import SpytialLean.SpecLang
 
 namespace SpytialLean
 
-open Lean (Json ToJson FromJson toJson)
+open Lean (Json ToJson toJson JsonNumber)
+open SpecLang
 
-/-- Relative positioning directions for orientation constraints. -/
-public meta inductive Direction where
-  | above | below | left | right
-  | directlyAbove | directlyBelow | directlyLeft | directlyRight
-  deriving Repr, DecidableEq, Inhabited, ToJson, FromJson
+/-! ## The op AST
 
-/-- Alignment direction. -/
-public meta inductive AlignDir where
-  | horizontal | vertical
-  deriving Repr, DecidableEq, Inhabited, ToJson, FromJson
+One node type: a manifest item plus the fields that were set, each parsed to
+the shape its `FieldType` declares. Nothing here names an item, so an item or
+field added upstream needs no new constructor — the same ruling as the
+selector AST, where a generated typed inductive would buy exhaustiveness only
+for consumers that do not exist and every `match` over it would be an edit. -/
 
-/-- Rotation direction for cyclic constraints. -/
-public meta inductive RotationDir where
-  | clockwise | counterclockwise
-  deriving Repr, DecidableEq, Inhabited, ToJson, FromJson
-
-/-- Line pattern, for `lineStyle` blocks. -/
-public meta inductive LinePattern where
-  | solid | dashed | dotted
-  deriving Repr, DecidableEq, Inhabited, ToJson, FromJson
-
-/-- Icon placement: `full` occupies the atom's box, `badge` is a top-right
-    marker secondary to the label. -/
-public meta inductive IconPlacement where
-  | full | badge
-  deriving Repr, DecidableEq, Inhabited, ToJson, FromJson
-
-public meta inductive GroupEdgeDirection where
-  | togroup | fromgroup
-  deriving Repr, DecidableEq, Inhabited, ToJson, FromJson
-
-/-! ## Style blocks
-
-Sparse structs mirroring core's style blocks; only set fields reach the wire.
-The op elaborator fills them from `(blockName arg…)` surface blocks. -/
-
-public meta structure BorderStyle where
-  color : Option String := none
-  width : Option Nat := none
+/-- A field's elaborated value. Which constructor a field carries is a
+    function of its `FieldType`; the elaborator establishes it and the
+    lowering relies on it. -/
+public meta inductive FieldVal where
+  /-- A checked selector (`selector`, `filter`, `toTag`, `value`). -/
+  | sel (s : Sel)
+  /-- A relation name from the walker's vocabulary (`field`). -/
+  | rel (name : String)
+  | str (s : String)
+  /-- A validated member of the field's enum. -/
+  | «enum» (value : String)
+  /-- A validated enum-list (`orientation.directions`). -/
+  | enums (values : List String)
+  | num (n : JsonNumber)
+  | bool (b : Bool)
+  /-- A block instance: the set fields of its `BlockSpec` — or, on an enum
+      field with an `AltForm`, the block alternative (`group.addEdge`'s
+      `{points, lineStyle, textStyle}`). -/
+  | block (fields : List (FieldId × FieldVal))
   deriving Repr, Inhabited
 
-public meta structure FillStyle where
-  color : Option String := none
-  deriving Repr, Inhabited
-
-public meta structure IconStyle where
-  path : String
-  placement : Option IconPlacement := none
-  deriving Repr, Inhabited
-
-public meta structure LineStyle where
-  color : Option String := none
-  pattern : Option LinePattern := none
-  weight : Option Nat := none
-  deriving Repr, Inhabited
-
-public meta structure GroupEdge where
-  direction : GroupEdgeDirection
-  lineStyle : Option LineStyle := none
-  deriving Repr, Inhabited
-
-public meta instance : ToJson Sel := ⟨fun s => Json.str s.toSGQ⟩
-
-/-- Selector positions carry checked `Sel`s; `field` positions carry relation
-    names validated against the target type's vocabulary. Style ops carry the
-    sparse blocks; an op with nothing set is rejected at elaboration. -/
-public meta inductive SpytialOp where
-  -- Layout constraints
-  | orientation (selector : Sel) (directions : List Direction)
-  | align (selector : Sel) (direction : AlignDir)
-  | cyclic (selector : Sel) (direction : RotationDir := .clockwise)
-  | group (selector : Sel) (name : String) (addEdge : Option GroupEdge := none)
-  | hideAtom (selector : Sel)
-  | size (selector : Sel) (width : Nat := 100) (height : Nat := 60)
-  -- Visual directives
-  | atomStyle (selector : Sel) (border : Option BorderStyle := none)
-      (fill : Option FillStyle := none) (icon : Option IconStyle := none)
-      (showLabel : Option Bool := none)
-  | edgeStyle (field : String) (line : Option LineStyle := none)
-      (showLabel : Option Bool := none)
-  | hideField (field : String)
-  | attribute (field : String)
-  | tag (toTag : Sel) (name : String) (value : String)
-  | inferredEdge (name : String) (selector : Sel) (line : Option LineStyle := none)
-  | flag (name : String)
-  deriving Repr, Inhabited
-
-/-- Where an op was written. Spytial is a *generator* of specs, so the wire
-    form carries the Lean the user actually wrote: core cites this in conflict
+/-- Where an op was written. Spytial is a *generator* of specs, so the
+    serialized op carries the Lean the user actually wrote: core cites this in conflict
     reports and warnings in place of its own rendering of the rule, which for a
     resolved Lean selector would otherwise be a list of atom ids. -/
 public meta structure OpSource where
@@ -116,21 +60,121 @@ public meta register_option spytial.source : Bool := {
             spec, for conflict reports"
 }
 
-/-- An op together with the source it was written as. Attached specs store the
-    stamp, so a spec re-run in another file still cites where it was declared. -/
-public meta structure StampedOp where
-  op : SpytialOp
+/-- One Spytial operation: a manifest item with its set fields. Unset
+    optional fields are absent, not defaulted — the serialized spec carries
+    what the source said and core supplies its own defaults. -/
+public meta structure SpytialOp where
+  item : ItemId
+  fields : List (FieldId × FieldVal)
+  /-- `hold: never` negates a constraint; only items with
+      `ItemSpec.supportsHold` carry it. -/
+  hold : Option String := none
+  /-- Where it was written. An attached spec keeps the stamp it was declared
+      with, so re-running it against another value still points there. -/
   source : Option OpSource := none
   deriving Repr, Inhabited
 
 /-- A list of Spytial operations forming a complete layout specification. -/
-public meta abbrev SpytialSpec := List StampedOp
+public meta abbrev SpytialSpec := List SpytialOp
 
-/-- The graph-side name an op introduces, with its arity. -/
-public meta def SpytialOp.introduces? : SpytialOp → Option (String × Nat)
-  | .group _ name _ => some (name, 1)
-  | .inferredEdge name _ _ => some (name, 2)
+public meta def SpytialOp.field? (op : SpytialOp) (f : FieldId) : Option FieldVal :=
+  op.fields.lookup f
+
+/-- The graph-side name an op introduces, with the manifest's account of it:
+    which field spells it, how wide it is, and where it can be referenced. -/
+public meta def SpytialOp.introduces? (op : SpytialOp) : Option (String × Introduces) := do
+  let i ← (ItemSpec.of op.item).introduces
+  match op.field? i.field with
+  | some (.str s) => some (s, i)
   | _ => none
+
+/-! ## Checking an op against the tables
+
+The elaborator builds ops that fit their item. Anything else that builds one
+meets the same check here, at the boundary every spec crosses. -/
+
+private meta def FieldVal.fits : FieldVal → FieldType → Bool
+  | .sel _, .selector _ | .rel _, .relation
+  | .str _, .str | .str _, .iconPath | .str _, .color
+  | .num _, .number .. | .bool _, .boolean _ => true
+  | .«enum» v, .«enum» vs _ => vs.contains v
+  | .enums vs, .enumList all _ => vs.all all.contains
+  | _, _ => false
+
+private meta def checkNumberBounds (path : String) (n : JsonNumber)
+    (min max : Option Bound) : Except String Unit := do
+  if let some b := min then
+    if (if b.exclusive then !(b.value.lt n) else n.lt b.value) then
+      .error s!"{path} must be \
+        {if b.exclusive then "greater than" else "at least"} {toString b.value}"
+  if let some b := max then
+    if (if b.exclusive then !(n.lt b.value) else b.value.lt n) then
+      .error s!"{path} must be \
+        {if b.exclusive then "less than" else "at most"} {toString b.value}"
+
+private meta def checkEnumList (path : String) (rules : EnumListRules)
+    (chosen : List String) : Except String Unit := do
+  for value in chosen do
+    if 1 < (chosen.filter (· == value)).length then
+      .error s!"{path} contains duplicate '{value}'"
+  for group in rules.atMostOneOf do
+    let hits := chosen.filter group.contains
+    if 2 ≤ hits.length then
+      .error s!"{path} allows at most one of {"|".intercalate group}, \
+        got {", ".intercalate hits}"
+  for (key, allowed) in rules.narrows do
+    if chosen.contains key then
+      for value in chosen do
+        unless allowed.contains value do
+          .error s!"'{key}' restricts {path} to {"|".intercalate allowed}; \
+            '{value}' cannot join it"
+
+mutual
+
+private meta partial def FieldVal.check (path : String) (f : FieldSpec) :
+    FieldVal → Except String Unit
+  | .block fs =>
+    match f.type, f.alt with
+    | .block bid, _ => checkFields path (BlockSpec.of bid).fields [] fs
+    | .«enum» vs _, some alt =>
+      let specs := alt.blocks.map (fun (bf, bid) =>
+          ({ id := bf, type := .block bid, required := false, alt := none } : FieldSpec))
+        ++ [{ id := alt.enumField, type := .«enum» vs none, required := true, alt := none }]
+      checkFields path specs [alt.enumField] fs
+    | _, _ => .error s!"{path} is not a block field"
+  | .num n =>
+    match f.type with
+    | .number min max => checkNumberBounds path n min max
+    | _ => .error s!"{path} holds a value of the wrong shape"
+  | .enums values =>
+    match f.type with
+    | .enumList allowed rules => do
+      unless values.all allowed.contains do
+        .error s!"{path} holds a value of the wrong shape"
+      checkEnumList path rules values
+    | _ => .error s!"{path} holds a value of the wrong shape"
+  | v => unless v.fits f.type do .error s!"{path} holds a value of the wrong shape"
+
+private meta partial def checkFields (path : String) (specs : List FieldSpec)
+    (required : List FieldId) (fs : List (FieldId × FieldVal)) : Except String Unit := do
+  for (fid, v) in fs do
+    let some f := specs.find? (·.id == fid)
+      | .error s!"{path} has no field {fieldName fid}"
+    if 1 < (fs.filter (·.1 == fid)).length then
+      .error s!"{path}.{fieldName fid} is set twice"
+    v.check s!"{path}.{fieldName fid}" f
+  for r in required do
+    unless fs.any (·.1 == r) do .error s!"{path} is missing {fieldName r}"
+
+end
+
+public meta def SpytialOp.check (op : SpytialOp) : Except String Unit := do
+  let i := ItemSpec.of op.item
+  let path := itemName op.item
+  checkFields path i.fields ((i.fields.filter (·.required)).map (·.id)) op.fields
+  if let some h := op.hold then
+    unless i.supportsHold do .error s!"{path} does not support hold"
+    unless holdValues.contains h do .error s!"{path}: hold must be one of {holdValues}"
 
 /-! ## Spec serialization
 
@@ -141,97 +185,55 @@ The shape has two optional top-level keys:
 {"constraints": [{"orientation": {"selector": "…", "directions": ["above"]}}],
  "directives":  [{"atomStyle": {"selector": "…", "borderStyle": {"color": "#ff0000"}}}]}
 ```
-`SpytialOp`s partition into constraints vs directives; each lowers to a single
-`{opName: …}` object. Selectors lower through `Sel.toSGQ` here — the
-environment stores the structured spec, and the wire string exists only in the
-widget payload.
+Which section an item lowers into is the table's `constraint`; each op lowers
+to a single `{yamlKey: …}` object over its set fields (a `scalar` item's one
+field is the payload itself). Selectors lower through `Sel.toSGQ` here — the
+environment stores the structured spec, and the serialized string exists
+only in the widget payload.
+
+Serialization is fallible for that reason: a selector node whose arguments do
+not fill its template — too few, or one of the wrong kind at a position — has no
+lowering (`Selector.argAt`), and the spec it sits in has none either.
 -/
 
-/-- Is this op a constraint (affects layout geometry)? Also decides which ops
-    carry their `source` on the wire: core cites the constraints. -/
-public meta def SpytialOp.isConstraint : SpytialOp → Bool
-  | .orientation .. | .align .. | .cyclic .. | .group .. => true
-  | .hideAtom .. | .size .. => true
-  | _ => false
+public meta partial def FieldVal.toJson : FieldVal → Except String Json
+  | .sel s => Json.str <$> s.toSGQ
+  | .rel s | .str s | .«enum» s => .ok (Json.str s)
+  | .enums vs => .ok (Lean.toJson vs)
+  | .num n => .ok (Json.num n)
+  | .bool b => .ok (Json.bool b)
+  | .block fs => do
+    return Json.mkObj (← fs.mapM fun (f, v) => do return (fieldName f, ← v.toJson))
 
-/-- An object from the fields that are set; `none`s are omitted, never
-    `null` (core treats an absent key and an explicit `null` differently). -/
-public meta def objOpt (kvs : List (String × Option Json)) : Json :=
-  Json.mkObj <| kvs.filterMap fun (k, v?) => v?.map ((k, ·))
+public meta instance : ToJson OpSource where
+  toJson s := Json.mkObj <|
+    (fieldName .text, Json.str s.text) ::
+      (s.location.map fun l => (fieldName .location, Json.str l)).toList
 
-public meta instance : ToJson BorderStyle := ⟨fun b => objOpt
-  [("color", b.color.map toJson), ("width", b.width.map toJson)]⟩
-public meta instance : ToJson FillStyle := ⟨fun f => objOpt
-  [("color", f.color.map toJson)]⟩
-public meta instance : ToJson IconStyle := ⟨fun i => objOpt
-  [("path", some (toJson i.path)), ("placement", i.placement.map toJson)]⟩
-public meta instance : ToJson LineStyle := ⟨fun l => objOpt
-  [("color", l.color.map toJson), ("pattern", l.pattern.map toJson),
-   ("weight", l.weight.map toJson)]⟩
-
-/-- A direction-only edge is the bare string form; with styling it is the
-    block form, whose direction key is `points`. -/
-public meta instance : ToJson GroupEdge := ⟨fun g =>
-  match g.lineStyle with
-  | none => toJson g.direction
-  | some ls => Json.mkObj [("points", toJson g.direction), ("lineStyle", toJson ls)]⟩
-
-deriving instance ToJson for SpytialOp
-
-/-- The style ops emit sparse objects (`objOpt`); the rest keep the derived
-    shape. `flag`'s payload is the bare name — core matches flags by string. -/
-public meta instance : ToJson SpytialOp where
-  toJson
-    | .atomStyle s border fill icon showLabel =>
-      Json.mkObj [("atomStyle", objOpt
-        [("selector", some (toJson s)), ("borderStyle", border.map toJson),
-         ("fillStyle", fill.map toJson), ("iconStyle", icon.map toJson),
-         ("showLabel", showLabel.map toJson)])]
-    | .edgeStyle field line showLabel =>
-      Json.mkObj [("edgeStyle", objOpt
-        [("field", some (toJson field)), ("lineStyle", line.map toJson),
-         ("showLabel", showLabel.map toJson)])]
-    | .inferredEdge name s line =>
-      Json.mkObj [("inferredEdge", objOpt
-        [("name", some (toJson name)), ("selector", some (toJson s)),
-         ("lineStyle", line.map toJson)])]
-    | .group s name addEdge =>
-      Json.mkObj [("group", objOpt
-        [("selector", some (toJson s)), ("name", some (toJson name)),
-         ("addEdge", addEdge.map toJson)])]
-    | .flag name => Json.mkObj [("flag", toJson name)]
-    | op => instToJsonSpytialOp.toJson op
-
-public meta instance : ToJson OpSource := ⟨fun s => objOpt
-  [("text", some (toJson s.text)), ("location", s.location.map toJson)]⟩
-
-/-- An op renders as `{opName: body}`, and core reads `source` from inside
-    `body`. Only the constraints carry it: those are the ops core cites in
-    conflict reports, and on a directive it would be payload core parses and
-    ignores. `flag`'s payload is the bare name, with nowhere to put it. -/
-public meta instance : ToJson StampedOp where
-  toJson s :=
-    let j := toJson s.op
-    match s.source with
-    | some src =>
-      if s.op.isConstraint then
-        match j.getObj? with
-        | .ok kvs =>
-          match kvs.toList with
-          | [(key, body@(.obj _))] =>
-            Json.mkObj [(key, body.setObjVal! "source" (toJson src))]
-          | _ => j
-        | _ => j
-      else j
-    | none => j
+public meta def SpytialOp.toJson (op : SpytialOp) : Except String Json := do
+  op.check
+  let i := ItemSpec.of op.item
+  let fields ← op.fields.mapM fun (f, v) => do return (fieldName f, ← v.toJson)
+  -- The stamp rides beside `hold`, and only where core reads it back: a
+  -- scalar payload has nowhere to put it, and elsewhere it is bytes core
+  -- parses and ignores.
+  let extras :=
+    (op.hold.map fun h => (holdField, Json.str h)).toList ++
+    (if i.displaysSource then (op.source.map (sourceField, Lean.toJson ·)).toList else [])
+  let payload ← match i.scalar, op.fields with
+    | true, [(_, v)] => v.toJson
+    | _, _ => .ok (Json.mkObj (fields ++ extras))
+  return Json.mkObj [(i.yamlKey, payload)]
 
 /-- A spec with no ops renders as the empty string, not `{}`. -/
-public meta def SpytialSpec.render (spec : SpytialSpec) : String :=
-  let mkSection (key : String) (ops : SpytialSpec) : List (String × Json) :=
-    if ops.isEmpty then [] else [(key, toJson ops)]
-  let (constraints, directives) := spec.partition (SpytialOp.isConstraint ·.op)
-  match mkSection "constraints" constraints ++ mkSection "directives" directives with
-  | [] => ""
-  | kvs => (Json.mkObj kvs).pretty
+public meta def SpytialSpec.render (spec : SpytialSpec) : Except String String := do
+  let mkSection (key : String) (ops : SpytialSpec) : Except String (List (String × Json)) := do
+    if ops.isEmpty then return []
+    return [(key, Json.arr (← ops.toArray.mapM SpytialOp.toJson))]
+  let (constraints, directives) :=
+    spec.partition fun op => (ItemSpec.of op.item).constraint
+  match (← mkSection "constraints" constraints) ++ (← mkSection "directives" directives) with
+  | [] => return ""
+  | kvs => return (Json.mkObj kvs).pretty
 
 end SpytialLean

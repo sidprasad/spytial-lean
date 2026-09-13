@@ -132,27 +132,20 @@ def myList : List Nat := [1, 2, 3, 4]
 
 /-! ## Debugging -/
 
--- See the generated spec (hover to inspect in infoview)
 #spytial.spec myTree with [
   orientation left left below,
   hideAtom Nat
 ]
 
--- See the generated JSON data instance (shows relation names)
 #spytial.datum myTree
 
-/-! ## Free layout (no spec) -/
+/-! ## Extending an attached spec
 
-#spytial myTree
+`..` splices the type's `spytial_spec` at that position. -/
 
-/-! ## Tactic mode
+#spytial myTree with [.., atomStyle Tree (borderStyle "#0066ff")]
 
-Use `spytial` as a tactic to visualize data structures mid-proof.
-Hypothesis names and local bindings are in scope.
--/
-
--- Visualize a hypothesis
-
+/-! ## Tactic mode -/
 
 -- We need to think about what visualizing somethign within a hypothesis
 -- even means. Right now, there isn't anything to

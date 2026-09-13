@@ -2,6 +2,11 @@ packages:
   - widget
   - render
 
+# simple-graph-query is a build-time input, not a runtime one: the root package
+# depends on it so `SpytialLean.Sgq` can include_str docs/sgq-language.json from
+# a stable path. spytial-core embeds its own prebuilt sgq bundle, so nothing
+# here changes what the widget evaluates.
+
 # Pinned to stay consistent with the infoview bundle.
 catalog:
   '@rollup/plugin-commonjs': ^28.0.1
@@ -18,3 +23,4 @@ catalog:
 minimumReleaseAgeExclude:
   - spytial-core@5.4.0
   - simple-graph-query@3.1.0
+  - simple-graph-query@3.2.0
