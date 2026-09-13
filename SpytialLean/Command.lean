@@ -811,25 +811,25 @@ meta def elabSpytialOpsCmd : CommandElab := fun
     liftCoreM <| setSpytialOps declName { root, ops := spec }
   | stx => throwError "Unexpected syntax {stx}."
 
-/-! ## spytial_relationalizer command -/
+/-- Registers a `CustomRelationalizer` def as the relationalizer for a type. -/
+syntax (name := spytialRelationalizerCmd)
+  "spytial_relationalizer " ident ident (" emits " ident)? : command
 
-/-- `spytial_relationalizer <TypeName> <defName>` registers a custom relationalizer
-    for a type. The def must have type `CustomRelationalizer`, and — to be usable
-    from importing modules — should be `public meta def`.
-
-    ```
-    public meta def myRelationalizer : CustomRelationalizer := fun e walkExpr => do ...
-
-    spytial_relationalizer MyType myRelationalizer
-    ```
--/
-syntax (name := spytialRelationalizerCmd) "spytial_relationalizer " ident ident : command
-
+/-- `spytial_relationalizer <Type> <defName> (emits <Shape>)?` registers a
+    custom relationalizer. With `emits`, `<Shape>` is an inductive naming what
+    the def emits: its constructors are the atom types, its fields the
+    relations. Specs over `<Type>` then check against that vocabulary instead
+    of accepting any name. -/
 @[command_elab spytialRelationalizerCmd]
 meta def elabSpytialRelationalizerCmd : CommandElab := fun
-  | `(spytial_relationalizer $typeId:ident $defId:ident) => do
+  | `(spytial_relationalizer $typeId:ident $defId:ident $[emits $shapeId:ident]?) => do
     let typeName ← liftCoreM <| realizeGlobalConstNoOverloadWithInfo typeId
     let defName ← liftCoreM <| realizeGlobalConstNoOverloadWithInfo defId
+    let shape? ← shapeId.mapM fun id => do
+      let shape ← liftCoreM <| realizeGlobalConstNoOverloadWithInfo id
+      unless (← getEnv).find? shape matches some (.inductInfo _) do
+        throwErrorAt id m!"'{shape}' is not an inductive type"
+      pure shape
     -- fail mistyped registrations here, not opaquely at dispatch
     liftTermElabM do
       let declType := (← getConstInfo defName).type
@@ -839,7 +839,7 @@ meta def elabSpytialRelationalizerCmd : CommandElab := fun
       logWarningAt defId m!"'{defName}' is not `public`, so a `#spytial` on this \
         type from an importing module fails at render with `Unknown constant` — \
         declare it `public meta def`"
-    liftCoreM <| setSpytialRelationalizer typeName defName
+    liftCoreM <| setSpytialRelationalizer typeName defName shape?
   | stx => throwError "Unexpected syntax {stx}."
 
 /-! ## Debugging commands -/
