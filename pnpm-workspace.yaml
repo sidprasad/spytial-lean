@@ -6,6 +6,17 @@ packages:
 # depends on it so `SpytialLean.Sgq` can include_str docs/sgq-language.json from
 # a stable path. spytial-core embeds its own prebuilt sgq bundle, so nothing
 # here changes what the widget evaluates.
+#
+# TEMPORARY: `introduces`, `inertWhenBare`, and `middleColumns` exist only on
+# spytial-core#580/#581, and this branch derives from them, so the override
+# points at the commit holding the two merged. Drop it when a release carries
+# them, and the widget's `~5.4.0` pin takes over.
+overrides:
+  spytial-core: github:sidprasad/spytial-core#4b25657d6aa67dcb228fa46e5d8e3c8b5acda89e
+
+# That commit ships sources; pnpm builds its dist on install.
+allowBuilds:
+  "spytial-core@https://codeload.github.com/sidprasad/spytial-core/tar.gz/4b25657d6aa67dcb228fa46e5d8e3c8b5acda89e": true
 
 # Pinned to stay consistent with the infoview bundle.
 catalog:

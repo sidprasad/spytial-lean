@@ -19,6 +19,29 @@ private meta def manifestText : String :=
   include_str ".." / "widget" / "node_modules" / "spytial-core" / "docs" /
     "spytial-language.json"
 
+/-! ## The manifest format -/
+
+private meta def neededMajor : Nat := 1
+/-- A consumer needs the minor that introduced each member it reads; 1.1 added
+    `introducedKinds`. -/
+private meta def neededMinor : Nat := 1
+
+private meta def majorMinor (v : String) : Option (Nat × Nat) := do
+  let major :: minor :: _ := v.splitOn "." | none
+  return (← major.toNat?, ← minor.toNat?)
+
+private meta def checkFormat (version? : Option String) : Except String Unit := do
+  let needed := s!"{neededMajor}.{neededMinor}"
+  let some version := version?
+    | .error s!"no manifestVersion, so this manifest predates format \
+        versioning; this reader needs {needed} or later"
+  let some (major, minor) := majorMinor version
+    | .error s!"manifestVersion is {version.quote}, which does not begin with a \
+        numeric MAJOR.MINOR"
+  unless major == neededMajor && neededMinor ≤ minor do
+    .error s!"manifestVersion is {version}; this reader needs {needed} or \
+      later, within major {neededMajor}"
+
 /-! ## The language as data, with ids still strings -/
 
 json_union DeclaredArity where
@@ -50,10 +73,16 @@ json_union Section where
   | constraints
   | directives
 
+/-- What the engine does with the columns between a tuple's first and last. -/
+json_union MiddleColumns where
+  | ignored
+  | displayed
+
 public meta structure JAccept where
   arity : DeclaredArity
   minColumns : Nat
   maxColumns : Option Nat
+  middleColumns : Option MiddleColumns
   requires : Option String
   deriving Repr, Inhabited
 
@@ -90,11 +119,27 @@ public meta structure JDeprecated where
 -- an item's rewrite hints (`mapping`, `reason`, `warningSpecType`) are core's own
 json_record JDeprecated ignoring "mapping" "reason" "warningSpecType"
 
+/-- `arity` is how many columns a name of that kind has. -/
+public meta structure JIntroducedKind where
+  arity : Nat
+  deriving Inhabited
+
+json_record JIntroducedKind ignoring "description"
+
+/-- `kind` is a key of `introducedKinds`, which is where its arity comes from. -/
+public meta structure JIntroduces where
+  kind : String
+  referencedBy : List String
+  deriving Inhabited
+
+json_record JIntroduces
+
 /-- Read off the same object as `JFieldType`, which takes the rest. -/
 public meta structure JField where
   name : String
   required : Option Bool
   alternativeForm : Option JAltForm
+  introduces : Option JIntroduces
   deprecated : Option JDeprecated
   deriving Inhabited
 
@@ -102,12 +147,19 @@ public meta structure JField where
 json_record JField ignoring JFieldType.memberNames "description" "note" "pattern"
   "enforcement"
 
+public meta structure JInertWhenBare where
+  effectFields : List String
+  deriving Inhabited
+
+json_record JInertWhenBare
+
 public meta structure JItem where
   id : String
   yamlKey : Option String
   sections : Option (List Section)
   valueShape : Option ValueShape
   supportsHold : Option Bool
+  inertWhenBare : Option JInertWhenBare
   fields : Option (List Json)
   deprecated : Option JDeprecated
   deriving Inhabited
@@ -150,15 +202,17 @@ public meta structure JDocument where
 json_record JDocument ignoring "notes" "sectionShape" "unknownKeys"
 
 public meta structure JManifest where
+  /-- Keys are data, so this stays an object rather than becoming a record. -/
+  introducedKinds : JsonObject
   document : JDocument
   hold : JHold
   source : JSource
   blocks : List JBlock
   deriving Inhabited
 
--- `items` and `languageVersion` are read on their own; `deprecations` restates
--- what `items[].deprecated` already reads
-json_record JManifest ignoring "items" "language" "languageVersion"
+-- `items` and `manifestVersion` are read on their own; the version words and
+-- `deprecations` restate what `checkFormat` and `items[].deprecated` already read
+json_record JManifest ignoring "items" "manifestVersion" "language" "languageVersion"
   "spytialCoreVersion" "documentation" "versioning" "deprecations"
 
 /-! ## Choices the manifest leaves open
@@ -178,44 +232,6 @@ private meta def leadingSelectorOverride : List String := ["size"]
     would be noise. -/
 private meta def boolSugarTable : List (String × String × Bool) :=
   [("labels", "showLabel", true), ("noLabels", "showLabel", false)]
-
-/-! ## Facts the manifest does not carry yet
-
-Proposed upstream as spytial-core#580 and #581, and tables here until a
-release carries them. Each is keyed by manifest ids and checked against the
-live manifest at derivation, and all of them hold only for the language they
-were audited against, so a language bump fails the build until they are read
-again. -/
-
-private meta def tablesLanguageVersion : String := "2026-08-25"
-
-/-- How many columns a graph-side name of each kind has. -/
-private meta def introducedKindsTable : List (String × Nat) := [("group", 1), ("edge", 2)]
-
-/-- The string positions that name a group or an inferred edge: the kind named
-    and the `item.field` positions where the engine resolves such a name. -/
-private meta def introducesTable : List ((String × String) × String × List String) :=
-  [(("group", "name"), "group", ["inferredEdge.draw", "edgeStyle.field"]),
-   (("inferredEdge", "name"), "edge", ["edgeStyle.field"])]
-
-/-- Items whose listed fields are their entire effect: an instance setting none
-    of them parses and does nothing. -/
-private meta def inertWhenBareTable : List (String × List String) :=
-  [("atomStyle", ["fillStyle", "borderStyle", "iconStyle", "textStyle", "showLabel"]),
-   ("edgeStyle", ["lineStyle", "textStyle", "showLabel", "hidden"])]
-
-/-- What the engine does with the columns between a tuple's first and last. -/
-private meta inductive MiddleColumns where
-  | ignored
-  | displayed
-
-/-- Per selector position admitting more than two columns. -/
-private meta def middleColumnsTable : List ((String × String) × MiddleColumns) :=
-  [(("orientation", "selector"), .ignored), (("align", "selector"), .ignored),
-   (("cyclic", "selector"), .ignored), (("group", "selector"), .ignored),
-   (("edgeStyle", "filter"), .ignored), (("attribute", "filter"), .ignored),
-   (("hideField", "filter"), .ignored), (("tag", "value"), .displayed),
-   (("inferredEdge", "selector"), .displayed)]
 
 /-! ## Assembling the tables' input -/
 
@@ -283,6 +299,15 @@ private meta structure RawManifest where
   deprecatedItems : List (String × String)
   deprecatedFields : List (String × String)
 
+/-- Data, not a rule restated here: a kind added upstream needs no edit. -/
+private meta abbrev IntroducedKinds := List (String × Nat)
+
+private meta def introducedKinds (o : JsonObject) : Except String IntroducedKinds :=
+  o.toArray.toList.mapM fun (kind, j) => do
+    let k : JIntroducedKind ← (fromJson? j).mapError fun e =>
+      s!"introducedKinds.{kind}: {e}"
+    return (kind, k.arity)
+
 private meta def listRules (o : JsonObject) : Except String EnumListRules := do
   onlyMembers ["atMostOneOf", "narrowsListTo"] o
   let atMostOneOf : List (List String) := (← o.get? "atMostOneOf").getD []
@@ -299,8 +324,7 @@ private meta def bound (incl excl : Option JsonNumber) : Except String (Option B
 
 /-- The column bounds are what the elaborator uses, so a disagreement with the
     arity word means one of the two moved upstream and this reading is stale. -/
-private meta def selForm (middle? : Option MiddleColumns) (a : JAccept) :
-    Except String RawSelForm := do
+private meta def selForm (a : JAccept) : Except String RawSelForm := do
   let agrees := match a.arity with
     | .unary => a.minColumns == 1 && a.maxColumns == some 1
     | .binary => a.minColumns == 2 && a.maxColumns == some 2
@@ -308,12 +332,16 @@ private meta def selForm (middle? : Option MiddleColumns) (a : JAccept) :
   unless agrees do
     .error s!"an accepted form's arity word and its column bounds \
       ({a.minColumns}, {repr a.maxColumns}) disagree"
-  if a.maxColumns.all (2 < ·) && middle?.isNone then
+  match a.maxColumns.any (· ≤ 2), a.middleColumns with
+  | false, none =>
     .error s!"an accepted form admitting more than two columns \
-      ({a.minColumns}, {repr a.maxColumns}) has no middleColumnsTable entry \
-      saying what becomes of the middle ones"
+      ({a.minColumns}, {repr a.maxColumns}) does not say what becomes of the \
+      middle ones"
+  | true, some _ =>
+    .error "an accepted form capped at two columns has no middle columns to declare"
+  | _, _ => pure ()
   return { min := a.minColumns, max := a.maxColumns, requires := a.requires,
-           middlesIgnored := middle? matches some .ignored }
+           middlesIgnored := a.middleColumns matches some .ignored }
 
 private meta def altForm (a : JAltForm) : Except String RawAltForm := do
   unless a.type == "block" do .error "alternativeForm is not a block"
@@ -328,8 +356,8 @@ private meta def decodeFields (js : List Json) : Except String (List (JField × 
   js.mapM fun j => do return (← fromJson? j, j)
 
 /-- `c` is `j`'s `JField` reading; `JFieldType` takes the rest of the object. -/
-private meta def fieldOf (itemId : String) (c : JField) (j : Json) :
-    Except String (Option RawField) := do
+private meta def fieldOf (kinds : IntroducedKinds) (itemId : String)
+    (c : JField) (j : Json) : Except String (Option RawField) := do
   -- A deprecated field keeps parsing upstream; the new surface never writes it.
   if c.deprecated.isSome then return none
   let name := c.name
@@ -338,14 +366,13 @@ private meta def fieldOf (itemId : String) (c : JField) (j : Json) :
   let alt ← match c.alternativeForm with
     | some a => some <$> (altForm a).mapError here
     | none => pure none
-  let middle? := middleColumnsTable.lookup (itemId, name)
   let type : RawFieldType ← match ty with
     | .selector arity accepts =>
       let some first := accepts.head?
         | .error (here "a selector position with no accepted form")
       unless first.arity == arity do
         .error (here "the declared arity is not the first accepted form's")
-      pure (.selector (← (accepts.mapM (selForm middle?)).mapError here))
+      pure (.selector (← (accepts.mapM selForm).mapError here))
     | .relation => pure .relation
     | .str => pure .str
     | .«enum» values dflt => pure (.«enum» values dflt)
@@ -361,19 +388,13 @@ private meta def fieldOf (itemId : String) (c : JField) (j : Json) :
     | .color => pure .color
   if alt.isSome && !(type matches RawFieldType.«enum» ..) then
     .error (here "alternativeForm on a non-enum field")
-  if middle?.isSome then
-    match type with
-    | .selector forms =>
-      if forms.all fun f => f.max.any (· ≤ 2) then
-        .error (here "middleColumnsTable names a position capped at two columns")
-    | _ => .error (here "middleColumnsTable names a position that is not a selector")
-  let introduces ← (introducesTable.lookup (itemId, name)).mapM fun (kind, referencedBy) => do
+  let introduces ← c.introduces.mapM fun i => do
     unless type matches RawFieldType.str do
       .error (here "a field introducing a graph-side name must be a string")
-    let some arity := introducedKindsTable.lookup kind
-      | .error (here s!"introducesTable names the kind {kind.quote}, which \
-          introducedKindsTable does not declare")
-    return { field := name, arity, referencedBy }
+    let some arity := kinds.lookup i.kind
+      | .error (here s!"introduces names the kind {i.kind.quote}, which \
+          introducedKinds does not declare")
+    return { field := name, arity, referencedBy := i.referencedBy }
   return some { name, type, required := c.required.getD false, alt, introduces }
 
 /-- `fieldPaths` and the deprecation pairs cover deprecated surface; `item` leaves it out. -/
@@ -383,8 +404,8 @@ private meta structure ParsedItem where
   deprecatedFields : List (String × String)
   item : Option RawItem
 
-private meta def itemOf (displayedBy : List String) (j : Json) :
-    Except String ParsedItem := do
+private meta def itemOf (kinds : IntroducedKinds) (displayedBy : List String)
+    (j : Json) : Except String ParsedItem := do
   let i : JItem ← fromJson? j
   let id := i.id
   let here (e : String) : String := s!"{id}: {e}"
@@ -401,7 +422,7 @@ private meta def itemOf (displayedBy : List String) (j : Json) :
     | some [.directives] => pure false
     | s => .error (here s!"no representation for sections {repr s}")
   let some shape := i.valueShape | .error (here "no valueShape")
-  let fields ← jfields.filterMapM fun (c, fj) => fieldOf id c fj
+  let fields ← jfields.filterMapM fun (c, fj) => fieldOf kinds id c fj
   -- A scalar item serializes as its one field's value (`Spec.lean`), leaving
   -- nowhere for a second field, a `hold`, or the source stamp riding beside.
   let scalar := shape matches .scalar
@@ -449,20 +470,20 @@ private meta def itemOf (displayedBy : List String) (j : Json) :
     | [i] => pure (some i)
     | is => .error (here s!"two fields introduce a name \
         ({", ".intercalate (is.map (·.field))}); an op introduces at most one")
-  let inert? := inertWhenBareTable.lookup id
-  let effectFields := inert?.getD []
-  if inert?.isSome && effectFields.isEmpty then
-    .error (here "inertWhenBareTable names no effect field, so every body would be inert")
+  let effectFields := (i.inertWhenBare.map (·.effectFields)).getD []
+  if i.inertWhenBare.isSome && effectFields.isEmpty then
+    .error (here "inertWhenBare names no effect field, so every body would be inert")
   for f in effectFields do
     unless fields.any (·.name == f) do
-      .error (here s!"inertWhenBareTable names the effect field {f.quote}, which it does not have")
+      .error (here s!"inertWhenBare names the effect field {f.quote}, which it does not have")
   return { fieldPaths, deprecatedItem := none, deprecatedFields,
            item := some { id, yamlKey, constraint, scalar, supportsHold,
                           fields, positional, leadingSelector, introduces,
                           effectFields, displaysSource } }
 
-private meta def blockOf (b : JBlock) : Except String RawBlock := do
-  let fields ← (← decodeFields b.fields).filterMapM fun (c, j) => fieldOf b.name c j
+private meta def blockOf (kinds : IntroducedKinds) (b : JBlock) :
+    Except String RawBlock := do
+  let fields ← (← decodeFields b.fields).filterMapM fun (c, j) => fieldOf kinds b.name c j
   for f in fields do
     if f.required then
       .error s!"{b.name}.{f.name}: no representation for a required block field"
@@ -481,22 +502,21 @@ private meta def RawField.ids (f : RawField) : List String :=
 
 private meta def parseManifest : Except String RawManifest := do
   let json ← Json.parse manifestText
-  let version ← member String json "languageVersion"
-  unless version == tablesLanguageVersion do
-    .error s!"languageVersion is {version}, but the tables in SpecLang.lean were \
-      audited against {tablesLanguageVersion}; check them against the new \
-      language and move the pin"
+  -- Ahead of the record, so a manifest too old to carry a member says so
+  -- rather than failing by the member's name.
+  checkFormat (← member (Option String) json "manifestVersion")
   let m : JManifest ← fromJson? json
   let rawItems ← member (Array Json) json "items"
+  let kinds ← introducedKinds m.introducedKinds
 
   unless m.document.sections matches [.constraints, .directives] do
     .error "document.sections moved; the lowering's section names are stale"
 
-  let parsed ← rawItems.toList.mapM (itemOf m.source.displayedBy)
+  let parsed ← rawItems.toList.mapM (itemOf kinds m.source.displayedBy)
   let items := parsed.filterMap (·.item)
-  let blocks ← m.blocks.mapM blockOf
+  let blocks ← m.blocks.mapM (blockOf kinds)
   let sourceFields ← (← decodeFields m.source.fields).filterMapM fun (c, j) =>
-    fieldOf m.source.field c j
+    fieldOf kinds m.source.field c j
 
   -- `Spec.lean`'s `OpSource` is these two fields, by name.
   unless sourceFields.map (·.name) == ["text", "location"] do
@@ -520,15 +540,6 @@ private meta def parseManifest : Except String RawManifest := do
   for id in leadingSelectorOverride do
     unless items.any (·.id == id) do
       .error s!"leadingSelectorOverride names {id.quote}, which is not a live item"
-  for (id, _) in inertWhenBareTable do
-    unless items.any (·.id == id) do
-      .error s!"inertWhenBareTable names {id.quote}, which is not a live item"
-  for ((id, field), _) in introducesTable do
-    unless items.any fun i => i.id == id && i.fields.any (·.name == field) do
-      .error s!"introducesTable names {id}.{field}, which is not a live field"
-  for ((id, field), _) in middleColumnsTable do
-    unless items.any fun i => i.id == id && i.fields.any (·.name == field) do
-      .error s!"middleColumnsTable names {id}.{field}, which is not a live field"
   for id in m.hold.supportedBy do
     unless items.any (·.id == id) || deprecatedItems.any (·.1 == id) do
       .error s!"hold.supportedBy: names {id.quote}, which is not an item"
@@ -553,6 +564,12 @@ private meta def parseManifest : Except String RawManifest := do
     unless i.supportsHold == listed do
       .error s!"{i.id}: items[].supportsHold is {i.supportsHold} but \
         hold.supportedBy {if listed then "lists" else "does not list"} it"
+
+  -- An absent `inertWhenBare` is indistinguishable from "not inert", so the
+  -- member going away would take the bare-body check with it silently.
+  unless items.any fun i => !i.effectFields.isEmpty do
+    .error "no item declares inertWhenBare; the member left the manifest or \
+      the pin moved past it"
 
   -- Field ids are global across items, blocks and the source stamp: the same
   -- name means the same serialized key everywhere.
