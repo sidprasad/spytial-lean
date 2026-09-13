@@ -9,6 +9,12 @@ test:
     lake build SpytialTests
     pnpm -C widget test
 
+# LSP server tests: `--^ <method>` markers in tests/interactive/test-cases
+# drive requests against `lake serve`; blessing = copy produced.out over
+# expected.out after reading the diff
+lsp-test:
+    ./tests/interactive/run_interactive.sh
+
 # elaborate every demo
 demos:
     lake build Demos
