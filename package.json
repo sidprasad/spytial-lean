@@ -4,6 +4,6 @@
   "private": true,
   "description": "pnpm workspace root: widget/ (infoview bundle) and render/ (render-test harness). No sources of its own.",
   "devDependencies": {
-    "simple-graph-query": "^3.1.0"
+    "simple-graph-query": "^3.2.0"
   }
 }

@@ -28,16 +28,13 @@ catalogs:
       specifier: ^4.17.2
       version: 4.62.3
 
-overrides:
-  spytial-lean>simple-graph-query: github:sidprasad/simple-graph-query#43e0f5340ec8c5fb426fe8b2ff3baf142056b1f5
-
 importers:
 
   .:
     devDependencies:
       simple-graph-query:
-        specifier: github:sidprasad/simple-graph-query#43e0f5340ec8c5fb426fe8b2ff3baf142056b1f5
-        version: https://codeload.github.com/sidprasad/simple-graph-query/tar.gz/43e0f5340ec8c5fb426fe8b2ff3baf142056b1f5
+        specifier: ^3.2.0
+        version: 3.2.0
 
   render:
     devDependencies:
@@ -1612,9 +1609,8 @@ packages:
   simple-graph-query@3.1.0:
     resolution: {integrity: sha512-4eqMcJh0Vi1tw7ZpVApeDtZ+HytkBGz4cD0mRKPtB/LZp+h5EwnwRcOd+HJ2bjusu46T7lFCumxOu3M0kLoCZA==}
 
-  simple-graph-query@https://codeload.github.com/sidprasad/simple-graph-query/tar.gz/43e0f5340ec8c5fb426fe8b2ff3baf142056b1f5:
-    resolution: {gitHosted: true, tarball: https://codeload.github.com/sidprasad/simple-graph-query/tar.gz/43e0f5340ec8c5fb426fe8b2ff3baf142056b1f5}
-    version: 3.1.0
+  simple-graph-query@3.2.0:
+    resolution: {integrity: sha512-yqIkmDqQfGYlVfn9xzWQBXYxyJOM+dOrfQsdZorxM/J2aKsngnECXdLKf2gPaIyMqqqcQeu8jYsrfTPGXY5BVw==}
 
   smob@1.6.2:
     resolution: {integrity: sha512-RQsvleCbF8cVHEv+xuDGaA4pOizFqJ0GgjtMSRo6oP8pnN7WsigHgVGey6aILRBKv4W2YOMHLqbKdnB6hpB9fw==}
@@ -3705,7 +3701,7 @@ snapshots:
     dependencies:
       antlr4ts: 0.5.0-alpha.4
 
-  simple-graph-query@https://codeload.github.com/sidprasad/simple-graph-query/tar.gz/43e0f5340ec8c5fb426fe8b2ff3baf142056b1f5:
+  simple-graph-query@3.2.0:
     dependencies:
       antlr4ts: 0.5.0-alpha.4
 
