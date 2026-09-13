@@ -7,7 +7,7 @@ package spytialLean where
   releaseRepo := "https://github.com/sidprasad/spytial-lean"
 
 require iykyk from
-  git "https://github.com/sidprasad/iykyk" @ "v0.1.2"
+  git "https://github.com/sidprasad/iykyk" @ "v0.3.0"
 
 /-! ## JS build targets
 
@@ -170,6 +170,10 @@ lean_lib Demos where
 lean_lib SpytialTests where
   globs := #[.submodules `SpytialTests]
   needs := #[sgqLoweringGolden]
+
+/-- The semantic core of relational inspection by computation and proof. -/
+lean_lib SpytialLeanInspectionSemantics where
+  srcDir := "metatheory"
 
 require proofwidgets from
   git "https://github.com/leanprover-community/ProofWidgets4" @ "v0.0.105"

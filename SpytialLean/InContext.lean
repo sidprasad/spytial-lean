@@ -1,6 +1,6 @@
 module
 
-public meta import Iykyk.Extract
+public meta import Iykyk.Query
 public meta import SpytialLean.Relationalizer
 public meta import SpytialLean.SelectorElab
 
@@ -25,22 +25,29 @@ private meta def isNegation (proposition : Expr) : Bool :=
   | .forallE _ _ body _ => !body.hasLooseBVar 0 && body.isConstOf ``False
   | _ => false
 
+/-- The implementation output corresponding to the metatheory's checked `Proposition` boundary.
+    `head` retains declaration/free-variable identity even when two heads share a display name. -/
+public meta structure PropTupleShape where
+  relation : String
+  head : Expr
+  arguments : Array Expr
+
 /-- The positive relation represented by a known proposition. Equations with a
     named application become function-graph tuples. Negative and disjunctive
     knowledge does not produce an unconditional tuple. -/
-public meta def propTupleShape? (proposition : Expr) : MetaM (Option (String × Array Expr)) := do
+public meta def propTupleShape? (proposition : Expr) : MetaM (Option PropTupleShape) := do
   unless ← isProp proposition do return none
   if proposition.isAppOfArity ``Or 2 then return none
   if let some (_, domain, result) := proposition.eq? then
     if let some (name, args) ← graphSide? domain then
-      return some (name, args.push result)
+      return some { relation := name, head := domain.getAppFn, arguments := args.push result }
     if let some (name, args) ← graphSide? result then
-      return some (name, args.push domain)
+      return some { relation := name, head := result.getAppFn, arguments := args.push domain }
   if isNegation proposition then return none
   let some name ← propRelName? proposition.getAppFn | return none
   let args ← dataArgsOf proposition
   if args.isEmpty then return none
-  return some (name, args)
+  return some { relation := name, head := proposition.getAppFn, arguments := args }
 
 /-- An equality that supplies visible structure for a local variable. An
     equation involving a named application remains a relation instead. -/
@@ -66,6 +73,16 @@ private meta def definitionalRefinements : MetaM (Array (FVarId × Expr)) := do
       unless value.containsFVar declaration.fvarId do
         refinements := refinements.push (declaration.fvarId, value)
   return refinements
+
+/-- Primitive values keep their informative value labels (`3`, `true`, ...)
+    when a refinement determines them. Names instead label structured values,
+    whose constructor label describes shape rather than contextual identity. -/
+private meta def primitiveLabelTypes : List Name :=
+  [``Nat, ``String, ``Bool, ``Char, ``Int, ``Float, ``UInt8, ``UInt16,
+    ``UInt32, ``UInt64, ``USize]
+
+private meta def isPrimitiveLabelType (ty : Expr) : MetaM Bool := do
+  return (← typeHead? ty).any primitiveLabelTypes.contains
 
 /-- Substitute known variable refinements through a compound relation
     endpoint, allowing projections such as `t.left` to reach the atom already
@@ -94,6 +111,55 @@ private meta partial def substituteKnown (refinements : Std.HashMap FVarId Expr)
   if replaced.equal expression || fuel == 0 then replaced
   else substituteKnown refinements (fuel - 1) replaced
 
+/-- Find the atom reached by a refined local even when IYKYK substituted the
+    local before the relational walk saw it. -/
+private meta def atomForRefinedLocal? (fvarId : FVarId)
+    (refinements : Std.HashMap FVarId Expr) (state : WalkState) : MetaM (Option String) := do
+  if let some atomId := state.fvarAtoms[fvarId]? then return some atomId
+  let some value := refinements[fvarId]? | return none
+  let value ← whnf (substituteKnown refinements 8 value)
+  for (term, atomId) in state.selectorTerms do
+    let term ← whnf (substituteKnown refinements 8 term)
+    if term.equal value then return some atomId
+  for (atomId, representative) in state.provenance do
+    let representative ← whnf (substituteKnown refinements 8 representative)
+    if representative.equal value then return some atomId
+  return none
+
+/-- Prefer user-written local names for represented values refined by the
+    context. Concrete primitive values keep informative labels such as `3`,
+    while a name may replace a generated symbolic primitive label. Later
+    declarations are nearer the inspection site and win when several aliases
+    denote one atom; the explicitly inspected root wins over every other alias.
+    Atom ids, relations, and provenance are unchanged. -/
+private meta def labelRefinedLocals (selected : Expr) (rootId : String)
+    (refinements : Std.HashMap FVarId Expr) (state : WalkState) : MetaM WalkState := do
+  let mut labels : Std.HashMap String String := {}
+  let mut generatedRenames : Std.HashMap String String := {}
+  for declaration in ← getLCtx do
+    if declaration.isImplementationDetail || !refinements.contains declaration.fvarId then
+      continue
+    let userName := declaration.userName
+    if userName.isAnonymous || userName.hasMacroScopes then continue
+    if let some atomId ← atomForRefinedLocal? declaration.fvarId refinements state then
+      if ← isPrimitiveLabelType declaration.type then
+        unless state.generatedAtoms.contains atomId do continue
+        let some atom := state.atoms.find? (·.id == atomId) | continue
+        generatedRenames := generatedRenames.insert atom.label (toString userName)
+      labels := labels.insert atomId (toString userName)
+  if let .fvar fvarId := selected then
+    let declaration ← fvarId.getDecl
+    if !declaration.isImplementationDetail && !(← isPrimitiveLabelType declaration.type) then
+      let userName := declaration.userName
+      if !userName.isAnonymous && !userName.hasMacroScopes then
+        labels := labels.insert rootId (toString userName)
+  return { state with atoms := state.atoms.map fun atom =>
+    let rewritten := generatedRenames.toArray.foldl
+      (fun label (generated, contextual) => label.replace generated contextual) atom.label
+    match labels[atom.id]? with
+    | some label => { atom with label }
+    | none => { atom with label := rewritten } }
+
 private meta def contextArgument (cfg : WalkConfig) (argument : Expr) :
     MetaM Expr :=
   if argument.isFVar || argument.isMVar then pure argument
@@ -106,11 +172,21 @@ private meta def contextArgument (cfg : WalkConfig) (argument : Expr) :
 private meta def displayedProposition (fact : Iykyk.KnownFact) : MetaM Expr :=
   do instantiateMVars (← inferType fact.proof)
 
+/-- Recover the user-written binder from the existential proof consumed by a
+    witness's `Classical.choose`, when that binder survived elaboration. -/
+private meta def witnessBinderName? (term : Expr) : MetaM (Option String) := do
+  let some proof := term.getAppArgs.back? | return none
+  let proposition ← instantiateMVars (← inferType proof)
+  unless proposition.isAppOfArity ``Exists 2 do return none
+  let predicate := proposition.getAppArgs[1]!
+  let .lam binderName _ _ _ := predicate | return none
+  if binderName.isAnonymous || binderName.hasMacroScopes then return none
+  return some (toString binderName)
+
 /-- Allocate the shared unknowns before anything else walks. Registering each
     choice term in `applicationAtoms` makes all of its occurrences reuse the
-    same short-labelled atom rather than displaying `Classical.choose`, and the
-    labels come from the walk's one `?ₙ` counter so no other generated atom can
-    repeat them. -/
+    same atom rather than displaying `Classical.choose`. Prefer the source
+    existential's binder; genuinely anonymous witnesses use a neutral name. -/
 private meta def addWitnesses (afaik : Iykyk.Afaik) (recordObservationTerms : Bool) :
     StateT WalkState MetaM (Array (Expr × String)) := do
   let mut anchors := #[]
@@ -119,7 +195,10 @@ private meta def addWitnesses (afaik : Iykyk.Afaik) (recordObservationTerms : Bo
     -- inside the root is found under the reduced spelling.
     let reduced ← whnf witness.term
     let state ← get
-    let (label, state) := state.freshApplicationLabel
+    let binderName? ← witnessBinderName? witness.term
+    let (label, state) ← match binderName? with
+      | some binderName => pure (state.freshGeneratedLabel binderName)
+      | none => pure state.freshAnonymousLabel
     let (atomId, state) := state.freshId
     let atom : JsonAtom := {
       id := atomId
@@ -129,6 +208,7 @@ private meta def addWitnesses (afaik : Iykyk.Afaik) (recordObservationTerms : Bo
     set <| ({ state.addAtom atom with
       applicationAtoms :=
         (state.applicationAtoms.insert ⟨witness.term⟩ atomId).insert ⟨reduced⟩ atomId
+      generatedAtoms := state.generatedAtoms.insert atomId
       observationTerms := if recordObservationTerms then
         state.observationTerms.push (witness.term, atomId)
       else state.observationTerms }).rememberSelectorTerm witness.term atomId
@@ -140,16 +220,31 @@ private meta def addWitnesses (afaik : Iykyk.Afaik) (recordObservationTerms : Bo
 private meta def walkFact (cfg : WalkConfig)
     (fact : Iykyk.KnownFact) (initialAnchors : Array (Expr × String)) :
     StateT WalkState MetaM (Array (Expr × String)) := do
-  let some (relation, rawArguments) ← propTupleShape? (← displayedProposition fact)
+  let some shape ← propTupleShape? (← displayedProposition fact)
     | return initialAnchors
-  -- Predicates that differ only past their short name land in one relation; a
-  -- tuple of another width would corrupt it, so the colliding fact stays
-  -- undrawn instead.
+  let relation := shape.relation
+  let rawArguments := shape.arguments
+  let sourceHead := (⟨shape.head⟩ : ExprStructEq)
+  let rawTypes ← rawArguments.mapM fun argument => do
+    sigOfType (← inferType argument)
+  -- A display-name collision must agree on every retained column, not merely
+  -- arity, before its tuple may join the existing relation.
   if let some (declaredTypes, _) := (← get).relations.get? relation then
-    if declaredTypes.size != rawArguments.size then
+    if declaredTypes.size != rawTypes.size then
       logWarning m!"spytial: '{relation}' names relations of arity \
-        {declaredTypes.size} and {rawArguments.size}; the second is not drawn"
+        {declaredTypes.size} and {rawTypes.size}; the second is not drawn"
       return initialAnchors
+    if declaredTypes != rawTypes then
+      logWarning m!"spytial: incompatible checked proposition columns for '{relation}'; \
+        the colliding fact is not drawn"
+      return initialAnchors
+  if let some declaredHead := (← get).knowledgeRelationHeads[relation]? then
+    if declaredHead != sourceHead then
+      logWarning m!"spytial: '{relation}' names distinct proposition heads; \
+        the colliding fact is not drawn"
+      return initialAnchors
+  modify fun state => { state with
+    knowledgeRelationHeads := state.knowledgeRelationHeads.insert relation sourceHead }
   let mut anchors := initialAnchors
   let mut atomIds := #[]
   let mut types := #[]
@@ -174,7 +269,7 @@ private meta def walkFact (cfg : WalkConfig)
         anchors := anchors.push (argument, atomId)
         pure atomId
     atomIds := atomIds.push atomId
-    types := types.push (← sigOfType (← inferType argument))
+    types := types.push rawTypes[types.size]!
     -- Keep the source term even if a proved equality refined this endpoint.
     modify fun state => state.rememberSelectorTerm rawArgument atomId
   -- An observation may already have emitted the graph point established by
@@ -224,6 +319,43 @@ private meta def rootWalkAtomIds (root : String) (witnessIds : Array String)
     if !witnessIds.contains atom.id || used.contains atom.id then atoms.insert atom.id
     else atoms
 
+/-- Simplify observations, ask IYKYK only the focused questions exposed by
+    remaining arithmetic blockers, and simplify again with every checked
+    answer. The loop is local and bounded; unanswered questions remain
+    symbolic. -/
+private meta def prepareContextObservations (afaik : Iykyk.Afaik) (config : WalkConfig)
+    (domain : Array Expr) : MetaM WalkConfig := do
+  let contextProofs := afaik.facts.map (·.proof)
+  let mut prepared ← prepareObservations config domain contextProofs
+  let mut answers : Array Iykyk.KnownFact := #[]
+  let mut attempted : Std.HashSet ExprStructEq := {}
+  let mut warnedAboutBudget := false
+  for _ in [:4] do
+    let mut changed := false
+    for question in ← observationQuestions prepared do
+      if question.alternatives.any fun goal =>
+          answers.any fun answer => answer.proposition.equal goal then
+        continue
+      for goal in question.alternatives do
+        if attempted.contains ⟨goal⟩ then continue
+        attempted := attempted.insert ⟨goal⟩
+        match ← Iykyk.prove afaik goal { mechanisms := #[.simp, .omega] } with
+        | .proved fact =>
+            answers := answers.push fact
+            changed := true
+            break
+        | .notProved => pure ()
+        | .truncated =>
+            unless warnedAboutBudget do
+              logWarning "spytial: an observation proof query exhausted its arithmetic budget; \
+                leaving the affected computation symbolic"
+              warnedAboutBudget := true
+    unless changed do return prepared
+    prepared ← prepareObservations
+      { prepared with observationResults := {}, observationResiduals := {} }
+      domain (contextProofs ++ answers.map (·.proof))
+  return prepared
+
 /-- Translate proof-backed knowledge into Spytial's relational data. The
     proofs remain owned by IYKYK. Requested observations parameterize the
     expression walk and add their function graphs over every represented value
@@ -233,7 +365,8 @@ private meta def rootWalkAtomIds (root : String) (witnessIds : Array String)
     `Spytial.Sel` form receives — the root with its known refinements
     substituted, closed exactly when the context determines the value. -/
 private meta def relationalizeAfaikInspection (afaik : Iykyk.Afaik)
-    (baseConfig : WalkConfig := {}) (observations : Array Expr := #[]) :
+    (baseConfig : WalkConfig := {}) (observations : Array Expr := #[])
+    (selectedRoot? : Option Expr := none) :
     MetaM (JsonDataInstance × Provenance × Expr × InspectedValue × SelectorEvidence) :=
   withoutModifyingEnv do
     let mut config ← contextWalkConfig afaik
@@ -252,8 +385,7 @@ private meta def relationalizeAfaikInspection (afaik : Iykyk.Afaik)
           if let some (variableId, value) ← refinementOf? (← displayedProposition fact) then
             if refinements[variableId]?.any (·.equal value) then continue
           anchors ← walkFact config fact anchors
-      config ← prepareObservations config (discovery.observationTerms.map (·.1))
-        (afaik.facts.map (·.proof))
+      config ← prepareContextObservations afaik config (discovery.observationTerms.map (·.1))
     let (rootId, state) ← StateT.run (s := {}) do
       -- Witnesses first: a witness can occur inside the refined root, and the
       -- walk reuses its atom only when it is already registered.
@@ -278,6 +410,7 @@ private meta def relationalizeAfaikInspection (afaik : Iykyk.Afaik)
         anchors ← walkFact config fact anchors
       addActiveDomainObservations config observations
       return rootId
+    let state ← labelRefinedLocals (selectedRoot?.getD afaik.root) rootId refinements state
     let facts ← afaik.facts.mapM fun fact => do
       return (← ppExpr (← displayedProposition fact)).pretty
     let inspection : InspectedValue := {
@@ -319,7 +452,6 @@ public meta structure ContextView where
   inspection : InspectedValue
   /-- Terms and certified evidence interpreting the atoms in `data`. -/
   evidence : SelectorEvidence
-  deriving Inhabited
 
 /-- Local names and their definitions have one spelling for relevance
     matching. This does not unfold observed functions or change their proofs. -/
@@ -351,6 +483,43 @@ private meta partial def contextualTerms (cfg : WalkConfig) (root e : Expr) :
   let (_, terms) ← (visit (← contextTerm cfg e)).run {}
   return terms
 
+/-- Whether `e` is a constructor-built value of a recursive inductive. Such a
+    value contributes another instance of the selected representation's shape,
+    rather than merely an opaque endpoint or scalar fact. -/
+private meta def recursiveConstructorValue? (e : Expr) : MetaM (Option (Name × Expr)) := do
+  let type ← inferType e
+  if ← isPrimitiveLabelType type then return none
+  let some typeName ← typeHead? type | return none
+  let some shape ← TypeShape.ofInductive typeName | return none
+  unless shape.ctors.any (fun ctor =>
+      ctor.fields.any (fun field => field.typeHead == some typeName)) do
+    return none
+  let value ← whnf e
+  let .const ctorName _ := value.getAppFn | return none
+  unless shape.ctors.any (·.ctorName == ctorName) do return none
+  return some (typeName, value)
+
+/-- A root-only fact must not extend an explicit observation to an alternate
+    constructor-built recursive value when the selected representation already
+    contains that recursive type. Opaque endpoints remain admissible, as do
+    observations wholly about represented subterms. -/
+private meta partial def observesAlternateRecursiveValue (cfg : WalkConfig)
+    (representedTerms : Std.HashSet ExprStructEq)
+    (representedTypes : Std.HashSet Name)
+    (expression : Expr) : MetaM Bool := do
+  let expression ← contextTerm cfg expression
+  if let some (_, arguments) ← observedGraphSide? cfg expression then
+    for argument in arguments do
+      let argument ← contextTerm cfg argument
+      unless representedTerms.contains ⟨argument⟩ do
+        if let some (typeName, value) ← recursiveConstructorValue? argument then
+          if !representedTerms.contains ⟨value⟩ && representedTypes.contains typeName then
+            return true
+  for argument in ← dataArgsOf expression do
+    if ← observesAlternateRecursiveValue cfg representedTerms representedTypes argument then
+      return true
+  return false
+
 /-- Keep the certified component connected to the values actually represented
     by the selected root. IYKYK still owns extraction and contradiction checks;
     this consumer only selects a subset of its checked facts and witnesses. -/
@@ -366,17 +535,37 @@ private meta def projectToRepresentation (afaik : Iykyk.Afaik) (baseConfig : Wal
     pure ()
   let mut anchors : Std.HashSet ExprStructEq := {}
   anchors := anchors.insert ⟨root⟩
+  let mut representedTerms : Std.HashSet ExprStructEq := {}
+  let mut representedTypes : Std.HashSet Name := {}
   for (term, _) in state.observationTerms do
     let term ← contextTerm cfg term
+    representedTerms := representedTerms.insert ⟨term⟩
+    if let some typeName ← typeHead? (← inferType term) then
+      representedTypes := representedTypes.insert typeName
     if term.hasFVar || term.hasMVar then anchors := anchors.insert ⟨term⟩
+  for (_, representative) in state.provenance do
+    let representative ← contextTerm cfg representative
+    representedTerms := representedTerms.insert ⟨representative⟩
+    if let some typeName ← typeHead? (← inferType representative) then
+      representedTypes := representedTypes.insert typeName
+  representedTerms := representedTerms.insert ⟨root⟩
+  if let some typeName ← typeHead? (← inferType root) then
+    representedTypes := representedTypes.insert typeName
   let candidates ← afaik.facts.mapM fun fact => do
     contextualTerms cfg root (← displayedProposition fact)
+  let mut stale : Array Bool := #[]
+  for index in [:afaik.facts.size] do
+    let proposition ← displayedProposition afaik.facts[index]!
+    let isRefinement := (← refinementOf? proposition).isSome
+    let isStale ← if isRefinement then pure false else
+      observesAlternateRecursiveValue cfg representedTerms representedTypes proposition
+    stale := stale.push isStale
   let mut selected : Std.HashSet Nat := {}
   let mut changed := true
   while changed do
     changed := false
     for index in [:afaik.facts.size] do
-      if selected.contains index then continue
+      if selected.contains index || stale[index]! then continue
       let terms := candidates[index]!
       if terms.toArray.any anchors.contains then
         selected := selected.insert index
@@ -399,7 +588,7 @@ public meta def wdykInContext (subject : Expr) (walkConfig : WalkConfig := {})
         projectToRepresentation afaik walkConfig observations
       else pure afaik
       let (data, prov, datum, inspection, evidence) ←
-        relationalizeAfaikInspection afaik walkConfig observations
+        relationalizeAfaikInspection afaik walkConfig observations (some subject)
       let inspection := { inspection with term := (← ppExpr subject).pretty }
       return ({ truncated := afaik.truncated }, some { afaik, data, prov, datum, inspection, evidence })
 
@@ -443,9 +632,9 @@ public meta def scopeForAfaik (afaik : Iykyk.Afaik) (base : SelScope)
     relations := relations ++ observationRelations
     heads := heads ++ observationHeads
   for fact in afaik.facts do
-    if let some (name, arguments) ← propTupleShape? (← displayedProposition fact) then
-      relations := relations.push (name, arguments.size)
-      for argument in arguments do
+    if let some shape ← propTupleShape? (← displayedProposition fact) then
+      relations := relations.push (shape.relation, shape.arguments.size)
+      for argument in shape.arguments do
         heads := heads.push (← typeHead? (← inferType argument))
         let (argumentRelations, argumentHeads) ← functionGraphScopeEntries afaik cfg argument
         relations := relations ++ argumentRelations

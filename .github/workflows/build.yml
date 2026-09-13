@@ -9,6 +9,32 @@ on:
 name: ci
 
 jobs:
+  metatheory:
+    name: Build metatheory
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Install elan
+        run: |
+          curl -sSfLO https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh
+          chmod +x elan-init.sh
+          ./elan-init.sh -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
+      - uses: actions/checkout@v4
+
+      - name: Cache Lake packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.elan
+            .lake/packages
+          key: lake-metatheory-${{ hashFiles('lean-toolchain') }}-${{ hashFiles('lake-manifest.json') }}
+
+      - name: Build metatheory
+        run: lake build SpytialLeanInspectionSemantics
+
   build:
     name: Build
     runs-on: ubuntu-latest

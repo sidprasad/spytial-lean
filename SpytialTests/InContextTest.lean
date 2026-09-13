@@ -42,6 +42,72 @@ private meta def viewOf (label : String) (root : Expr) (config : Iykyk.Config :=
     assertCanon "consumer.connected" view.data
       "α|x\nα|y\nα|z\nR[α,α]:0,1\nS[α,α]:1,2"
 
+/-! ## Checked decoder boundary -/
+
+/- The Lean-expression boundary recognizes both graph orientations and refuses to turn negative
+   or unresolved disjunctive knowledge into positive tuples. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `R (← mkArrow (mkConst ``Nat) (mkSort Level.zero)) fun R => do
+  withLocalDeclD `next (← mkArrow (mkConst ``Nat) (mkConst ``Nat)) fun next => do
+  withLocalDeclD `x (mkConst ``Nat) fun x => do
+  withLocalDeclD `y (mkConst ``Nat) fun y => do
+    let direct := mkApp R x
+    let some directShape ← propTupleShape? direct
+      | throwError "direct predicate was rejected"
+    unless directShape.head.equal R && directShape.arguments == #[x] do
+      throwError "direct predicate lost its checked head or arguments"
+    let application := mkApp next x
+    let some forward ← propTupleShape? (← mkEq application y)
+      | throwError "forward graph equation was rejected"
+    let some symmetric ← propTupleShape? (← mkEq y application)
+      | throwError "symmetric graph equation was rejected"
+    unless forward.head.equal next && symmetric.head.equal next &&
+        forward.arguments == #[x, y] && symmetric.arguments == #[x, y] do
+      throwError "equation orientations decoded to different graph points"
+    let negative ← mkAppM ``Not #[direct]
+    if (← propTupleShape? negative).isSome then
+      throwError "negative proposition decoded as a positive tuple"
+    let disjunction ← mkAppM ``Or #[direct, direct]
+    if (← propTupleShape? disjunction).isSome then
+      throwError "unresolved disjunction decoded as a positive tuple"
+
+namespace InContextTestFirstHead
+
+def linked (_left _right : Nat) : Prop := True
+
+end InContextTestFirstHead
+
+namespace InContextTestSecondHead
+
+def linked (_left _right : Nat) : Prop := True
+
+end InContextTestSecondHead
+
+/- Distinct declarations with one short display name are not one relation. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x (mkConst ``Nat) fun x => do
+  withLocalDeclD `y (mkConst ``Nat) fun y => do
+  withLocalDeclD `z (mkConst ``Nat) fun z => do
+  withLocalDeclD `first (mkApp2 (mkConst ``InContextTestFirstHead.linked) x y) fun _ => do
+  withLocalDeclD `second (mkApp2 (mkConst ``InContextTestSecondHead.linked) x z) fun _ => do
+    let view ← viewOf "consumer.relationHeadMismatch" x { rootOnly := false }
+    assertCanon "consumer.relationHeadMismatch" view.data
+      "Nat|x\nNat|y\nlinked[Nat,Nat]:0,1"
+
+private def polymorphicRelation {Type_ : Type} (_value : Type_) : Prop := True
+
+/- One polymorphic head cannot change the checked column types of an existing relation. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `x (mkConst ``Nat) fun x => do
+  withLocalDeclD `flag (mkConst ``Bool) fun flag => do
+  withLocalDeclD `first
+      (mkApp2 (mkConst ``polymorphicRelation) (mkConst ``Nat) x) fun _ => do
+  withLocalDeclD `second
+      (mkApp2 (mkConst ``polymorphicRelation) (mkConst ``Bool) flag) fun _ => do
+    let view ← viewOf "consumer.relationTypeMismatch" x { rootOnly := false }
+    assertCanon "consumer.relationTypeMismatch" view.data
+      "Nat|x\npolymorphicRelation[Nat]:0"
+
 /-! ## Equalities refine structure -/
 
 private inductive Tree where
@@ -61,7 +127,7 @@ private meta def node (left right : Expr) : Expr :=
   withLocalDeclD `shape (← mkAppM ``Eq #[t, node (leaf 1) (leaf 2)]) fun _ => do
     let view ← viewOf "consumer.refinement" t
     assertCanon "consumer.refinement" view.data
-      "Tree|node\nTree|leaf\nNat|1\nTree|leaf\nNat|2\n\
+      "Tree|t\nTree|leaf\nNat|1\nTree|leaf\nNat|2\n\
        left[Tree,Tree]:0,1\nright[Tree,Tree]:0,3\nvalue[Tree,Nat]:1,2;3,4"
 
 /- A fact whose endpoint is a constructor subterm reuses the atom reached by
@@ -81,6 +147,7 @@ private meta def node (left right : Expr) : Expr :=
 
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `α (mkSort Level.one) fun α => do
+  withLocalDeclD `measure (← mkArrow α (mkConst ``Nat)) fun measure => do
   withLocalDeclD `edge (← mkArrow α (← mkArrow α (mkSort Level.zero))) fun edge => do
   withLocalDeclD `source α fun source => do
   withLocalDeclD `target α fun target => do
@@ -90,7 +157,31 @@ private meta def node (left right : Expr) : Expr :=
     withLocalDeclD `route routeType fun _ => do
       let view ← viewOf "consumer.witness" source
       assertCanon "consumer.witness" view.data
-        "α|?₁\nα|source\nα|target\nedge[α,α]:1,0;0,2"
+        "α|¿middle?\nα|source\nα|target\nedge[α,α]:1,0;0,2"
+      let observed ← viewOf "consumer.observedWitness" source {} #[mkApp measure source]
+      let some middle := observed.data.atoms.find? (·.label == "¿middle?")
+        | throwError "an observed witness lost its binder name"
+      let some measureRelation := observed.data.relations.find? (·.name == "measure")
+        | throwError "an observed witness lost its observation relation"
+      let some measured := measureRelation.tuples.find?
+          (·.atoms[0]? == some middle.id)
+        | throwError "an observed witness exposed its choice implementation\n\
+            {canonInstance observed.data}"
+      unless observed.data.atoms.any
+          (fun atom => some atom.id == measured.atoms[1]? && atom.label == "¿y?") do
+        throwError "an observed witness exposed its choice implementation\n\
+          {canonInstance observed.data}"
+
+#eval show Lean.Elab.TermElabM Unit from do
+  let nat := mkConst ``Nat
+  withLocalDeclD `source nat fun source => do
+    let existence ← withLocalDeclD Name.anonymous nat fun witness => do
+      let body ← mkEq source witness
+      mkAppM ``Exists #[← mkLambdaFVars #[witness] body]
+    withLocalDeclD `anonymousWitness existence fun _ => do
+      let view ← viewOf "consumer.anonymousWitness" source { rootOnly := false }
+      unless view.data.atoms.any (·.label == "¿x?") do
+        throwError "anonymous witness did not use a neutral name\n{canonInstance view.data}"
 
 /-! ## Explicit IYKYK rules add derived relations -/
 
@@ -130,7 +221,7 @@ private meta def node (left right : Expr) : Expr :=
     withLocalDeclD `h₁ (mkApp Reach nextStart) fun _ => do
       let view ← viewOf "consumer.functionGraph" start
       assertCanon "consumer.functionGraph" view.data
-        "α|start\nα|?₁\nReach[α]:0;1\nnext[α,α]:0,1"
+        "α|start\nα|¿x?\nReach[α]:0;1\nnext[α,α]:0,1"
 
 /-! ## Requested observations become graph points -/
 
@@ -139,7 +230,7 @@ private meta def node (left right : Expr) : Expr :=
   withLocalDeclD `x (mkConst ``Nat) fun x => do
     let view ← viewOf "consumer.observation" x {} #[mkApp measure x]
     assertCanon "consumer.observation" view.data
-      "Nat|x\nNat|?₁\nmeasure[Nat,Nat]:0,1"
+      "Nat|x\nNat|¿x?\nmeasure[Nat,Nat]:0,1"
 
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `measure (← mkArrow (mkConst ``Nat) (mkConst ``Nat)) fun measure => do
@@ -147,7 +238,7 @@ private meta def node (left right : Expr) : Expr :=
   withLocalDeclD `known (← mkAppM ``Eq #[mkApp measure x, mkRawNatLit 3]) fun _ => do
     let view ← viewOf "consumer.knownObservation" x {} #[mkApp measure x]
     assertCanon "consumer.knownObservation" view.data
-      "Nat|x\nNat|3\nNat|?₁\nmeasure[Nat,Nat]:0,1;1,2"
+      "Nat|x\nNat|3\nNat|¿x?\nmeasure[Nat,Nat]:0,1;1,2"
 
 private def Tree.height : Tree → Nat
   | .leaf _ => 0
@@ -162,8 +253,9 @@ private def Tree.height : Tree → Nat
     let observation := mkApp (mkConst ``Tree.height) root
     assertCanon "consumer.activeDomainObservation"
       (← relationalize root {} #[observation])
-      "Tree|node\nTree|left\nTree|right\nNat|?₁\nNat|?₂\nNat|?₃\n\
-       height[Tree,Nat]:0,3;1,4;2,5\nleft[Tree,Tree]:0,1\nright[Tree,Tree]:0,2"
+      "Tree|node\nTree|left\nTree|right\nNat|¿x?\nNat|¿y?\n\
+       Nat|(max ¿x? ¿y?) + 1\n\
+       height[Tree,Nat]:0,5;1,3;2,4\nleft[Tree,Tree]:0,1\nright[Tree,Tree]:0,2"
 
 /- Values introduced by proof-backed context facts join the same active
    domain, so observing the selected endpoint also observes its neighbor. -/
@@ -175,7 +267,7 @@ private def Tree.height : Tree → Nat
     let leftHeight := mkApp (mkConst ``Tree.height) left
     let view ← viewOf "consumer.contextActiveDomainObservation" left {} #[leftHeight]
     assertCanon "consumer.contextActiveDomainObservation" view.data
-      "Tree|left\nNat|?₁\nTree|right\nNat|?₂\n\
+      "Tree|left\nNat|¿x?\nTree|right\nNat|¿y?\n\
        edge[Tree,Tree]:0,2\nheight[Tree,Nat]:0,1;2,3"
 
 /- Observations parameterize fact relationalization. The source computation
@@ -191,7 +283,9 @@ private def Tree.height : Tree → Nat
     withLocalDeclD `branch (← mkAppM ``LT.lt #[oneMore, leftHeight]) fun _ => do
       let view ← viewOf "consumer.observationContext" left {} #[leftHeight]
       assertCanon "consumer.observationContext" view.data
-        "Tree|left\nNat|?₁\nNat|?₂\nNat|?₃\nNat|2\nNat|?₄\nTree|right\nNat|1\n\
+        "Tree|left\nNat|¿x?\nNat|¿y?\n\
+         Nat|¿z?\nNat|2\nNat|¿a?\n\
+         Tree|right\nNat|1\n\
          hAdd[Nat,Nat,Nat]:3,7,2\nhMul[Nat,Nat,Nat]:4,5,3\n\
          height[Tree,Nat]:0,1;6,5\nlt[Nat,Nat]:2,1"
       assertMatchesReference "consumer.observationContext.reference" oneMore

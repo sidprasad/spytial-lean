@@ -12,6 +12,7 @@ public meta import SpytialLean.SpecLang
 public meta import SpytialLean.Selector
 public meta import SpytialLean.SelectorElab
 public meta import SpytialLean.Relationalizer
+public meta import SpytialLean.Reify
 public meta import SpytialLean.InContext
 public meta import SpytialLean.LeanSelector
 public meta import SpytialLean.Widget
@@ -654,8 +655,8 @@ private meta def elabRelationalized (t : Syntax) (cfg : WalkConfig := {})
     TermElabM (Expr × Array Expr × JsonDataInstance × Provenance × SelectorEvidence) := do
   let e ← elabTermInstantiated t
   let observations ← resolveObservationTerms observerSyntaxes
-  let (di, prov, evidence) ← relationalizeWithEvidence e cfg observations
-  return (e, observations, di, prov, evidence)
+  let (datum, prov, evidence) ← Reify.relationalizeWithEvidence e cfg observations
+  return (e, observations, datum.data, prov, evidence)
 
 /-- `scope?` overrides the scope for callers that know more than `e`'s type does. -/
 private meta def elabUseSiteOps (e : Expr) (ops : Array (TSyntax `spytial_op))
@@ -754,7 +755,7 @@ syntax (name := spytialCmd) "#spytial " term (" observing " "[" term,* "]")?
 
 @[command_elab spytialCmd]
 meta def elabSpytialCmd : CommandElab := fun stx => do
-  let props ← liftTermElabM <|
+  let props ← liftTermElabM do
     spytialPayloadProps stx[1] (optionalOps stx[3]) {} (optionalTerms stx[2])
   liftCoreM <| savePanelWidgetInfo SpytialWidget.javascriptHash (return props) stx
 
@@ -858,7 +859,8 @@ syntax (name := spytialDatumDebug) "#spytial.datum " term
 
 @[command_elab spytialDatumDebug]
 meta def elabSpytialDatumDebug : CommandElab := fun stx => do
-  let (_, _, di, _, _) ← liftTermElabM <| elabRelationalized stx[1] {} (optionalTerms stx[2])
+  let (_, _, di, _, _) ← liftTermElabM do
+    elabRelationalized stx[1] {} (optionalTerms stx[2])
   logInfo m!"{(toJson di).pretty}"
 
 /-- `#spytial.proof <term>` draws a proof term without filtering Prop-typed fields. -/
@@ -956,8 +958,8 @@ open Tactic in
 /-- `spytial term` asks IYKYK what the current context establishes about
     `term`, translates that knowledge into relational data, and displays it.
     `observing [f₁, ...]` parameterizes that translation and displays each
-    function over every compatible represented value; `fyi [h₁, ...]`
-    supplies proved hypotheses or forward rules to IYKYK;
+    function over every compatible represented value;
+    `fyi [h₁, ...]` supplies proved hypotheses or forward rules to IYKYK;
     `with [...]` supplies Spytial layout operations. -/
 syntax (name := spytialTactic) "spytial " term (" observing " "[" term,* "]")?
   (" fyi " "[" term,* "]")?

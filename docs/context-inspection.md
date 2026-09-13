@@ -33,17 +33,29 @@ spytial before observing [height]
 spytial (Tree.node (.node ll lx lr) x r) observing [height]
 ```
 
-After a rotation, facts about unchanged subtrees remain relevant even if no
-hypothesis mentions the new whole tree. A fact about an old parent still refers
-to that old parent, not to the new root. The resulting datum can therefore
-include old structure needed to express the retained facts.
+Both spellings retain the same facts and relational identity. For display,
+however, a user-written name is more informative than a constructor name:
+`before` labels the first inspection's root, while the inline inspection falls
+back to `node`. Refined structured locals used below the root likewise label
+their atoms. If several in-scope aliases denote one atom, the nearest local
+declaration wins, except that the explicitly inspected name always wins at the
+root. Primitive values keep their value labels (`3`, `true`, `"text"`, and so
+on) instead of being renamed by refinements. A contextual name for a symbolic
+primitive does win over its generated label, and expressions referring to that
+atom use the same contextual name.
 
-The widget shows one relational datum: the selected expression together with all
-relevant structures and relationships needed by its retained facts. For example,
-an after-rotation inspection can include an old parent mentioned by a branch
-inequality. This is program knowledge, not a second display mode. Use layout
-operations such as `hideAtom`, `hideField`, and selectors to control what the
-diagram presents. The context facts are listed below the diagram.
+After a rotation, root-only inspection does not import an old constructor-built
+parent merely because it shares leaves with the new tree. Facts wholly about
+subtrees of the selected result remain relevant, but inequalities involving an
+obsolete parent are omitted from that view.
+
+The widget shows one relational datum: the selected expression together with
+the relationships retained by its root-only projection. Opaque relation
+endpoints may extend that datum, but a second constructor-built recursive value
+does not overwrite the selected structure's shape. Use `rootOnly := false`
+programmatically when the full extracted context, including alternate
+structures, is required. The retained context facts are listed below the
+diagram.
 
 `spytial.datum` prints the same datum. The widget payload additionally records the
 selected root and its source term so the infoview can identify what was inspected.
@@ -82,26 +94,21 @@ deliberately distinguish occurrences. There is no new observation option.
 For a known node with unknown children, `observing [height]` records:
 
 ```text
-height(parent, H)
-height(left, HL)
-height(right, HR)
+height(left, ¿x?)
+height(right, ¿y?)
+height(parent, (max ¿x? ¿y?) + 1)
 ```
 
-The observer is evaluated before its result is added. Known child heights can
-therefore compute the parent's height. However, computing an observation does
-not implicitly request the relations used by its implementation:
-
-```text
-max(HL, HR, M)
-add(1, M, H)
-```
-
-Those `max` and `add` tuples are not emitted merely because `height` uses them.
-An independently retained fact such as `height r + 1 < height l` does introduce
-an `add` relationship, along with the observed heights and the comparison.
-An equation being provable by unfolding a definition does not, by itself,
-request its expansion in the diagram. See [Observations](observations.md) for
-the evaluation and result-representation contract.
+The observer is residualized before its result is added. Known child heights
+can therefore compute the parent's height, while deterministic symbolic
+results are labelled as expressions over genuinely unknown leaves. In tactic
+mode, Spytial can ask IYKYK focused arithmetic questions needed to simplify a
+symbolic `max`; successful answers are checked proofs and do not become extra
+facts in the displayed `Afaik`. An independently retained fact such as
+`height r + 1 < height l` can still introduce `add` and comparison relations.
+See
+[Observations](observations.md) for the evaluation and result-representation
+contract.
 
 In particular, neither retaining branch inequalities nor observing heights
 proves that an arbitrary result is balanced. That requires appropriate
