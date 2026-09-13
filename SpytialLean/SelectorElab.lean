@@ -40,10 +40,13 @@ and pass through.
 /-- A name an earlier op put into the drawn graph: how many columns it has, and
     the `item.field` positions where the engine resolves it (the manifest's
     `introduces.referencedBy`). A reference from anywhere else parses and is
-    never looked up. -/
+    never looked up. `decl` is where the introducing op wrote the name, for
+    hover and go-to-definition. -/
 meta structure Introduced where
+  kind : String
   arity : Nat
   referencedBy : List String
+  decl : Option DeclarationLocation := none
   deriving Inhabited
 
 /-- Everything the relationalizer can emit for values of the target type, per
@@ -185,6 +188,28 @@ private meta def warnUnresolvedName (ref : Syntax) (position name : String) :
   logWarningAt ref s!"spec-introduced '{name}' is not resolved at {position} — \
     the engine matches that field before groups and inferred edges join the \
     drawn graph, so this reference matches nothing at render"
+
+/-- Hover and go-to-definition for a spec-introduced name, at its declaration
+    (`isBinder`) or at a reference aiming back at the declaring op. The name is
+    a string in the serialized spec, so the info's term is its literal. -/
+meta def addIntroducedInfo (stx : Syntax) (name kind : String)
+    (referencedBy : List String) (location? : Option DeclarationLocation := none)
+    (isBinder : Bool := false) : TermElabM Unit := do
+  let doc := match referencedBy with
+    | [] => s!"{kind} '{name}', introduced by this spec; no field position \
+        resolves it"
+    | ps => s!"{kind} '{name}', introduced by this spec; resolved at \
+        {", ".intercalate ps}"
+  pushInfoLeaf <| .ofDelabTermInfo
+    { elaborator := .anonymous
+      stx
+      lctx := ← getLCtx
+      expectedType? := none
+      expr := mkStrLit name
+      isBinder
+      location?
+      mkDocString? := some fun _ => pure doc
+      explicit := false }
 
 /-! ## Syntax -/
 
@@ -1009,6 +1034,7 @@ private meta partial def resolveIdent (scope : SelScope) (env : LEnv)
     addRelInfo stx owner s
     return { sel := .rel s, kind := .relation, arity := arity? }
   if let some i := scope.introduced.get? s then
+    addIntroducedInfo stx s i.kind i.referencedBy i.decl
     warnGraphSideName stx s
     return { sel := .rel s, kind := .relation, arity := some i.arity }
   if let some e ← resolveTypeRef? then return e
@@ -1094,6 +1120,7 @@ meta def elabFieldName (scope : SelScope) (position : String) (stx : TSyntax `id
   if scope.rels.contains s then
     return s
   if let some i := scope.introduced.get? s then
+    addIntroducedInfo stx s i.kind i.referencedBy i.decl
     unless i.referencedBy.contains position do
       warnUnresolvedName stx position s
     return s
