@@ -11,18 +11,18 @@ namespace ClosedValueTest
 public inductive Tree where
   | leaf (value : Nat)
   | branch (left right : Tree)
-  deriving ToExpr, SpytialIdentity, SpytialReify, Tier1Lossless
+  deriving ToExpr, SpytialIdentity, SpytialReify, LosslessIdentity
 
 @[expose] public def sample : Tree := .branch (.leaf 7) (.leaf 7)
 
 -- This succeeds by the universal theorem, not computation of the concrete graph or its decoder.
 public theorem sample_roundTrip : reify (relationalize% sample) = Except.ok sample :=
-  Tier1.reify_relationalize_of_lossless sample
+  Structural.reify_relationalize_of_lossless sample
 
-public instance : Tier1Lossless (List Nat) := by spytial_lossless
+public instance : LosslessIdentity (List Nat) := by spytial_lossless
 
 example : reify (relationalize% ([1, 2, 1] : List Nat)) = Except.ok [1, 2, 1] :=
-  Tier1.reify_relationalize_of_lossless _
+  Structural.reify_relationalize_of_lossless _
 
 private meta def check (value : Expr) : MetaM Unit := do
   let some result ← ClosedValue.relationalize? value
@@ -40,12 +40,12 @@ private meta def check (value : Expr) : MetaM Unit := do
   for (left, right) in evidence.terms.zip result.evidence.terms do
     unless left.1.equal right.1 && left.2 == right.2 do
       throwError "typed production changed selector evidence order"
-  let program ← mkAppM ``Tier1.relationalizeCandidate #[value]
+  let program ← mkAppM ``Structural.relationalizeCandidate #[value]
   unless ← isDefEq result.program program do throwError "not the proved program"
-  let expected ← mkAppM ``Tier1.reify_relationalize_of_lossless #[value]
+  let expected ← mkAppM ``Structural.reify_relationalize_of_lossless #[value]
   unless ← isDefEq (← inferType result.roundTrip) (← inferType expected) do
     throwError "round-trip proof has the wrong type"
-  unless result.roundTrip.getUsedConstants.contains ``Tier1.reify_relationalize_of_lossless do
+  unless result.roundTrip.getUsedConstants.contains ``Structural.reify_relationalize_of_lossless do
     throwError "production did not reuse the universal theorem"
   checkWithKernel result.roundTrip
   -- Independently check the exact compiled output as well as the pure program's theorem.
@@ -61,7 +61,7 @@ private meta def check (value : Expr) : MetaM Unit := do
   check (mkApp2 (mkConst ``Tree.branch) leaf computed)
   let some shared ← ClosedValue.relationalize? (toExpr sample) | throwError "missing route"
   unless shared.datum.data.atoms.size == 3 do throwError "structural sharing was lost"
-  for name in #[``sample_roundTrip, ``Tier1.reify_relationalize_of_lossless] do
+  for name in #[``sample_roundTrip, ``Structural.reify_relationalize_of_lossless] do
     let axioms ← collectAxioms name
     unless axioms.all (#[``propext, ``Classical.choice, ``Quot.sound].contains ·) do
       throwError "unexpected proof dependency: {axioms}"
@@ -72,7 +72,7 @@ public inductive Written where
   deriving ToExpr, SpytialReify
 
 public instance : SpytialIdentity Written := .asWritten
-deriving instance Tier1Lossless for Written
+deriving instance LosslessIdentity for Written
 
 #eval show MetaM Unit from do
   let value := toExpr (Written.branch (.leaf 7) (.leaf 7))
@@ -91,7 +91,7 @@ public structure ByEquivalence where
 public instance : SpytialIdentity ByEquivalence where
   «via» := .eqv (fun a b => a.value == b.value)
 
-deriving instance Tier1Lossless for ByEquivalence
+deriving instance LosslessIdentity for ByEquivalence
 
 public meta def customTree : CustomRelationalizer := fun _ _ => do
   let (root, state) := (← get).freshId
@@ -144,7 +144,7 @@ section DifferentValueIdentity
 local instance (priority := 20000) : ValueIdentity Tree where
   key? _ := none
 
-local instance : Tier1Lossless Tree := by spytial_lossless
+local instance : LosslessIdentity Tree := by spytial_lossless
 
 #eval show MetaM Unit from withExporting (isExporting := false) do
   unless (← ClosedValue.relationalize? (toExpr sample)).isNone do

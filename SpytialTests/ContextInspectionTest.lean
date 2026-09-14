@@ -32,7 +32,7 @@ private meta def view (root : Expr) (rootOnly := true) : MetaM ContextView := do
   return result
 
 private meta def tuples (data : JsonDataInstance) (name : String) : Array JsonTuple :=
-  (data.relations.find? (·.name == name)).map (·.tuples) |>.getD #[]
+  (data.relations.filter (·.name == name)).flatMap (·.tuples)
 
 private meta def assertCount (label : String) (data : JsonDataInstance)
     (relation : String) (count : Nat) : MetaM Unit := do

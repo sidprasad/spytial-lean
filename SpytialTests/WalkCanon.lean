@@ -16,7 +16,8 @@ public meta def canonInstance (di : JsonDataInstance) : String := Id.run do
   for a in di.atoms do
     idx := idx.insert a.id idx.size
   let atomsS := di.atoms.map fun a => s!"{a.type}|{a.label}"
-  let rels := di.relations.qsort (·.name < ·.name)
+  let rels := di.relations.qsort fun a b =>
+    if a.name == b.name then a.id < b.id else a.name < b.name
   let relsS := rels.map fun r =>
     let ts := r.tuples.map fun t =>
       String.intercalate "," (t.atoms.map (fun a => toString (idx.getD a 9999))).toList

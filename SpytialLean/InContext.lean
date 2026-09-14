@@ -224,27 +224,9 @@ private meta def walkFact (cfg : WalkConfig)
     | return initialAnchors
   let relation := shape.relation
   let rawArguments := shape.arguments
-  let sourceHead := (⟨shape.head⟩ : ExprStructEq)
   let rawTypes ← rawArguments.mapM fun argument => do
     sigOfType (← inferType argument)
-  -- A display-name collision must agree on every retained column, not merely
-  -- arity, before its tuple may join the existing relation.
-  if let some (declaredTypes, _) := (← get).relations.get? relation then
-    if declaredTypes.size != rawTypes.size then
-      logWarning m!"spytial: '{relation}' names relations of arity \
-        {declaredTypes.size} and {rawTypes.size}; the second is not drawn"
-      return initialAnchors
-    if declaredTypes != rawTypes then
-      logWarning m!"spytial: incompatible checked proposition columns for '{relation}'; \
-        the colliding fact is not drawn"
-      return initialAnchors
-  if let some declaredHead := (← get).knowledgeRelationHeads[relation]? then
-    if declaredHead != sourceHead then
-      logWarning m!"spytial: '{relation}' names distinct proposition heads; \
-        the colliding fact is not drawn"
-      return initialAnchors
-  modify fun state => { state with
-    knowledgeRelationHeads := state.knowledgeRelationHeads.insert relation sourceHead }
+  let relationId ← headRelationId shape.head rawTypes
   let mut anchors := initialAnchors
   let mut atomIds := #[]
   let mut types := #[]
@@ -274,9 +256,9 @@ private meta def walkFact (cfg : WalkConfig)
     modify fun state => state.rememberSelectorTerm rawArgument atomId
   -- An observation may already have emitted the graph point established by
   -- this equation. Relations contain tuples, not one copy per justification.
-  unless ((← get).relations.get? relation).any (fun (_, tuples) =>
-      tuples.any (·.atoms == atomIds)) do
-    modify fun state => state.addTuple relation types { atoms := atomIds, types }
+  unless ((← get).relations[relationId]?).any (fun stored =>
+      stored.tuples.any (·.atoms == atomIds)) do
+    modify fun state => state.addTuple relation types { atoms := atomIds, types } relationId
   return anchors
 
 private meta def contextWalkConfig (afaik : Iykyk.Afaik) (baseConfig : WalkConfig)

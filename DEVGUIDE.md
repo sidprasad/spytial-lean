@@ -13,6 +13,52 @@ whenever its tracked inputs (sources, rollup configs, `package.json`,
 `pnpm-lock.yaml`) change. The lockfile is committed; dependency changes go
 through `pnpm add` / `pnpm remove` in `widget/`.
 
+The widget uses spytial-core 6.0.0. Core preserves relations by `id`; selectors
+resolve a `name` to the set union of all records with that name. Lean stores
+relations by ID and emits structural field IDs qualified by the exposed owner
+type. Observations and checked facts use the full constant name or unique local
+head identity plus retained column types. Same-named fields, observations, and
+facts therefore coexist without losing tuples or changing selector spelling.
+
+Reification selects the structural field ID determined by the owner's type and
+field name. A same-named observation cannot supply a missing field or corrupt an
+existing one. Custom relationalizers can pass an explicit `id` to
+`WalkState.addTuple` / `addRelation`; display names stay separate.
+
+`ReconstructionInvariance` makes that separation a theorem. `JsonDataInstance.SameStructure`
+compares atoms and the tuples selected by structural field IDs, ignoring relation
+names and relation-level metadata. `Structural.reify_relationalize_of_sameStructure`
+preserves the unchecked round trip for a `LosslessIdentity` value after any change
+preserving this view and the root. Its corollaries allow arbitrary relation
+renaming and appending relations with nonstructural IDs, with atoms fixed.
+No uniqueness requirement on display names enters these proofs.
+
+## Structural reconstruction
+
+Reconstruction is described by capabilities and their laws:
+
+| Capability | Guarantee |
+| --- | --- |
+| `SpytialReify α` | A decoder for values of `α`. |
+| `StructuralReification α` | An independent structural checker whose success implies decoding. |
+| `StructuralExposure α` | A typed exposure into the shared walker, with proofs connecting it to that checker. |
+| `LosslessIdentity α` | The selected sharing policy preserves the full structure of every value of `α`. |
+
+`deriving SpytialReify` supplies the first three together for supported datatypes.
+`deriving LosslessIdentity` proves the sharing law for a concrete type; for a
+parameterized type, use `instance : LosslessIdentity (T ...) := by spytial_lossless`.
+`Structural.reify_relationalize_of_lossless` then proves
+`reify (Structural.relationalizeCandidate value) = Except.ok value` for every value.
+
+Automatic deriving supports regular first-order, non-indexed inductive types and
+structures, including explicit, implicit, strict-implicit, and instance-implicit
+data fields. Hidden fields are decoded from their relations and passed explicitly
+to the constructor; an available default instance cannot replace a stored field.
+The current handler requires distinct field-relation names within a constructor
+and does not yet derive dependent/indexed families, mutual or nested recursion,
+or proof-, type-, or function-valued fields. These are deriving limitations;
+additional types can supply matching instances and proofs directly.
+
 ## Prerequisites
 
 - Lean 4 (pinned by `lean-toolchain`, installed via [elan](https://github.com/leanprover/elan))

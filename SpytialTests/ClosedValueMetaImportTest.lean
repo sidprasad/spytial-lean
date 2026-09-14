@@ -8,7 +8,7 @@ open Lean Meta SpytialLean ClosedValueTest
 -- No private implementation imports or per-value structural-checker proof is needed. Meta import
 -- supplies the executable definitions for the typed exposure and selected identity classifiers.
 example : reify (relationalize% sample) = Except.ok sample :=
-  Tier1.reify_relationalize_of_lossless sample
+  Structural.reify_relationalize_of_lossless sample
 
 #eval show MetaM Unit from do
   let some result ← ClosedValue.relationalize? (mkConst ``sample)

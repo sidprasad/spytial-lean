@@ -16,7 +16,7 @@ The comparison path is `closed value → reprStr`. The decoder receives only the
 data, its root ID, and the expected type's instance: no source expression, provenance, or saved
 printout. Every fixture must select the typed route, and the exact parsed output also receives a
 kernel-checked reconstruction certificate. These examples exercise the integration; the universal
-theorems below and in `Tier1Lossless` establish the value-level result for all values of a type.
+theorems below and in `LosslessIdentity` establish the value-level result for all values of a type.
 -/
 
 -- PUnit has a supplied decoder/exposure, but no primitive identity classifier.
@@ -24,40 +24,40 @@ deriving instance SpytialIdentity for PUnit
 -- Sum likewise needs an explicit policy; occurrence preservation is lossless.
 public instance : SpytialIdentity (Sum Nat String) := .asWritten
 
-public instance : Tier1Lossless Nat := by spytial_lossless
-public instance : Tier1Lossless String := by spytial_lossless
-public instance : Tier1Lossless Bool := by spytial_lossless
-public instance : Tier1Lossless Int := by spytial_lossless
-public instance : Tier1Lossless PUnit := by spytial_lossless
-public instance : Tier1Lossless (Option String) := by spytial_lossless
-public instance : Tier1Lossless (Sum Nat String) := by spytial_lossless
-public instance : Tier1Lossless (Nat × String) := by spytial_lossless
-public instance : Tier1Lossless (List (List Nat)) := by spytial_lossless
+public instance : LosslessIdentity Nat := by spytial_lossless
+public instance : LosslessIdentity String := by spytial_lossless
+public instance : LosslessIdentity Bool := by spytial_lossless
+public instance : LosslessIdentity Int := by spytial_lossless
+public instance : LosslessIdentity PUnit := by spytial_lossless
+public instance : LosslessIdentity (Option String) := by spytial_lossless
+public instance : LosslessIdentity (Sum Nat String) := by spytial_lossless
+public instance : LosslessIdentity (Nat × String) := by spytial_lossless
+public instance : LosslessIdentity (List (List Nat)) := by spytial_lossless
 
 deriving instance Repr for Tree, Written
 
 public inductive Color where
   | red | green | blue
-  deriving Repr, SpytialIdentity, SpytialReify, Tier1Lossless
+  deriving Repr, SpytialIdentity, SpytialReify, LosslessIdentity
 
 public structure Entry where
   name : String
   count : Nat
-  deriving Repr, SpytialIdentity, SpytialReify, Tier1Lossless
+  deriving Repr, SpytialIdentity, SpytialReify, LosslessIdentity
 
 -- A quantified theorem, not a finite collection of successful examples.
 public theorem list_inspection (inspect : List Nat → String) (xs : List Nat) :
-    (reify (Tier1.relationalizeCandidate xs)).map inspect = Except.ok (inspect xs) :=
-  Tier1.inspect_reify_relationalize_of_lossless inspect xs
+    (reify (Structural.relationalizeCandidate xs)).map inspect = Except.ok (inspect xs) :=
+  Structural.inspect_reify_relationalize_of_lossless inspect xs
 
 public theorem list_repr (xs : List Nat) :
-    reifyRepr (α := List Nat) (Tier1.relationalizeCandidate xs) = Except.ok (reprStr xs) :=
-  Tier1.reifyRepr_relationalize_of_lossless xs
+    reifyRepr (α := List Nat) (Structural.relationalizeCandidate xs) = Except.ok (reprStr xs) :=
+  Structural.reifyRepr_relationalize_of_lossless xs
 
 -- The elaboration bridge exposes that same program, so no concrete decoder computation is needed.
 example : reifyRepr (α := List Nat) (relationalize% ([1, 2, 1] : List Nat)) =
     Except.ok (reprStr ([1, 2, 1] : List Nat)) :=
-  Tier1.reifyRepr_relationalize_of_lossless _
+  Structural.reifyRepr_relationalize_of_lossless _
 
 private meta def checkPayload {α : Type} [SpytialReify α] [Repr α]
     (input : TSyntax `term) (expected : α) : TermElabM RootedJsonDataInstance := do
@@ -124,8 +124,8 @@ run_cmd Lean.Elab.Command.liftTermElabM do
 
 #eval show MetaM Unit from do
   for name in #[``list_inspection, ``list_repr,
-      ``Tier1.inspect_reify_relationalize_of_lossless,
-      ``Tier1.reifyRepr_relationalize_of_lossless] do
+      ``Structural.inspect_reify_relationalize_of_lossless,
+      ``Structural.reifyRepr_relationalize_of_lossless] do
     let axioms ← collectAxioms name
     unless axioms.all (#[``propext, ``Classical.choice, ``Quot.sound].contains ·) do
       throwError "unexpected axiom in the inspection-preservation theorem: {name}: {axioms}"

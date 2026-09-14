@@ -9,7 +9,7 @@ open Lean Meta SpytialLean
 namespace ReifyCertificationTest
 
 #eval show MetaM Unit from do
-  for name in #[``Tier1.reify_relationalizeAsWritten, ``Tier1.reify_relationalize] do
+  for name in #[``Structural.reify_relationalizeAsWritten, ``Structural.reify_relationalize] do
     let axioms ← collectAxioms name
     unless axioms.all (#[``propext, ``Classical.choice, ``Quot.sound].contains ·) do
       throwError "round-trip theorem contains unexpected axioms: {axioms}"
@@ -44,7 +44,7 @@ private meta def checkExactProof (value : Expr) (datum : RootedJsonDataInstance)
   let (datum, provenance, evidence) ← relationalizeRootedWithEvidence raw
   let proof ← Reify.certifyReification value datum
   checkExactProof value datum proof
-  unless proof.getUsedConstants.contains ``reify_of_tier1Represents do
+  unless proof.getUsedConstants.contains ``reify_of_structurallyRepresents do
     throwError "certification did not use the universal reconstruction theorem"
   unless provenance.size == datum.data.atoms.size && !evidence.terms.isEmpty do
     throwError "production metadata was lost"
@@ -124,7 +124,7 @@ set_option spytial.certifyReification true in
 private def checkedDatum : RootedJsonDataInstance := relationalize% (some 7 : Option Nat)
 
 example : reify checkedDatum = Except.ok (some 7 : Option Nat) := by
-  apply reify_of_tier1Represents
+  apply reify_of_structurallyRepresents
   decide_cbv
 
 end ReifyCertificationTest

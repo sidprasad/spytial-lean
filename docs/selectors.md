@@ -258,7 +258,9 @@ and resolved types (like `Nat` in a `Tree α` spec) pass without a warning.
 Derived type and field names are **short names** (`T` for `A.T`, `left` for a
 `left` field), a convention shared with the Rust and Python Spytial
 implementations. At render time a selector like `hideField left` matches
-every relation with that short name, so two constructors that each have a
-`left` field are styled together. The checker resolves one specific
+the tuple set union of every relation with that short name, so two constructors
+that each have a `left` field are styled together. Since spytial-core 6.0, distinct
+relation IDs survive in the datum; Lean uses those IDs for structural field
+reification, independently of selector names. The checker resolves one specific
 declaration, so on a short-name collision the runtime matches more than the
 checker points at.

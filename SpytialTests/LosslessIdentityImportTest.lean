@@ -1,24 +1,24 @@
 module
 
-public import SpytialTests.Tier1LosslessTest
-public meta import SpytialLean.Tier1LosslessDeriving
+public import SpytialTests.LosslessIdentityTest
+public meta import SpytialLean.LosslessIdentityDeriving
 public meta import Lean.Util.CollectAxioms
 
-open SpytialLean Tier1LosslessTest
+open SpytialLean LosslessIdentityTest
 
 -- A downstream module uses the generated certificate without importing private definitions.
-example (value : Tree) : reify (Tier1.relationalizeCandidate value) = Except.ok value :=
-  Tier1.reify_relationalize_of_lossless value
+example (value : Tree) : reify (Structural.relationalizeCandidate value) = Except.ok value :=
+  Structural.reify_relationalize_of_lossless value
 
 -- Derivation also composes with an imported recursive field type.
 public structure Imported where
   tree : Tree
   values : List Tree
-  deriving SpytialReify, Tier1Lossless
+  deriving SpytialReify, LosslessIdentity
 
 public theorem imported_roundTrip (value : Imported) :
-    reify (Tier1.relationalizeCandidate value) = Except.ok value :=
-  Tier1.reify_relationalize_of_lossless value
+    reify (Structural.relationalizeCandidate value) = Except.ok value :=
+  Structural.reify_relationalize_of_lossless value
 
 #eval show Lean.MetaM Unit from do
   let axioms ← Lean.collectAxioms ``imported_roundTrip

@@ -66,6 +66,26 @@ def myList : List Nat := [1, 2, 3]
 
 The relationalizer walks the expression, turning constructors into nodes and arguments into edges.
 
+### Structural reconstruction
+
+For supported datatypes, derive reconstruction and certify that sharing preserves the value:
+
+```lean
+inductive Packet where
+  | mk {tag : Nat} (payload : String)
+  deriving SpytialIdentity, SpytialReify, LosslessIdentity
+
+example (value : Packet) :
+    reify (Structural.relationalizeCandidate value) = Except.ok value :=
+  Structural.reify_relationalize_of_lossless value
+```
+
+This theorem holds for every value, including its implicit fields. `SpytialReify`
+generates a decoder, a structural checker, and a certified typed exposure;
+`LosslessIdentity` certifies the selected sharing policy. The
+[development guide](DEVGUIDE.md#structural-reconstruction) describes the guarantees
+and the types supported by automatic deriving.
+
 ### Layout operations
 
 Pass a `with [...]` block to control how the diagram is laid out. Ops and

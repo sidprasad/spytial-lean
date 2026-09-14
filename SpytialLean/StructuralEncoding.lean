@@ -5,7 +5,7 @@ public import SpytialLean.RelationalizerCore
 import Std.Data.HashMap.Lemmas
 import Std.Data.String.ToNat
 
-namespace SpytialLean.Tier1Structural
+namespace SpytialLean.StructuralEncoding
 
 open SpytialLean.RelationalizerCore
 
@@ -58,38 +58,38 @@ theorem atom_ok_of_mem {datum : JsonDataInstance} {atom : JsonAtom}
   unfold JsonDataInstance.atom
   rw [filter_key_eq_singleton JsonAtom.id datum.atoms.toList atom nodup mem]
 
-private def relationOfEntry (entry : String × (Array String × Array JsonTuple)) : JsonRelation :=
-  { id := entry.1, name := entry.1, types := entry.2.1, tuples := entry.2.2 }
+private def relationOfEntry (entry : String × RelationData) : JsonRelation :=
+  { id := entry.1, name := entry.2.name, types := entry.2.types, tuples := entry.2.tuples }
 
-theorem relation_filter_of_get {graph : Graph} {name : String}
-    {types : Array String} {tuples : Array JsonTuple}
-    (found : graph.relations[name]? = some (types, tuples)) :
-    (graph.toDataInstance.relations.toList.filter (fun relation => relation.name == name)) =
-      [{ id := name, name, types, tuples }] := by
-  have member : (name, (types, tuples)) ∈ graph.relations.toList := by
+theorem relation_filter_of_get {graph : Graph} {id : String} {relation : RelationData}
+    (found : graph.relations[id]? = some relation) :
+    (graph.toDataInstance.relations.toList.filter (fun relation => relation.id == id)) =
+      [{ id, name := relation.name, types := relation.types, tuples := relation.tuples }] := by
+  have member : (id, relation) ∈ graph.relations.toList := by
     simpa [Std.HashMap.mem_toList_iff_getElem?_eq_some] using found
   have nodup : (graph.relations.toList.map fun entry => entry.1).Nodup := by
     simpa [Std.HashMap.map_fst_toList_eq_keys] using graph.relations.nodup_keys
   have filtered := filter_key_eq_singleton (fun entry => entry.1)
-    graph.relations.toList (name, (types, tuples)) nodup member
+    graph.relations.toList (id, relation) nodup member
   simp only [Graph.toDataInstance, Array.toList_map, Std.HashMap.toList_toArray]
   change (List.map relationOfEntry graph.relations.toList).filter
-    (fun relation => relation.name == name) = [_]
+    (fun relation => relation.id == id) = [_]
   rw [List.filter_map]
   change List.map relationOfEntry
-    (graph.relations.toList.filter (fun entry => entry.1 == name)) = [_]
+    (graph.relations.toList.filter (fun entry => entry.1 == id)) = [_]
   rw [filtered]
   rfl
 
 theorem child_ok_of_mem {graph : Graph}
     {owner child field ownerType childType ownerLabel childLabel : String}
-    {declaredTypes : Array String} {tuples : Array JsonTuple}
+    {relation : RelationData}
     (atomNodup : (graph.atoms.toList.map JsonAtom.id).Nodup)
     (ownerMem : { id := owner, type := ownerType, label := ownerLabel } ∈ graph.atoms.toList)
     (childMem : { id := child, type := childType, label := childLabel } ∈ graph.atoms.toList)
-    (relationFound : graph.relations[field]? = some (declaredTypes, tuples))
-    (ownerNodup : (tuples.toList.map fun tuple => tuple.atoms[0]?).Nodup)
-    (tupleMem : { atoms := #[owner, child], types := #[ownerType, childType] } ∈ tuples.toList) :
+    (relationFound : graph.relations[fieldRelationId ownerType field]? = some relation)
+    (ownerNodup : (relation.tuples.toList.map fun tuple => tuple.atoms[0]?).Nodup)
+    (tupleMem : { atoms := #[owner, child], types := #[ownerType, childType] } ∈
+      relation.tuples.toList) :
     graph.toDataInstance.child owner field = .ok child := by
   have ownerOk : graph.toDataInstance.atom owner =
       .ok { id := owner, type := ownerType, label := ownerLabel } :=
@@ -101,13 +101,13 @@ theorem child_ok_of_mem {graph : Graph}
       atom_ok_of_mem (datum := graph.toDataInstance) atomNodup childMem
   have relationFilter := relation_filter_of_get relationFound
   have tupleFilter := filter_key_eq_singleton (fun tuple => tuple.atoms[0]?)
-    tuples.toList { atoms := #[owner, child], types := #[ownerType, childType] }
+    relation.tuples.toList { atoms := #[owner, child], types := #[ownerType, childType] }
     ownerNodup tupleMem
-  have tupleFilter' : tuples.toList.filter (fun tuple => tuple.atoms[0]? == some owner) =
+  have tupleFilter' : relation.tuples.toList.filter (fun tuple => tuple.atoms[0]? == some owner) =
       [{ atoms := #[owner, child], types := #[ownerType, childType] }] := by
     simpa using tupleFilter
   unfold JsonDataInstance.child
-  simp_all [Bind.bind, Pure.pure, Except.bind, Except.pure]
+  simp_all [JsonDataInstance.fieldTuples, Bind.bind, Pure.pure, Except.bind, Except.pure]
 
 namespace Node
 
@@ -214,13 +214,13 @@ structure Graph.Valid (graph : Graph) : Prop where
   atomIdsNodup : (graph.atoms.toList.map JsonAtom.id).Nodup
   atomIdsBelow : ∀ atom ∈ graph.atoms.toList,
     ∃ index, index < graph.nextId ∧ atom.id = atomId index
-  relationOwnersNodup : ∀ (name : String) (types : Array String) (tuples : Array JsonTuple),
-    graph.relations[name]? = some (types, tuples) →
-      (tuples.toList.map tupleOwner?).Nodup
-  relationOwnersBelow : ∀ (name : String) (types : Array String) (tuples : Array JsonTuple)
+  relationOwnersNodup : ∀ (name : String) (relation : RelationData),
+    graph.relations[name]? = some relation →
+      (relation.tuples.toList.map tupleOwner?).Nodup
+  relationOwnersBelow : ∀ (name : String) (relation : RelationData)
       (owner : String),
-    graph.relations[name]? = some (types, tuples) →
-      some owner ∈ tuples.toList.map tupleOwner? →
+    graph.relations[name]? = some relation →
+      some owner ∈ relation.tuples.toList.map tupleOwner? →
       ∃ index, index < graph.nextId ∧ owner = atomId index
 
 def Graph.allocateAtom (graph : Graph) (type label : String) : String × Graph :=
@@ -265,8 +265,8 @@ theorem Graph.Valid.allocateAtom (valid : Valid graph) :
           s!"atom_{graph.nextId}" = atomId index
         exact ⟨graph.nextId, by omega, rfl⟩
     · simpa using valid.relationOwnersNodup
-    · intro name types tuples owner found ownerMem
-      rcases valid.relationOwnersBelow name types tuples owner found ownerMem with
+    · intro name relation owner found ownerMem
+      rcases valid.relationOwnersBelow name relation owner found ownerMem with
         ⟨index, indexLt, ownerEq⟩
       change ∃ index, index < graph.nextId + 1 ∧ owner = atomId index
       exact ⟨index, by omega, ownerEq⟩
@@ -277,86 +277,86 @@ theorem Graph.Valid.allocateAtom (valid : Valid graph) :
 
 theorem Graph.addField_get_self (graph : Graph)
     (name owner ownerType child childType : String) :
-    let existing := graph.relations.getD name (#[ownerType, childType], #[])
-    (graph.addField name owner ownerType child childType).relations[name]? =
-      some (existing.1, existing.2.push {
-        atoms := #[owner, child], types := #[ownerType, childType] }) := by
+    let existing := graph.relations.getD (fieldRelationId ownerType name)
+      { name, types := #[ownerType, childType], tuples := #[] }
+    (graph.addField name owner ownerType child childType).relations[
+      fieldRelationId ownerType name]? =
+      some { existing with tuples := existing.tuples.push {
+        atoms := #[owner, child], types := #[ownerType, childType] } } := by
   simp [Graph.addField, Graph.addTuple]
 
 theorem Graph.addField_get_other (graph : Graph)
-    {other name owner ownerType child childType : String} (different : name ≠ other) :
+    {other name owner ownerType child childType : String}
+    (different : fieldRelationId ownerType name ≠ other) :
     (graph.addField name owner ownerType child childType).relations[other]? =
       graph.relations[other]? := by
   simp [Graph.addField, Graph.addTuple, Std.HashMap.getElem?_insert, different]
 
 def Graph.OwnerFree (graph : Graph) (owner : String) : Prop :=
-  ∀ (name : String) (types : Array String) (tuples : Array JsonTuple),
-    graph.relations[name]? = some (types, tuples) →
-    some owner ∉ tuples.toList.map tupleOwner?
+  ∀ (id : String) (relation : RelationData),
+    graph.relations[id]? = some relation →
+    some owner ∉ relation.tuples.toList.map tupleOwner?
 
-def Graph.FieldFree (graph : Graph) (owner name : String) : Prop :=
-  ∀ (types : Array String) (tuples : Array JsonTuple),
-    graph.relations[name]? = some (types, tuples) →
-      some owner ∉ tuples.toList.map tupleOwner?
+def Graph.FieldFree (graph : Graph) (owner id : String) : Prop :=
+  ∀ (relation : RelationData),
+    graph.relations[id]? = some relation →
+      some owner ∉ relation.tuples.toList.map tupleOwner?
 
 def Graph.Subgraph (smaller larger : Graph) : Prop :=
   (∀ atom, atom ∈ smaller.atoms.toList → atom ∈ larger.atoms.toList) ∧
-  ∀ (name : String) (types : Array String) (tuples : Array JsonTuple)
-      (tuple : JsonTuple),
-    smaller.relations[name]? = some (types, tuples) → tuple ∈ tuples.toList →
-      ∃ largerTypes largerTuples,
-        larger.relations[name]? = some (largerTypes, largerTuples) ∧
-        tuple ∈ largerTuples.toList
+  ∀ (id : String) (relation : RelationData) (tuple : JsonTuple),
+    smaller.relations[id]? = some relation → tuple ∈ relation.tuples.toList →
+      ∃ largerRelation,
+        larger.relations[id]? = some largerRelation ∧ tuple ∈ largerRelation.tuples.toList
 
 theorem Graph.FieldFree.allocateAtom (free : FieldFree graph owner name) :
     let (_, larger) := allocateAtom graph type label
     FieldFree larger owner name := by
   unfold FieldFree at *
-  simpa [SpytialLean.Tier1Structural.Graph.allocateAtom, Graph.freshId, Graph.addAtom] using free
+  simpa [SpytialLean.StructuralEncoding.Graph.allocateAtom, Graph.freshId, Graph.addAtom] using free
 
 theorem Graph.Valid.allocateAtom_ownerFree (valid : Valid graph) :
-    let (owner, larger) := SpytialLean.Tier1Structural.Graph.allocateAtom graph type label
+    let (owner, larger) := SpytialLean.StructuralEncoding.Graph.allocateAtom graph type label
     OwnerFree larger owner := by
-  dsimp [SpytialLean.Tier1Structural.Graph.allocateAtom, Graph.freshId, Graph.addAtom, OwnerFree]
-  intro name types tuples found ownerMem
-  rcases valid.relationOwnersBelow name types tuples (atomId graph.nextId) found ownerMem with
+  dsimp [SpytialLean.StructuralEncoding.Graph.allocateAtom, Graph.freshId, Graph.addAtom, OwnerFree]
+  intro name relation found ownerMem
+  rcases valid.relationOwnersBelow name relation (atomId graph.nextId) found ownerMem with
     ⟨index, indexLt, ownerEq⟩
   have : graph.nextId = index := atomId_injective ownerEq
   omega
 
-theorem Graph.FieldFree.addField_of_name_ne (free : FieldFree graph protectedOwner target)
-    (different : addedName ≠ target) :
+theorem Graph.FieldFree.addField_of_id_ne (free : FieldFree graph protectedOwner target)
+    (different : fieldRelationId ownerType addedName ≠ target) :
     FieldFree (graph.addField addedName owner ownerType child childType) protectedOwner target := by
-  intro types tuples found
-  apply free types tuples
+  intro relation found
+  apply free relation
   rw [← found]
   exact (addField_get_other graph different).symm
 
 theorem Graph.FieldFree.addField_of_owner_ne (free : FieldFree graph protectedOwner target)
     (different : owner ≠ protectedOwner) :
     FieldFree (graph.addField addedName owner ownerType child childType) protectedOwner target := by
-  by_cases same : addedName = target
+  by_cases same : fieldRelationId ownerType addedName = target
   · subst target
-    intro types tuples found
-    cases oldFound : graph.relations[addedName]? with
+    intro relation found
+    cases oldFound : graph.relations[fieldRelationId ownerType addedName]? with
     | none =>
         have self := addField_get_self graph addedName owner ownerType child childType
         rw [Std.HashMap.getD_eq_getD_getElem?, oldFound] at self
         simp at self
         have pairEq := Option.some.inj (found.symm.trans self)
-        cases pairEq
+        subst relation
         simp only [List.map_singleton, List.mem_singleton, tupleOwner?]
         intro member
         rw [arrayPair_head] at member
         exact different (Option.some.inj member).symm
     | some old =>
-        rcases old with ⟨oldTypes, oldTuples⟩
         have self := addField_get_self graph addedName owner ownerType child childType
         rw [Std.HashMap.getD_eq_getD_getElem?, oldFound] at self
         simp at self
         have pairEq := Option.some.inj (found.symm.trans self)
-        cases pairEq
-        have oldFree := free types oldTuples oldFound
+        subst relation
+        have oldFree := free old oldFound
         simp only [Array.toList_push, List.map_append, List.map_singleton,
           List.mem_append, List.mem_singleton, tupleOwner?]
         intro member
@@ -364,86 +364,69 @@ theorem Graph.FieldFree.addField_of_owner_ne (free : FieldFree graph protectedOw
         · exact oldFree oldMember
         · rw [arrayPair_head] at newMember
           exact different (Option.some.inj newMember).symm
-  · exact free.addField_of_name_ne same
+  · exact free.addField_of_id_ne same
 
 theorem Graph.Valid.addField (valid : Valid graph)
-    (fieldFree : FieldFree graph owner name)
+    (fieldFree : FieldFree graph owner (fieldRelationId ownerType name))
     (ownerMem : { id := owner, type := ownerType, label := ownerLabel } ∈ graph.atoms.toList) :
     Valid (graph.addField name owner ownerType child childType) := by
   have ownerBelow : ∃ index, index < graph.nextId ∧ owner = atomId index := by
     rcases valid.atomIdsBelow _ ownerMem with ⟨index, indexLt, idEq⟩
-    change owner = atomId index at idEq
     exact ⟨index, indexLt, idEq⟩
-  have ownerBelow' : ∃ index,
-      index < (graph.addField name owner ownerType child childType).nextId ∧
-        owner = atomId index := by
-    simpa [Graph.addField, Graph.addTuple] using ownerBelow
   refine ⟨valid.atomIdsNodup, valid.atomIdsBelow, ?_, ?_⟩
-  · intro other types tuples found
-    by_cases same : name = other
+  · intro other relation found
+    by_cases same : fieldRelationId ownerType name = other
     · subst other
-      cases oldFound : graph.relations[name]? with
+      have self := addField_get_self graph name owner ownerType child childType
+      cases oldFound : graph.relations[fieldRelationId ownerType name]? with
       | none =>
-          have self := addField_get_self graph name owner ownerType child childType
           rw [Std.HashMap.getD_eq_getD_getElem?, oldFound] at self
           simp at self
           have pairEq := Option.some.inj (found.symm.trans self)
-          cases pairEq
+          subst relation
           simp [tupleOwner?]
       | some old =>
-          rcases old with ⟨oldTypes, oldTuples⟩
-          have self := addField_get_self graph name owner ownerType child childType
           rw [Std.HashMap.getD_eq_getD_getElem?, oldFound] at self
           simp at self
           have pairEq := Option.some.inj (found.symm.trans self)
-          cases pairEq
-          have oldNodup := valid.relationOwnersNodup name types oldTuples oldFound
-          have oldFree := fieldFree types oldTuples oldFound
-          rw [Array.toList_push, List.map_append, List.map_singleton,
-            List.nodup_append]
+          subst relation
+          have oldNodup := valid.relationOwnersNodup _ old oldFound
+          have oldFree := fieldFree old oldFound
+          rw [Array.toList_push, List.map_append, List.map_singleton, List.nodup_append]
           refine ⟨oldNodup, by simp, ?_⟩
           intro old oldMember new newMember
           simp only [tupleOwner?, List.mem_singleton] at newMember
           subst new
           exact fun equal => oldFree (by simpa [equal] using oldMember)
-    · have oldFound : graph.relations[other]? = some (types, tuples) := by
-        rw [← found]
-        exact (addField_get_other graph same).symm
-      exact valid.relationOwnersNodup other types tuples oldFound
-  · intro other types tuples queriedOwner found queriedOwnerMem
-    by_cases same : name = other
+    · exact valid.relationOwnersNodup other relation
+        ((addField_get_other graph same).symm.trans found)
+  · intro other relation queriedOwner found queriedOwnerMem
+    by_cases same : fieldRelationId ownerType name = other
     · subst other
-      cases oldFound : graph.relations[name]? with
+      have self := addField_get_self graph name owner ownerType child childType
+      cases oldFound : graph.relations[fieldRelationId ownerType name]? with
       | none =>
-          have self := addField_get_self graph name owner ownerType child childType
           rw [Std.HashMap.getD_eq_getD_getElem?, oldFound] at self
           simp at self
           have pairEq := Option.some.inj (found.symm.trans self)
-          cases pairEq
+          subst relation
           simp [tupleOwner?] at queriedOwnerMem
           subst queriedOwner
-          exact ownerBelow'
+          exact ownerBelow
       | some old =>
-          rcases old with ⟨oldTypes, oldTuples⟩
-          have self := addField_get_self graph name owner ownerType child childType
           rw [Std.HashMap.getD_eq_getD_getElem?, oldFound] at self
           simp at self
           have pairEq := Option.some.inj (found.symm.trans self)
-          cases pairEq
+          subst relation
           simp only [Array.toList_push, List.map_append, List.map_singleton,
             List.mem_append, List.mem_singleton, tupleOwner?] at queriedOwnerMem
           rcases queriedOwnerMem with oldMember | newMember
-          · simpa [Graph.addField, Graph.addTuple] using
-              valid.relationOwnersBelow name types oldTuples queriedOwner
-                oldFound oldMember
+          · exact valid.relationOwnersBelow _ old queriedOwner oldFound oldMember
           · rw [arrayPair_head] at newMember
             have queriedEq : queriedOwner = owner := Option.some.inj newMember
-            simpa [queriedEq] using ownerBelow'
-    · have oldFound : graph.relations[other]? = some (types, tuples) := by
-        rw [← found]
-        exact (addField_get_other graph same).symm
-      simpa [Graph.addField, Graph.addTuple] using
-        valid.relationOwnersBelow other types tuples queriedOwner oldFound queriedOwnerMem
+            simpa [queriedEq, Graph.addField, Graph.addTuple] using ownerBelow
+    · exact valid.relationOwnersBelow other relation queriedOwner
+        ((addField_get_other graph same).symm.trans found) queriedOwnerMem
 
 def nodeTypeName : Node typeKey valueKey → String
   | .value _ type _ _ => type
@@ -452,13 +435,13 @@ def Graph.HasId (graph : Graph) (id : String) : Prop :=
   ∃ atom, atom ∈ graph.atoms.toList ∧ atom.id = id
 
 theorem Graph.Subgraph.hasId {id : String} (subgraph : Subgraph smaller larger) :
-    SpytialLean.Tier1Structural.Graph.HasId smaller id →
-      SpytialLean.Tier1Structural.Graph.HasId larger id := by
+    SpytialLean.StructuralEncoding.Graph.HasId smaller id →
+      SpytialLean.StructuralEncoding.Graph.HasId larger id := by
   rintro ⟨atom, atomMem, atomIdEq⟩
   exact ⟨atom, subgraph.1 atom atomMem, atomIdEq⟩
 
 theorem Graph.Valid.oldId_ne_fresh {id : String} (valid : Valid graph)
-    (old : SpytialLean.Tier1Structural.Graph.HasId graph id) :
+    (old : SpytialLean.StructuralEncoding.Graph.HasId graph id) :
     id ≠ atomId graph.nextId := by
   rintro equality
   rcases old with ⟨atom, atomMem, atomIdEq⟩
@@ -468,31 +451,34 @@ theorem Graph.Valid.oldId_ne_fresh {id : String} (valid : Valid graph)
 
 theorem Graph.addField_contains (graph : Graph)
     (name owner ownerType child childType : String) :
-    ∃ types tuples,
-      (graph.addField name owner ownerType child childType).relations[name]? =
-        some (types, tuples) ∧
-      fieldTuple owner child ownerType childType ∈ tuples.toList := by
-  let existing := graph.relations.getD name (#[ownerType, childType], #[])
-  refine ⟨existing.1, existing.2.push (fieldTuple owner child ownerType childType), ?_, ?_⟩
-  · simpa [existing, fieldTuple] using
+    ∃ relation,
+      (graph.addField name owner ownerType child childType).relations[
+      fieldRelationId ownerType name]? =
+        some relation ∧ fieldTuple owner child ownerType childType ∈ relation.tuples.toList := by
+  let existing := graph.relations.getD (fieldRelationId ownerType name)
+    { name, types := #[ownerType, childType], tuples := #[] }
+  let newTuples := existing.tuples.push (fieldTuple owner child ownerType childType)
+  let updated := { existing with tuples := newTuples }
+  refine ⟨updated, ?_, ?_⟩
+  · simpa [updated, newTuples, existing, fieldTuple] using
       addField_get_self graph name owner ownerType child childType
-  · simp [Array.toList_push]
+  · simp [updated, newTuples, Array.toList_push]
 
 mutual
   /- A proof-only specification for the occurrence-preserving behavior of the shared engine. -/
   def Graph.addFreshNode (graph : Graph) :
       Node typeKey valueKey → String × Graph
     | .value _ type label fields =>
-        let (root, graph) := SpytialLean.Tier1Structural.Graph.allocateAtom graph type label
-        (root, SpytialLean.Tier1Structural.Graph.addFreshFields graph root type fields)
+        let (root, graph) := SpytialLean.StructuralEncoding.Graph.allocateAtom graph type label
+        (root, SpytialLean.StructuralEncoding.Graph.addFreshFields graph root type fields)
 
   def Graph.addFreshFields (graph : Graph) (owner ownerType : String) :
       List (String × Node typeKey valueKey) → Graph
     | [] => graph
     | (name, child) :: fields =>
-        let (childRoot, graph) := SpytialLean.Tier1Structural.Graph.addFreshNode graph child
+        let (childRoot, graph) := SpytialLean.StructuralEncoding.Graph.addFreshNode graph child
         let graph := graph.addField name owner ownerType childRoot (nodeTypeName child)
-        SpytialLean.Tier1Structural.Graph.addFreshFields graph owner ownerType fields
+        SpytialLean.StructuralEncoding.Graph.addFreshFields graph owner ownerType fields
 end
 
 mutual
@@ -507,8 +493,9 @@ mutual
       String → String → List (String × Node typeKey valueKey) → Prop where
     | nil : EncodesFields graph root ownerType []
     | cons
-        (relationFound : graph.relations[name]? = some (declaredTypes, tuples))
-        (tupleMem : fieldTuple root childRoot ownerType (nodeTypeName child) ∈ tuples.toList)
+        (relationFound : graph.relations[fieldRelationId ownerType name]? = some relation)
+        (tupleMem : fieldTuple root childRoot ownerType (nodeTypeName child) ∈
+          relation.tuples.toList)
         (childEncoded : Encodes graph childRoot child)
         (fieldsEncoded : EncodesFields graph root ownerType fields) :
         EncodesFields graph root ownerType ((name, child) :: fields)
@@ -527,18 +514,18 @@ theorem Node.countFields_lt_countFields_cons (name : String) (child : Node typeK
   omega
 
 theorem Graph.Subgraph.refl (graph : Graph) : Subgraph graph graph := by
-  exact ⟨fun _ => id, fun _ types tuples tuple found member =>
-    ⟨types, tuples, found, member⟩⟩
+  exact ⟨fun _ => id, fun _ relation tuple found member =>
+    ⟨relation, found, member⟩⟩
 
 theorem Graph.Subgraph.trans (first : Subgraph small middle) (second : Subgraph middle large) :
     Subgraph small large := by
   constructor
   · intro atom member
     exact second.1 atom (first.1 atom member)
-  · intro name types tuples tuple found member
-    rcases first.2 name types tuples tuple found member with
-      ⟨middleTypes, middleTuples, middleFound, middleMember⟩
-    exact second.2 name middleTypes middleTuples tuple middleFound middleMember
+  · intro name relation tuple found member
+    rcases first.2 name relation tuple found member with
+      ⟨middleRelation, middleFound, middleMember⟩
+    exact second.2 name middleRelation tuple middleFound middleMember
 
 theorem Graph.Subgraph.allocateAtom :
     let (_, larger) := allocateAtom graph type label
@@ -548,28 +535,25 @@ theorem Graph.Subgraph.allocateAtom :
   · intro atom member
     change atom ∈ graph.atoms.toList.concat _
     simp [List.concat_eq_append, member]
-  · intro name types tuples tuple found member
-    exact ⟨types, tuples, found, member⟩
+  · intro name relation tuple found member
+    exact ⟨relation, found, member⟩
 
 theorem Graph.Subgraph.addField :
     Subgraph graph (graph.addField name owner ownerType child childType) := by
   constructor
   · intro atom member
     exact member
-  · intro other types tuples tuple found member
-    by_cases same : name = other
+  · intro other relation tuple found member
+    by_cases same : fieldRelationId ownerType name = other
     · subst other
       let newTuple : JsonTuple := {
         atoms := #[owner, child], types := #[ownerType, childType] }
-      have existingEq : graph.relations.getD name (#[ownerType, childType], #[]) =
-          (types, tuples) := by
-        rw [Std.HashMap.getD_eq_getD_getElem?, found]
-        rfl
-      refine ⟨types, tuples.push newTuple, ?_, ?_⟩
-      · simpa [existingEq] using
-          addField_get_self graph name owner ownerType child childType
+      have self := addField_get_self graph name owner ownerType child childType
+      rw [Std.HashMap.getD_eq_getD_getElem?, found] at self
+      refine ⟨{ relation with tuples := relation.tuples.push newTuple }, ?_, ?_⟩
+      · simpa using self
       · simp [Array.toList_push, member]
-    · exact ⟨types, tuples, (addField_get_other graph same).trans found, member⟩
+    · exact ⟨relation, (addField_get_other graph same).trans found, member⟩
 
 mutual
 theorem Graph.Encodes.mono (subgraph : Subgraph small large) :
@@ -586,10 +570,9 @@ theorem Graph.EncodesFields.mono (subgraph : Subgraph small large) :
   intro encoded
   cases encoded with
   | nil => exact .nil
-  | @cons name declaredTypes tuples _ childRoot _ _ _ found tupleMem childEncoded
-      fieldsEncoded =>
-      rcases subgraph.2 name declaredTypes tuples _ found tupleMem with
-        ⟨largeTypes, largeTuples, largeFound, largeTupleMem⟩
+  | cons found tupleMem childEncoded fieldsEncoded =>
+      rcases subgraph.2 _ _ _ found tupleMem with
+        ⟨largeRelation, largeFound, largeTupleMem⟩
       exact .cons largeFound largeTupleMem (Encodes.mono subgraph childEncoded)
         (EncodesFields.mono subgraph fieldsEncoded)
   termination_by _ => Node.countFields fields
@@ -643,15 +626,14 @@ mutual
     | cons field fields =>
         rcases field with ⟨name, child⟩
         cases encoded with
-        | @cons _ declaredTypes tuples _ childRoot _ _ _ relationFound tupleMem
-            childEncoded fieldsEncoded =>
+        | cons relationFound tupleMem childEncoded fieldsEncoded =>
             cases child with
             | value childIdentity childType childLabel childFields =>
                 cases childEncoded with
                 | value childMem childFieldsEncoded =>
-                    have childOk : graph.toDataInstance.child root name = .ok childRoot :=
+                    have childOk :=
                       child_ok_of_mem valid.atomIdsNodup ownerMem childMem relationFound
-                        (valid.relationOwnersNodup name declaredTypes tuples relationFound) tupleMem
+                        (valid.relationOwnersNodup _ _ relationFound) tupleMem
                     have childEnough : Node.depth
                         (.value childIdentity childType childLabel childFields) ≤ fuel := by
                       simpa [Node.depthFields] using Nat.le_trans (Nat.le_max_left _ _) enoughFuel
@@ -665,7 +647,7 @@ mutual
 end
 
 def Graph.PreservesOldFieldFree (before after : Graph) : Prop :=
-  ∀ (owner name : String), SpytialLean.Tier1Structural.Graph.HasId before owner →
+  ∀ (owner name : String), SpytialLean.StructuralEncoding.Graph.HasId before owner →
     FieldFree before owner name → FieldFree after owner name
 
 mutual
@@ -673,16 +655,16 @@ mutual
       {typeKey : Type u} {valueKey : Type v} {graph : Graph}
       {node : Node typeKey valueKey}
       (valid : Valid graph) (wellFormed : Node.WellFormed node) :
-      let (root, after) := SpytialLean.Tier1Structural.Graph.addFreshNode graph node
+      let (root, after) := SpytialLean.StructuralEncoding.Graph.addFreshNode graph node
       Valid after ∧ Subgraph graph after ∧ Encodes after root node ∧
         after.atoms.size = graph.atoms.size + Node.atomCount node ∧
         PreservesOldFieldFree graph after := by
     cases node with
     | value identity type label fields =>
         change Node.FieldsWellFormed fields at wellFormed
-        unfold SpytialLean.Tier1Structural.Graph.addFreshNode
+        unfold SpytialLean.StructuralEncoding.Graph.addFreshNode
         generalize allocation :
-          SpytialLean.Tier1Structural.Graph.allocateAtom graph type label = allocated
+          SpytialLean.StructuralEncoding.Graph.allocateAtom graph type label = allocated
         rcases allocated with ⟨root, afterAtom⟩
         have allocationFacts := valid.allocateAtom (type := type) (label := label)
         rw [allocation] at allocationFacts
@@ -698,9 +680,9 @@ mutual
           rw [allocation] at proof
           exact proof
         have fieldsFree : ∀ name ∈ fields.map Prod.fst,
-            FieldFree afterAtom root name := by
+            FieldFree afterAtom root (fieldRelationId type name) := by
           intro name nameMem
-          exact rootOwnerFree name
+          exact rootOwnerFree (fieldRelationId type name)
         have fieldsFacts :=
           Graph.addFreshFields_correct afterAtomValid rootMem wellFormed fieldsFree
         rcases fieldsFacts with
@@ -716,7 +698,7 @@ mutual
           have oldHasAfterAtom := allocationSubgraph.hasId oldHasId
           have rootEq : root = atomId graph.nextId := by
             have equality := congrArg Prod.fst allocation
-            simpa [SpytialLean.Tier1Structural.Graph.allocateAtom, Graph.freshId,
+            simpa [SpytialLean.StructuralEncoding.Graph.allocateAtom, Graph.freshId,
               atomId] using equality.symm
           have oldNeRoot : oldOwner ≠ root := by
             rw [rootEq]
@@ -730,17 +712,18 @@ mutual
       (valid : Valid graph)
       (ownerMem : { id := owner, type := ownerType, label := ownerLabel } ∈ graph.atoms.toList)
       (wellFormed : Node.FieldsWellFormed fields)
-      (fieldsFree : ∀ name ∈ fields.map Prod.fst, FieldFree graph owner name) :
-      let after := SpytialLean.Tier1Structural.Graph.addFreshFields graph owner ownerType fields
+      (fieldsFree : ∀ name ∈ fields.map Prod.fst,
+        FieldFree graph owner (fieldRelationId ownerType name)) :
+      let after := SpytialLean.StructuralEncoding.Graph.addFreshFields graph owner ownerType fields
       Valid after ∧ Subgraph graph after ∧ EncodesFields after owner ownerType fields ∧
         after.atoms.size = graph.atoms.size + Node.atomCountFields fields ∧
-        (∀ (oldOwner name : String), SpytialLean.Tier1Structural.Graph.HasId graph oldOwner →
+        (∀ (oldOwner name : String), SpytialLean.StructuralEncoding.Graph.HasId graph oldOwner →
           FieldFree graph oldOwner name →
-          (oldOwner ≠ owner ∨ name ∉ fields.map Prod.fst) →
+          (oldOwner ≠ owner ∨ name ∉ fields.map (fun f => fieldRelationId ownerType f.1)) →
           FieldFree after oldOwner name) := by
     cases fields with
     | nil =>
-        simp only [SpytialLean.Tier1Structural.Graph.addFreshFields, Node.atomCountFields]
+        simp only [SpytialLean.StructuralEncoding.Graph.addFreshFields, Node.atomCountFields]
         exact ⟨valid, Graph.Subgraph.refl graph, .nil, rfl,
           fun _ _ _ free _ => free⟩
     | cons field fields =>
@@ -751,15 +734,16 @@ mutual
         have fieldFree := fieldsFree fieldName (by simp)
         have childFacts := Graph.addFreshNode_correct valid childWellFormed
         generalize childRun :
-          SpytialLean.Tier1Structural.Graph.addFreshNode graph child = childResult
+          SpytialLean.StructuralEncoding.Graph.addFreshNode graph child = childResult
           at childFacts ⊢
         rcases childResult with ⟨childRoot, afterChild⟩
         rcases childFacts with
           ⟨afterChildValid, childSubgraph, childEncoded, childSize, childPreserve⟩
-        have ownerHasId : SpytialLean.Tier1Structural.Graph.HasId graph owner :=
+        have ownerHasId : SpytialLean.StructuralEncoding.Graph.HasId graph owner :=
           ⟨{ id := owner, type := ownerType, label := ownerLabel }, ownerMem, rfl⟩
         have ownerMemAfterChild := childSubgraph.1 _ ownerMem
-        have fieldFreeAfterChild := childPreserve owner fieldName ownerHasId fieldFree
+        have fieldFreeAfterChild := childPreserve owner
+          (fieldRelationId ownerType fieldName) ownerHasId fieldFree
         let afterField := afterChild.addField fieldName owner ownerType childRoot
           (nodeTypeName child)
         have afterFieldValid : Valid afterField := by
@@ -770,36 +754,38 @@ mutual
             { id := owner, type := ownerType, label := ownerLabel } ∈ afterField.atoms.toList :=
           fieldSubgraph.1 _ ownerMemAfterChild
         have remainingFree : ∀ name ∈ fields.map Prod.fst,
-            FieldFree afterField owner name := by
+            FieldFree afterField owner (fieldRelationId ownerType name) := by
           intro name nameMem
-          have before := childPreserve owner name ownerHasId
+          have before := childPreserve owner (fieldRelationId ownerType name) ownerHasId
             (fieldsFree name (by simp [nameMem]))
-          apply before.addField_of_name_ne
+          apply before.addField_of_id_ne
           intro equality
+          have same := fieldRelationId_injective ownerType equality
           apply fieldNameFresh
-          simpa [equality] using nameMem
+          simpa [same] using nameMem
         have remainingFacts := Graph.addFreshFields_correct afterFieldValid ownerMemAfterField
           fieldsWellFormed remainingFree
         rcases remainingFacts with
           ⟨afterValid, remainingSubgraph, remainingEncoded, remainingSize,
             remainingPreserve⟩
         have totalSubgraph : Subgraph graph
-            (SpytialLean.Tier1Structural.Graph.addFreshFields afterField owner ownerType fields) :=
+            (SpytialLean.StructuralEncoding.Graph.addFreshFields
+              afterField owner ownerType fields) :=
           childSubgraph.trans (fieldSubgraph.trans remainingSubgraph)
         have edge := Graph.addField_contains afterChild fieldName owner ownerType childRoot
           (nodeTypeName child)
-        rcases edge with ⟨edgeTypes, edgeTuples, edgeFound, edgeMem⟩
-        rcases remainingSubgraph.2 fieldName edgeTypes edgeTuples _ edgeFound edgeMem with
-          ⟨afterTypes, afterTuples, afterFound, afterMem⟩
+        rcases edge with ⟨edgeRelation, edgeFound, edgeMem⟩
+        rcases remainingSubgraph.2 _ edgeRelation _ edgeFound edgeMem with
+          ⟨afterRelation, afterFound, afterMem⟩
         have childEncodedAfter : Encodes
-            (SpytialLean.Tier1Structural.Graph.addFreshFields
+            (SpytialLean.StructuralEncoding.Graph.addFreshFields
               afterField owner ownerType fields) childRoot child :=
           childEncoded.mono (fieldSubgraph.trans remainingSubgraph)
-        simp only [SpytialLean.Tier1Structural.Graph.addFreshFields, childRun]
+        simp only [SpytialLean.StructuralEncoding.Graph.addFreshFields, childRun]
         refine ⟨afterValid, totalSubgraph,
           .cons afterFound afterMem childEncodedAfter remainingEncoded, ?_, ?_⟩
         · simp only [Node.atomCountFields]
-          change (SpytialLean.Tier1Structural.Graph.addFreshFields
+          change (SpytialLean.StructuralEncoding.Graph.addFreshFields
               afterField owner ownerType fields).atoms.size =
             graph.atoms.size + (Node.atomCount child + Node.atomCountFields fields)
           have afterFieldAtoms : afterField.atoms.size = afterChild.atoms.size := by
@@ -811,7 +797,7 @@ mutual
           have freeAfterField : FieldFree afterField oldOwner name := by
             rcases allowed with ownerDifferent | nameUnused
             · exact freeAfterChild.addField_of_owner_ne ownerDifferent.symm
-            · apply freeAfterChild.addField_of_name_ne
+            · apply freeAfterChild.addField_of_id_ne
               intro equality
               apply nameUnused
               simp [equality]
@@ -827,14 +813,14 @@ mutual
       [BEq valueKey] [Hashable valueKey]
       (engine : Engine typeKey valueKey) (node : Node typeKey valueKey) :
       engine.addNode (Node.asWritten node) =
-        let (root, graph) := SpytialLean.Tier1Structural.Graph.addFreshNode engine.graph node
+        let (root, graph) := SpytialLean.StructuralEncoding.Graph.addFreshNode engine.graph node
         (root, { engine with graph }) := by
     cases node with
     | value identity type label fields =>
         simp only [Node.asWritten, Engine.addNode, Engine.intern, Engine.find?,
           Graph.freshId, Engine.register,
-          SpytialLean.Tier1Structural.Graph.addFreshNode,
-          SpytialLean.Tier1Structural.Graph.allocateAtom, Graph.addAtom]
+          SpytialLean.StructuralEncoding.Graph.addFreshNode,
+          SpytialLean.StructuralEncoding.Graph.allocateAtom, Graph.addAtom]
         exact congrArg (fun result => (s!"atom_{engine.graph.nextId}", result))
           (Engine.addFields_asWritten
             { engine with
@@ -848,7 +834,7 @@ mutual
       (fields : List (String × Node typeKey valueKey)) :
       engine.addFields owner ownerType (Node.asWrittenFields fields) =
         { engine with
-          graph := SpytialLean.Tier1Structural.Graph.addFreshFields
+          graph := SpytialLean.StructuralEncoding.Graph.addFreshFields
             engine.graph owner ownerType fields } := by
     cases fields with
     | nil => simp [Node.asWrittenFields, Graph.addFreshFields]
@@ -857,18 +843,18 @@ mutual
         simp only [Node.asWrittenFields, Engine.addFields_cons]
         rw [Engine.addNode_asWritten]
         generalize childRun :
-          SpytialLean.Tier1Structural.Graph.addFreshNode engine.graph child = childResult
+          SpytialLean.StructuralEncoding.Graph.addFreshNode engine.graph child = childResult
         rcases childResult with ⟨childRoot, afterChild⟩
         simp only
         rw [Engine.addFields_asWritten]
-        simp only [SpytialLean.Tier1Structural.Graph.addFreshFields, childRun]
+        simp only [SpytialLean.StructuralEncoding.Graph.addFreshFields, childRun]
         cases child <;> rfl
 end
 
 theorem walk_asWritten_eq [BEq typeKey] [Hashable typeKey]
     [BEq valueKey] [Hashable valueKey] (node : Node typeKey valueKey) :
     RelationalizerCore.walk (Node.asWritten node) =
-      let (root, graph) := SpytialLean.Tier1Structural.Graph.addFreshNode ({} : Graph) node
+      let (root, graph) := SpytialLean.StructuralEncoding.Graph.addFreshNode ({} : Graph) node
       { root, data := graph.toDataInstance } := by
   unfold RelationalizerCore.walk
   rw [Engine.addNode_asWritten]
@@ -880,7 +866,7 @@ public theorem walk_asWritten_represents [BEq typeKey] [Hashable typeKey]
     let datum := RelationalizerCore.walk (Node.asWritten node)
     Node.representsAt datum.data datum.root (datum.data.atoms.size + 1) node = true := by
   rw [walk_asWritten_eq]
-  generalize run : SpytialLean.Tier1Structural.Graph.addFreshNode ({} : Graph) node = result
+  generalize run : SpytialLean.StructuralEncoding.Graph.addFreshNode ({} : Graph) node = result
   rcases result with ⟨root, graph⟩
   have facts := Graph.addFreshNode_correct Graph.Valid.empty wellFormed
   rw [run] at facts
@@ -891,4 +877,4 @@ public theorem walk_asWritten_represents [BEq typeKey] [Hashable typeKey]
   simp at atomSize
   omega
 
-end SpytialLean.Tier1Structural
+end SpytialLean.StructuralEncoding

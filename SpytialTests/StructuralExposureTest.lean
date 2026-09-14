@@ -1,16 +1,16 @@
 module
 
-public import SpytialLean.Tier1Exposure
+public import SpytialLean.StructuralExposure
 public meta import SpytialLean.ReifyDeriving
 public import SpytialLean.ReifyInstances
 public import Lean.ToExpr
 meta import SpytialLean.Relationalizer
 
 open SpytialLean
-open SpytialLean.Tier1
+open SpytialLean.Structural
 open Lean
 
-namespace Tier1ExposureTest
+namespace StructuralExposureTest
 
 example (value : Nat) : reify (relationalize value) = Except.ok value := by
   exact reify_relationalize value
@@ -18,7 +18,7 @@ example (value : Nat) : reify (relationalize value) = Except.ok value := by
 example (value : String) : reify (relationalize value) = Except.ok value := by
   exact reify_relationalize value
 
-example (value : Nat) : Tier1Represents (relationalize value) value := by
+example (value : Nat) : StructurallyRepresents (relationalize value) value := by
   exact relationalize_represents value
 
 example (value : Nat) : reify (relationalizeAsWritten value) = Except.ok value :=
@@ -76,13 +76,13 @@ public inductive Tree (alpha : Type u) where
   | branch (left right : Tree alpha)
   deriving DecidableEq, SpytialIdentity, SpytialReify
 
-example {alpha : Type u} [SpytialReify alpha] [Tier1Reification alpha]
-    [ValueIdentity alpha] [Tier1Exposure alpha] (value : Tree alpha) :
+example {alpha : Type u} [SpytialReify alpha] [StructuralReification alpha]
+    [ValueIdentity alpha] [StructuralExposure alpha] (value : Tree alpha) :
     reify (relationalize value) = Except.ok value := by
   exact reify_relationalize value
 
-example {alpha : Type u} [SpytialReify alpha] [Tier1Reification alpha]
-    [ValueIdentity alpha] [Tier1Exposure alpha] (value : Tree alpha) :
+example {alpha : Type u} [SpytialReify alpha] [StructuralReification alpha]
+    [ValueIdentity alpha] [StructuralExposure alpha] (value : Tree alpha) :
     reify (relationalizeAsWritten value) = Except.ok value :=
   reify_relationalizeAsWritten value
 
@@ -102,7 +102,7 @@ private def unequalCoarsePair : CoarsePair := ⟨⟨1⟩, ⟨2⟩⟩
 private def equalCoarsePair : CoarsePair := ⟨⟨1⟩, ⟨1⟩⟩
 
 /-- A lossy identity makes the normal candidate fail its independent structural check. -/
-example : tier1Represents (relationalizeCandidate unequalCoarsePair) unequalCoarsePair = false := by
+example : structurallyRepresents (relationalizeCandidate unequalCoarsePair) unequalCoarsePair = false := by
   native_decide
 
 /-- The typed entry point detects that loss and reruns the same engine occurrence-by-occurrence. -/
@@ -113,7 +113,7 @@ example : reify (relationalize unequalCoarsePair) = Except.ok unequalCoarsePair 
   exact reify_relationalize unequalCoarsePair
 
 /-- A safe merge is retained: equal children share an atom instead of triggering the fallback. -/
-example : tier1Represents (relationalizeCandidate equalCoarsePair) equalCoarsePair = true := by
+example : structurallyRepresents (relationalizeCandidate equalCoarsePair) equalCoarsePair = true := by
   native_decide
 
 example : (relationalize equalCoarsePair).data.atoms.size = 3 := by
@@ -134,4 +134,4 @@ example :
       true := by
   simp [isAsWritten, valueIdentity, ValueIdentity.key?]
 
-end Tier1ExposureTest
+end StructuralExposureTest

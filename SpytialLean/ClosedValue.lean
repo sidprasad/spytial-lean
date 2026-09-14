@@ -1,6 +1,6 @@
 module
 
-public import SpytialLean.Tier1Lossless
+public import SpytialLean.LosslessIdentity
 public meta import SpytialLean.Relationalizer
 public meta import SpytialLean.ReifyCore
 
@@ -12,7 +12,7 @@ public meta initialize registerTraceClass `spytial.closedValue
 
 /-!
 The closed-value production route evaluates the typed exposure and runs the proved shared engine.
-It is selected only when a `Tier1Lossless` certificate is already available and the exposure agrees
+It is selected only when a `LosslessIdentity` certificate is already available and the exposure agrees
 with ordinary expression inspection, including the selected identity policy. Unsupported inspection
 features stay on the existing expression adapter. Declining this route does not change identities.
 
@@ -128,16 +128,16 @@ public meta def relationalize? (value : Expr) (cfg : WalkConfig := {})
   let saved ← saveState
   try
     let type ← whnf (← inferType value)
-    let certificateType ← mkAppOptM ``Tier1Lossless #[some type, none, none, none, none]
+    let certificateType ← mkAppOptM ``LosslessIdentity #[some type, none, none, none, none]
     let some certificate ← synthInstance? certificateType
-      | trace[spytial.closedValue] "no available Tier1Lossless certificate for {type}"
+      | trace[spytial.closedValue] "no available LosslessIdentity certificate for {type}"
         return none
-    let proof ← mkAppOptM ``Tier1.reify_relationalize_of_lossless
+    let proof ← mkAppOptM ``Structural.reify_relationalize_of_lossless
       #[some type, none, none, none, none, some certificate, some value]
     let proof ← instantiateMVars proof
     checkWithKernel proof
-    let program ← instantiateMVars (← mkAppM ``Tier1.relationalizeCandidate #[value])
-    let exposed ← instantiateMVars (← mkAppM ``Tier1Exposure.nodeOf #[value])
+    let program ← instantiateMVars (← mkAppM ``Structural.relationalizeCandidate #[value])
+    let exposed ← instantiateMVars (← mkAppM ``StructuralExposure.nodeOf #[value])
     let nodeType ← inferType exposed
     let node ← evalClosed (Node IdentityKey IdentityKey) nodeType exposed
     let (source, _) ← (prepare value node).run {}

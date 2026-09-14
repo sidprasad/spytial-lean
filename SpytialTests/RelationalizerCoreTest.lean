@@ -19,6 +19,29 @@ private def sample : RootedJsonDataInstance :=
   let graph := graph.addRelation "empty" #["Box", "Nat"]
   { root, data := graph.toDataInstance }
 
+private def sameNamedFields : JsonDataInstance :=
+  let graph := ({} : Graph).addField "value" "a" "A" "one" "Nat"
+  let graph := graph.addField "value" "b" "B" "two" "Nat"
+  let graph := graph.addRelation "value" #["Empty", "Nat"] (fieldRelationId "Empty" "value")
+  graph.toDataInstance
+
+example : sameNamedFields.relations.size = 3 := by native_decide
+
+example : (sameNamedFields.relations.all (·.name == "value")) = true := by native_decide
+
+example : (sameNamedFields.relations.any fun r =>
+    r.id == fieldRelationId "A" "value" && r.tuples.map (·.atoms) == #[#["a", "one"]]) = true := by
+  native_decide
+
+example : (sameNamedFields.relations.any fun r =>
+    r.id == fieldRelationId "B" "value" && r.tuples.map (·.atoms) == #[#["b", "two"]]) = true := by
+  native_decide
+
+example : (sameNamedFields.relations.any fun r =>
+    r.id == fieldRelationId "Empty" "value" && r.tuples.isEmpty) = true := by native_decide
+
+example : fieldRelationId "A:B" "C" ≠ fieldRelationId "A" "B:C" := by decide_cbv
+
 private def identityAllocations : Array Allocation :=
   let engine : Engine String String := Engine.empty
   let (first, engine) := engine.intern (.keyed "Nat" "1")

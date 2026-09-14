@@ -2,7 +2,7 @@ module
 
 public import SpytialLean.ReifyCore
 public import SpytialLean.ReifyInstances
-public import SpytialLean.Tier1Exposure
+public import SpytialLean.StructuralExposure
 public meta import SpytialLean.ReifyOptions
 public meta import SpytialLean.Relationalizer
 public meta import SpytialLean.ClosedValue
@@ -17,7 +17,7 @@ open Lean Elab Meta Term
 # Adapter for the existing relationalizer
 
 The pure `SpytialReify` class is a decoder only. Ordinary closed values with an available
-`Tier1Lossless` certificate can now use the proved typed exposure and shared engine directly at
+`LosslessIdentity` certificate can now use the proved typed exposure and shared engine directly at
 the `#spytial` and `relationalize%` boundaries. `ClosedValue` attaches provenance and selector
 aliases by reading that datum, without building another graph. Other cases retain the existing
 expression adapter; contextual tactics are unchanged. Both routes return the same ordinary
@@ -73,7 +73,7 @@ public meta instance : ToExpr RootedJsonDataInstance where
     (toExpr datum.root) (toExpr datum.data)
 
 /-- Prove reconstruction of this exact output of the production walk by establishing
-`Tier1Represents datum value` and applying the universal reconstruction theorem. Checking the
+`StructurallyRepresents datum value` and applying the universal reconstruction theorem. Checking the
 structural relation avoids imposing an irrelevant ordering on the datum's relation array.
 
 This certifies a successful invocation, not universal correctness or termination of the `MetaM`
@@ -84,7 +84,7 @@ public meta def certifyReification (value : Expr) (datum : RootedJsonDataInstanc
     throwError "spytial reify: certification requires a closed, fully instantiated value"
   try
     let type ← whnf (← inferType value)
-    let proposition ← mkAppOptM ``tier1Represents
+    let proposition ← mkAppOptM ``structurallyRepresents
       #[some type, none, none, some (toExpr datum), some value]
     let proposition ← mkEq proposition (mkConst ``Bool.true)
     let goal ← mkFreshExprMVar proposition
@@ -92,7 +92,7 @@ public meta def certifyReification (value : Expr) (datum : RootedJsonDataInstanc
       | throwError "could not create the representation proof obligation"
     Lean.Meta.Tactic.Cbv.cbvDecideGoal decideGoal
     let represented ← instantiateMVars goal
-    let proof ← mkAppM ``reify_of_tier1Represents #[represented]
+    let proof ← mkAppM ``reify_of_structurallyRepresents #[represented]
     let proof ← instantiateMVars proof
     checkWithKernel proof
     return proof
@@ -123,18 +123,18 @@ public section
 /-- Relationalize a closed, fully elaborated term during elaboration and embed the resulting
 `RootedJsonDataInstance` in a kernel-checked declaration.
 
-For example, a concrete Tier 1 round trip can be stated directly as:
+For example, a concrete structural reconstruction round trip can be stated directly as:
 
 ```lean
 theorem example :
     reify (relationalize% (some 7 : Option Nat)) = Except.ok (some 7) := by
-  apply reify_of_tier1Represents
+  apply reify_of_structurallyRepresents
   decide_cbv
 ```
 
-With an available `Tier1Lossless` certificate and compatible ordinary inspection semantics, `%`
-elaborates directly to the proved pure `Tier1.relationalizeCandidate` application. Its round trip
-then follows from `Tier1.reify_relationalize_of_lossless`, without checking a particular datum.
+With an available `LosslessIdentity` certificate and compatible ordinary inspection semantics, `%`
+elaborates directly to the proved pure `Structural.relationalizeCandidate` application. Its round trip
+then follows from `Structural.reify_relationalize_of_lossless`, without checking a particular datum.
 Other closed values retain the expression adapter and embed its rooted datum. Open terms,
 metavariables, universe parameters, and terms containing `sorry` are rejected. Optional
 `spytial.certifyReification` additionally checks the concrete datum produced during elaboration.
@@ -157,11 +157,11 @@ elab_rules : term
       return toExpr datum
 
 /-- A concrete theorem through the actual relationalizer. The general proof used here is
-`reify_of_tier1Represents`; `decide_cbv` kernel-checks that this elaboration-time datum has the
+`reify_of_structurallyRepresents`; `decide_cbv` kernel-checks that this elaboration-time datum has the
 independent structural representation of the closed value. -/
 public theorem relationalize_nat_roundtrip :
     SpytialLean.reify (relationalize% (37 : Nat)) = Except.ok 37 := by
-  apply reify_of_tier1Represents
+  apply reify_of_structurallyRepresents
   decide_cbv
 
 end
