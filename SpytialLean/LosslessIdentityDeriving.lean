@@ -1,16 +1,16 @@
 module
 
-public import SpytialLean.Tier1Lossless
+public import SpytialLean.LosslessIdentity
 public meta import SpytialLean.ReifyDeriving
 public meta import Lean.Elab.Tactic
 import all SpytialLean.Identity
-import all SpytialLean.Tier1Exposure
+import all SpytialLean.StructuralExposure
 
-namespace SpytialLean.Tier1Lossless.Deriving
+namespace SpytialLean.LosslessIdentity.Deriving
 
 open Lean Meta Elab Term Tactic Command
 open Lean.Parser.Tactic
-open Tier1Structural
+open StructuralEncoding
 
 private abbrev SimpArg := TSyntax
   [`Lean.Parser.Tactic.simpStar, `Lean.Parser.Tactic.simpErase, `Lean.Parser.Tactic.simpLemma]
@@ -29,8 +29,8 @@ private meta partial def collect (type : Expr) (members : Array Member := #[]) :
   let type ← whnf type
   if members.any (·.type == type) then return members
   if type.hasFVar || type.hasMVar then
-    throwError "Tier1Lossless requires a fully instantiated type, not {type}"
-  let node ← mkAppOptM ``Tier1Exposure.nodeOf #[some type, none, none, none, none]
+    throwError "LosslessIdentity requires a fully instantiated type, not {type}"
+  let node ← mkAppOptM ``StructuralExposure.nodeOf #[some type, none, none, none, none]
   let key ← mkAppOptM ``ValueIdentity.key? #[some type, none]
   let noKey ← withLocalDeclD `value type fun value => do
     return (← withTransparency .all <| whnf (mkApp key value)).isAppOf ``Option.none
@@ -82,7 +82,7 @@ private meta def memberProof (index count : Nat) (value : Term) : TermElabM Term
   return proof
 
 private meta def memberTactic (count : Nat) : TermElabM (TSyntax `tactic) := do
-  let mut tactic ← `(tactic| fail "field is outside the collected Tier 1 family")
+  let mut tactic ← `(tactic| fail "field is outside the collected structural reconstruction family")
   for index in (List.range count).reverse do
     let proof ← memberProof index count (← `(_))
     tactic ← `(tactic| first | exact $proof | $tactic:tactic)
@@ -137,6 +137,8 @@ private meta def deriveProof (type : Expr) : TermElabM Expr :=
     let key ← exprToSyntax member.key
     let x := mkIdent (← mkFreshUserName `x)
     let y := mkIdent (← mkFreshUserName `y)
+    -- Class constructors do not have the usual generated `mk.injEq` simp lemma. Congruence
+    -- reasoning discharges the remaining constructor equality after simplifying the keys.
     statements := statements.push (← `(tactic|
       have $law:ident : ∀ ($x:ident $y:ident : $type),
           $key $x:ident = $key $y:ident ↔ $x:ident = $y:ident := by
@@ -144,7 +146,7 @@ private meta def deriveProof (type : Expr) : TermElabM Expr :=
         first
         | solve | simp [Int.natCast_inj, $args,*]
         | induction $x:ident generalizing $y:ident <;> cases $y:ident <;>
-            simp_all [Int.natCast_inj, $args,*]))
+            (simp_all [Int.natCast_inj, $args,*] <;> grind)))
     keyLaws := keyLaws.push (← `(simpLemma| $law:ident))
   let p := mkIdent (← mkFreshUserName `family)
   let x := mkIdent (← mkFreshUserName `value)
@@ -158,7 +160,7 @@ private meta def deriveProof (type : Expr) : TermElabM Expr :=
   -- reveals the generated pattern match without reducing primitive labels.
   let mut exposureNames : NameSet := {}
   for member in members do
-    let inst ← synthInstance (← mkAppOptM ``Tier1Exposure
+    let inst ← synthInstance (← mkAppOptM ``StructuralExposure
       #[some member.type, none, none, none])
     for name in inst.getUsedConstants do
       if (← getEnv).find? name matches some (.defnInfo _) then
@@ -174,15 +176,15 @@ private meta def deriveProof (type : Expr) : TermElabM Expr :=
     let $p:ident := $predicate
     constructor
     intro $x:ident
-    apply Node.coherent_of_closed $p:ident (Tier1Exposure.nodeOf $x:ident)
+    apply Node.coherent_of_closed $p:ident (StructuralExposure.nodeOf $x:ident)
     · exact $rootMember
     · intro node member name child field
       change $predicate node at member
       rcases member with $patternX:rcasesPatMed
       all_goals
         cases $x:ident <;>
-          (try simp only [Tier1Exposure.nodeOf, Tier1Exposure.expose, ExposedValue.withIdentity,
-            Node.fields, $exposeArgs,*] at field)
+          (try simp only [StructuralExposure.nodeOf, StructuralExposure.expose,
+            ExposedValue.withIdentity, Node.fields, $exposeArgs,*] at field)
         all_goals
           (try simp only [List.mem_cons, List.mem_singleton, List.not_mem_nil,
             Prod.mk.injEq, false_or, or_false] at field) <;>
@@ -203,29 +205,29 @@ private meta def deriveProof (type : Expr) : TermElabM Expr :=
               first
               | rfl
               | simpa only [$keyLaws,*] using
-                  (Tier1Exposure.identity_eq_of_node_key_eq $x:ident $y:ident equal)
+                  (StructuralExposure.identity_eq_of_node_key_eq $x:ident $y:ident equal)
             cases same
             rfl
           | solve |
-              have types := (Tier1Exposure.typeKey_eq_of_node_key $x:ident key keyA).trans
-                (Tier1Exposure.typeKey_eq_of_node_key $y:ident key keyB).symm
-              simp [Tier1Exposure.typeKey, natTypeKey, stringTypeKey, $exposeArgs,*] at types
-          | simp [Tier1Exposure.nodeOf_key, $allArgs,*] at keyA keyB)
-  let expected ← mkAppOptM ``Tier1Lossless #[some type, none, none, none, none]
+              have types := (StructuralExposure.typeKey_eq_of_node_key $x:ident key keyA).trans
+                (StructuralExposure.typeKey_eq_of_node_key $y:ident key keyB).symm
+              simp [StructuralExposure.typeKey, natTypeKey, stringTypeKey, $exposeArgs,*] at types
+          | simp [StructuralExposure.nodeOf_key, $allArgs,*] at keyA keyB)
+  let expected ← mkAppOptM ``LosslessIdentity #[some type, none, none, none, none]
   let result ← withoutErrToSorry <| elabTermEnsuringType proof expected
   synthesizeSyntheticMVarsNoPostponing
   let result ← instantiateMVars result
   if result.hasSorry || result.hasMVar then
-    throwError "Tier1Lossless could not construct a complete proof for {type}"
+    throwError "LosslessIdentity could not construct a complete proof for {type}"
   checkWithKernel result
   return result
 
-/-- Prove losslessness for all values of a fully instantiated Tier 1 type, using its selected
+/-- Prove losslessness for all values of a supported fully instantiated type, using its selected
 identity instances. This constructs an induction proof, not a per-value test or certification. -/
 elab "spytial_lossless" : tactic => withMainContext do
   let target ← getMainTarget
-  unless target.isAppOf ``Tier1Lossless do
-    throwError "spytial_lossless expects a Tier1Lossless goal"
+  unless target.isAppOf ``LosslessIdentity do
+    throwError "spytial_lossless expects a LosslessIdentity goal"
   let type := target.getAppArgs[0]!
   let proof ← deriveProof type
   closeMainGoal `spytial_lossless proof
@@ -234,14 +236,14 @@ public meta def mkHandler (declNames : Array Name) : CommandElabM Bool := do
   for name in declNames do
     let info ← getConstInfoInduct name
     unless info.numParams == 0 do
-      throwError "derive Tier1Lossless at a concrete instantiation: \
-        `instance : Tier1Lossless ({name} ...) := by spytial_lossless`"
-    let instanceName ← liftTermElabM <| Lean.Elab.Deriving.mkInstName ``Tier1Lossless name
+      throwError "derive LosslessIdentity at a concrete instantiation: \
+        `instance : LosslessIdentity ({name} ...) := by spytial_lossless`"
+    let instanceName ← liftTermElabM <| Lean.Elab.Deriving.mkInstName ``LosslessIdentity name
     elabCommand (← `(@[no_expose] instance $(mkIdent instanceName):ident :
-      Tier1Lossless $(mkCIdent name) := by spytial_lossless))
+      LosslessIdentity $(mkCIdent name) := by spytial_lossless))
   return true
 
 meta initialize
-  registerDerivingHandler ``Tier1Lossless mkHandler
+  registerDerivingHandler ``LosslessIdentity mkHandler
 
-end SpytialLean.Tier1Lossless.Deriving
+end SpytialLean.LosslessIdentity.Deriving

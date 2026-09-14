@@ -48,10 +48,7 @@ public meta structure SelectorEvidence where
 
 public meta structure WalkState where
   atoms : Array JsonAtom := #[]
-  relations : Std.HashMap String (Array String × Array JsonTuple) := {}
-  /-- Exact Lean heads behind checked context relations. A short display-name collision never
-      authorizes merging propositions headed by different constants or local relations. -/
-  knowledgeRelationHeads : Std.HashMap String ExprStructEq := {}
+  relations : Std.HashMap String RelationalizerCore.RelationData := {}
   nextId : Nat := 0
   /-- One atom per metavariable, and one per free variable, under every mode:
       substitution structure, not identity policy. -/
@@ -216,8 +213,8 @@ private meta def rememberObservationTerm (enabled : Bool) (term : Expr) (atomId 
   else pure ()
 
 public meta def WalkState.addTuple (s : WalkState) (relName : String) (types : Array String)
-    (tuple : JsonTuple) : WalkState :=
-  let graph := s.toGraph.addTuple relName types tuple
+    (tuple : JsonTuple) (id : String := relName) : WalkState :=
+  let graph := s.toGraph.addTuple relName types tuple id
   { s with relations := graph.relations }
 
 /-- Add an ordinary constructor or structure field through the pure graph core. -/
@@ -228,8 +225,8 @@ public meta def WalkState.addField (s : WalkState)
 
 /-- Registered with no tuples, so an empty extension still appears. -/
 public meta def WalkState.addRelation (s : WalkState) (relName : String)
-    (types : Array String) : WalkState :=
-  let graph := s.toGraph.addRelation relName types
+    (types : Array String) (id : String := relName) : WalkState :=
+  let graph := s.toGraph.addRelation relName types id
   { s with relations := graph.relations }
 
 public meta def WalkState.toDataInstance (s : WalkState) : JsonDataInstance :=
@@ -867,6 +864,19 @@ public meta def graphSide? (side : Expr) : MetaM (Option (String × Array Expr))
   if args.isEmpty then return none
   return some (name, args)
 
+/-- Identity of a named function/proposition, separate from its short selector name.
+Column signatures distinguish retained instantiations; local heads use their declaration indices
+rather than potentially shadowed user names or global fresh-name counters. JSON encoding avoids
+delimiter collisions. -/
+public meta def headRelationId (head : Expr) (types : Array String) : MetaM String := do
+  let identity ← match head with
+    | .const name _ => pure #["const", name.toString]
+    | .fvar id => do
+        let declaration ← id.getDecl
+        pure #["fvar", toString declaration.index, declaration.userName.toString]
+    | _ => pure #["expr", toString head]
+  return "lean:head:" ++ (toJson (identity ++ types)).compress
+
 /-- Allocate a neutral label for an unknown application result. Its incoming
     relations already record where the value came from, so the label should
     identify the atom without privileging one provenance path. -/
@@ -1320,20 +1330,18 @@ private meta def emitFunctionGraph? (cfg : WalkConfig)
   ids := ids.push atomId
   types := types.push typeName
   let tuple : JsonTuple := { atoms := ids, types }
-  modify fun state => state.addTuple relName types tuple
+  let relationId ← headRelationId e.getAppFn types
+  modify fun state => state.addTuple relName types tuple relationId
   return true
 
 /-- A reduced source application may already have emitted this same graph
     point through its residual (for example after simplifying numeral syntax). -/
-private meta def addComputedTuple (relation : String) (types ids : Array String) :
+private meta def addComputedTuple (head : Expr) (relation : String) (types ids : Array String) :
     StateT WalkState MetaM Unit := do
-  if let some (previousTypes, tuples) := (← get).relations.get? relation then
-    if previousTypes != types then
-      logWarning m!"spytial: incompatible graph columns for '{relation}'; \
-        the computed tuple is not drawn"
-      return
-    if tuples.any (·.atoms == ids) then return
-  modify fun state => state.addTuple relation types { atoms := ids, types }
+  let id ← headRelationId head types
+  if let some previous := (← get).relations[id]? then
+    if previous.tuples.any (·.atoms == ids) then return
+  modify fun state => state.addTuple relation types { atoms := ids, types } id
 
 /-- An evaluated application is an ordinary result expression plus the graph
     tuple connecting it to its arguments. Shared by both expression walkers. -/
@@ -1355,7 +1363,7 @@ private meta def walkComputed? (cfg : WalkConfig) (e : Expr)
   let resultId ← recurse nested result.expr
   ids := ids.push resultId
   types := types.push (← sigOfType (← inferType e))
-  addComputedTuple relation types ids
+  addComputedTuple e.getAppFn relation types ids
   modify fun state =>
     { state with applicationAtoms := state.applicationAtoms.insert ⟨e⟩ resultId }
   return some resultId
@@ -1369,16 +1377,17 @@ private meta def tabulate? (cfg : WalkConfig) (recurse : Expr → StateT WalkSta
   unless plan.size ≤ cfg.maxTableTuples do return false
   let fn@(.lam ..) ← Meta.whnf value | return false
   let types := #[ownerSig] ++ (← plan.tailTypes.mapM (sigOfType ·))
+  let relationId := fieldRelationId ownerSig relName
   let columns := plan.binders.map (·.elems.map (·.2))
   let points := plan.points
   match plan.kind with
   | .data =>
-    modify (·.addRelation relName types)
+    modify (·.addRelation relName types relationId)
     let ids ← columns.mapM (·.mapM recurse)
     for pt in points do
       let resId ← recurse (← Meta.whnf (mkAppN fn (pick columns pt)))
       let atoms := #[ownerId] ++ pick ids pt ++ #[resId]
-      modify fun s => s.addTuple relName types { atoms, types }
+      modify fun s => s.addTuple relName types { atoms, types } relationId
     return true
   | .prop =>
     -- decide every point before walking any atom: an undecided point bails
@@ -1387,7 +1396,7 @@ private meta def tabulate? (cfg : WalkConfig) (recurse : Expr → StateT WalkSta
     for pt in points do
       let some verdict ← decideProp? (mkAppN fn (pick columns pt)) | return false
       if verdict then holds := holds.push pt
-    modify (·.addRelation relName types)
+    modify (·.addRelation relName types relationId)
     -- walk only elements a true tuple names; the two-pass reference prunes
     -- orphans
     let mut ids := columns.map (·.map fun _ => (none : Option String))
@@ -1402,7 +1411,7 @@ private meta def tabulate? (cfg : WalkConfig) (recurse : Expr → StateT WalkSta
             ids := ids.set! col (ids[col]!.set! i (some id))
             pure id
         atoms := atoms.push id
-      modify fun s => s.addTuple relName types { atoms, types }
+      modify fun s => s.addTuple relName types { atoms, types } relationId
     return true
 
 /-! ### Instance-evaluated leaf labels
@@ -1661,15 +1670,16 @@ public meta def addObservation (cfg : WalkConfig) (source result : Expr)
     types := types.push (← sigOfType (← inferType argument))
   let resultType := ← sigOfType (← inferType result)
   types := types.push resultType
+  let relationId ← headRelationId source.getAppFn types
   let reducedResult ← match cfg.observationResults[(⟨result⟩ : ExprStructEq)]? with
     | some normalized => pure normalized.expr
     | none => pure result
   let state ← get
   let mut knownResult? := state.applicationAtoms[(⟨result⟩ : ExprStructEq)]?
   if knownResult?.isNone then
-    if let some (declaredTypes, tuples) := state.relations.get? relation then
-      if declaredTypes == types then
-        for tuple in tuples do
+    if let some stored := state.relations[relationId]? then
+      if stored.types == types then
+        for tuple in stored.tuples do
           if tupleStartsWith tuple atomIds then
             knownResult? := tuple.atoms.back?
             break
@@ -1688,13 +1698,9 @@ public meta def addObservation (cfg : WalkConfig) (source result : Expr)
     { state with applicationAtoms := applications }
   atomIds := atomIds.push resultId
   let state ← get
-  if let some (declaredTypes, tuples) := state.relations.get? relation then
-    if declaredTypes != types then
-      logWarning m!"spytial: '{relation}' names relations of arity \
-        {declaredTypes.size} and {types.size}; the observation is not drawn"
-      return
-    if tuples.any (fun tuple => tuple.atoms == atomIds) then return
-  modify fun state => state.addTuple relation types { atoms := atomIds, types }
+  if let some stored := state.relations[relationId]? then
+    if stored.tuples.any (fun tuple => tuple.atoms == atomIds) then return
+  modify fun state => state.addTuple relation types { atoms := atomIds, types } relationId
 
 /-- Extend the current datum with each requested function's graph over the
     represented values of its domain type. The domain is snapshotted before

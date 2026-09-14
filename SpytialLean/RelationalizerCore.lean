@@ -17,11 +17,17 @@ adapters supply field exposure, child inspection, and graph-state access; neithe
 second constructor-field traversal. Identity and non-structural expression handling are unchanged.
 -/
 
+/-- Stored relation metadata; its ID is the graph map's key. -/
+public structure RelationData where
+  name : String
+  types : Array String
+  tuples : Array JsonTuple
+
 /-- The graph state shared by relationalization frontends. -/
 public structure Graph where
   atoms : Array JsonAtom := #[]
-  /-- Map from relation name to its declared column types and accumulated tuples. -/
-  relations : Std.HashMap String (Array String × Array JsonTuple) := {}
+  /-- Relations indexed by identity, independently of their selector names. -/
+  relations : Std.HashMap String RelationData := {}
   nextId : Nat := 0
 
 /-- An identity request supplied by a frontend after it has chosen the policy and computed keys. -/
@@ -88,26 +94,27 @@ public structure Engine (typeKey : Type u) (valueKey : Type v)
 
 /-- Add a tuple, creating its named relation when this is the first tuple. -/
 @[expose] public def Graph.addTuple (graph : Graph) (name : String) (types : Array String)
-    (tuple : JsonTuple) : Graph :=
-  let existing := graph.relations.getD name (types, #[])
-  { graph with relations := graph.relations.insert name (existing.1, existing.2.push tuple) }
+    (tuple : JsonTuple) (id : String := name) : Graph :=
+  let existing := graph.relations.getD id { name, types, tuples := #[] }
+  let updated := { existing with tuples := existing.tuples.push tuple }
+  { graph with relations := graph.relations.insert id updated }
 
 /-- Add the binary relation edge used for an ordinary constructor or structure field. -/
 @[expose] public def Graph.addField (graph : Graph)
     (name owner ownerType child childType : String) : Graph :=
   let types := #[ownerType, childType]
-  graph.addTuple name types { atoms := #[owner, child], types }
+  graph.addTuple name types { atoms := #[owner, child], types } (fieldRelationId ownerType name)
 
 /-- Register a relation with no tuples, preserving an empty extension in the resulting datum. -/
 @[expose] public def Graph.addRelation (graph : Graph)
-    (name : String) (types : Array String) : Graph :=
-  if graph.relations.contains name then graph
-  else { graph with relations := graph.relations.insert name (types, #[]) }
+    (name : String) (types : Array String) (id : String := name) : Graph :=
+  if graph.relations.contains id then graph
+  else { graph with relations := graph.relations.insert id { name, types, tuples := #[] } }
 
 /-- Materialize the ordinary relational datum represented by the graph state. -/
 @[expose] public def Graph.toDataInstance (graph : Graph) : JsonDataInstance :=
-  let relations := graph.relations.toArray.map fun (name, types, tuples) =>
-    { id := name, name, types, tuples : JsonRelation }
+  let relations := graph.relations.toArray.map fun (id, relation) =>
+    { id, name := relation.name, types := relation.types, tuples := relation.tuples : JsonRelation }
   { atoms := graph.atoms, relations }
 
 /-- Look up the atom selected by an identity request. `asWritten` never selects one. -/

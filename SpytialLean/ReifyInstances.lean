@@ -1,7 +1,7 @@
 module
 
 public import SpytialLean.ReifyCore
-public import SpytialLean.Tier1Exposure
+public import SpytialLean.StructuralExposure
 public meta import SpytialLean.ReifyDeriving
 
 namespace SpytialLean

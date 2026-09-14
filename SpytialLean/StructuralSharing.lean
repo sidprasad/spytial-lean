@@ -1,9 +1,9 @@
 module
 
-public import SpytialLean.Tier1Structural
-import all SpytialLean.Tier1Structural
+public import SpytialLean.StructuralEncoding
+import all SpytialLean.StructuralEncoding
 
-namespace SpytialLean.Tier1Structural
+namespace SpytialLean.StructuralEncoding
 
 open RelationalizerCore
 
@@ -346,9 +346,9 @@ mutual
               Graph.Subgraph.allocateAtom
             have cacheStart : CacheValid meaning stack start := cache_begin cache
             have fieldsFree : ∀ name ∈ fields.map Prod.fst,
-                Graph.FieldFree start.graph root name := by
+                Graph.FieldFree start.graph root (fieldRelationId type name) := by
               intro name _
-              exact valid.allocateAtom_ownerFree name
+              exact valid.allocateAtom_ownerFree (fieldRelationId type name)
             have belowFields : BelowPending meaning stack (Node.depthFields fields) := by
               intro key id ancestor
               rcases List.mem_cons.mp ancestor with same | ancestor
@@ -415,7 +415,8 @@ mutual
         engine.graph.atoms.toList)
       (wellFormed : Node.FieldsWellFormed fields)
       (sound : Node.FieldsIdentitySound meaning fields)
-      (fieldsFree : ∀ name ∈ fields.map Prod.fst, Graph.FieldFree engine.graph owner name) :
+      (fieldsFree : ∀ name ∈ fields.map Prod.fst,
+        Graph.FieldFree engine.graph owner (fieldRelationId ownerType name)) :
       let after := engine.addFields owner ownerType fields
       Graph.Valid after.graph ∧ Graph.Subgraph engine.graph after.graph ∧
         CacheValid meaning pending after ∧ Graph.EncodesFields after.graph owner ownerType fields ∧
@@ -423,7 +424,7 @@ mutual
         engine.graph.atoms.size ≤ after.graph.atoms.size ∧
         (∀ oldOwner name, Graph.HasId engine.graph oldOwner →
           Graph.FieldFree engine.graph oldOwner name →
-          (oldOwner ≠ owner ∨ name ∉ fields.map Prod.fst) →
+          (oldOwner ≠ owner ∨ name ∉ fields.map (fun f => fieldRelationId ownerType f.1)) →
           Graph.FieldFree after.graph oldOwner name) := by
     cases fields with
     | nil =>
@@ -448,16 +449,18 @@ mutual
         generalize childRun : engine.addNode child = childResult at childFacts
         rcases childResult with ⟨childRoot, afterChild⟩
         rcases childFacts with
-          ⟨childValid, childSubgraph, childCache, childEncoded, childDepth, childSize, childPreserve⟩
+          ⟨childValid, childSubgraph, childCache, childEncoded, childDepth,
+            childSize, childPreserve⟩
         have ownerHasId : Graph.HasId engine.graph owner :=
           ⟨{ id := owner, type := ownerType, label := ownerLabel }, ownerMem, rfl⟩
         have ownerAfterChild := childSubgraph.1 _ ownerMem
-        have fieldFree := childPreserve owner fieldName ownerHasId
+        have fieldFree := childPreserve owner (fieldRelationId ownerType fieldName) ownerHasId
           (fieldsFree fieldName (by simp [fieldName]))
         let afterField : Engine T V := { afterChild with
           graph := afterChild.graph.addField fieldName owner ownerType childRoot
             (nodeTypeName child) }
-        have fieldValid : Graph.Valid afterField.graph := childValid.addField fieldFree ownerAfterChild
+        have fieldValid : Graph.Valid afterField.graph :=
+          childValid.addField fieldFree ownerAfterChild
         have fieldSubgraph : Graph.Subgraph afterChild.graph afterField.graph :=
           Graph.Subgraph.addField
         have fieldSize : afterField.graph.atoms.size = afterChild.graph.atoms.size := rfl
@@ -465,11 +468,13 @@ mutual
           cache_mono childCache rfl fieldSubgraph (by omega)
         have reservedField : pending.length ≤ afterField.graph.atoms.size := by omega
         have remainingFree : ∀ name ∈ fields.map Prod.fst,
-            Graph.FieldFree afterField.graph owner name := by
+            Graph.FieldFree afterField.graph owner (fieldRelationId ownerType name) := by
           intro name nameMem
-          have before := childPreserve owner name ownerHasId (fieldsFree name (by simp [nameMem]))
-          apply before.addField_of_name_ne
+          have before := childPreserve owner (fieldRelationId ownerType name) ownerHasId
+            (fieldsFree name (by simp [nameMem]))
+          apply before.addField_of_id_ne
           intro equality
+          have equality := fieldRelationId_injective ownerType equality
           exact fieldNameFresh (by simpa [← equality, fieldName] using nameMem)
         have remainingFacts := addFields_correct fieldValid fieldCache reservedField belowRest
           (fieldSubgraph.1 _ ownerAfterChild) fieldsWellFormed sound.2 remainingFree
@@ -477,9 +482,9 @@ mutual
           ⟨afterValid, restSubgraph, afterCache, restEncoded, restDepth, restSize, restPreserve⟩
         have edge := Graph.addField_contains afterChild.graph fieldName owner ownerType childRoot
           (nodeTypeName child)
-        rcases edge with ⟨edgeTypes, edgeTuples, edgeFound, edgeMem⟩
-        rcases restSubgraph.2 fieldName edgeTypes edgeTuples _ edgeFound edgeMem with
-          ⟨afterTypes, afterTuples, afterFound, afterMem⟩
+        rcases edge with ⟨edgeRelation, edgeFound, edgeMem⟩
+        rcases restSubgraph.2 _ edgeRelation _ edgeFound edgeMem with
+          ⟨afterRelation, afterFound, afterMem⟩
         rw [Engine.addFields_cons, childRun]
         refine ⟨afterValid, childSubgraph.trans (fieldSubgraph.trans restSubgraph), afterCache,
           .cons afterFound afterMem (childEncoded.mono (fieldSubgraph.trans restSubgraph))
@@ -495,7 +500,7 @@ mutual
           have freeField : Graph.FieldFree afterField.graph oldOwner name := by
             rcases allowed with different | unused
             · exact freeChild.addField_of_owner_ne different.symm
-            · apply freeChild.addField_of_name_ne
+            · apply freeChild.addField_of_id_ne
               intro equality
               exact unused (by simp [← equality, fieldName])
           apply restPreserve oldOwner name
@@ -543,4 +548,4 @@ public theorem walk_coherent_represents [BEq T] [Hashable T] [BEq V] [Hashable V
   obtain ⟨meaning, sound⟩ := coherent.exists_meaning
   exact walk_sharing_represents node meaning wellFormed sound
 
-end SpytialLean.Tier1Structural
+end SpytialLean.StructuralEncoding

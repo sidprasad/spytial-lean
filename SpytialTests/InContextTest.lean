@@ -73,13 +73,15 @@ private meta def viewOf (label : String) (root : Expr) (config : Iykyk.Config :=
 
 namespace InContextTestFirstHead
 
-def linked (_left _right : Nat) : Prop := True
+inductive linked : Nat → Nat → Prop where
+  | intro (left right : Nat) : linked left right
 
 end InContextTestFirstHead
 
 namespace InContextTestSecondHead
 
-def linked (_left _right : Nat) : Prop := True
+inductive linked : Nat → Nat → Prop where
+  | intro (left right : Nat) : linked left right
 
 end InContextTestSecondHead
 
@@ -92,11 +94,30 @@ end InContextTestSecondHead
   withLocalDeclD `second (mkApp2 (mkConst ``InContextTestSecondHead.linked) x z) fun _ => do
     let view ← viewOf "consumer.relationHeadMismatch" x { rootOnly := false }
     assertCanon "consumer.relationHeadMismatch" view.data
-      "Nat|x\nNat|y\nlinked[Nat,Nat]:0,1"
+      "Nat|x\nNat|y\nNat|z\nlinked[Nat,Nat]:0,1\nlinked[Nat,Nat]:0,2"
+    let relations := view.data.relations.filter (·.name == "linked")
+    unless relations.size == 2 && relations[0]!.id != relations[1]!.id do
+      throwError "same-named proposition heads lost their identities"
 
-private def polymorphicRelation {Type_ : Type} (_value : Type_) : Prop := True
+/- Shadowed local relations share a selector name but retain distinct declaration identities. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  let predicateType ← mkArrow (mkConst ``Nat) (mkSort Level.zero)
+  withLocalDeclD `R predicateType fun first => do
+  withLocalDeclD `R predicateType fun second => do
+  withLocalDeclD `x (mkConst ``Nat) fun x => do
+  withLocalDeclD `h₁ (mkApp first x) fun _ => do
+  withLocalDeclD `h₂ (mkApp second x) fun _ => do
+    let view ← viewOf "consumer.shadowedRelations" x { rootOnly := false }
+    let relations := view.data.relations.filter (·.name == "R")
+    unless relations.size == 2 && relations[0]!.id != relations[1]!.id do
+      throwError "shadowed local relations lost their identities"
+    unless relations.all (fun r => r.tuples.size == 1) do
+      throwError "shadowed local relation lost its fact"
 
-/- One polymorphic head cannot change the checked column types of an existing relation. -/
+private inductive polymorphicRelation : {Type_ : Type} → Type_ → Prop where
+  | intro {Type_ : Type} (value : Type_) : polymorphicRelation value
+
+/- Instantiations with different retained columns have distinct IDs and keep every fact. -/
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `x (mkConst ``Nat) fun x => do
   withLocalDeclD `flag (mkConst ``Bool) fun flag => do
@@ -106,7 +127,7 @@ private def polymorphicRelation {Type_ : Type} (_value : Type_) : Prop := True
       (mkApp2 (mkConst ``polymorphicRelation) (mkConst ``Bool) flag) fun _ => do
     let view ← viewOf "consumer.relationTypeMismatch" x { rootOnly := false }
     assertCanon "consumer.relationTypeMismatch" view.data
-      "Nat|x\npolymorphicRelation[Nat]:0"
+      "Nat|x\nBool|flag\npolymorphicRelation[Bool]:1\npolymorphicRelation[Nat]:0"
 
 /-! ## Equalities refine structure -/
 

@@ -697,9 +697,15 @@ private meta def scopeWithObservedData (scope : SelScope) (data : JsonDataInstan
     SelScope := Id.run do
   let mut scope := scope
   for relation in data.relations do
-    unless scope.rels.contains relation.name do
-      scope := { scope with
-        rels := scope.rels.insert relation.name (scope.root, some relation.types.size) }
+    let arities := if relation.tuples.isEmpty then #[relation.types.size]
+      else relation.tuples.map (·.atoms.size)
+    for arity in arities do
+      scope := { scope with rels :=
+        match scope.rels.get? relation.name with
+        | some (owner, some previous) =>
+            if previous == arity then scope.rels else scope.rels.insert relation.name (owner, none)
+        | some (_, none) => scope.rels
+        | none => scope.rels.insert relation.name (scope.root, some arity) }
   return scope
 
 private meta def elabSpytialPayload (t : Syntax) (ops? : Option (Array (TSyntax `spytial_op)))

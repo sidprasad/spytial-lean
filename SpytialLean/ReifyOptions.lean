@@ -9,7 +9,7 @@ namespace SpytialLean
 Certification neither changes identity nor substitutes another graph when checking fails. -/
 public meta register_option spytial.certifyReification : Bool := {
   defValue := false
-  descr := "kernel-check reconstruction of the actual emitted closed Tier 1 datum"
+  descr := "kernel-check structural reconstruction of the actual emitted closed datum"
 }
 
 end SpytialLean
