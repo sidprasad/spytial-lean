@@ -33,4 +33,4 @@ line. The first draws a complete list. In the proof, the diagram shows that
 See [layout specifications](docs/layout.md) to customize a diagram or
 [proof contexts](docs/context-inspection.md) to see which facts it includes.
 
-[AVL rotations](Demos/AVL.lean) · [Union-find proofs](Demos/UnionFind.lean) · [Development guide](DEVGUIDE.md)
+[Development guide](DEVGUIDE.md)
