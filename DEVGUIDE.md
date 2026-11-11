@@ -65,8 +65,8 @@ additional types can supply matching instances and proofs directly.
 - Node.js + [pnpm](https://pnpm.io/)
 - [just](https://github.com/casey/just) (optional)
 
-The nix dev shell (`flake.nix`) provides all of these; see the
-[README](README.md#nix-dev-shell) for direnv setup.
+Run `nix develop` for a shell with these tools. To load it with direnv, run
+`ln -s nix/envrc .envrc` and `direnv allow` from the repository root.
 
 ## Tasks
 
