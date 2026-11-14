@@ -32,5 +32,6 @@ line. The first draws a complete list. In the proof, the diagram shows that
 
 See [layout specifications](docs/layout.md) to customize a diagram or
 [proof contexts](docs/context-inspection.md) to see which facts it includes.
+Place the cursor on a theorem's name to [compare its proof inspections](docs/theorem-inspections.md).
 
 [Development guide](DEVGUIDE.md)

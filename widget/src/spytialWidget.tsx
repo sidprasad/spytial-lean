@@ -1,11 +1,11 @@
 import * as React from 'react';
-import { useRpcSession } from '@leanprover/infoview';
 // @ts-ignore — virtual module created by rollup from the IIFE bundle
 import spytialcore from 'spytial-core';
 // @ts-ignore — virtual module for components bundle (provides mountErrorMessageModal, ErrorAPI)
 import spytialComponents from 'spytial-core-components';
 import {
-  withLeanScalarTypes, type InspectedValue, type RelationalData,
+  withLeanScalarTypes, pointTitle, correspondingAtoms, continuityOptions,
+  type InspectionPoint, type LayoutState,
 } from './inspection';
 
 const { JSONDataInstance, LayoutInstance, parseLayoutSpec, SGraphQueryEvaluator } = spytialcore;
@@ -37,6 +37,20 @@ function injectCss() {
       color: var(--vscode-errorForeground);
     }
     .spytial-inspection-note { font-size: 12px; margin: 6px 0; }
+    .spytial-explorer { margin: 8px 0; }
+    .spytial-toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .spytial-toolbar strong { overflow-wrap: anywhere; margin-right: auto; }
+    .spytial-toolbar button, .spytial-point-header select {
+      color: var(--vscode-foreground); background: var(--vscode-editorWidget-background);
+      border: 1px solid var(--vscode-panel-border, #777); border-radius: 4px; padding: 4px 8px;
+    }
+    .spytial-toolbar button[aria-pressed=true] { outline: 1px solid var(--vscode-focusBorder, #007acc); }
+    .spytial-toolbar button:disabled { opacity: .4; }
+    .spytial-panes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 12px; }
+    .spytial-point-header { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+    .spytial-point-header select { max-width: 100%; min-width: 0; }
+    .spytial-context { font-size: 12px; margin-top: 8px; }
+    .spytial-context code { white-space: pre-wrap; overflow-wrap: anywhere; }
     .spytial-facts { margin: 8px 0; font-size: 12px; }
     .spytial-facts code { white-space: pre-wrap; overflow-wrap: anywhere; }
     .spytial-facts li { margin: 5px 0; }
@@ -193,25 +207,135 @@ function injectCss() {
   document.head.appendChild(style);
 }
 
-interface SpytialWidgetProps {
-  dataInstance: RelationalData;
-  cndSpec?: string;
-  inspection?: InspectedValue;
+interface SpytialWidgetProps extends Partial<InspectionPoint> {
+  explorer?: { name: string; points: InspectionPoint[] };
 }
 
 const MIN_HEIGHT = 200;
 const DEFAULT_HEIGHT = 500;
 
 export default function SpytialWidget(props: SpytialWidgetProps) {
+  if (props.explorer) return <InspectionExplorer key={props.explorer.name} {...props.explorer} />;
+  if (!props.dataInstance) return <div>No inspection data.</div>;
+  return <DiagramWidget {...props as InspectionPoint} />;
+}
+
+interface SettledInspection { point: InspectionPoint; state?: LayoutState }
+
+function InspectionExplorer({ name, points }: { name: string; points: InspectionPoint[] }) {
+  const [mode, setMode] = React.useState('compare');
+  const [left, setLeft] = React.useState(0);
+  const [right, setRight] = React.useState(points.length - 1);
+  const [step, setStep] = React.useState(0);
+  const [anchor, setAnchor] = React.useState<SettledInspection>();
+  const [stepPrior, setStepPrior] = React.useState<SettledInspection>();
+  const history = React.useRef<SettledInspection>();
+  React.useEffect(() => { injectCss(); }, []);
+  // A refreshed Lean payload invalidates every settled position and selection.
+  React.useEffect(() => {
+    setLeft(0); setRight(points.length - 1); setStep(0);
+    setAnchor(undefined); setStepPrior(undefined); history.current = undefined;
+  }, [points]);
+  if (!points.length) return <div>No proof inspections.</div>;
+  const multiple = points.length > 1;
+  const selected = !multiple ? [0] : mode === 'compare' ? [left, right] :
+    mode === 'all' ? points.map((_, i) => i) : [step];
+  // Until the reset effect runs, an updated theorem may have fewer points.
+  const visible = selected.filter(i => points[i] !== undefined);
+  const first = points[visible[0]];
+  const anchorReady = anchor?.point === first;
+  const choose = (index: number, slot: number) => {
+    if (mode === 'step') { setStepPrior(history.current); setStep(index); }
+    else if (slot === 0) setLeft(index);
+    else setRight(index);
+  };
+  return <section className="spytial-explorer" aria-label="Theorem inspection explorer">
+    <div className="spytial-toolbar">
+      <strong>{name}</strong>
+      <span>{points.length} inspection {multiple ? 'points' : 'point'}</span>
+      {multiple && <div role="group" aria-label="Inspection view mode">
+        {([['step', 'Step through'], ['compare', 'Side by side'], ['all', 'All points']]).map(([key, label]) =>
+          <button key={key} type="button" aria-pressed={mode === key}
+            onClick={() => setMode(key)}>{label}</button>)}
+      </div>}
+    </div>
+    <p className="spytial-inspection-note">Proof inspections in source order. These are proof views;
+      different goals and case branches have independent layouts.</p>
+    {multiple && mode === 'step' && <div className="spytial-toolbar">
+      <button type="button" disabled={step === 0} onClick={() => choose(step - 1, 0)}>Previous</button>
+      <span aria-live="polite">{step + 1} / {points.length}</span>
+      <button type="button" disabled={step === points.length - 1}
+        onClick={() => choose(step + 1, 0)}>Next</button>
+    </div>}
+    <div className="spytial-panes">
+      {visible.map((index, slot) => {
+        const point = points[index];
+        const prior = mode === 'step' ? stepPrior : slot > 0 && anchorReady ? anchor : undefined;
+        const matches = prior && prior.point !== point ? correspondingAtoms(prior.point, point) : [];
+        // Followers wait for settled anchor positions, as in Cope and Drag's
+        // temporal panes, rather than copying a pre-solve layout.
+        const waiting = mode !== 'step' && slot > 0 && !anchorReady;
+        return <section key={slot} aria-label={pointTitle(point)}>
+          <div className="spytial-point-header">
+            {multiple && mode !== 'all' ? <select
+              aria-label={mode === 'step' ? 'Inspection point' : slot === 0 ? 'Left inspection point' : 'Right inspection point'}
+              value={index} onChange={e => choose(Number(e.target.value), slot)}>
+              {points.map((p, i) => <option key={i} value={i}
+                disabled={mode === 'compare' && i === (slot === 0 ? right : left)}>
+                {i + 1}. {pointTitle(p)} (line {p.point?.line ?? '?'})
+              </option>)}
+            </select> : <strong>{pointTitle(point)}</strong>}
+            <span>Line {point.point?.line ?? '?'}</span>
+          </div>
+          {point.point?.branch && <p className="spytial-inspection-note">Case {point.point.branch}</p>}
+          {!waiting ? <DiagramWidget {...point} prior={prior?.point !== point ? prior : undefined}
+            onSettled={slot === 0 ? state => {
+              const settled = { point, state };
+              history.current = settled;
+              setAnchor(previous => previous?.point === point ? previous : settled);
+            } : undefined} /> : <div className="spytial-loading">Waiting for comparison layout…</div>}
+          {(slot > 0 || mode === 'step' && prior) && !waiting && <p className="spytial-inspection-note" role="status">
+            {matches.length && prior?.state ? `Stability hints for ${matches.length} shared Lean identities; layout constraints still apply.` :
+              'Independent layout: no reliable correspondence in the same proof goal.'}
+          </p>}
+        </section>;
+      })}
+    </div>
+  </section>;
+}
+
+function DiagramWidget(props: InspectionPoint & {
+  prior?: SettledInspection; onSettled?: (state?: LayoutState) => void;
+}) {
   const containerRef = React.useRef<HTMLDivElement>(null);
+  const graphRef = React.useRef<any>();
   const errorMountRef = React.useRef<HTMLDivElement>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [height, setHeight] = React.useState(DEFAULT_HEIGHT);
   const errorMountedRef = React.useRef(false);
   const data = props.dataInstance;
+  const onSettledRef = React.useRef(props.onSettled);
+  onSettledRef.current = props.onSettled;
+  // The prior snapshot is consumed once per selected payload, never on a
+  // callback-driven rerender of that same diagram.
+  const priorRef = React.useRef(props.prior);
+  priorRef.current = props.prior;
 
   React.useEffect(() => { injectCss(); }, []);
+
+  // Switching between one, two, and all panes resizes retained graphs. Wait
+  // for core's own resize handling before fitting the new pane dimensions.
+  React.useEffect(() => {
+    if (!containerRef.current) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const observer = new ResizeObserver(() => {
+      clearTimeout(timer);
+      timer = setTimeout(() => graphRef.current?.resetViewToFitContent?.(), 100);
+    });
+    observer.observe(containerRef.current);
+    return () => { observer.disconnect(); clearTimeout(timer); };
+  }, []);
 
   // Mount the error modal into the DOM container (same pattern as sterling-ts / spytial-py)
   React.useEffect(() => {
@@ -282,19 +406,32 @@ export default function SpytialWidget(props: SpytialWidgetProps) {
         container.innerHTML = '';
 
         const graphEl = document.createElement('webcola-cnd-graph');
+        graphRef.current = graphEl;
         container.appendChild(graphEl);
 
         if (result.error) {
           graphEl.setAttribute('unsat', '');
         }
 
-        await (graphEl as any).renderLayout(result.layout);
+        graphEl.addEventListener('layout-complete', () => {
+          if (!cancelled) {
+            // A new shape can exceed the anchor's viewport, even though the
+            // positions are valid hints. Frame the pane's own settled graph.
+            (graphEl as any).resetViewToFitContent?.();
+            onSettledRef.current?.((graphEl as any).getLayoutState());
+          }
+        }, { once: true });
+        const prior = priorRef.current;
+        const options = prior?.state && continuityOptions(spytialcore, prior.point, props, prior.state);
+        await (graphEl as any).renderLayout(result.layout, options);
+        if (!cancelled && result.error) onSettledRef.current?.(undefined);
         if (!cancelled) setLoading(false);
       } catch (e: any) {
         if (cancelled) return;
         console.error('SpytialWidget render error:', e);
         setError(e.message || String(e));
         setLoading(false);
+        onSettledRef.current?.(undefined);
       }
     };
 
@@ -302,6 +439,7 @@ export default function SpytialWidget(props: SpytialWidgetProps) {
 
     return () => {
       cancelled = true;
+      graphRef.current = undefined;
       if (containerRef.current) containerRef.current.innerHTML = '';
     };
   }, [data, props.cndSpec]);
@@ -328,6 +466,14 @@ export default function SpytialWidget(props: SpytialWidgetProps) {
             <ul>{props.inspection.facts.map((fact, index) =>
               <li key={index}><code>{fact}</code></li>)}</ul>
           </details>}
+        {!!props.observations?.length && <p className="spytial-inspection-note">
+          Observing: <code>{props.observations.join(', ')}</code></p>}
+        {!!props.localContext?.length && <details className="spytial-context">
+          <summary>Local context ({props.localContext.length})</summary>
+          <ul>{props.localContext.map((local, i) => <li key={i}><code>
+            {local.name} : {local.type}{local.value != null ? ` := ${local.value}` : ''}
+          </code></li>)}</ul>
+        </details>}
       </div>
     </details>
   );
