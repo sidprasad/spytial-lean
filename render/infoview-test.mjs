@@ -85,7 +85,7 @@ export async function leanDocument(file, text = fs.readFileSync(file, 'utf8')) {
 export async function browserPage(browser, props) {
   const page = await browser.newPage({ viewport: { width: 1300, height: 1000 } });
   const errors = [];
-  page.on('pageerror', error => errors.push(error.message));
+  page.on('pageerror', error => errors.push(error.stack ?? error.message));
   await page.setContent('<html><body><div id="root"></div></body></html>');
   await page.evaluate(props => { window.__CASE__ = props; }, props);
   await page.addScriptTag({ path: path.resolve('render/dist/harness.js') });
@@ -168,21 +168,26 @@ async function main() {
     const { page, errors } = await browserPage(browser, header.props);
     await expandExplorer(page, 3);
     await settled(page, 2);
+    assert.deepEqual(errors, [], 'opening the explorer');
     assert.equal(await page.getByLabel('Left inspection point').inputValue(), '0');
     assert.equal(await page.getByLabel('Right inspection point').inputValue(), '2');
     await page.getByLabel('Right inspection point').selectOption('1');
     await settled(page, 2);
+    assert.deepEqual(errors, [], 'changing the right inspection');
     await page.getByLabel('Left inspection point').selectOption('2');
     await settled(page, 2);
+    assert.deepEqual(errors, [], 'changing the left inspection');
     const summary = page.getByText('Spytial inspections (3)', { exact: true });
     await summary.click();
     await page.waitForFunction(() => document.querySelectorAll('webcola-cnd-graph').length === 0);
     await summary.click();
     await settled(page, 2);
+    assert.deepEqual(errors, [], 'closing and reopening the explorer');
     assert.equal(await page.getByLabel('Left inspection point').inputValue(), '2');
     assert.equal(await page.getByLabel('Right inspection point').inputValue(), '1');
     await page.getByRole('button', { name: 'Step through', exact: true }).click();
     await settled(page, 1);
+    assert.deepEqual(errors, [], 'switching to stepping');
     await page.getByRole('button', { name: 'Next', exact: true }).click();
     assert.equal(await page.getByLabel('Inspection point', { exact: true }).inputValue(), '1');
     await page.getByRole('button', { name: 'Previous', exact: true }).click();
