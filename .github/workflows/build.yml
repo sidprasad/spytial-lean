@@ -81,6 +81,12 @@ jobs:
       - name: Build, test, demos
         run: just build test demos
 
+      - name: Check infoview interactions in Chromium
+        run: |
+          lake build renderHarnessJs
+          pnpm -C render exec playwright install --with-deps chromium
+          node render/infoview-test.mjs
+
       - name: Create GitHub Release
         if: github.event_name == 'push' && github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
