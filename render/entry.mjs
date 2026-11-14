@@ -9,7 +9,10 @@ import SpytialWidget from '../widget/dist/spytialWidget.js';
 window.__spytialEvents = [];
 for (const type of ['layout-complete', 'constraints-satisfied',
                     'constraint-error', 'layout-generation-error']) {
-  document.addEventListener(type, () => window.__spytialEvents.push(type), true);
+  document.addEventListener(type, event => {
+    window.__spytialEvents.push(type);
+    if (type === 'layout-complete') event.target.dataset.layoutSettled = 'true';
+  }, true);
 }
 
 function round(x) {

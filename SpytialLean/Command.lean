@@ -16,6 +16,7 @@ public meta import SpytialLean.Reify
 public meta import SpytialLean.InContext
 public meta import SpytialLean.LeanSelector
 public meta import SpytialLean.Widget
+public meta import SpytialLean.Explorer
 public meta import SpytialLean.Attr
 public meta import Iykyk.Tactic
 
@@ -931,7 +932,27 @@ private meta def spytialInContextProps? (subject : Expr)
     liftM (resolveLeanSelectors view.datum view.data view.prov s view.evidence)
   let props := spytialProps view.data
     (← spec?.mapM fun s => Lean.ofExcept (SpytialSpec.render s))
-  return (some (props.setObjVal! "inspection" (toJson view.inspection)), status)
+  -- Only exact Lean free-variable identities establish cross-view correspondence.
+  -- Atom IDs and pretty names are local to one walk and cannot establish it.
+  let identities := view.evidence.terms.filterMap fun (term, atom) =>
+    match term with
+    | .fvar id => some (Json.mkObj [
+        ("atom", toJson atom), ("identity", toJson id.name.toString)])
+    | _ => none
+  let mut context := #[]
+  for localDecl in ← getLCtx do
+    if localDecl.isImplementationDetail then continue
+    let type ← ppExpr localDecl.type
+    let value ← localDecl.value?.mapM fun e => return (← ppExpr e).pretty
+    context := context.push (Json.mkObj [
+      ("name", toJson localDecl.userName.toString), ("type", toJson type.pretty),
+      ("value", toJson value)])
+  let props := props.setObjVal! "inspection" (toJson view.inspection)
+    |>.setObjVal! "identities" (toJson identities)
+    |>.setObjVal! "localContext" (toJson context)
+    |>.setObjVal! "observations" (toJson (← observations.mapM fun e =>
+        return (← ppExpr e.getAppFn).pretty))
+  return (some props, status)
 
 /-- Programmatic entry point for Spytial's IYKYK consumer. -/
 public meta def spytialInContextProps (subject : Expr)
@@ -947,7 +968,9 @@ public meta def spytialInContextProps (subject : Expr)
 open Tactic in
 private meta def spytialInContextTac (term : Syntax)
     (observingSyntax fyiSyntax : Syntax)
-    (ops? : Option (Array (TSyntax `spytial_op))) (invocation : Syntax) : TacticM Unit := do
+    (ops? : Option (Array (TSyntax `spytial_op))) (invocation : Syntax)
+    (caption? : Option String := none) : TacticM Unit := do
+  let goal ← getMainGoal
   let (props?, status) ← withMainContext do
     let subject ← elabTermInstantiated term
     spytialInContextProps? subject ops? {} (← resolveFyi fyiSyntax)
@@ -958,6 +981,14 @@ private meta def spytialInContextTac (term : Syntax)
   if status.truncated then
     logWarning "spytial: IYKYK reached an extraction limit; the diagram may be incomplete"
   let some props := props? | return
+  let fileMap ← getFileMap
+  let line := invocation.getPos?.map fun p => (fileMap.toPosition p).line
+  let tag ← goal.getTag
+  let props := props.setObjVal! "point" (Json.mkObj [
+    ("title", toJson caption?), ("line", toJson line),
+    ("scope", toJson goal.name.toString),
+    ("branch", toJson (if tag.isAnonymous then "" else tag.toString))])
+  recordInspection invocation props
   savePanelWidgetInfo SpytialWidget.javascriptHash (return props) invocation
 
 open Tactic in
@@ -969,12 +1000,13 @@ open Tactic in
     `with [...]` supplies Spytial layout operations. -/
 syntax (name := spytialTactic) "spytial " term (" observing " "[" term,* "]")?
   (" fyi " "[" term,* "]")?
-  (" with " "[" spytial_op,*,? "]")? : tactic
+  (" with " "[" spytial_op,*,? "]")? (" titled " str)? : tactic
 
 open Tactic in
 @[tactic spytialTactic]
 meta def elabSpytialTactic : Tactic := fun stx =>
   spytialInContextTac stx[1] stx[2] stx[3] (optionalOps stx[4]) stx
+    (if stx[5].getNumArgs == 0 then none else stx[5][1].isStrLit?)
 
 meta def spytialDatumKw : Lean.Parser.Parser :=
   Lean.Parser.nonReservedSymbol "spytial.datum" (includeIdent := true)
