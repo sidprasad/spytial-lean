@@ -9,7 +9,7 @@ Use the Lean version in [`lean-toolchain`](lean-toolchain). Install Node.js 24
 and pnpm 11 to build the widget. Add this dependency to your `lakefile.lean`.
 
 ```lean
-require spytialLean from git "https://github.com/sidprasad/spytial-lean" @ "main"
+require spytialLean from git "https://github.com/sidprasad/spytial-lean" @ "v0.2.0"
 ```
 
 Run `lake update spytialLean`, then `lake build SpytialLean`.
