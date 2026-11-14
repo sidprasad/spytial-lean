@@ -38,6 +38,7 @@ function injectCss() {
     }
     .spytial-inspection-note { font-size: 12px; margin: 6px 0; }
     .spytial-explorer { margin: 8px 0; }
+    .spytial-explorer-summary { cursor: pointer; margin: 6px 0; }
     .spytial-toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
     .spytial-toolbar strong { overflow-wrap: anywhere; margin-right: auto; }
     .spytial-toolbar button, .spytial-point-header select {
@@ -223,6 +224,7 @@ export default function SpytialWidget(props: SpytialWidgetProps) {
 interface SettledInspection { point: InspectionPoint; state?: LayoutState }
 
 function InspectionExplorer({ name, points }: { name: string; points: InspectionPoint[] }) {
+  const [expanded, setExpanded] = React.useState(false);
   const [mode, setMode] = React.useState('compare');
   const [left, setLeft] = React.useState(0);
   const [right, setRight] = React.useState(points.length - 1);
@@ -249,7 +251,15 @@ function InspectionExplorer({ name, points }: { name: string; points: Inspection
     else if (slot === 0) setLeft(index);
     else setRight(index);
   };
-  return <section className="spytial-explorer" aria-label="Theorem inspection explorer">
+  return <details className="spytial-theorem-inspections" open={expanded} onToggle={event => {
+    const open = event.currentTarget.open;
+    setExpanded(open);
+    if (!open) {
+      setAnchor(undefined); setStepPrior(undefined); history.current = undefined;
+    }
+  }}>
+    <summary className="spytial-explorer-summary">Spytial inspections ({points.length})</summary>
+    {expanded && <section className="spytial-explorer" aria-label="Theorem inspection explorer">
     <div className="spytial-toolbar">
       <strong>{name}</strong>
       <span>{points.length} inspection {multiple ? 'points' : 'point'}</span>
@@ -301,7 +311,8 @@ function InspectionExplorer({ name, points }: { name: string; points: Inspection
         </section>;
       })}
     </div>
-  </section>;
+    </section>}
+  </details>;
 }
 
 function DiagramWidget(props: InspectionPoint & {

@@ -1,10 +1,13 @@
 # Inspecting a proof
 
-Place the cursor on a theorem's name to explore the `spytial` inspections in
-its proof. They appear in source order. With two or more points, the explorer
+Place the cursor on a theorem's name to see a collapsed **Spytial inspections (n)**
+summary in the infoview. Expand it to explore the `spytial` inspections in
+its proof. Diagrams and comparison controls are loaded only after expansion.
+The points appear in source order. With two or more points, the explorer
 initially compares the first and last. Choose any two points with the selectors,
 use **Step through** to inspect one point at a time, or choose **All points**.
-A theorem with one inspection shows that view directly.
+A theorem with one inspection shows that view after expansion.
+Collapsing and reopening the explorer preserves the selected view and points.
 
 Each `spytial` line still has its ordinary infoview widget. The explorer retains
 the same payload: inspected term, relational data, resolved layout specification,

@@ -1,6 +1,6 @@
 {
   "name": "spytial-lean",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "pnpm workspace root: widget/ (infoview bundle) and render/ (render-test harness). No sources of its own.",
   "devDependencies": {

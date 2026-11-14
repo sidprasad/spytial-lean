@@ -9,7 +9,7 @@ Use the Lean version in [`lean-toolchain`](lean-toolchain). Install Node.js 24
 and pnpm 11 to build the widget. Add this dependency to your `lakefile.lean`.
 
 ```lean
-require spytialLean from git "https://github.com/sidprasad/spytial-lean" @ "v0.2.0"
+require spytialLean from git "https://github.com/sidprasad/spytial-lean" @ "v0.2.1"
 ```
 
 Run `lake update spytialLean`, then `lake build SpytialLean`.
@@ -32,6 +32,7 @@ line. The first draws a complete list. In the proof, the diagram shows that
 
 See [layout specifications](docs/layout.md) to customize a diagram or
 [proof contexts](docs/context-inspection.md) to see which facts it includes.
-Place the cursor on a theorem's name to [compare its proof inspections](docs/theorem-inspections.md).
+Place the cursor on a theorem's name and expand **Spytial inspections** in the
+infoview to [compare its proof inspections](docs/theorem-inspections.md).
 
 [Development guide](DEVGUIDE.md)

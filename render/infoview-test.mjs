@@ -85,11 +85,20 @@ export async function leanDocument(file, text = fs.readFileSync(file, 'utf8')) {
 export async function browserPage(browser, props) {
   const page = await browser.newPage({ viewport: { width: 1300, height: 1000 } });
   const errors = [];
-  page.on('pageerror', error => errors.push(error.message));
+  page.on('pageerror', error => errors.push(error.stack ?? error.message));
   await page.setContent('<html><body><div id="root"></div></body></html>');
   await page.evaluate(props => { window.__CASE__ = props; }, props);
   await page.addScriptTag({ path: path.resolve('render/dist/harness.js') });
   return { page, errors };
+}
+
+export async function expandExplorer(page, pointCount) {
+  const disclosure = page.locator('details.spytial-theorem-inspections');
+  await disclosure.waitFor({ state: 'visible' });
+  assert.equal(await disclosure.evaluate(el => el.open), false, 'theorem inspections start collapsed');
+  assert.equal(await page.locator('webcola-cnd-graph').count(), 0, 'closed inspections do not mount diagrams');
+  assert.equal(await page.getByLabel('Inspection view mode').count(), 0, 'controls wait for expansion');
+  await page.getByText(`Spytial inspections (${pointCount})`, { exact: true }).click();
 }
 
 export async function settled(page, count) {
@@ -157,15 +166,28 @@ async function main() {
 
     browser = await chromium.launch({ headless: true });
     const { page, errors } = await browserPage(browser, header.props);
+    await expandExplorer(page, 3);
     await settled(page, 2);
+    assert.deepEqual(errors, [], 'opening the explorer');
     assert.equal(await page.getByLabel('Left inspection point').inputValue(), '0');
     assert.equal(await page.getByLabel('Right inspection point').inputValue(), '2');
     await page.getByLabel('Right inspection point').selectOption('1');
     await settled(page, 2);
+    assert.deepEqual(errors, [], 'changing the right inspection');
     await page.getByLabel('Left inspection point').selectOption('2');
     await settled(page, 2);
+    assert.deepEqual(errors, [], 'changing the left inspection');
+    const summary = page.getByText('Spytial inspections (3)', { exact: true });
+    await summary.click();
+    await page.waitForFunction(() => document.querySelectorAll('webcola-cnd-graph').length === 0);
+    await summary.click();
+    await settled(page, 2);
+    assert.deepEqual(errors, [], 'closing and reopening the explorer');
+    assert.equal(await page.getByLabel('Left inspection point').inputValue(), '2');
+    assert.equal(await page.getByLabel('Right inspection point').inputValue(), '1');
     await page.getByRole('button', { name: 'Step through', exact: true }).click();
     await settled(page, 1);
+    assert.deepEqual(errors, [], 'switching to stepping');
     await page.getByRole('button', { name: 'Next', exact: true }).click();
     assert.equal(await page.getByLabel('Inspection point', { exact: true }).inputValue(), '1');
     await page.getByRole('button', { name: 'Previous', exact: true }).click();
@@ -178,10 +200,12 @@ async function main() {
     await page.screenshot({ path: '.lake/explorer-all.png', fullPage: true });
     await page.close();
     const one = await browserPage(browser, single.props);
+    await expandExplorer(one.page, 1);
     await settled(one.page, 1);
     assert.equal(await one.page.getByRole('button', { name: 'Side by side' }).count(), 0);
     await one.page.close();
     const branchPage = await browserPage(browser, branches.props);
+    await expandExplorer(branchPage.page, 2);
     await settled(branchPage.page, 2);
     assert.ok(await branchPage.page.getByRole('status').textContent().then(s => s.includes('Independent layout')));
     await branchPage.page.close();
@@ -196,7 +220,7 @@ async function main() {
     assert.equal(updated.props.explorer.points[2].point.title, 'Repainted caption');
     assert.deepEqual(doc.diagnostics.flatMap(d => d.diagnostics).filter(d => d.severity === 1), []);
     fs.writeFileSync('.lake/explorer-props.json', JSON.stringify(header.props, null, 2));
-    console.log('Infoview RPC + Chromium: theorem and line widgets, captions, pair selection, stepping, all points, single point, branch isolation, rollback and edits passed.');
+    console.log('Infoview RPC + Chromium: collapsed theorem disclosure, lazy diagrams, reopen selections, line widgets, captions, comparisons, stepping, all points, single point, branch isolation, rollback and edits passed.');
   } finally { await browser?.close(); doc.close(); }
 }
 

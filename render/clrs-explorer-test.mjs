@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { chromium } from '@playwright/test';
-import { leanDocument, browserPage, settled } from './infoview-test.mjs';
+import { leanDocument, browserPage, expandExplorer, settled } from './infoview-test.mjs';
 import { correspondingAtoms, continuityOptions } from '../widget/dist/inspection.js';
 
 const downstream = path.resolve(process.argv[2]);
@@ -68,6 +68,7 @@ try {
   }
   browser = await chromium.launch({ headless: true });
   const { page, errors } = await browserPage(browser, widget.props);
+  await expandExplorer(page, 3);
   await settled(page, 2);
   await page.getByLabel('Right inspection point').selectOption('1');
   await settled(page, 2);
