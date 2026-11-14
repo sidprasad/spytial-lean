@@ -1,4 +1,10 @@
 on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to verify without uploading a new archive
+        required: true
+        type: string
   pull_request:
   push:
     branches:
@@ -23,6 +29,8 @@ jobs:
           echo "$HOME/.elan/bin" >> $GITHUB_PATH
 
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
 
       - name: Cache Lake packages
         uses: actions/cache@v4
@@ -49,6 +57,8 @@ jobs:
           echo "$HOME/.elan/bin" >> $GITHUB_PATH
 
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
 
       - uses: actions/setup-node@v4
         with:
@@ -72,18 +82,23 @@ jobs:
         run: just build test demos
 
       - name: Create GitHub Release
-        if: github.ref_type == 'tag'
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
           prerelease: ${{ contains(github.ref, '-pre') }}
 
       - name: Upload release archive
-        if: github.ref_type == 'tag'
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         run: lake upload $RELEASE_TAG
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ github.ref_name }}
 
       - name: Verify release archive
-        if: github.ref_type == 'tag'
-        run: lake clean && lake build :release && lake build --no-build
+        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+        run: |
+          # The archive contains this package, not its dependencies. Keep their
+          # builds so --no-build checks the restored archive in isolation.
+          lake clean spytialLean
+          lake build :release
+          lake build --no-build
