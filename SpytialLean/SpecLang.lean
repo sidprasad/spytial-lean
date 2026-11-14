@@ -187,7 +187,9 @@ live manifest at derivation, and all of them hold only for the language they
 were audited against, so a language bump fails the build until they are read
 again. -/
 
-private meta def tablesLanguageVersion : String := "2026-08-25"
+-- Core 6.3.2 adds group.showLabel and clarifies keyed tag captions. Neither
+-- changes name references, inert fields, or whether middle columns are displayed.
+private meta def tablesLanguageVersion : String := "2026-09-18"
 
 /-- How many columns a graph-side name of each kind has. -/
 private meta def introducedKindsTable : List (String × Nat) := [("group", 1), ("edge", 2)]

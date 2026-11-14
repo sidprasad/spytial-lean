@@ -75,6 +75,11 @@ info: {"constraints":
 #guard_msgs in
 #spytial.spec sG with [group SG g (textStyle "green")]
 
+-- The renderer upgrade's optional group caption flag uses the existing bool sugar.
+/-- info: {"constraints": [{"group": {"showLabel": false, "selector": "SG", "name": "g"}}]} -/
+#guard_msgs in
+#spytial.spec sG with [group SG g noLabels]
+
 /-! ## Directive scoping and edge knobs -/
 
 /--
