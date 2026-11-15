@@ -259,7 +259,7 @@ function InspectionExplorer({ name, points }: { name: string; points: Inspection
     }
   }}>
     <summary className="spytial-explorer-summary">Spytial inspections ({points.length})</summary>
-    {expanded && <section className="spytial-explorer" aria-label="Theorem inspection explorer">
+    {expanded && <section className="spytial-explorer" aria-label="Spytial inspection explorer">
     <div className="spytial-toolbar">
       <strong>{name}</strong>
       <span>{points.length} inspection {multiple ? 'points' : 'point'}</span>
@@ -269,8 +269,6 @@ function InspectionExplorer({ name, points }: { name: string; points: Inspection
             onClick={() => setMode(key)}>{label}</button>)}
       </div>}
     </div>
-    <p className="spytial-inspection-note">Proof inspections in source order. These are proof views;
-      different goals and case branches have independent layouts.</p>
     {multiple && mode === 'step' && <div className="spytial-toolbar">
       <button type="button" disabled={step === 0} onClick={() => choose(step - 1, 0)}>Previous</button>
       <span aria-live="polite">{step + 1} / {points.length}</span>
@@ -306,7 +304,7 @@ function InspectionExplorer({ name, points }: { name: string; points: Inspection
             } : undefined} /> : <div className="spytial-loading">Waiting for comparison layout…</div>}
           {(slot > 0 || mode === 'step' && prior) && !waiting && <p className="spytial-inspection-note" role="status">
             {matches.length && prior?.state ? `Stability hints for ${matches.length} shared Lean identities; layout constraints still apply.` :
-              'Independent layout: no reliable correspondence in the same proof goal.'}
+              'Independent layout: no shared bindings established for these points.'}
           </p>}
         </section>;
       })}

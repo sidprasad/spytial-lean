@@ -42,3 +42,35 @@ theorem qualified (xs : List Nat) : True := by
   trivial
 
 end Nested
+
+/-- Both inspections in the cons branch share `tail`. The fallback has its own scope. -/
+def swapFirstTwo : List Nat → List Nat
+  | a :: b :: tail =>
+    let lower : List Nat := spytial (.cons a tail) titled "New tail"
+    spytial (.cons b lower) observing [List.length] with [attribute length] titled "Result"
+  | xs => spytial xs titled "Short list"
+
+example (a b : Nat) (tail : List Nat) : swapFirstTwo (a :: b :: tail) = b :: a :: tail := rfl
+example : swapFirstTwo [7] = [7] := rfl
+
+def guardedTail (xs : List Nat) : List Nat :=
+  if h : xs = [] then
+    spytial xs fyi [h] titled "Empty"
+  else
+    spytial xs titled "Nonempty"
+
+-- Later arguments can still determine implicit types, and the body can call itself.
+def mapIdentity (xs : List Nat) : List Nat :=
+  List.map (spytial id) xs
+
+example : mapIdentity [1, 2] = [1, 2] := rfl
+example : {α : Type} → α → α := spytial @id
+def copyList : List Nat → List Nat
+  | [] => []
+  | x :: xs => spytial (x :: copyList xs)
+
+example : copyList [1, 2] = [1, 2] := rfl
+
+/-- warning: spytial: IYKYK found an inconsistent context; no diagram rendered -/
+#guard_msgs in
+example (h : (some 1 : Option Nat) = none) : Nat := spytial 0
