@@ -1027,21 +1027,35 @@ private meta def inspectTermValue (stx : Syntax) (value : Expr) : TermElabM Unit
   if let some props := props? then
     saveInspectionPoint stx props (← termInspectionScope stx)
 
+/-- A free variable contains only its ID. Its inferred type and the declarations captured
+    by the widget can still contain metavariables after the expression itself is known. -/
+private meta def tryInspectTerm (stx : Syntax) (value : Expr) : TermElabM Bool := do
+  let subject ← instantiateMVars value
+  if subject.hasMVar || (← instantiateMVars (← inferType subject)).hasMVar then return false
+  for decl in ← getLCtx do
+    let decl ← instantiateLocalDeclMVars decl
+    if decl.type.hasMVar || (decl.value? (allowNondep := true)).any (·.hasMVar) then return false
+  inspectTermValue stx subject
+  return true
+
 @[term_elab spytialSite]
 meta def elabSpytialTerm : TermElab := fun stx expectedType? => do
   let value ← withSynthesizeLight <| elabTermEnsuringType stx[1] expectedType?
-  let subject ← instantiateMVars value
-  if subject.hasMVar then
-    -- Later arguments may determine an implicit type. Postpone only the diagram and
-    -- let the surrounding term use the original expression and its constraints immediately.
+  unless ← tryInspectTerm stx value do
+    let unitType := Lean.mkConst ``Unit
+    let unitValue := Lean.mkConst ``Unit.unit
+    -- On the last ordinary retry Lean can still default numerals or run queued tactics
+    -- (e.g. a later `by rfl` that fixes a let value). Queue the final check behind those.
+    let finalCheck : FixedTermElab := fun _ => do
+      unless ← tryInspectTerm stx value do
+        logWarningAt stx "spytial: unresolved expression or local context; no diagram rendered"
+      return unitValue
     elabToSyntax (fun _ => do
-      let subject ← instantiateMVars value
-      if subject.hasMVar then tryPostpone
-      inspectTermValue stx subject
-      return mkConst ``Unit.unit) fun pending =>
-        discard <| postponeElabTerm pending (some (mkConst ``Unit))
-  else
-    inspectTermValue stx subject
+      if ← tryInspectTerm stx value then return unitValue
+      tryPostpone
+      elabToSyntax finalCheck fun check => withRef .missing do
+        elabTerm (← `(by exact $check)) (some unitType)) fun pending =>
+          discard <| postponeElabTerm pending (some unitType)
   return value
 
 meta def spytialDatumKw : Lean.Parser.Parser :=

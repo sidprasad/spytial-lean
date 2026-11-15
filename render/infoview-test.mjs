@@ -191,6 +191,23 @@ async function main() {
     const [resolved] = await doc.widgets(lineOf('List.map (spytial id)'));
     assert.deepEqual(resolved.props, delayed.props.explorer.points[0]);
 
+    // Check the serialized diagrams as well as the inferred Lean definitions.
+    for (const [name, site, local, atomType] of [
+      ['inferredElement', 'fun x => spytial x', { name: 'x', type: 'Nat', value: null }, 'Nat'],
+      ['inferredList', 'let ys := spytial xs', { name: 'xs', type: 'List Nat', value: '[]' }, 'List'],
+      ['inferredLocalType', 'let head := spytial', { name: 'xs', type: 'List Nat', value: '[]' }, 'Nat'],
+      ['inferredLocalValue', 'let result := spytial', { name: 'n', type: 'Nat', value: '3' }, 'Nat'],
+    ]) {
+      const [header] = await doc.widgets(lineOf(`def ${name}`));
+      const widgets = await doc.widgets(lineOf(site));
+      assert.equal(widgets.length, 1, name);
+      const point = widgets[0].props;
+      assert.deepEqual(header?.props.explorer.points, [point], name);
+      assert.deepEqual(point.localContext.find(d => d.name === local.name), local, name);
+      assert.equal(point.dataInstance.atoms.find(a => a.id === point.inspection.root)?.type,
+        atomType, name);
+    }
+
     browser = await chromium.launch({ headless: true });
     const { page, errors } = await browserPage(browser, header.props);
     await expandExplorer(page, 3);
