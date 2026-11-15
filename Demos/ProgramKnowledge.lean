@@ -67,23 +67,19 @@ theorem sorted_orderedInsert (x : Nat) {l : List Nat} (h : Sorted l) :
       exact .cons b x [] hbx (.single x)
   | cons a b l hab rest ih =>
     by_cases hxa : x ≤ a
-    · -- This branch does not use the recursive insertion described by `ih`.
-      -- Removing it keeps the example focused on facts about this branch.
-      clear ih
-      -- The context proves `x ≤ a` and `a ≤ b`.
-      spytial x
+    · -- Focus this inspection on `x ≤ a` and `a ≤ b` by omitting the induction hypothesis.
+      spytial x nvm [ih]
       simp only [orderedInsert, if_pos hxa]
       exact .cons x a _ hxa (.cons a b l hab rest)
     · have hax : a ≤ x := by omega
       simp only [orderedInsert, if_neg hxa]
       simp only [orderedInsert] at ih ⊢
       by_cases hxb : x ≤ b
-      · clear ih
-        rw [if_pos hxb]
+      · rw [if_pos hxb]
         -- The context now proves `a ≤ x` and `x ≤ b`. The diagram shows `x`
         -- at its insertion point between two adjacent list elements.
-        spytial x with [orientation le right]
-        spytial.datum x
+        spytial x nvm [ih] with [orientation le right]
+        spytial.datum x nvm [ih]
         exact .cons a x _ hax (.cons x b l hxb rest)
       · rw [if_neg hxb] at ih ⊢
         -- Lean has not determined where `x` occurs in the tail. It does know,
