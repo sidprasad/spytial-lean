@@ -965,31 +965,30 @@ public meta def spytialInContextProps (subject : Expr)
   let some props := props? | throwError "spytial: IYKYK found an inconsistent context"
   return (props, status)
 
-open Tactic in
-private meta def spytialInContextTac (term : Syntax)
-    (observingSyntax fyiSyntax : Syntax)
-    (ops? : Option (Array (TSyntax `spytial_op))) (invocation : Syntax)
-    (caption? : Option String := none) : TacticM Unit := do
-  let goal ← getMainGoal
-  let (props?, status) ← withMainContext do
-    let subject ← elabTermInstantiated term
-    spytialInContextProps? subject ops? {} (← resolveFyi fyiSyntax)
-      (← resolveObservations observingSyntax)
+private meta def inspectionPointProps (subject : Expr) (stx : Syntax) :
+    TermElabM (Option Json) := do
+  let (props?, status) ← spytialInContextProps? subject (optionalOps stx[4]) {}
+    (← resolveFyi stx[3]) (← resolveObservations stx[2])
   if status.inconsistent then
     logWarning "spytial: IYKYK found an inconsistent context; no diagram rendered"
-    return
+    return none
   if status.truncated then
     logWarning "spytial: IYKYK reached an extraction limit; the diagram may be incomplete"
-  let some props := props? | return
+  return props?
+
+private meta def saveInspectionPoint (invocation : Syntax) (props : Json)
+    (scope : String) (branch : Name := .anonymous) : CoreM Unit := do
   let fileMap ← getFileMap
   let line := invocation.getPos?.map fun p => (fileMap.toPosition p).line
-  let tag ← goal.getTag
+  let caption? := invocation[5][1].isStrLit?
   let props := props.setObjVal! "point" (Json.mkObj [
     ("title", toJson caption?), ("line", toJson line),
-    ("scope", toJson goal.name.toString),
-    ("branch", toJson (if tag.isAnonymous then "" else tag.toString))])
+    ("scope", toJson scope), ("branch", toJson (if branch.isAnonymous then "" else branch.toString))])
   recordInspection invocation props
   savePanelWidgetInfo SpytialWidget.javascriptHash (return props) invocation
+
+syntax spytialSite := "spytial " term (" observing " "[" term,* "]")?
+  (" fyi " "[" term,* "]")? (" with " "[" spytial_op,*,? "]")? (" titled " str)?
 
 open Tactic in
 /-- `spytial term` asks IYKYK what the current context establishes about
@@ -998,15 +997,66 @@ open Tactic in
     function over every compatible represented value;
     `fyi [h₁, ...]` supplies proved hypotheses or forward rules to IYKYK;
     `with [...]` supplies Spytial layout operations. -/
-syntax (name := spytialTactic) "spytial " term (" observing " "[" term,* "]")?
-  (" fyi " "[" term,* "]")?
-  (" with " "[" spytial_op,*,? "]")? (" titled " str)? : tactic
+syntax (name := spytialTactic) spytialSite : tactic
 
 open Tactic in
 @[tactic spytialTactic]
-meta def elabSpytialTactic : Tactic := fun stx =>
-  spytialInContextTac stx[1] stx[2] stx[3] (optionalOps stx[4]) stx
-    (if stx[5].getNumArgs == 0 then none else stx[5][1].isStrLit?)
+meta def elabSpytialTactic : Tactic := fun stx => withMainContext do
+  let stx := stx[0]
+  let goal ← getMainGoal
+  let some props ← inspectionPointProps (← elabTermInstantiated stx[1]) stx | return
+  saveInspectionPoint stx props goal.name.toString (← goal.getTag)
+
+/-- Inspect an expression in the surrounding local context and return the expression itself.
+    The optional clauses have the same meanings as in the `spytial` tactic. -/
+macro (name := spytialTerm) site:spytialSite : term => do
+  -- As in Lean's `show_term`, leave implicit lambda insertion to the inspected expression.
+  let inner : Term := ⟨site.raw⟩
+  `(no_implicit_lambda% $inner)
+
+private meta def inspectTermValue (stx : Syntax) (value : Expr) : TermElabM Unit := withRef stx do
+  -- Inspection may do proof search and synthesize instances. Keep its assignments out of
+  -- the enclosing function, whose remaining constraints Lean may still be solving.
+  let props? ← try
+    withoutModifyingStateWithInfoAndMessages <| withoutErrToSorry do
+      inspectionPointProps value stx
+  catch ex =>
+    let .error _ message := ex | throw ex
+    logWarningAt stx m!"spytial: could not inspect this expression: {message}"
+    pure none
+  if let some props := props? then
+    saveInspectionPoint stx props (← termInspectionScope stx)
+
+/-- A free variable contains only its ID. Its inferred type and the declarations captured
+    by the widget can still contain metavariables after the expression itself is known. -/
+private meta def tryInspectTerm (stx : Syntax) (value : Expr) : TermElabM Bool := do
+  let subject ← instantiateMVars value
+  if subject.hasMVar || (← instantiateMVars (← inferType subject)).hasMVar then return false
+  for decl in ← getLCtx do
+    let decl ← instantiateLocalDeclMVars decl
+    if decl.type.hasMVar || (decl.value? (allowNondep := true)).any (·.hasMVar) then return false
+  inspectTermValue stx subject
+  return true
+
+@[term_elab spytialSite]
+meta def elabSpytialTerm : TermElab := fun stx expectedType? => do
+  let value ← withSynthesizeLight <| elabTermEnsuringType stx[1] expectedType?
+  unless ← tryInspectTerm stx value do
+    let unitType := Lean.mkConst ``Unit
+    let unitValue := Lean.mkConst ``Unit.unit
+    -- On the last ordinary retry Lean can still default numerals or run queued tactics
+    -- (e.g. a later `by rfl` that fixes a let value). Queue the final check behind those.
+    let finalCheck : FixedTermElab := fun _ => do
+      unless ← tryInspectTerm stx value do
+        logWarningAt stx "spytial: unresolved expression or local context; no diagram rendered"
+      return unitValue
+    elabToSyntax (fun _ => do
+      if ← tryInspectTerm stx value then return unitValue
+      tryPostpone
+      elabToSyntax finalCheck fun check => withRef .missing do
+        elabTerm (← `(by exact $check)) (some unitType)) fun pending =>
+          discard <| postponeElabTerm pending (some unitType)
+  return value
 
 meta def spytialDatumKw : Lean.Parser.Parser :=
   Lean.Parser.nonReservedSymbol "spytial.datum" (includeIdent := true)

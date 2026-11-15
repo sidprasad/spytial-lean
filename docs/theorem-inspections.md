@@ -1,4 +1,4 @@
-# Inspecting a proof
+# Inspecting proofs and functions
 
 Place the cursor on a theorem's name to see a collapsed **Spytial inspections (n)**
 summary in the infoview. Expand it to explore the `spytial` inspections in
@@ -8,6 +8,12 @@ initially compares the first and last. Choose any two points with the selectors,
 use **Step through** to inspect one point at a time, or choose **All points**.
 A theorem with one inspection shows that view after expansion.
 Collapsing and reopening the explorer preserves the selected view and points.
+
+In a function body, `spytial e` is an expression. Lean checks `e` using the
+expected type at that position and returns it as the function's code. The
+infoview displays its local context and diagram as it does for a proof
+inspection. The same `observing`, `fyi`, `with`, and `titled` clauses work
+here. Select the function name to compare the marked expressions in source order.
 
 Each `spytial` line still has its ordinary infoview widget. The explorer retains
 the same payload: inspected term, relational data, resolved layout specification,
@@ -45,6 +51,11 @@ are not evidence. Rebuilt constructor nodes are not matched by their key fields.
 The current implementation is deliberately conservative about correspondence
 across tactics that create a new goal, and about terms without local-variable
 evidence.
+
+Function inspections can reuse positions for shared Lean bindings in the same
+equation or match alternative. The two arms of a conditional have separate
+comparison scopes. Term inspections directly inside a tactic block or `do`
+block use independent layouts when the enclosing branch cannot be identified.
 
 For example, in CLRS-Lean's `redBlackShape_repaint_rotateLeft_red_red`:
 
@@ -88,9 +99,9 @@ References inspected for this integration:
 
 ## Collection and verification
 
-Named theorems and definitions containing literal `spytial` tactics use a small
-declaration elaborator that finishes the proof before attaching the explorer to
-the declaration name. Those declarations currently elaborate synchronously and
+Named theorems and definitions containing literal `spytial` tactics or terms use a small
+declaration elaborator that finishes the declaration before attaching the explorer to
+its name. Those declarations currently elaborate synchronously and
 do not reuse intermediate tactic snapshots. Declarations without inspections use
 Lean's ordinary elaborator. Tactics generated entirely by another macro and
 anonymous `example` declarations retain their line widgets but do not currently

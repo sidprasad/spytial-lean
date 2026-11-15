@@ -35,4 +35,22 @@ See [layout specifications](docs/layout.md) to customize a diagram or
 Place the cursor on a theorem's name and expand **Spytial inspections** in the
 infoview to [compare its proof inspections](docs/theorem-inspections.md).
 
+## Inside a function
+
+On the development branch (`@ "main"`), wrap an expression with `spytial` to
+inspect it while Lean checks the function. The expression supplies the value
+of the surrounding computation.
+
+```lean
+def swapFirstTwo : List Nat → List Nat
+  | a :: b :: tail =>
+    let lower : List Nat := spytial (.cons a tail) titled "New tail"
+    spytial (.cons b lower) titled "Result"
+  | xs => xs
+```
+
+Place the cursor on either `spytial` line for its diagram, or on `swapFirstTwo`
+and expand **Spytial inspections** to compare the new tail with the result.
+Both views keep the rest of the list symbolic.
+
 [Development guide](DEVGUIDE.md)
