@@ -60,10 +60,12 @@ diagram.
 `spytial.datum` prints the same datum. The widget payload additionally records the
 selected root and its source term so the infoview can identify what was inspected.
 
-The AVL layout renders `height` and `key` as attributes. It also enables core's
-`hideDisconnectedBuiltIns` flag: scalar nodes left unconnected after attribute
-folding are hidden, but scalar values participating in context comparisons remain
-visible. This is a presentation policy; the datum keeps the scalar values.
+The AVL demo renders symbolic `height` and `key` values as attributes and uses
+`hideAtom Nat` to keep arithmetic out of the tree drawing. Scalar facts remain in
+the datum and the context listing. Green and red styles come from proved
+`Balanced` and `¬ Balanced` facts; a neutral node has neither classification.
+Five inspections follow the left-right case from a failed single rotation to a
+successful double rotation, revealing only the inner subtree's root along the way.
 
 Contradiction checks still happen before projection. Inconsistency and
 extraction truncation keep their existing behavior. Programmatic callers that

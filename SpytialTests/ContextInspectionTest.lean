@@ -406,6 +406,26 @@ def Tree.combinedHeight : Tree → Nat
       | throwError "lost the known symbolic height"
     unless (tuples result.data "height").any (·.atoms[1]? == some scalar.id) do
       throwError "the child's observation does not use its known height"
+    let output ← graphResult "known symbolic arithmetic" result.data "height" result.inspection.root
+    unless result.data.atoms.any (fun atom => atom.id == output && atom.label == "n + 1") do
+      throwError "known arithmetic was replaced by an unrelated unknown\n{canonInstance result.data}"
+
+/- An observed result and a local equality about it are one value, including
+   when the latter's RHS reduces from h + 1 to Nat.succ h during extraction. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `l tree fun l => do
+  withLocalDeclD `r tree fun r => do
+  withLocalDeclD `h (mkConst ``Nat) fun h => do
+    let h1 ← mkAppM ``HAdd.hAdd #[h, mkNatLit 1]
+    withLocalDeclD `hl (← mkEq (height l) h) fun _ => do
+    withLocalDeclD `hr (← mkEq (height r) h1) fun _ => do
+      let result ← view (node l 7 r)
+      assertCount "one height per tree" result.data "height" 3
+      if result.data.atoms.any (·.label == "succ") then
+        throwError "context equality created a duplicate successor value"
+      let output ← graphResult "known height offset" result.data "height" result.inspection.root
+      unless result.data.atoms.any (fun atom => atom.id == output && atom.label == "h + 2") do
+        throwError "known height offset did not remain symbolic\n{canonInstance result.data}"
 
 /- An irrelevant unknown key does not prevent height evaluation. Command
    mode has the same reduction semantics, without importing context facts. -/

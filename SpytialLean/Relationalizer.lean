@@ -1155,7 +1155,10 @@ public meta def prepareObservations (cfg : WalkConfig) (values : Array Expr)
           if abstracted.mvars.any (fun m => !inputMVars.contains m.mvarId!) ||
               abstracted.expr.hasMVar || abstracted.expr.hasLevelMVar then
             throwError "observation simplification left unresolved metavariables"
-          match Kernel.check (← getEnv) (← getLCtx) abstracted.expr with
+          -- `have` and `let` may leave assigned type/universe metavariables in local
+          -- declarations. The kernel cannot consult their assignments in MetaM.
+          let scope ← instantiateLCtxMVars (← getLCtx)
+          match Kernel.check (← getEnv) scope abstracted.expr with
           | .error exception => throwError "{exception.toMessageData (← getOptions)}"
           | .ok _ => pure { result with expr := expression, proof? := some proof }
         results := results.insert ⟨application⟩ result
@@ -1295,7 +1298,10 @@ mutual
   private meta partial def symbolicObservationResult (cfg : WalkConfig) (e : Expr) :
       StateT WalkState MetaM String := do
     if let some id := (← get).applicationAtoms[(⟨e⟩ : ExprStructEq)]? then return id
-    if (← dependsOnObservation cfg e) && !hasObservedHead cfg e then
+    -- A checked residual can be known arithmetic over local variables (e.g. `h + 2`),
+    -- even when simplification has eliminated every observed function application.
+    if !hasObservedHead cfg e &&
+        (cfg.observationResiduals.contains ⟨e⟩ || (← dependsOnObservation cfg e)) then
       let rendered ← symbolicObservationExpression cfg e
       addSymbolicObservationAtom cfg e rendered.text
     else

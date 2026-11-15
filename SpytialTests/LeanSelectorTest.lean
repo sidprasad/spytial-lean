@@ -101,25 +101,25 @@ public meta def elabMaskedSpec : CommandElab := fun
 /-! ## Arity 1: a predicate resolves to the atoms it selects, extensionally,
 by atom id -/
 
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_3"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_3`"}}]} -/
 #guard_msgs in
 #spytial.spec lSmall with [hideAtom lean (fun n : LRB => n matches .nil)]
 
 -- a `Prop`-valued predicate goes through `Decidable`, not compiled `Bool`
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_1"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_1`"}}]} -/
 #guard_msgs in
 #spytial.spec lSmall with [hideAtom lean (fun c : LHue => c = LHue.black)]
 
 -- the argument type fixes the sig the column ranges over, so scalars are reachable
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_2"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_2`"}}]} -/
 #guard_msgs in
 #spytial.spec lSmall with [hideAtom lean (fun k : Nat => k > 0)]
 
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_0"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_0`"}}]} -/
 #guard_msgs in
 #spytial.spec lSmall with [hideAtom lean (LRB.isBlack)]
 
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_3 + LHue"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_3` + LHue"}}]} -/
 #guard_msgs in
 #spytial.spec lSmall with [hideAtom lean (fun n : LRB => n matches .nil) + LHue]
 
@@ -147,7 +147,8 @@ a predicate (`p.lt == c`) is the accessor's relation. -/
 /--
 info: {"constraints":
  [{"orientation":
-   {"selector": "`atom_0->`atom_3 + `atom_3->`atom_6 + `atom_6->`atom_6",
+   {"selector":
+    "``atom_0`->``atom_3` + ``atom_3`->``atom_6` + ``atom_6`->``atom_6`",
     "directions": ["below"]}}]}
 -/
 #guard_msgs in
@@ -158,7 +159,8 @@ info: {"constraints":
 /--
 info: {"directives":
  [{"inferredEdge":
-   {"selector": "`atom_0->`atom_3 + `atom_0->`atom_6 + `atom_3->`atom_6",
+   {"selector":
+    "``atom_0`->``atom_3` + ``atom_0`->``atom_6` + ``atom_3`->``atom_6`",
     "name": "kids"}}]}
 -/
 #guard_msgs in
@@ -167,7 +169,8 @@ info: {"directives":
 -- And a partial accessor compares against `some`.
 /--
 info: {"constraints":
- [{"orientation": {"selector": "`atom_0->`atom_3", "directions": ["below"]}}]}
+ [{"orientation":
+   {"selector": "``atom_0`->``atom_3`", "directions": ["below"]}}]}
 -/
 #guard_msgs in
 #spytial.spec lBig with [orientation lean (fun p c : LRB => p.inner == some c) below]
@@ -183,7 +186,8 @@ error: a raw Lean selector returns `Bool` or `Prop` — the walked tuples it acc
 -- Arity 3.
 /--
 info: {"directives":
- [{"inferredEdge": {"selector": "`atom_0->`atom_4->`atom_5", "name": "tri"}}]}
+ [{"inferredEdge":
+   {"selector": "``atom_0`->``atom_4`->``atom_5`", "name": "tri"}}]}
 -/
 #guard_msgs in
 #spytial.spec lBig with
@@ -225,12 +229,12 @@ public def LRB.subtrees : LRB → List LRB
 
 -- The datum itself, inline: the anonymous constructor takes its type from
 -- the ascription.
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_0"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_0`"}}]} -/
 #guard_msgs in
 #spytial.spec lBig with [hideAtom lean ((⟨fun t => [t]⟩ : Spytial.Sel LRB LRB))]
 
 -- `Tuples` is a set: order and duplicates in the returned list change nothing.
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_0"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_0`"}}]} -/
 #guard_msgs in
 #spytial.spec lBig with [hideAtom lean ((⟨fun t => [t, t]⟩ : Spytial.Sel LRB LRB))]
 
@@ -241,7 +245,7 @@ public def blackSel : Spytial.Sel LRB LRB :=
 -- A selector is plain code, so it tests like any other function.
 #guard blackSel.select lBig == [.node .black 2 .nil .nil]
 
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_3"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_3`"}}]} -/
 #guard_msgs in
 #spytial.spec lBig with [hideAtom lean (blackSel)]
 
@@ -250,7 +254,7 @@ public def nilSel : Spytial.Sel LRB LRB :=
   ⟨fun t => t.subtrees.filter (fun n => n matches .nil)⟩
 
 /--
-info: {"constraints": [{"hideAtom": {"selector": "`atom_3 + `atom_6"}}]}
+info: {"constraints": [{"hideAtom": {"selector": "``atom_3` + ``atom_6`"}}]}
 -/
 #guard_msgs in
 #spytial.spec lBig with [hideAtom lean ((blackSel ∪ nilSel))]
@@ -258,7 +262,8 @@ info: {"constraints": [{"hideAtom": {"selector": "`atom_3 + `atom_6"}}]}
 -- `α`'s product structure is the arity, and it reaches the op position check.
 /--
 info: {"constraints":
- [{"orientation": {"selector": "`atom_0->`atom_3", "directions": ["below"]}}]}
+ [{"orientation":
+   {"selector": "``atom_0`->``atom_3`", "directions": ["below"]}}]}
 -/
 #guard_msgs in
 #spytial.spec lBig with
@@ -275,7 +280,8 @@ public abbrev LEdge := LRB × LRB
 
 /--
 info: {"constraints":
- [{"orientation": {"selector": "`atom_0->`atom_3", "directions": ["below"]}}]}
+ [{"orientation":
+   {"selector": "``atom_0`->``atom_3`", "directions": ["below"]}}]}
 -/
 #guard_msgs in
 #spytial.spec lBig with
@@ -285,13 +291,13 @@ info: {"constraints":
 public abbrev LNode := LRB
 public abbrev LRBSel := Spytial.Sel LRB LNode
 
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_0"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_0`"}}]} -/
 #guard_msgs in
 #spytial.spec lBig with [hideAtom lean ((⟨fun t => [t]⟩ : LRBSel))]
 
 -- The tuple cap counts the *set*, so duplicates cost nothing: this returns
 -- 9000 tuples and selects one.
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_0"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_0`"}}]} -/
 #guard_msgs in
 #spytial.spec lBig with
   [hideAtom lean ((⟨fun t => List.replicate 9000 t⟩ : Spytial.Sel LRB LRB))]
@@ -307,7 +313,7 @@ spytial_spec LRB [
 ]
 
 /--
-info: "{\"directives\":\n [{\"atomStyle\": {\"selector\": \"`atom_0\", \"borderStyle\": {\"color\": \"black\"}}}],\n \"constraints\": [{\"hideAtom\": {\"selector\": \"`atom_3\"}}]}"
+info: "{\"directives\":\n [{\"atomStyle\": {\"selector\": \"``atom_0`\", \"borderStyle\": {\"color\": \"black\"}}}],\n \"constraints\": [{\"hideAtom\": {\"selector\": \"``atom_3`\"}}]}"
 -/
 #guard_msgs in
 #payload_spec lSmall
@@ -325,14 +331,14 @@ public structure LExt extends LBase where
 spytial_spec LBase [hideAtom lean ((⟨fun b => [b.tag]⟩ : Spytial.Sel LBase Nat))]
 
 /--
-info: "{\"constraints\": [{\"hideAtom\": {\"selector\": \"`atom_2\"}}]}"
+info: "{\"constraints\": [{\"hideAtom\": {\"selector\": \"``atom_2`\"}}]}"
 -/
 #guard_msgs in
 #payload_spec (LExt.mk ⟨7⟩ 9)
 
 -- Same stored spec, different value: `isBlack` now picks the interior node.
 /--
-info: "{\"directives\":\n [{\"atomStyle\": {\"selector\": \"`atom_3\", \"borderStyle\": {\"color\": \"black\"}}}],\n \"constraints\": [{\"hideAtom\": {\"selector\": \"`atom_6\"}}]}"
+info: "{\"directives\":\n [{\"atomStyle\": {\"selector\": \"``atom_3`\", \"borderStyle\": {\"color\": \"black\"}}}],\n \"constraints\": [{\"hideAtom\": {\"selector\": \"``atom_6`\"}}]}"
 -/
 #guard_msgs in
 #payload_spec lBig
@@ -416,7 +422,7 @@ info: {"constraints":
    {"source":
     {"text": "hideAtom lean (fun n : LRB => n matches .nil)",
      "location": "LeanSelectorTest.lean:N"},
-    "selector": "`atom_6"}}]}
+    "selector": "``atom_6`"}}]}
 -/
 #guard_msgs in
 #masked_spec lBig with [hideAtom lean (fun n : LRB => n matches .nil)]
@@ -427,7 +433,7 @@ info: {"constraints":
 set_option spytial.source true in
 /--
 info: {"directives":
- [{"atomStyle": {"selector": "`atom_3", "borderStyle": {"color": "black"}}}]}
+ [{"atomStyle": {"selector": "``atom_3`", "borderStyle": {"color": "black"}}}]}
 -/
 #guard_msgs in
 #masked_spec lBig with [atomStyle lean (LRB.isBlack) (borderStyle "black")]

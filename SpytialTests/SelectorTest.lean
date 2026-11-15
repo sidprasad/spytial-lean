@@ -1089,7 +1089,7 @@ info: {"constraints":
 #guard_msgs in
 #spytial.spec sExample with [orientation SBDD -> lone SBDD below]
 
-/-- info: {"constraints": [{"hideAtom": {"selector": "{x : SBDD | x = `a0}"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "{x : SBDD | x = ``a0`}"}}]} -/
 #guard_msgs in
 #spytial.spec sExample with [hideAtom {x : SBDD | x = `a0}]
 

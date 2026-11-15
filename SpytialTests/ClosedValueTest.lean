@@ -164,7 +164,7 @@ run_cmd Lean.Elab.Command.liftTermElabM do
   let .str serialized := props.getObjValD "cndSpec" | throwError "missing selector result"
   let .ok spec := Json.parse serialized | throwError "invalid selector JSON"
   let .arr constraints := spec.getObjValD "constraints" | throwError "missing constraints"
-  unless (constraints[0]!.getObjValD "hideAtom").getObjValD "selector" == .str "`atom_2" do
+  unless (constraints[0]!.getObjValD "hideAtom").getObjValD "selector" == .str "``atom_2`" do
     throwError "the production selector did not resolve against the typed datum"
 
 end ClosedValueTest

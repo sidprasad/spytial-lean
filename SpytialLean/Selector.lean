@@ -124,16 +124,18 @@ public meta def sgqBareName (s : String) : Bool :=
   | c :: cs => Sgq.bareHead c && cs.all Sgq.bareRest
   | [] => false
 
+private meta def quoteSgqName (s : String) : String :=
+  let esc := s.foldl (init := "") fun acc c =>
+    if Sgq.quoteMustEscape.contains c then (acc.push Sgq.quoteEscape).push c else acc.push c
+  s!"{Sgq.quoteDelimiter}{esc}{Sgq.quoteDelimiter}"
+
 /-- FIXME: the empty name has no spelling at all (`Sgq.quoteMinLength` is 1),
     and this still emits the invalid `` `` `` for it. Nothing produces one
     today: sigs and relations come from resolved Lean names and binders from
     binder names. Fixing it properly means an error path through every caller. -/
 public meta def quoteIfNeeded (s : String) : String :=
   if sgqBareName s && s.length ≥ Sgq.bareMinLength && !Sgq.reserved.contains s then s
-  else
-    let esc := s.foldl (init := "") fun acc c =>
-      if Sgq.quoteMustEscape.contains c then (acc.push Sgq.quoteEscape).push c else acc.push c
-    s!"{Sgq.quoteDelimiter}{esc}{Sgq.quoteDelimiter}"
+  else quoteSgqName s
 
 /-- How SGQ spells `c` inside a double-quoted literal. `none` = no spelling at
     all (C0/DEL without a readable escape, which the JSON hop mangles). -/
@@ -304,7 +306,10 @@ private meta partial def renderItems (cd : Sgq.Construct) (op : Option Sgq.OpId)
     | .name _ =>
       let a ← argAt cd args i
       let .name s := a | wrongArg cd i "a name" a
-      out := out.push (quoteIfNeeded s, {})
+      -- Atom literals have a backtick prefix. Always quote their name as well:
+      -- otherwise two prefixes in a union/product lex as one quoted identifier.
+      let rendered := if cd.id == .«atomLiteral» then quoteSgqName s else quoteIfNeeded s
+      out := out.push (rendered, {})
       i := i + 1
     | .operator | .constant =>
       -- `constant` is the `const` alternation; the numeric and string literals

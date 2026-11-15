@@ -211,6 +211,20 @@ def inspectNext (n : Nat) : Nat := by
   spytial n observing [observedNext] with [attribute observedNext]
   exact n + 1
 
+-- `let`/`have` can retain assigned type and universe metavariables in the local
+-- context. Both observation certificates and predicate certificates must instantiate
+-- those declarations before kernel checking. Neither path may warn or reject the proof.
+#guard_msgs in
+example (n : Nat) : observedNext (observedNext n) = n + 2 := by
+  let next := observedNext n
+  have hnext : next = n + 1 := rfl
+  have htwice : observedNext next = n + 2 := by simp only [hnext, observedNext]
+  spytial next observing [observedNext] with [
+    attribute observedNext,
+    atomStyle lean (fun value : Nat => observedNext value = n + 2) (fillStyle "green")
+  ]
+  exact htwice
+
 /--
 info: {"relations":
  [{"types": ["Nat", "Nat"],
@@ -623,7 +637,7 @@ example (h : (some 1 : Option Nat) = none) : True := by
 -- a predicate runs on the values the refinement established
 set_option linter.unusedVariables false in
 set_option spytial.source false in
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_1"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_1`"}}]} -/
 #guard_msgs in
 example (xs : List Nat) (h : xs = [1]) : True := by
   spytial_wire_spec xs with [hideAtom lean (fun n : Nat => n == 1)]
@@ -649,7 +663,7 @@ def listElems : Spytial.Sel (List Nat) Nat := ⟨fun xs => xs⟩
 
 set_option linter.unusedVariables false in
 set_option spytial.source false in
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_1"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_1`"}}]} -/
 #guard_msgs in
 example (xs : List Nat) (h : xs = [1]) : True := by
   spytial_wire_spec xs with [hideAtom lean (listElems)]
@@ -676,7 +690,7 @@ spytial_spec SelCrate [hideAtom lean (fun n : Nat => n == 5)]
 
 set_option linter.unusedVariables false in
 set_option spytial.source false in
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_1"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_1`"}}]} -/
 #guard_msgs in
 example (c : SelCrate) (h : c = ⟨5⟩) : True := by
   spytial_wire_spec c

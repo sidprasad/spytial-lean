@@ -220,21 +220,33 @@ private meta def addWitnesses (afaik : Iykyk.Afaik) (recordObservationTerms : Bo
 private meta def walkFact (cfg : WalkConfig)
     (fact : Iykyk.KnownFact) (initialAnchors : Array (Expr × String)) :
     StateT WalkState MetaM (Array (Expr × String)) := do
-  let some shape ← propTupleShape? (← displayedProposition fact)
+  let proposition ← displayedProposition fact
+  let some shape ← propTupleShape? proposition
     | return initialAnchors
   let relation := shape.relation
   let rawArguments := shape.arguments
   let rawTypes ← rawArguments.mapM fun argument => do
     sigOfType (← inferType argument)
   let relationId ← headRelationId shape.head rawTypes
+  -- A checked equation about an observed application names the same output as its
+  -- observation. Reuse that result by source expression, rather than walking an
+  -- equivalent RHS (e.g. `h + 1` reduced to `Nat.succ h`) into a second value.
+  let observedResult? ← do
+    if !cfg.observations.any (fun observation => observation.getAppFn.equal shape.head) then
+      pure none
+    else
+      let some (_, lhs, rhs) := proposition.eq? | pure none
+      let source := if lhs.getAppFn.equal shape.head then lhs else rhs
+      let source ← contextArgument cfg source
+      pure (← get).applicationAtoms[(⟨source⟩ : ExprStructEq)]?
   let mut anchors := initialAnchors
   let mut atomIds := #[]
   let mut types := #[]
   for rawArgument in rawArguments do
     let argument ← contextArgument cfg rawArgument
-    let mut atomId? := none
+    let mut atomId? := if atomIds.size + 1 == rawArguments.size then observedResult? else none
     for (seen, atomId) in anchors do
-      if seen.equal argument then
+      if atomId?.isNone && seen.equal argument then
         atomId? := some atomId
         break
     -- Root and earlier fact walks record every visited subterm, not just their
