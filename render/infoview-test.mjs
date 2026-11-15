@@ -164,6 +164,50 @@ async function main() {
     assert.equal((await doc.widgets(lineOf('theorem explorerWithoutInspections'))).length, 0);
     assert.equal((await doc.widgets(lineOf('theorem qualified')))[0].props.explorer.points.length, 1);
 
+    const [functionHeader] = await doc.widgets(lineOf('def swapFirstTwo'));
+    const sites = functionHeader.props.explorer.points;
+    assert.deepEqual(sites.map(p => p.point.title), ['New tail', 'Result', 'Short list']);
+    for (const p of sites) {
+      const [lineWidget] = await doc.widgets(p.point.line - 1);
+      assert.deepEqual(lineWidget.props, p);
+    }
+    assert.ok(sites[0].point.scope);
+    assert.equal(sites[0].point.scope, sites[1].point.scope);
+    assert.notEqual(sites[0].point.scope, sites[2].point.scope);
+    const tailIdentity = p => {
+      const atom = p.dataInstance.atoms.find(a => a.label === 'tail');
+      assert.ok(atom);
+      const evidence = p.identities.find(i => i.atom === atom.id);
+      assert.ok(evidence);
+      return evidence.identity;
+    };
+    assert.equal(tailIdentity(sites[0]), tailIdentity(sites[1]));
+    const [guarded] = await doc.widgets(lineOf('def guardedTail'));
+    const [empty, nonempty] = guarded.props.explorer.points;
+    assert.notEqual(empty.point.scope, nonempty.point.scope);
+    assert.ok(empty.localContext.some(d => d.name === 'h'));
+    const [delayed] = await doc.widgets(lineOf('def mapIdentity'));
+    assert.equal(delayed.props.explorer.points.length, 1);
+    const [resolved] = await doc.widgets(lineOf('List.map (spytial id)'));
+    assert.deepEqual(resolved.props, delayed.props.explorer.points[0]);
+
+    // Check the serialized diagrams as well as the inferred Lean definitions.
+    for (const [name, site, local, atomType] of [
+      ['inferredElement', 'fun x => spytial x', { name: 'x', type: 'Nat', value: null }, 'Nat'],
+      ['inferredList', 'let ys := spytial xs', { name: 'xs', type: 'List Nat', value: '[]' }, 'List'],
+      ['inferredLocalType', 'let head := spytial', { name: 'xs', type: 'List Nat', value: '[]' }, 'Nat'],
+      ['inferredLocalValue', 'let result := spytial', { name: 'n', type: 'Nat', value: '3' }, 'Nat'],
+    ]) {
+      const [header] = await doc.widgets(lineOf(`def ${name}`));
+      const widgets = await doc.widgets(lineOf(site));
+      assert.equal(widgets.length, 1, name);
+      const point = widgets[0].props;
+      assert.deepEqual(header?.props.explorer.points, [point], name);
+      assert.deepEqual(point.localContext.find(d => d.name === local.name), local, name);
+      assert.equal(point.dataInstance.atoms.find(a => a.id === point.inspection.root)?.type,
+        atomType, name);
+    }
+
     browser = await chromium.launch({ headless: true });
     const { page, errors } = await browserPage(browser, header.props);
     await expandExplorer(page, 3);
@@ -211,8 +255,16 @@ async function main() {
     await branchPage.page.close();
     const linePage = await browserPage(browser, points[0]);
     await settled(linePage.page, 1);
-    assert.equal(await linePage.page.getByLabel('Theorem inspection explorer').count(), 0);
+    assert.equal(await linePage.page.getByLabel('Spytial inspection explorer').count(), 0);
     await linePage.page.close();
+
+    const fn = await browserPage(browser, functionHeader.props);
+    await expandExplorer(fn.page, sites.length);
+    await fn.page.getByLabel('Right inspection point').selectOption('1');
+    await settled(fn.page, 2);
+    assert.match(await fn.page.getByRole('status').innerText(), /Stability hints/);
+    assert.deepEqual(fn.errors, []);
+    await fn.page.close();
 
     doc.change(text.replace('After repaint', 'Repainted caption'));
     const [updated] = await doc.widgets(headerLine);
