@@ -113,6 +113,42 @@ example {R : Nat → Nat → Prop} (a : Nat) (h : ∃ b, R a b) : True := by
   spytial a
   trivial
 
+-- Both exclusions last one inspection. The explicitly supplied h is also excluded.
+set_option linter.unusedVariables false in
+/--
+info: {"relations": [], "atoms": [{"type": "Nat", "label": "x", "id": "atom_0"}]}
+---
+warning: spytial: IYKYK found an inconsistent context; no datum produced
+-/
+#guard_msgs in
+example (x : Nat) (h : x = 7) (bad : False) : x = 7 := by
+  spytial.datum x nvm [bad, h] fyi [h]
+  spytial.datum x
+  exact h
+
+-- Excluding one source still admits the same fact from another local declaration.
+set_option linter.unusedVariables false in
+/-- warning: spytial: IYKYK found an inconsistent context; no diagram rendered -/
+#guard_msgs in
+example (x : Nat) (h other : False) : False := by
+  spytial x nvm [h]
+  exact other
+
+-- Exclusion also takes precedence for a forward rule with implicit parameters.
+set_option linter.unusedVariables false in
+/-- warning: spytial: IYKYK found an inconsistent context; no diagram rendered -/
+#guard_msgs in
+example (x : Nat) (P : Nat → Prop) (hx : P x) (step : ∀ {n}, P n → False) : False := by
+  spytial x fyi [step] nvm [step]
+  spytial x fyi [step]
+  exact step hx
+
+/-- error: 'nvm' expects the name of a local declaration -/
+#guard_msgs in
+example (x : Nat) : True := by
+  spytial x nvm [Nat.zero]
+  trivial
+
 set_option linter.unusedVariables false in
 example (xs : List Nat) (h : ∃ y, xs = [y, y]) : True := by
   spytial xs

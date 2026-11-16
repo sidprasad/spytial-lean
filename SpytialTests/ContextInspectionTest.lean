@@ -474,6 +474,22 @@ private meta def assertRootObservation (data : JsonDataInstance) (relation label
   unless data.atoms.any (fun a => some a.id == observed.atoms[1]? && a.label == label) do
     throwError "expected root {relation} = {label}\n{canonInstance data}"
 
+def Tree.balanceFactor : Tree → Int
+  | .leaf => 0
+  | .node l _ r => (r.height : Int) - l.height
+
+def Tree.factorMagnitude (t : Tree) : Nat := t.balanceFactor.natAbs
+
+/- A match on an unknown subtree denotes one unknown integer, including when
+   it occurs inside a second observation. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `b tree fun b => do
+    let factor := mkApp (mkConst ``Tree.balanceFactor) b
+    let magnitude := mkApp (mkConst ``Tree.factorMagnitude) b
+    let data ← relationalize b {} #[magnitude, factor]
+    assertRootObservation data "balanceFactor" "¿x?"
+    assertRootObservation data "factorMagnitude" "¿x?.natAbs"
+
 /- Spytial discovers the comparisons that block symbolic `max` reductions,
    asks IYKYK's bounded arithmetic query, and then normalizes every derived
    height over the one genuinely unknown base value. -/

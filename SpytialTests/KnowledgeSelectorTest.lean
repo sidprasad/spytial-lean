@@ -215,13 +215,17 @@ example (t : KnowledgeTree) (k : Nat) (h : t.height = k) : True := by
 -- Computation with symbolic children and context equalities: the parent has
 -- height 3 even though neither child is a closed value. Observation equations
 -- survive relationalization and are sufficient evidence on their own.
+#guard_msgs in
 #eval show TermElabM Unit from do
   let tree := mkConst ``KnowledgeTree
   let height := mkConst ``KnowledgeTree.height
   withLocalDeclD `left tree fun left => do
   withLocalDeclD `right tree fun right => do
-  withLocalDeclD `hl (← mkEq (mkApp height left) (mkNatLit 2)) fun _ => do
+  -- Elaboration can solve a placeholder after it has entered a hypothesis type.
+  let leftHeight ← mkFreshExprMVar (mkConst ``Nat)
+  withLocalDeclD `hl (← mkEq (mkApp height left) leftHeight) fun _ => do
   withLocalDeclD `hr (← mkEq (mkApp height right) (mkNatLit 1)) fun _ => do
+    leftHeight.mvarId!.assign (mkNatLit 2)
     let root := mkApp2 (mkConst ``KnowledgeTree.node) left right
     let (_, some view) ← wdykInContext root {} { mechanisms := #[.simp] } #[mkApp height root]
       | throwError "expected an observed tree"

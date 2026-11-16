@@ -234,8 +234,7 @@ private meta def checkPredicateProof (proposition proof : Expr) : MetaM Expr := 
   let checked := mkApp2 (mkConst ``id [.zero]) proposition proof
   if checked.hasExprMVar || checked.hasLevelMVar || checked.hasSorry then
     throwError "Lean selector evidence contains unresolved holes or sorry"
-  -- A proof can be fully instantiated while the types of its local hypotheses still
-  -- contain assigned metavariables. Instantiate those declarations for the kernel too.
+  -- Local hypotheses can still mention assigned metavariables after the proof is instantiated.
   let scope ← instantiateLCtxMVars (← getLCtx)
   match Kernel.check (← getEnv) scope checked with
   | .error exception => throwError "{exception.toMessageData (← getOptions)}"

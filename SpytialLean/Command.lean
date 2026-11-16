@@ -905,30 +905,47 @@ meta def elabSpytialProofDatumDebug : CommandElab := fun
     logInfo m!"{(toJson di).pretty}"
   | stx => throwError "Unexpected syntax {stx}."
 
-private meta def resolveFyi (stx : Syntax) : TermElabM (Array Expr) := do
-  if stx.getNumArgs == 0 then return #[]
-  stx[2].getSepArgs.mapM fun rule => do
-    let e ← elabTermInstantiated rule
-    unless ← isProp (← inferType e) do
-      throwErrorAt rule m!"'fyi' expects a hypothesis: a proof of a Prop-typed \
-        statement, but this term has type {← inferType e}"
-    return e
+declare_syntax_cat spytialEvidenceClause
+syntax "fyi " "[" term,* "]" : spytialEvidenceClause
+syntax "nvm " "[" ident,* "]" : spytialEvidenceClause
 
 /-- Spytial's `wdyk` configuration. Simp is always enabled: it
     normalizes each fact before decomposition, so a constructor clash reduces
     to `False` (an inconsistent context) and a same-constructor equation
     splits into the field equalities that refine atoms. -/
-private meta def contextConfig (hypotheses : Array Expr) : Iykyk.Config :=
-  { hypotheses, mechanisms := #[.simp] }
+private meta def contextConfig : Iykyk.Config := { mechanisms := #[.simp] }
+
+private meta def resolveContextConfig (clauses : Syntax) : TermElabM Iykyk.Config := do
+  let mut config : Iykyk.Config := contextConfig
+  for clause in clauses.getArgs do
+    match clause with
+    | `(spytialEvidenceClause| fyi [$rules:term,*]) =>
+      for rule in rules.getElems do
+        -- Keep a bare local's identity, including rules with implicit binders.
+        let e ← if rule.raw.isIdent then
+          match ← Term.resolveId? rule (withInfo := true) with
+          | some e@(.fvar _) => pure e
+          | _ => elabTermInstantiated rule
+        else elabTermInstantiated rule
+        unless ← isProp (← inferType e) do
+          throwErrorAt rule m!"'fyi' expects a hypothesis: a proof of a Prop-typed \
+            statement, but this term has type {← inferType e}"
+        config := { config with hypotheses := config.hypotheses.push e }
+    | `(spytialEvidenceClause| nvm [$names:ident,*]) =>
+      for name in names.getElems do
+        let some (.fvar id) ← Term.resolveId? name (withInfo := true)
+          | throwErrorAt name "'nvm' expects the name of a local declaration"
+        config := { config with excludedHypotheses := config.excludedHypotheses.push id }
+    | _ => throwUnsupportedSyntax
+  return config
 
 /-- Extract knowledge with IYKYK and turn it into a Spytial widget payload. -/
 private meta def spytialInContextProps? (subject : Expr)
     (ops? : Option (Array (TSyntax `spytial_op)) := none)
-    (walkConfig : WalkConfig := {}) (hypotheses : Array Expr := #[])
+    (walkConfig : WalkConfig := {}) (config : Iykyk.Config := contextConfig)
     (observations : Array Expr := #[]) :
     TermElabM (Option Json × ContextViewStatus) := do
-  let (status, view?) ←
-    wdykInContext subject walkConfig (contextConfig hypotheses) observations
+  let (status, view?) ← wdykInContext subject walkConfig config observations
   let some view := view? | return (none, status)
   let spec? ← match ops? with
     | some ops => do
@@ -955,9 +972,11 @@ private meta def spytialInContextProps? (subject : Expr)
     if localDecl.isImplementationDetail then continue
     let type ← ppExpr localDecl.type
     let value ← localDecl.value?.mapM fun e => return (← ppExpr e).pretty
-    context := context.push (Json.mkObj [
+    let entry := Json.mkObj [
       ("name", toJson localDecl.userName.toString), ("type", toJson type.pretty),
-      ("value", toJson value)])
+      ("value", toJson value)]
+    context := context.push (if config.excludedHypotheses.contains localDecl.fvarId then
+      entry.setObjVal! "excluded" (toJson true) else entry)
   let props := props.setObjVal! "inspection" (toJson view.inspection)
     |>.setObjVal! "identities" (toJson identities)
     |>.setObjVal! "localContext" (toJson context)
@@ -972,14 +991,14 @@ public meta def spytialInContextProps (subject : Expr)
     (observations : Array Expr := #[]) :
     TermElabM (Json × ContextViewStatus) := do
   let (props?, status) ←
-    spytialInContextProps? subject ops? walkConfig hypotheses observations
+    spytialInContextProps? subject ops? walkConfig { contextConfig with hypotheses } observations
   let some props := props? | throwError "spytial: IYKYK found an inconsistent context"
   return (props, status)
 
 private meta def inspectionPointProps (subject : Expr) (stx : Syntax) :
     TermElabM (Option Json) := do
   let (props?, status) ← spytialInContextProps? subject (optionalOps stx[4]) {}
-    (← resolveFyi stx[3]) (← resolveObservations stx[2])
+    (← resolveContextConfig stx[3]) (← resolveObservations stx[2])
   if status.inconsistent then
     logWarning "spytial: IYKYK found an inconsistent context; no diagram rendered"
     return none
@@ -999,7 +1018,7 @@ private meta def saveInspectionPoint (invocation : Syntax) (props : Json)
   savePanelWidgetInfo SpytialWidget.javascriptHash (return props) invocation
 
 syntax spytialSite := "spytial " term (" observing " "[" term,* "]")?
-  (" fyi " "[" term,* "]")? (" with " "[" spytial_op,*,? "]")? (" titled " str)?
+  spytialEvidenceClause* (" with " "[" spytial_op,*,? "]")? (" titled " str)?
 
 open Tactic in
 /-- `spytial term` asks IYKYK what the current context establishes about
@@ -1007,6 +1026,7 @@ open Tactic in
     `observing [f₁, ...]` parameterizes that translation and displays each
     function over every compatible represented value;
     `fyi [h₁, ...]` supplies proved hypotheses or forward rules to IYKYK;
+    `nvm [h₁, ...]` omits local declarations from this extraction;
     `with [...]` supplies Spytial layout operations. -/
 syntax (name := spytialTactic) spytialSite : tactic
 
@@ -1078,7 +1098,7 @@ open Tactic in
     `spytial`. -/
 syntax (name := spytialDatumTactic) spytialDatumKw term
   (" observing " "[" term,* "]")?
-  (" fyi " "[" term,* "]")? : tactic
+  spytialEvidenceClause* : tactic
 
 open Tactic in
 @[tactic spytialDatumTactic]
@@ -1086,7 +1106,7 @@ meta def elabSpytialDatumTactic : Tactic := fun stx => withMainContext do
   let subject ← elabTermInstantiated stx[1]
   let observations ← resolveObservations stx[2]
   let (status, view?) ← wdykInContext subject {}
-    (contextConfig (← resolveFyi stx[3])) observations
+    (← resolveContextConfig stx[3]) observations
   if status.inconsistent then
     logWarning "spytial: IYKYK found an inconsistent context; no datum produced"
   else if let some view := view? then

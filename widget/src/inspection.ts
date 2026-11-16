@@ -19,7 +19,7 @@ export interface InspectionPoint {
   cndSpec?: string;
   inspection?: InspectedValue;
   identities?: Array<{ atom: string; identity: string }>;
-  localContext?: Array<{ name: string; type: string; value?: string | null }>;
+  localContext?: Array<{ name: string; type: string; value?: string | null; excluded?: boolean }>;
   observations?: string[];
   point?: { title?: string | null; line?: number; scope: string; branch: string };
 }
