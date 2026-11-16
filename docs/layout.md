@@ -27,6 +27,11 @@ splice in the type's default. Structures inherit parent specs before their own
 operations. Use `spytial_ops` to name operations for reuse with `..name`.
 Selectors can use the [relational language](selectors.md) or [Lean predicates](lean-selectors.md).
 
+When the observed function changes during a proof, a local Lean macro can take
+the relation name and expand to a bracketed list of `spytial_op`s. The union-find
+walkthrough uses `with [forestView(parent)]` before the union and
+`with [forestView(link)]` after it. [Union-find walkthrough](../Demos/UnionFind.lean)
+
 ## Layout constraints
 
 | Operation | Description |

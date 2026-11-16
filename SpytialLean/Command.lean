@@ -74,6 +74,7 @@ syntax (name := spytialAttrOp) "attribute " spytialOpArg* : spytial_op
 syntax (name := spytialSpliceStx) ".." : spytial_op
 /-- `..name` splices the list bound by `spytial_ops name`, whose root must match. -/
 syntax (name := spytialSpliceNamedStx) ".." noWs ident : spytial_op
+syntax (name := spytialOpGroup) "[" spytial_op,*,? "]" : spytial_op
 
 run_cmd do
   unless (SpecLang.itemOfKey? "attribute").isSome do
@@ -534,6 +535,16 @@ private meta def opSource? (op : TSyntax `spytial_op) : TermElabM (Option OpSour
   let base := (System.FilePath.mk path).fileName.getD path
   return some { text, location := s!"{base}:{(fileMap.toPosition startPos).line}" }
 
+/-- A layout macro can expand to one operation or a group. Flatten groups before
+    checking names so fields and splices have the same scope as at the use site. -/
+private meta partial def expandLayoutOp (op : TSyntax `spytial_op) :
+    TermElabM (Array (TSyntax `spytial_op)) := withRef op <| withIncRecDepth do
+  if op.raw.isOfKind ``spytialOpGroup then
+    return (← op.raw[1].getSepArgs.mapM fun arg => expandLayoutOp ⟨arg⟩).flatten
+  if let some expanded ← liftMacroM (expandMacro? op.raw) then
+    return ← withMacroExpansion op expanded (expandLayoutOp ⟨expanded⟩)
+  return #[op]
+
 /-- Elaborate an op list, bringing each op's introduced names (groups, inferred
     edges) into scope for the ops after it. A `..` element splices `attached?`
     at that position; `none` means the context has no attached spec to splice.
@@ -549,7 +560,7 @@ meta def elabSpytialOps (scope : SelScope) (ops : Array (TSyntax `spytial_op))
   let mut spec : Array SpytialOp := #[]
   let mut spliced := false
   let mut splicedNames : NameSet := .empty
-  for op in ops do
+  for op in (← ops.mapM expandLayoutOp).flatten do
     if op.raw.isOfKind ``spytialSpliceStx then
       let some attached := attached?
         | throwErrorAt op "`..` splices the type's attached spec; \
