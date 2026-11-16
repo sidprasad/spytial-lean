@@ -156,6 +156,16 @@ async function main() {
       fs.readFileSync('.lake/build/js/spytialWidget.js', 'utf8'), 'infoview serves current bundle');
     const [single] = await doc.widgets(lineOf('theorem explorerSingle'));
     assert.equal(single.props.explorer.points.length, 1);
+    const [exclusion] = await doc.widgets(lineOf('theorem explorerExclusion'));
+    const [omitted, restored] = exclusion.props.explorer.points;
+    assert.deepEqual(omitted.inspection.facts, []);
+    assert.ok(restored.inspection.facts.length > 0);
+    assert.deepEqual(omitted.dataInstance.atoms.map(a => a.label), ['x']);
+    assert.ok(restored.dataInstance.atoms.some(a => a.label === '7'));
+    assert.equal(omitted.localContext.find(d => d.name === 'h').excluded, true);
+    assert.ok(!restored.localContext.find(d => d.name === 'h').excluded);
+    const [termExclusion] = await doc.widgets(lineOf('def termExclusion'));
+    assert.deepEqual(termExclusion.props.explorer.points[0].dataInstance, omitted.dataInstance);
     const [branches] = await doc.widgets(lineOf('theorem explorerBranches'));
     assert.equal(branches.props.explorer.points.length, 2);
     assert.notEqual(...branches.props.explorer.points.map(p => p.point.scope));
@@ -253,9 +263,12 @@ async function main() {
     await settled(branchPage.page, 2);
     assert.ok(await branchPage.page.getByRole('status').textContent().then(s => s.includes('Independent layout')));
     await branchPage.page.close();
-    const linePage = await browserPage(browser, points[0]);
+    const linePage = await browserPage(browser, omitted);
     await settled(linePage.page, 1);
     assert.equal(await linePage.page.getByLabel('Spytial inspection explorer').count(), 0);
+    await linePage.page.locator('.spytial-context summary').click();
+    assert.match(await linePage.page.locator('.spytial-context').innerText(),
+      /h : x = 7\s+\(omitted from this inspection\)/);
     await linePage.page.close();
 
     const fn = await browserPage(browser, functionHeader.props);

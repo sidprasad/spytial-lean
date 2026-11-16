@@ -7,6 +7,13 @@ to that same subtree atom.
 
 ## Relevant context
 
+`spytial x nvm [ih]` omits the local declaration `ih` as a source of evidence
+for this inspection. The infoview marks it as omitted in **Local context**.
+Later proof steps and inspections can still use it. A fact with another source
+can still appear. If both `fyi [ih]` and `nvm [ih]` name the same declaration,
+the exclusion wins in either order. `spytial.datum x nvm [ih]` prints the
+corresponding diagram data.
+
 IYKYK extracts and checks the facts before Spytial selects the relevant subset.
 Spytial starts from the selected root and the symbolic values represented by
 its expression walk, including children exposed by known equalities. Local

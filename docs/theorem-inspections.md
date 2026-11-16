@@ -12,7 +12,7 @@ Collapsing and reopening the explorer preserves the selected view and points.
 In a function body, `spytial e` is an expression. Lean checks `e` using the
 expected type at that position and returns it as the function's code. The
 infoview displays its local context and diagram as it does for a proof
-inspection. The same `observing`, `fyi`, `with`, and `titled` clauses work
+inspection. The same `observing`, `fyi`, `nvm`, `with`, and `titled` clauses work
 here. Select the function name to compare the marked expressions in source order.
 
 Each `spytial` line still has its ordinary infoview widget. The explorer retains
@@ -32,8 +32,8 @@ theorem exampleInspection (xs : List Nat) : True := by
   trivial
 ```
 
-The clause order is `spytial term`, `observing [...]`, `fyi [...]`, `with [...]`,
-then `titled "..."`; every clause after the term is optional. Captions do not
+After `spytial term`, use `observing [...]`, then `fyi [...]` and `nvm [...]` in
+either order, then `with [...]` and `titled "..."`. All clauses are optional. Captions do not
 change the term or infer anything about the proof.
 
 ## Correspondence and layout

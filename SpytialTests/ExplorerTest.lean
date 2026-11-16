@@ -101,3 +101,12 @@ example : copyList [1, 2] = [1, 2] := rfl
 /-- warning: spytial: IYKYK found an inconsistent context; no diagram rendered -/
 #guard_msgs in
 example (h : (some 1 : Option Nat) = none) : Nat := spytial 0
+
+theorem explorerExclusion (x : Nat) (h : x = 7) : x = 7 := by
+  spytial x fyi [h] nvm [h] titled "Omitted"
+  spytial x titled "Restored"
+  exact h
+
+def termExclusion (x : Nat) (h : x = 7) :=
+  spytial x nvm [h]
+example (x : Nat) (h : x = 7) : termExclusion x h = x := rfl

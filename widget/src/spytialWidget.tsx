@@ -481,7 +481,7 @@ function DiagramWidget(props: InspectionPoint & {
           <summary>Local context ({props.localContext.length})</summary>
           <ul>{props.localContext.map((local, i) => <li key={i}><code>
             {local.name} : {local.type}{local.value != null ? ` := ${local.value}` : ''}
-          </code></li>)}</ul>
+          </code>{local.excluded && ' (omitted from this inspection)'}</li>)}</ul>
         </details>}
       </div>
     </details>
