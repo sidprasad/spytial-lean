@@ -1155,7 +1155,9 @@ public meta def prepareObservations (cfg : WalkConfig) (values : Array Expr)
           if abstracted.mvars.any (fun m => !inputMVars.contains m.mvarId!) ||
               abstracted.expr.hasMVar || abstracted.expr.hasLevelMVar then
             throwError "observation simplification left unresolved metavariables"
-          match Kernel.check (← getEnv) (← getLCtx) abstracted.expr with
+          -- The kernel also needs the assignments in the local hypotheses used by this proof.
+          let scope ← instantiateLCtxMVars (← getLCtx)
+          match Kernel.check (← getEnv) scope abstracted.expr with
           | .error exception => throwError "{exception.toMessageData (← getOptions)}"
           | .ok _ => pure { result with expr := expression, proof? := some proof }
         results := results.insert ⟨application⟩ result
