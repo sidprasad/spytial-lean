@@ -1263,6 +1263,11 @@ private meta def renderObservationApplication (expression : Expr)
       return rendered
   addPlaceholders 0 expression.getAppArgs #[]
 
+/-- After simplification, a match still waiting on its discriminant denotes one
+    unknown result, just like an irreducible observation application. -/
+private meta def isUnknownObservation (cfg : WalkConfig) (e : Expr) : MetaM Bool := do
+  return (← isMatcherApp e) || (hasObservedHead cfg e && (← graphSide? e).isSome)
+
 mutual
   /-- Render an observation residual in terms of its genuinely unknown
       observation leaves. The renderer only distinguishes atomic results from
@@ -1270,7 +1275,7 @@ mutual
       notation. -/
   private meta partial def symbolicObservationExpression (cfg : WalkConfig) (expression : Expr) :
       StateT WalkState MetaM RenderedObservationExpression := do
-    if hasObservedHead cfg expression && (← graphSide? expression).isSome then
+    if ← isUnknownObservation cfg expression then
       let label ← symbolicObservationResult cfg expression >>= symbolicAtomLabel
       return { text := label, atomic := true }
     if isAtomicObservationExpression expression then
@@ -1289,13 +1294,15 @@ mutual
       text := ← renderObservationApplication expression argumentIndexes renderedArguments
       atomic := false }
 
-  /-- One symbolic observation result. Only irreducible observed applications
-      receive fresh names; residual computations are labelled by expressions
-      over those shared names. -/
+  /-- Irreducible observations and stuck matches receive fresh names.
+      Residual computations are labelled by expressions over those shared names. -/
   private meta partial def symbolicObservationResult (cfg : WalkConfig) (e : Expr) :
       StateT WalkState MetaM String := do
     if let some id := (← get).applicationAtoms[(⟨e⟩ : ExprStructEq)]? then return id
-    if (← dependsOnObservation cfg e) && !hasObservedHead cfg e then
+    -- A checked residual can be known arithmetic over local variables (e.g. `h + 2`),
+    -- even when simplification has eliminated every observed function application.
+    if !(← isUnknownObservation cfg e) &&
+        (cfg.observationResiduals.contains ⟨e⟩ || (← dependsOnObservation cfg e)) then
       let rendered ← symbolicObservationExpression cfg e
       addSymbolicObservationAtom cfg e rendered.text
     else
