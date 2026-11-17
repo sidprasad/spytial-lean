@@ -118,7 +118,7 @@ set_option linter.unusedVariables false in
 /--
 info: {"relations": [], "atoms": [{"type": "Nat", "label": "x", "id": "atom_0"}]}
 ---
-warning: spytial: IYKYK found an inconsistent context; no datum produced
+warning: spytial: inconsistent context; no datum produced
 -/
 #guard_msgs in
 example (x : Nat) (h : x = 7) (bad : False) : x = 7 := by
@@ -128,7 +128,7 @@ example (x : Nat) (h : x = 7) (bad : False) : x = 7 := by
 
 -- Excluding one source still admits the same fact from another local declaration.
 set_option linter.unusedVariables false in
-/-- warning: spytial: IYKYK found an inconsistent context; no diagram rendered -/
+/-- warning: spytial: inconsistent context; no diagram rendered -/
 #guard_msgs in
 example (x : Nat) (h other : False) : False := by
   spytial x nvm [h]
@@ -136,7 +136,7 @@ example (x : Nat) (h other : False) : False := by
 
 -- Exclusion also takes precedence for a forward rule with implicit parameters.
 set_option linter.unusedVariables false in
-/-- warning: spytial: IYKYK found an inconsistent context; no diagram rendered -/
+/-- warning: spytial: inconsistent context; no diagram rendered -/
 #guard_msgs in
 example (x : Nat) (P : Nat → Prop) (hx : P x) (step : ∀ {n}, P n → False) : False := by
   spytial x fyi [step] nvm [step]
@@ -306,7 +306,7 @@ example (n : Nat) (h : n ≠ 0) : True := by
   spytial n
   trivial
 
--- the caller can supply an explicit IYKYK forward rule
+-- the caller can supply an explicit context preparation forward rule
 set_option linter.unusedVariables false in
 example {α : Type} (R : α → α → Prop) (x y : α)
     (h : R x y) (symmetric : ∀ a b, R a b → R b a) : True := by
@@ -519,10 +519,12 @@ example {α : Type u} (β : α → Type v) (value : Nat) (h : FamilyTagged β va
 
 -- Two predicates sharing a short name retain their separate identities and all tuples.
 namespace ArityFoo
-inductive Adj : Nat → Nat → Prop
+inductive Adj : Nat → Nat → Prop where
+  | intro (x y : Nat) : Adj x y
 end ArityFoo
 namespace ArityBar
-inductive Adj : Nat → Nat → Nat → Prop
+inductive Adj : Nat → Nat → Nat → Prop where
+  | intro (x y z : Nat) : Adj x y z
 end ArityBar
 
 set_option linter.unusedVariables false in
@@ -659,7 +661,7 @@ end WireSpec
 
 -- The programmatic API keeps simp enabled when its caller supplies no hypotheses.
 set_option linter.unusedVariables false in
-/-- error: spytial: IYKYK found an inconsistent context -/
+/-- error: spytial: inconsistent context -/
 #guard_msgs in
 example (h : (some 1 : Option Nat) = none) : True := by
   spytial_programmatic_baseline 0

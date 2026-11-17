@@ -24,3 +24,7 @@ name = "TreeUnionSupport"
 
 [[lean_lib]]
 name = "TreeUnion"
+
+[[lean_lib]]
+name = "Gillon"
+srcDir = "gillon"

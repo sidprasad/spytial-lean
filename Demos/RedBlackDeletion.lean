@@ -116,6 +116,7 @@ theorem repair_inner_red (x a b c : RBNode) (h : Nat)
     (Balanced (recolorSibling t) ∧ ¬ NoRedRed (recolorSibling t)) ∧
       ¬ Balanced (rotateSibling t) ∧ BlackAt (rotateParent (rotateSibling t)) (h + 2) := by
   let t := afterDeletion x a b c
+  spytial t observing [blackHeight] with [.., attribute blackHeight]
   change (Balanced (recolorSibling t) ∧ ¬ NoRedRed (recolorSibling t)) ∧
     ¬ Balanced (rotateSibling t) ∧ BlackAt (rotateParent (rotateSibling t)) (h + 2)
   -- Unpack the four subtrees' invariants for inspection.

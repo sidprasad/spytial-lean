@@ -33,6 +33,12 @@ preserving this view and the root. Its corollaries allow arbitrary relation
 renaming and appending relations with nonstructural IDs, with atoms fixed.
 No uniqueness requirement on display names enters these proofs.
 
+## Context inspection
+
+[Evidence and context preparation](docs/evidence.md) describes the preparation,
+normalization, proof-export, and interpretation boundaries shared by functions and
+theorems. Whole-value commands keep the structural computation path.
+
 ## Structural reconstruction
 
 Reconstruction is described by capabilities and their laws:
@@ -78,8 +84,8 @@ Build the widget JS and Lean library with `just build`, or directly with lake:
 lake build
 ```
 
-The first build also fetches the Lean dependencies (ProofWidgets4) pinned in
-`lake-manifest.json`. Under the hood `just build` runs `pnpm install
+The first build also fetches the Lean dependencies (Aesop, Batteries, and
+ProofWidgets4) pinned in `lake-manifest.json`. Under the hood `just build` runs `pnpm install
 --frozen-lockfile` and `pnpm run build` in `widget/` before compiling Lean.
 
 ### Tests

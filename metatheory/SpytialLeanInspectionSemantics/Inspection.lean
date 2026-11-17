@@ -22,7 +22,7 @@ Gamma ; K |-expose e => v @ proof pi
 ```
 
 `Exposes` is the judgment. The first rule uses the operational semantics `Eval`; the second reads
-an equality from checked IYKYK knowledge and evaluates the proof-supplied representation before
+an equality from checked context preparation knowledge and evaluates the proof-supplied representation before
 walking it. Both therefore run the same defined structural walk over an evaluated residual,
 rooted at the atom for `e`, and record the exposure in the trace.
 
@@ -35,24 +35,24 @@ universe u v w x
 
 /-- Two typed atoms denote the same value in every world allowed by the context. -/
 @[expose] public def EqualInContext {World : Type u} {Ty : Type v}
-    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {context : Context World} {signature : Signature Ty}
     {model : Model World signature} {sort : Ty}
     (left right : Atom context model sort) : Prop :=
   ∀ world (compatible : context world), left world compatible = right world compatible
 
-/-- Contextual equality represented as an IYKYK fact. -/
+/-- Contextual equality represented as an context preparation fact. -/
 @[expose] public def equalityFact {World : Type u} {Ty : Type v}
-    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {context : Context World} {signature : Signature Ty}
     {model : Model World signature} {sort : Ty}
-    (left right : Atom context model sort) : Iykyk.Metatheory.Fact World :=
+    (left right : Atom context model sort) : Fact World :=
   fun world => ∀ compatible : context world,
     left world compatible = right world compatible
 
 /-- Exposure of a representation of `expression`, recording how it was obtained. -/
 public inductive Exposes {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty}
-    {base : Signature Ty} {context : Iykyk.Metatheory.Context World}
+    {base : Signature Ty} {context : Context World}
     (sem : Semantics World L base context) (program : Program L) {KnowledgeRoot : Type x}
-    (knowledge : Iykyk.Metatheory.Knowledge World KnowledgeRoot) {sort : Ty}
+    (knowledge : ContextEvidence World KnowledgeRoot) {sort : Ty}
     (expression : Term L sort) : Term L sort → Exposure → Prop where
   /-- EXPOSE-EVAL: the expression evaluates to `value`. -/
   | evaluation {value} (evaluates : Eval program expression value) :
@@ -79,9 +79,9 @@ observation is about `expression`: `proved` accepts any supported checked propos
 is the finite producer's responsibility.
 -/
 public inductive Inspection {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty}
-    {base : Signature Ty} {context : Iykyk.Metatheory.Context World}
+    {base : Signature Ty} {context : Context World}
     (sem : Semantics World L base context) (program : Program L) {KnowledgeRoot : Type x}
-    (knowledge : Iykyk.Metatheory.Knowledge World KnowledgeRoot) {sort : Ty}
+    (knowledge : ContextEvidence World KnowledgeRoot) {sort : Ty}
     (expression : Term L sort) : Trace context sem.model → Prop where
   | opaqueTerm :
       Inspection sem program knowledge expression (Trace.ofAtom (sem.denote expression))
@@ -108,9 +108,9 @@ public inductive Inspection {World : Type w} {Ty : Type u} {L : Language.{u, v} 
 /-- One finite exposure contribution selected by an inspection producer. The evidence ensures the
 entry can only describe an applicable evaluation or retained-proof exposure. -/
 public structure ExposureContribution {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty}
-    {base : Signature Ty} {context : Iykyk.Metatheory.Context World}
+    {base : Signature Ty} {context : Context World}
     (sem : Semantics World L base context) (program : Program L) {KnowledgeRoot : Type x}
-    (knowledge : Iykyk.Metatheory.Knowledge World KnowledgeRoot) {sort : Ty}
+    (knowledge : ContextEvidence World KnowledgeRoot) {sort : Ty}
     (expression : Term L sort) where
   value : Term L sort
   source : Exposure
@@ -119,9 +119,9 @@ public structure ExposureContribution {World : Type w} {Ty : Type u} {L : Langua
 namespace ExposureContribution
 
 variable {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty} {base : Signature Ty}
-  {context : Iykyk.Metatheory.Context World} {sem : Semantics World L base context}
+  {context : Context World} {sem : Semantics World L base context}
   {program : Program L} {KnowledgeRoot : Type x}
-  {knowledge : Iykyk.Metatheory.Knowledge World KnowledgeRoot} {sort : Ty}
+  {knowledge : ContextEvidence World KnowledgeRoot} {sort : Ty}
   {expression : Term L sort}
 
 /-- Materialize one exposure contribution as a structural trace. -/
@@ -135,7 +135,7 @@ end ExposureContribution
 /-- One computed function-graph point selected by the inspection producer. -/
 public structure ComputationContribution {World : Type w} {Ty : Type u}
     {L : Language.{u, v} Ty} {base : Signature Ty}
-    {context : Iykyk.Metatheory.Context World} (sem : Semantics World L base context)
+    {context : Context World} (sem : Semantics World L base context)
     (program : Program L) where
   operation : L.Op
   arguments : Arguments (Term L) (L.params operation)
@@ -145,7 +145,7 @@ public structure ComputationContribution {World : Type w} {Ty : Type u}
 namespace ComputationContribution
 
 variable {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty} {base : Signature Ty}
-  {context : Iykyk.Metatheory.Context World} {sem : Semantics World L base context}
+  {context : Context World} {sem : Semantics World L base context}
   {program : Program L}
 
 /-- Materialize one evaluated operation as a graph tuple. -/
@@ -156,13 +156,13 @@ variable {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty} {base : Signatu
 
 end ComputationContribution
 
-/-- One existential witness retained by the IYKYK snapshot boundary. `term` is the shared term
+/-- One existential witness retained by the context preparation snapshot boundary. `term` is the shared term
 used by every decomposed fact below the existential; `realizes` is the witness-aware certificate
 that the production extractor obtains from the checked proof. -/
 public structure WitnessContribution {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty}
-    {base : Signature Ty} {context : Iykyk.Metatheory.Context World}
+    {base : Signature Ty} {context : Context World}
     (sem : Semantics World L base context) {KnowledgeRoot : Type x}
-    (knowledge : Iykyk.Metatheory.Knowledge World KnowledgeRoot) where
+    (knowledge : ContextEvidence World KnowledgeRoot) where
   sort : Ty
   term : Term L sort
   left : World → sem.Carrier sort → Prop
@@ -176,8 +176,8 @@ public structure WitnessContribution {World : Type w} {Ty : Type u} {L : Languag
 namespace WitnessContribution
 
 variable {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty} {base : Signature Ty}
-  {context : Iykyk.Metatheory.Context World} {sem : Semantics World L base context}
-  {KnowledgeRoot : Type x} {knowledge : Iykyk.Metatheory.Knowledge World KnowledgeRoot}
+  {context : Context World} {sem : Semantics World L base context}
+  {KnowledgeRoot : Type x} {knowledge : ContextEvidence World KnowledgeRoot}
 
 /-- Materialize the shared existential term as one typed atom. -/
 @[expose] public def trace (contribution : WitnessContribution sem knowledge) :
@@ -188,9 +188,9 @@ end WitnessContribution
 
 /-- One supported checked proposition and its decoder output, selected by an inspection producer. -/
 public structure KnowledgeContribution {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty}
-    {base : Signature Ty} {context : Iykyk.Metatheory.Context World}
+    {base : Signature Ty} {context : Context World}
     (sem : Semantics World L base context) {KnowledgeRoot : Type x}
-    (knowledge : Iykyk.Metatheory.Knowledge World KnowledgeRoot) where
+    (knowledge : ContextEvidence World KnowledgeRoot) where
   proposition : Proposition L base
   tuple : Tuple (base.withFields L) (Atom context sem.model)
   known : proposition.fact sem ∈ knowledge.facts
@@ -199,8 +199,8 @@ public structure KnowledgeContribution {World : Type w} {Ty : Type u} {L : Langu
 namespace KnowledgeContribution
 
 variable {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty} {base : Signature Ty}
-  {context : Iykyk.Metatheory.Context World} {sem : Semantics World L base context}
-  {KnowledgeRoot : Type x} {knowledge : Iykyk.Metatheory.Knowledge World KnowledgeRoot}
+  {context : Context World} {sem : Semantics World L base context}
+  {KnowledgeRoot : Type x} {knowledge : ContextEvidence World KnowledgeRoot}
 
 /-- Materialize one checked tuple with its knowledge origin. -/
 @[expose] public def trace (contribution : KnowledgeContribution sem knowledge) :
@@ -213,9 +213,9 @@ end KnowledgeContribution
 every listed contribution carries its evidence, while `Complete` below states that discovery did
 not omit any applicable exposure or retained tuple. -/
 public structure InspectionPlan {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty}
-    {base : Signature Ty} {context : Iykyk.Metatheory.Context World}
+    {base : Signature Ty} {context : Context World}
     (sem : Semantics World L base context) (program : Program L) {KnowledgeRoot : Type x}
-    (knowledge : Iykyk.Metatheory.Knowledge World KnowledgeRoot) {sort : Ty}
+    (knowledge : ContextEvidence World KnowledgeRoot) {sort : Ty}
     (expression : Term L sort) where
   witnesses : List (WitnessContribution sem knowledge) := []
   computations : List (ComputationContribution sem program) := []
@@ -225,9 +225,9 @@ public structure InspectionPlan {World : Type w} {Ty : Type u} {L : Language.{u,
 namespace InspectionPlan
 
 variable {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty} {base : Signature Ty}
-  {context : Iykyk.Metatheory.Context World} {sem : Semantics World L base context}
+  {context : Context World} {sem : Semantics World L base context}
   {program : Program L} {KnowledgeRoot : Type x}
-  {knowledge : Iykyk.Metatheory.Knowledge World KnowledgeRoot} {sort : Ty}
+  {knowledge : ContextEvidence World KnowledgeRoot} {sort : Ty}
   {expression : Term L sort}
 
 /-- A plan is closed when it inventories every applicable exposure and every retained tuple. This
@@ -244,12 +244,12 @@ public structure Complete (plan : InspectionPlan sem program knowledge expressio
 
 end InspectionPlan
 
-/-- Evidence for `Γ ; e ⊢extract K`: a sound IYKYK knowledge snapshot and a finite inventory
+/-- Evidence for `Γ ; e ⊢extract K`: a sound context preparation knowledge snapshot and a finite inventory
 of owned contributions, complete for applicable exposures and decodable retained propositions. -/
 public structure Extraction {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty}
-    {base : Signature Ty} {context : Iykyk.Metatheory.Context World}
+    {base : Signature Ty} {context : Context World}
     (sem : Semantics World L base context) (program : Program L) {KnowledgeRoot : Type x}
-    (knowledge : Iykyk.Metatheory.Knowledge World KnowledgeRoot) {sort : Ty}
+    (knowledge : ContextEvidence World KnowledgeRoot) {sort : Ty}
     (expression : Term L sort) where
   knowledgeSound : knowledge.Sound context
   plan : InspectionPlan sem program knowledge expression
@@ -259,9 +259,9 @@ public structure Extraction {World : Type w} {Ty : Type u} {L : Language.{u, v} 
 and every retained tuple are combined exactly once at the set level; duplicate discoveries merge
 while their origins are preserved. -/
 @[expose] public def inspect {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty}
-    {base : Signature Ty} {context : Iykyk.Metatheory.Context World}
+    {base : Signature Ty} {context : Context World}
     (sem : Semantics World L base context) (program : Program L) {KnowledgeRoot : Type x}
-    (knowledge : Iykyk.Metatheory.Knowledge World KnowledgeRoot) {sort : Ty}
+    (knowledge : ContextEvidence World KnowledgeRoot) {sort : Ty}
     (expression : Term L sort) (plan : InspectionPlan sem program knowledge expression) :
     Trace context sem.model :=
   (Trace.ofAtom (sem.denote expression)).union
@@ -273,9 +273,9 @@ while their origins are preserved. -/
 /-- Compose an extracted snapshot with the concrete relational inspection rules. -/
 @[expose] public def Extraction.inspect
     {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty} {base : Signature Ty}
-    {context : Iykyk.Metatheory.Context World} {sem : Semantics World L base context}
+    {context : Context World} {sem : Semantics World L base context}
     {program : Program L} {KnowledgeRoot : Type x}
-    {knowledge : Iykyk.Metatheory.Knowledge World KnowledgeRoot} {sort : Ty}
+    {knowledge : ContextEvidence World KnowledgeRoot} {sort : Ty}
     {expression : Term L sort} (extraction : Extraction sem program knowledge expression) :
     Trace context sem.model :=
   SpytialLean.Semantics.inspect sem program knowledge expression extraction.plan

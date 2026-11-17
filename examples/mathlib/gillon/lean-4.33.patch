@@ -1,0 +1,383 @@
+--- published/Gillon.lean
++++ adapted/Gillon.lean
+@@ -1,5 +1,27 @@
+-
+ import Mathlib.Data.Nat.Basic
+ import Mathlib.Tactic
++import SpytialLean
++
++/-!
++# Verified AVL trees
++
++Alexander Gillon, *Verified AVL Trees in Lean 4* (2024), Appendix A.
++
++Follow keys 3, 1, 2 through `AVLTree.insertNode`. Inserting 2 grows the right side of 1.
++On return to 3, `insertLeftSubtree` calls `rebalanceLeft`. Select its first `spytial` line
++in the infoview to see which subtree must supply the new root. Try 3, 2, 1 for the single
++rotation, or start with 1 to follow the two mirror cases.
++
++`observing [AVLNode.structuralHeight]` asks for the recursively computed height of each
++represented subtree. Its value can be known relative to another height even while its
++children are unknown. The thesis leaves the other-key lookup claim open.
++-/
++
++set_option linter.unusedSimpArgs false
++set_option linter.unusedVariables false
++set_option backward.isDefEq.respectTransparency false
++set_option maxRecDepth 2048
++set_option linter.unusedTactic false
++set_option linter.defProp false
+ 
+ /-
+@@ -99,5 +121,26 @@
+         ∨ (cmp.cmp k k' = Order.LESS ∧ left.maps k v) ∨ (cmp.cmp k k' = Order.GREATER ∧ right.maps k v)
+ 
++/-- The recursively computed height. The node constructor also has a cached field named height. -/
++  abbrev structuralHeight {α β : Type} {cmp : ComparisonFunction α} (t : AVLNode α β cmp) : ℤ :=
++    height t
++
+ end AVLNode
++
++-- The proof also names earlier versions of this tree. Follow child fields from the
++-- inspected expression so those versions can share facts without sharing the drawing.
++spytial_spec AVLNode [
++  hideAtom univ - inspectedRoot.*(left + right),
++  orientation inspectedRoot.*(left + right) <: (left + right) below,
++  -- One Leaf atom can serve both sides of a parent.
++  orientation inspectedRoot.*(left + right) <: left.*(left + right) :> {t : AVLNode | @:t != Leaf} left,
++  orientation inspectedRoot.*(left + right) <: right.*(left + right) :> {t : AVLNode | @:t != Leaf} right,
++  align let tree = inspectedRoot.*(left + right) |
++    (tree <: structuralHeight.~structuralHeight :> tree) - iden horizontal,
++  attribute key,
++  attribute structuralHeight selector: AVLNode - (left + right).univ,
++  hideField height,
++  hideField isOrdered,
++  hideField heightCorrect
++]
+ 
+ /- An AVL tree is an underlying tree, accompanied by a proof that the tree is well-formed
+@@ -375,5 +418,5 @@
+     : balanceFactor rootₙₑ = n-1 := by
+       simp +zetaDelta -failIfUnchanged only [balanceFactor, hHeightLᵣₒ, sub_zero] at hBal
+-      simp +zetaDelta -failIfUnchanged only [balanceFactor, hHeightLₙₑ, hBal]
++      simp only [rootₙₑ, balanceFactor, hHeightLₙₑ, hBal]
+ 
+     have heightRᵣₒ {n : ℤ} (hBal : balanceFactor (Node hᵣₒ kᵣₒ vᵣₒ lᵣₒ rᵣₒ) = n) : rᵣₒ.height = n := by
+@@ -464,7 +507,7 @@
+           exact hOrigBal.2.2
+ 
+-    let T := { root := rootₙₑ, wellFormed := hNewRootIsAVLTree }
+-
+-    have hHeightBound := by
++    let T : AVLTree α β cmp := { root := rootₙₑ, wellFormed := hNewRootIsAVLTree }
++
++    have hHeightBound : T.root.height = hᵣₒ ∨ T.root.height = hᵣₒ + 1 := by
+       have hOrigBal := extractIsBalanced hWellFormed
+       rw [isBalanced, decide_eq_true_eq] at hOrigBal
+@@ -480,5 +523,5 @@
+           have hHeightRootₙₑ : T.root.height = 2 := by
+             have hHeightRᵣₒ := heightRᵣₒ hBal
+-            have hEq : T.root = rootₙₑ := by simp +zetaDelta -failIfUnchanged only
++            have hEq : T.root = rootₙₑ := rfl
+             rw [hEq, height, hHeightLₙₑ, hHeightRᵣₒ, AVLNode.max]
+             tauto
+@@ -491,5 +534,5 @@
+           have hHeightRootₙₑ : T.root.height = 2 := by
+             have hHeightRᵣₒ := heightRᵣₒ hBal
+-            have hEq : T.root = rootₙₑ := by simp +zetaDelta -failIfUnchanged only
++            have hEq : T.root = rootₙₑ := rfl
+             rw [hEq, height, hHeightLₙₑ, hHeightRᵣₒ, AVLNode.max]
+             tauto
+@@ -500,5 +543,5 @@
+     have hNewLeft : lₙₑ = (@Node α β cmp) 1 kᵢ vᵢ Leaf Leaf := by tauto
+     have hNewRoot : rootₙₑ = Node (1 + AVLNode.max lₙₑ.height rᵣₒ.height) kᵣₒ vᵣₒ lₙₑ rᵣₒ := by
+-      unfold_let rootₙₑ
++      dsimp only [rootₙₑ]
+       rw [hCachedHeightLₙₑ, hCachedHeightRᵣₒ]
+     have hT : T = { root := rootₙₑ, wellFormed := hNewRootIsAVLTree } := by tauto
+@@ -654,7 +697,7 @@
+         . tauto
+ 
+-    let T := { root := rootₙₑ, wellFormed := hNewRootIsAVLTree }
+-
+-    have hHeightBound := by
++    let T : AVLTree α β cmp := { root := rootₙₑ, wellFormed := hNewRootIsAVLTree }
++
++    have hHeightBound : T.root.height = hᵣₒ ∨ T.root.height = hᵣₒ + 1 := by
+       have hOrigBal := extractIsBalanced hWellFormed
+       rw [isBalanced, decide_eq_true_eq] at hOrigBal
+@@ -665,5 +708,5 @@
+         have hHeightRootₙₑ : T.root.height = 2 := by
+           have hHeightLᵣₒ := heightLᵣₒ hBal
+-          have hEq : T.root = rootₙₑ := by simp +zetaDelta -failIfUnchanged only
++          have hEq : T.root = rootₙₑ := rfl
+           rw [hEq, height, hHeightRₙₑ, hHeightLᵣₒ, AVLNode.max]
+           tauto
+@@ -679,5 +722,5 @@
+           have hHeightRootₙₑ : T.root.height = 2 := by
+             have hHeightLᵣₒ := heightLᵣₒ hBal
+-            have hEq : T.root = rootₙₑ := by simp +zetaDelta -failIfUnchanged only
++            have hEq : T.root = rootₙₑ := rfl
+             rw [hEq, height, hHeightRₙₑ, hHeightLᵣₒ, AVLNode.max]
+             tauto
+@@ -690,5 +733,5 @@
+     have hNewRight : rₙₑ = (@Node α β cmp) 1 kᵢ vᵢ Leaf Leaf := by tauto
+     have hNewRoot : rootₙₑ = Node (1 + AVLNode.max lᵣₒ.height rₙₑ.height) kᵣₒ vᵣₒ lᵣₒ rₙₑ := by
+-      unfold_let rootₙₑ
++      dsimp only [rootₙₑ]
+       rw [hCachedHeightRₙₑ, hCachedHeightLᵣₒ]
+     have hT : T = { root := rootₙₑ, wellFormed := hNewRootIsAVLTree } := by tauto
+@@ -711,5 +754,5 @@
+     (hᵣₒ : ℤ) (kᵣₒ : α) (vᵣₒ : β) (lᵣₒ rᵣₒ : AVLNode α β cmp)
+     (kᵢ : α) (leftOrRight : AVLNode α β cmp)
+-  where
++  : Type where
+     allLess (k : α) (hKey : cmp.cmp kᵢ k = Order.LESS) (hOrig : allLess k (Node hᵣₒ kᵣₒ vᵣₒ lᵣₒ rᵣₒ))
+       : allLess k leftOrRight
+@@ -718,5 +761,5 @@
+   deriving Repr, DecidableEq
+ 
+-  structure RightRotationHypotheses {α β : Type} {cmp : ComparisonFunction α} (left : AVLNode α β cmp) where
++  structure RightRotationHypotheses {α β : Type} {cmp : ComparisonFunction α} (left : AVLNode α β cmp) : Type where
+     leftIsRightHeavy {h k v l r} (hEqL : left = Node h k v l r) : ¬height r > height l
+   deriving Repr, DecidableEq
+@@ -746,5 +789,7 @@
+ 
+   let rₙₑ := Node (1 + AVLNode.max (cachedHeight rₗ) (cachedHeight right)) kᵣₒ vᵣₒ rₗ right
+-  let rootₙₑ := Node (1 + AVLNode.max (cachedHeight lₗ) (cachedHeight rₙₑ)) kₗ vₗ lₗ rₙₑ
++  -- Follow rₗ across the rotation. It must become the old root’s left child so that
++  -- keys between kₗ and kᵣₒ remain reachable by lookup.
++  let rootₙₑ := spytial (Node (1 + AVLNode.max (cachedHeight lₗ) (cachedHeight rₙₑ)) kₗ vₗ lₗ rₙₑ) observing [AVLNode.structuralHeight]
+ 
+   have hCachedHeightLₗ := cachedHeightIsCorrect lₗ (leftIsAVLTree hWellFormedL)
+@@ -909,4 +954,5 @@
+             rw [hCachedHeightRₗ, hCachedHeightR, hHeight, hHeights.1, hHeights.2.1, hHeights.2.2, AVLNode.max]
+             simp +zetaDelta -failIfUnchanged only [gt_iff_lt, sub_lt_self_iff, zero_lt_one, ↓reduceIte, add_sub_cancel]
++            omega
+           tauto
+ 
+@@ -938,7 +984,7 @@
+         . exact extractIsBalanced hWellFormedR
+ 
+-  let T := { root := rootₙₑ, wellFormed := hNewRootIsAVLTree }
+-
+-  have hHeightBound := by
++  let T : AVLTree α β cmp := { root := rootₙₑ, wellFormed := hNewRootIsAVLTree }
++
++  have hHeightBound : T.root.height = hᵣₒ ∨ T.root.height = hᵣₒ + 1 := by
+     simp +zetaDelta -failIfUnchanged only
+     unfold height
+@@ -1019,4 +1065,7 @@
+       -- linter claims this is unused, but its needed for the match directly following
+       have hRLNode : rₗ.isNode := by
++        -- Follow left, then right, to rₗ. It is taller than lₗ, so it cannot be Leaf.
++        -- We can choose the subtree to open before we know the key it will supply.
++        spytial (Node hᵣₒ kᵣₒ vᵣₒ left right) observing [AVLNode.structuralHeight]
+         by_contra hLeftRightNotNode
+         have hRLLeaf : rₗ = Leaf := notNodeToLeaf rₗ hLeftRightNotNode
+@@ -1083,6 +1132,5 @@
+           tauto
+         case inr h =>
+-          simp +zetaDelta -failIfUnchanged only [add_sub_cancel] at h
+-          tauto
++          exact Or.inr (h.trans (by omega))
+ 
+       have hHeightNewRₗ : newRₗ.height = n-1 ∨ newRₗ.height = n := by
+@@ -1097,6 +1145,5 @@
+           tauto
+         case inr h =>
+-          simp +zetaDelta -failIfUnchanged only [add_sub_cancel] at h
+-          tauto
++          exact Or.inr (h.trans (by omega))
+ 
+       have hHeightRᵣ : newRᵣ.height = n := by tauto
+@@ -1104,5 +1151,7 @@
+       let lₙₑ := Node (1 + AVLNode.max (cachedHeight newLₗ) (cachedHeight newLᵣ)) kₗ vₗ newLₗ newLᵣ
+       let rₙₑ := Node (1 + AVLNode.max (cachedHeight newRₗ) (cachedHeight newRᵣ)) kᵣₒ vᵣₒ newRₗ newRᵣ
+-      let rootₙₑ := Node (1 + AVLNode.max (cachedHeight lₙₑ) (cachedHeight rₙₑ)) kₗᵣ vₗᵣ lₙₑ rₙₑ
++      -- Each new child pairs an outer subtree of height n with a piece of the pivot of height
++      -- at most n. Both must have height n + 1. Their children can stay unknown.
++      let rootₙₑ := spytial (Node (1 + AVLNode.max (cachedHeight lₙₑ) (cachedHeight rₙₑ)) kₗᵣ vₗᵣ lₙₑ rₙₑ) observing [AVLNode.structuralHeight]
+ 
+       have hCachedHeightLₙₑ : cachedHeight lₙₑ = lₙₑ.height := by
+@@ -1265,5 +1314,5 @@
+               case inl hHeightNewLᵣ =>
+                 simp +zetaDelta -failIfUnchanged only [hHeightNewLₗ, hHeightNewLᵣ, sub_sub_cancel_left, Int.reduceNeg, neg_eq_zero,
+-                  one_ne_zero, neg_eq_self_iff, or_self, or_false]
++                  one_ne_zero, CharZero.neg_eq_self_iff, or_self, or_false]
+               case inr hHeightNewLᵣ =>
+                 simp +zetaDelta -failIfUnchanged only [hHeightNewLₗ, hHeightNewLᵣ, sub_self, Int.reduceNeg, zero_eq_neg, one_ne_zero,
+@@ -1277,5 +1326,5 @@
+             . cases hHeightNewRₗ
+               case inl hHeightRₗ =>
+-                simp +zetaDelta -failIfUnchanged only [hHeightRₗ, hHeightRₗ, sub_sub_cancel, Int.reduceNeg, eq_neg_self_iff, one_ne_zero, or_true]
++                simp +zetaDelta -failIfUnchanged only [hHeightRₗ, hHeightRₗ, sub_sub_cancel, Int.reduceNeg, CharZero.eq_neg_self_iff, one_ne_zero, or_true]
+               case inr hHeightRₗ =>
+                 simp +zetaDelta -failIfUnchanged only [hHeightRₗ, hHeightRₗ, sub_self, Int.reduceNeg, zero_eq_neg, one_ne_zero, zero_ne_one,
+@@ -1285,7 +1334,7 @@
+               tauto
+ 
+-      let T := { root := rootₙₑ, wellFormed := hNewRootIsAVLTree }
+-
+-      have hHeightBound := by
++      let T : AVLTree α β cmp := { root := rootₙₑ, wellFormed := hNewRootIsAVLTree }
++
++      have hHeightBound : T.root.height = hᵣₒ ∨ T.root.height = hᵣₒ + 1 := by
+         have : height T.root = hᵣₒ := by
+           have hNewLeft : height lₙₑ = n + 1 := by
+@@ -1414,8 +1463,6 @@
+         rw [hEqL'.2.2.2.1, hEqL'.2.2.2.2] at hLeftIsRightHeavy
+         exact hLeftIsRightHeavy
+-      rightRotation hᵣₒ kᵣₒ vᵣₒ left right kᵢ vᵢ (by rw [←hEqL] at hWellFormedL; tauto) hWellFormedR
+- (by rw [←hEqL] at hBal; tauto) hHᵣₒ (by rw [←hEqL] at hLNode; tauto) (by rw [←hEqL] at hAllLessL; tauto)
+-        hAllGreaterR (by rw [←hEqL] at hRebalance; tauto) {leftIsRightHeavy := leftIsRightHeavy} hCmpKᵢ
+- (by rw [←hEqL] at hMapsL; tauto)
++      rightRotation hᵣₒ kᵣₒ vᵣₒ left right kᵢ vᵢ (by rw [←hEqL] at hWellFormedL; tauto) hWellFormedR (by rw [←hEqL] at hBal; tauto) hHᵣₒ (by rw [←hEqL] at hLNode; tauto) (by rw [←hEqL] at hAllLessL; tauto)
++        hAllGreaterR (by rw [←hEqL] at hRebalance; tauto) {leftIsRightHeavy := leftIsRightHeavy} hCmpKᵢ (by rw [←hEqL] at hMapsL; tauto)
+ 
+   def insertLeftSubtree {α β : Type} {cmp : ComparisonFunction α} {hₗ kₗ vₗ lₗ rₗ hWellFormedL sibling}
+@@ -1466,7 +1513,7 @@
+       . exact hBal
+ 
+-    let T := { root := rootₙₑ, wellFormed := hNewRootIsAVLTree }
+-
+-    have hHeightBound := by
++    let T : AVLTree α β cmp := { root := rootₙₑ, wellFormed := hNewRootIsAVLTree }
++
++    have hHeightBound : T.root.height = hᵣₒ ∨ T.root.height = hᵣₒ + 1 := by
+       have hHₗ : height lᵣₒ = hₗ := by
+         have hOrigHeight := extractHeightCorrect hWellFormed
+@@ -1675,5 +1722,5 @@
+       hAllGreaterR hRebalance hMatch.1 lₙₑ.mapsTo
+ 
+-  structure LeftRotationHypotheses {α β : Type} {cmp : ComparisonFunction α} (right : AVLNode α β cmp) where
++  structure LeftRotationHypotheses {α β : Type} {cmp : ComparisonFunction α} (right : AVLNode α β cmp) : Type where
+     rightIsLeftHeavy {h k v l r} (hEqR : right = Node h k v l r) : ¬height l > height r
+   deriving Repr, DecidableEq
+@@ -1703,5 +1750,7 @@
+ 
+   let lₙₑ := Node (1 + AVLNode.max (cachedHeight left) (cachedHeight lᵣ)) kᵣₒ vᵣₒ left lᵣ
+-  let rootₙₑ := Node (1 + AVLNode.max (cachedHeight lₙₑ) (cachedHeight rᵣ)) kᵣ vᵣ lₙₑ rᵣ
++  -- Follow lᵣ from the promoted node to the old root. It holds the keys between kᵣₒ
++  -- and kᵣ, so it belongs on the old root’s right after this rotation.
++  let rootₙₑ := spytial (Node (1 + AVLNode.max (cachedHeight lₙₑ) (cachedHeight rᵣ)) kᵣ vᵣ lₙₑ rᵣ) observing [AVLNode.structuralHeight]
+ 
+   have hCachedHeightRᵣ := cachedHeightIsCorrect rᵣ (rightIsAVLTree hWellFormedR)
+@@ -1899,7 +1948,7 @@
+       . tauto
+ 
+-  let T := { root := rootₙₑ, wellFormed := hNewRootIsAVLTree }
+-
+-  have hHeightBound := by
++  let T : AVLTree α β cmp := { root := rootₙₑ, wellFormed := hNewRootIsAVLTree }
++
++  have hHeightBound : T.root.height = hᵣₒ ∨ T.root.height = hᵣₒ + 1 := by
+     simp +zetaDelta -failIfUnchanged only
+     unfold height
+@@ -1983,4 +2032,7 @@
+       -- linter claims this is unused, but needed for next match
+       have hLRNode : lᵣ.isNode := by
++        -- Follow right, then left, to lᵣ. A leaf there would have height zero, yet the branch
++        -- requires it to be taller than rᵣ. The next match must reveal a pivot key.
++        spytial (Node hᵣₒ kᵣₒ vᵣₒ left right) observing [AVLNode.structuralHeight]
+         by_contra hRightLeftNodeNode
+         have hLRLeaf : lᵣ = Leaf := notNodeToLeaf lᵣ hRightLeftNodeNode
+@@ -2049,6 +2101,5 @@
+           tauto
+         case inr h =>
+-          simp +zetaDelta -failIfUnchanged only [add_sub_cancel] at h
+-          tauto
++          exact Or.inr (h.trans (by omega))
+ 
+       have hHeightNewLᵣ : newLᵣ.height = n-1 ∨ newLᵣ.height = n := by
+@@ -2063,6 +2114,5 @@
+           tauto
+         case inr h =>
+-          simp +zetaDelta -failIfUnchanged only [add_sub_cancel] at h
+-          tauto
++          exact Or.inr (h.trans (by omega))
+ 
+       have hHeightLₗ : newLₗ.height = n := by tauto
+@@ -2070,5 +2120,7 @@
+       let lₙₑ := Node (1 + AVLNode.max (cachedHeight newLₗ) (cachedHeight newLᵣ)) kᵣₒ vᵣₒ newLₗ newLᵣ
+       let rₙₑ := Node (1 + AVLNode.max (cachedHeight newRₗ) (cachedHeight newRᵣ)) kᵣ vᵣ newRₗ newRᵣ
+-      let rootₙₑ := Node (1 + AVLNode.max (cachedHeight lₙₑ) (cachedHeight rₙₑ)) kᵣₗ vᵣₗ lₙₑ rₙₑ
++      -- Trace the old pivot’s two children. One now sits to the right of kᵣₒ, the other
++      -- to the left of kᵣ. Swapping them could preserve heights while breaking lookup.
++      let rootₙₑ := spytial (Node (1 + AVLNode.max (cachedHeight lₙₑ) (cachedHeight rₙₑ)) kᵣₗ vᵣₗ lₙₑ rₙₑ) observing [AVLNode.structuralHeight]
+ 
+       have hCachedHeightLₙₑ : cachedHeight lₙₑ = lₙₑ.height := by
+@@ -2231,5 +2283,5 @@
+               case inl hHeightNewLᵣ =>
+                 simp +zetaDelta -failIfUnchanged only [hHeightNewRᵣ, hHeightNewLᵣ, sub_sub_cancel_left, Int.reduceNeg, neg_eq_zero,
+-                  one_ne_zero, neg_eq_self_iff, or_self, or_false]
++                  one_ne_zero, CharZero.neg_eq_self_iff, or_self, or_false]
+               case inr hHeightNewLᵣ =>
+                 simp +zetaDelta -failIfUnchanged only [hHeightNewRᵣ, hHeightNewLᵣ, sub_self, Int.reduceNeg, zero_eq_neg, one_ne_zero,
+@@ -2243,5 +2295,5 @@
+             . cases hHeightNewRₗ
+               case inl hHeightRₗ =>
+-                simp +zetaDelta -failIfUnchanged only [hHeightNewRᵣ, hHeightRₗ, sub_sub_cancel, Int.reduceNeg, eq_neg_self_iff, one_ne_zero,
++                simp +zetaDelta -failIfUnchanged only [hHeightNewRᵣ, hHeightRₗ, sub_sub_cancel, Int.reduceNeg, CharZero.eq_neg_self_iff, one_ne_zero,
+                   or_true]
+               case inr hHeightRₗ =>
+@@ -2251,7 +2303,7 @@
+             . simp +zetaDelta -failIfUnchanged only [isAVLTree, isBalanced, decide_eq_true_eq] at hWellFormedR
+               tauto
+-      let T := { root := rootₙₑ, wellFormed := hNewRootIsAVLTree }
+-
+-      have hHeightBound := by
++      let T : AVLTree α β cmp := { root := rootₙₑ, wellFormed := hNewRootIsAVLTree }
++
++      have hHeightBound : T.root.height = hᵣₒ ∨ T.root.height = hᵣₒ + 1 := by
+         have : height T.root = hᵣₒ := by
+           have hNewRight : height rₙₑ = n + 1 := by
+@@ -2434,7 +2486,7 @@
+       . exact hBal
+ 
+-    let T := { root := rootₙₑ, wellFormed := hNewRootIsAVLTree }
+-
+-    have hHeightBound := by
++    let T : AVLTree α β cmp := { root := rootₙₑ, wellFormed := hNewRootIsAVLTree }
++
++    have hHeightBound : T.root.height = hᵣₒ ∨ T.root.height = hᵣₒ + 1 := by
+       have hHᵣ : height rᵣₒ = hᵣ := by
+         have hOrigHeight := extractHeightCorrect hWellFormed
+@@ -2645,4 +2697,11 @@
+       hAllGreaterR hRebalance hMatch.1 rₙₑ.mapsTo
+ 
++  /-! ## Insertion and the return to the parent
++
++  With keys 3 and 1 already in the map, inserting 2 takes the left branch at 3 and adds a
++  right child at 1. Follow the return to `insertLeftSubtree`. The two children at 3 now
++  have heights 2 and 0. The choice of rotation depends on where the extra level came from.
++  -/
++
+   def insertNode {α β : Type} {cmp : ComparisonFunction α}
+     (hᵣₒ : ℤ) (kᵣₒ : α) (vᵣₒ : β) (lᵣₒ rᵣₒ : AVLNode α β cmp)
+@@ -2656,6 +2715,6 @@
+       -- key matches current node: replace data at node
+       | (Order.EQUAL, _, _) => (
+-        let T := { root := Node hᵣₒ kᵣₒ vᵢ lᵣₒ rᵣₒ, wellFormed := by tauto }
+-        have hHeightBound := by
++        let T : AVLTree α β cmp := { root := Node hᵣₒ kᵣₒ vᵢ lᵣₒ rᵣₒ, wellFormed := by tauto }
++        have hHeightBound : T.root.height = hᵣₒ ∨ T.root.height = hᵣₒ + 1 := by
+           have hHeight : T.root.height = hᵣₒ := by
+             have hOrigHeight := extractHeightCorrect hWellFormed
+@@ -2821,5 +2880,5 @@
+ β)
+     : (T.insert k v).lookup k = some v := by
+-    rw [insert]
++    rw [insert.eq_def]
+     split
+ 
+@@ -2839,7 +2898,7 @@
+       exact mapsToLookup T'.T T'.mapsTo
+ 
+-  lemma AVLTreeInsertionDoesNotModifyOtherValues {α β : Type} {cmp : ComparisonFunction α}
++  def AVLTreeInsertionDoesNotModifyOtherValues {α β : Type} {cmp : ComparisonFunction α}
+     (T : AVLTree α β cmp) (k : α) (v : β) (k' : α) (result : Option β) (hk : k ≠ k')
+-    : T.lookup k' = result → (T.insert k v).lookup k' = result := by sorry
++    : Prop := T.lookup k' = result → (T.insert k v).lookup k' = result
+ 
+   lemma EmptyAVLTreeLookup {α β : Type} {cmp : ComparisonFunction α} (k : α) : (empty α β cmp).lookup k = none := by

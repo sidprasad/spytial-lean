@@ -33,7 +33,7 @@ public inductive Origin where
   deriving DecidableEq
 
 /-- A finite positive relational instance whose unique tuples remember every origin. -/
-public structure Trace {World : Type u} {Ty : Type v} (context : Iykyk.Metatheory.Context World)
+public structure Trace {World : Type u} {Ty : Type v} (context : Context World)
     {signature : Signature Ty} (model : Model World signature) where
   atoms : FiniteSet (TypedAtom (Atom context model))
   tuples : FiniteSet (Tuple signature (Atom context model))
@@ -43,7 +43,7 @@ public structure Trace {World : Type u} {Ty : Type v} (context : Iykyk.Metatheor
 
 namespace Trace
 
-variable {World : Type u} {Ty : Type v} {context : Iykyk.Metatheory.Context World}
+variable {World : Type u} {Ty : Type v} {context : Context World}
   {signature : Signature Ty} {model : Model World signature}
 
 /-- Every tuple in a trace carries arguments indexed by its declared relation columns. This is
@@ -267,7 +267,7 @@ end Trace
 
 namespace Instance
 
-variable {World : Type u} {Ty : Type v} {context : Iykyk.Metatheory.Context World}
+variable {World : Type u} {Ty : Type v} {context : Context World}
   {signature : Signature Ty} {model : Model World signature}
 
 /-- Record one origin on every tuple of an instance. -/
@@ -302,7 +302,7 @@ end Instance
 namespace Semantics
 
 variable {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty} {base : Signature Ty}
-  {context : Iykyk.Metatheory.Context World}
+  {context : Context World}
 
 /-- The structural trace of an exposed representation: the walk from the selected term's own
 atom over the exposed value, with every tuple tagged by how the value was exposed. -/

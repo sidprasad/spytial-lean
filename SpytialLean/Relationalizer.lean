@@ -568,7 +568,7 @@ private meta inductive IdVerdict where
   | grouped (tyKey : Expr)
 
 /-- Normalize local aliases and natural-literal encodings for contextual
-    references, without unfolding observation functions. IYKYK's simplifier
+    references, without unfolding observation functions. context preparation's simplifier
     can turn a raw literal into `OfNat.ofNat`; reduction checks the actual
     instance rather than assuming that every `OfNat Nat n` denotes `n`. -/
 public meta def normalizeReferenceTerm (e : Expr) : MetaM Expr := do
@@ -710,7 +710,7 @@ private meta def internIdentity (v : IdVerdict) : StateT WalkState MetaM
     `Tree`-shaped hole still occupies a `Tree` slot and `Tree` specs apply.
     Must short-circuit *before* custom-relationalizer dispatch: a value
     decomposer must never be handed a bare hole of its target type. A variable
-    with an entry in `cfg.refinements` is not opaque: it draws the shape IYKYK
+    with an entry in `cfg.refinements` is not opaque: it draws the shape context preparation
     established. -/
 private meta def holeAtom? (cfg : WalkConfig) (recurse : Expr → StateT WalkState MetaM String)
     (e ty : Expr) : StateT WalkState MetaM (Option String) := do

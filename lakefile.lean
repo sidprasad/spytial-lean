@@ -7,8 +7,8 @@ package spytialLean where
   buildArchive? := "SpytialLean.tar.gz"
   releaseRepo := "https://github.com/sidprasad/spytial-lean"
 
-require iykyk from
-  git "https://github.com/sidprasad/iykyk" @ "v0.4.0"
+require aesop from
+  git "https://github.com/leanprover-community/aesop" @ "3448c0bcc5ce01b2d1546e483ec3620e32df3d0e"
 
 /-! ## JS build targets
 

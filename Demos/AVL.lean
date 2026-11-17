@@ -5,13 +5,14 @@ open SpytialLean
 /-!
 # AVL rebalancing
 
-Course slides on AVL trees draw the same picture again and again: an unbalanced node `N`,
-its taller child `C`, and subtrees `T`, `U`, and `V` drawn as triangles. Each node carries
+Course slides on AVL trees draw the same picture again and again: an unbalanced root,
+its taller child, and the unopened subtrees drawn as triangles. Each node carries
 its height and its balance factor. After each rotation, the instructor draws the tree again.
 For one example, see Scott Wehrwein's CSCI 241 lecture
 (https://facultyweb.cs.wwu.edu/~wehrwes/courses/csci241_23s/lectures/L11/L11B.pdf).
 
-This file makes those pictures from Lean.
+This file makes those pictures from Lean. The companion walkthrough in `Demos/AVL.md`
+starts at the branch where the reader can predict which key will become the new root.
 
 1. Define the tree and draw concrete trees with `#spytial`.
 2. Write `rebalance` as in the slides, with an inspection at each case.
@@ -48,25 +49,18 @@ def insertBST (k : Nat) : Tree → Tree
   | .leaf => .node .leaf k .leaf
   | .node l x r => if k < x then .node (insertBST k l) x r else .node l x (insertBST k r)
 
-def Tree.isNode : Tree → Bool
-  | .node .. => true
-  | .leaf => false
-
--- Draw each node with its key. Red marks a node that breaks the AVL property. Green marks
--- a subtree proved balanced. Each inspection below adds `height` to every box and `bf` to
--- the nodes Lean has opened. A subtree Lean has not opened is one box, like a triangle on
--- the slides.
+-- Label each opened node with its key. An unopened subtree gets one box, like a triangle
+-- on the slides. The proof inspections add heights and balance factors.
 spytial_spec Tree [
-  orientation left left below,
-  orientation right right below,
+  -- Position visible children. Empty child slots all point to the same hidden leaf.
+  orientation inspectedRoot.*(left + right) <: left :> {t : Tree | @:t != leaf} left below,
+  orientation inspectedRoot.*(left + right) <: right :> {t : Tree | @:t != leaf} right below,
+  align let children = inspectedRoot.*(left + right) <: (left + right)
+      :> {t : Tree | @:t != leaf} | ~children.children - iden horizontal,
   attribute key,
-  edgeStyle left noLabels,
-  edgeStyle right noLabels,
-  hideAtom Nat,
-  hideAtom lean (fun t : Tree => t matches .leaf),
-  atomStyle lean (Balanced) (borderStyle "#15803d" 2),
-  atomStyle lean (fun t : Tree => bf t < -1 ∨ 1 < bf t)
-    (borderStyle "#b91c1c" 2) (fillStyle "#fef2f2")
+  hideAtom univ - inspectedRoot.*(left + right),
+  -- Suppress the shared empty child. An inspection of the empty tree itself still has a root.
+  hideAtom {t : Tree | @:t = leaf} - inspectedRoot,
 ]
 
 def keys : List Nat → Tree := List.foldl (fun t k => insertBST k t) .leaf
@@ -75,67 +69,74 @@ def before : Tree := keys [20, 10, 30, 5, 15, 25, 35, 3, 12, 40]
 
 -- Balanced: every balance factor is -1, 0, or 1.
 #spytial before observing [height, bf]
-  with [.., attribute height, attribute bf selector: lean (Tree.isNode), hideAtom Int]
+  with [.., attribute height, attribute bf, hideAtom Int]
 
 -- Insert 4 as a plain search tree would. Node 5 now has balance factor -2: its left child
 -- is two levels taller than its right child. This is Case 2 below.
 #spytial insertBST 4 before observing [height, bf]
-  with [.., attribute height, attribute bf selector: lean (Tree.isNode), hideAtom Int]
+  with [.., attribute height, attribute bf selector: key.univ, hideAtom Int]
 
 /-! ## 2. Rebalancing
 
 The slides give this pseudocode.
 
 ```text
-rebalance(n):
-  if bal(n) < -1:
-    if bal(n.left) < 0: case 1     -- right rotate n
-    else:               case 2     -- left rotate n.left, then right rotate n
-  else if bal(n) > 1:
-    if bal(n.right) < 0: case 3    -- right rotate n.right, then left rotate n
-    else:                case 4    -- left rotate n
+rebalance(tree):
+  if bal(tree) < -1:
+    if bal(tree.left) < 0: case 1     -- rotate the root right
+    else:                  case 2     -- rotate the left child left, then the root right
+  else if bal(tree) > 1:
+    if bal(tree.right) < 0: case 3    -- rotate the right child right, then the root left
+    else:                   case 4    -- rotate the root left
 ```
 
 Cases 3 and 4 mirror cases 1 and 2. Place the cursor on `rebalance` to step through its
-inspections. Each one draws the tree a line of code builds. Inside the function Lean knows
-only the branch conditions, so these pictures show shape, not heights. Part 3 adds the
-facts that hold after an insertion.
+inspections. The named match equations connect the input and its children to their
+patterns inside each branch. A requested height can still contain a symbolic maximum.
+Part 3 supplies the height facts that hold after an insertion.
 -/
 
 def rotateRight : Tree → Tree
-  | .node (.node T c U) n V => .node T c (.node U n V)
-  | t => t
+  | .node (.node left pivotKey middle) rootKey right =>
+    .node left pivotKey (.node middle rootKey right)
+  | tree => tree
 
 def rotateLeft : Tree → Tree
-  | .node V n (.node T c U) => .node (.node V n T) c U
-  | t => t
+  | .node left rootKey (.node middle pivotKey right) =>
+    .node (.node left rootKey middle) pivotKey right
+  | tree => tree
 
-/-- Left rotate the left child, as in "left rotate C". -/
+/-- Rotate the left child left and reattach it to the root. -/
 def rotateLeftChild : Tree → Tree
-  | .node C n V => .node (rotateLeft C) n V
-  | t => t
+  | .node left rootKey right => .node (rotateLeft left) rootKey right
+  | tree => tree
 
-def rebalance : Tree → Tree
-  | .leaf => .leaf
-  | .node C n V =>
-    if bf (.node C n V) < -1 then
-      match C with
-      | .leaf => .node .leaf n V
-      | .node T c U =>
-        if bf (.node T c U) < 0 then
-          let N := spytial (Tree.node (.node T c U) n V) titled "Case 1"
-          spytial (rotateRight N) titled "Case 1: right rotate N"
+-- The inspections use the match equations and field names from the local context.
+set_option linter.unusedVariables false in
+def rebalance (tree : Tree) : Tree :=
+  match rootShape : tree with
+  | .leaf => tree
+  | .node left rootKey right =>
+    if bf tree < -1 then
+      match leftShape : left with
+      | .leaf => tree
+      | .node outer leftKey inner =>
+        let leftFactor := bf (spytial left observing [height] with [.., attribute height])
+        if leftFactor < 0 then
+          let repaired := rotateRight (spytial tree)
+          spytial repaired observing [height, bf]
+            with [.., attribute height, attribute bf selector: key.univ]
         else
-          match U with
-          | .leaf => .node (.node T c .leaf) n V
-          | .node X u Y =>
-            let N := spytial (Tree.node (.node T c (.node X u Y)) n V) titled "Case 2"
-            let N := spytial (rotateLeftChild N) titled "Case 2: left rotate C"
-            spytial (rotateRight N) titled "Case 2: right rotate N"
-    else if 1 < bf (.node C n V) then
-      if bf V < 0 then rotateLeft (.node C n (rotateRight V))
-      else rotateLeft (.node C n V)
-    else .node C n V
+          match innerShape : inner with
+          | .leaf => tree
+          | .node pivotLeft pivotKey pivotRight =>
+            let leftChildRotated := rotateLeftChild (spytial tree)
+            let repaired := rotateRight (spytial leftChildRotated)
+            spytial repaired
+    else if 1 < bf tree then
+      if bf right < 0 then rotateLeft (.node left rootKey (rotateRight right))
+      else rotateLeft tree
+    else tree
 
 /-- AVL insertion: insert as in a search tree, then rebalance on the way back up. -/
 def insert (k : Nat) : Tree → Tree
@@ -145,15 +146,15 @@ def insert (k : Nat) : Tree → Tree
 
 -- The same insertion with rebalancing. Node 4 has moved up between 3 and 5.
 #spytial insert 4 before observing [height, bf]
-  with [.., attribute height, attribute bf selector: lean (Tree.isNode), hideAtom Int]
+  with [.., attribute height, attribute bf selector: key.univ, hideAtom Int]
 
 /-! ## 3. Rebalancing after an insertion
 
-An insertion has made `C` two levels taller than `V`. Name `V`'s height `h`. Both subtrees
-are AVL trees, and `C` grew, so it leans to one side: its balance factor is not 0.
+This local repair theorem takes the post-insertion facts as hypotheses. Both children
+are balanced. The left subtree leans and is two levels taller than the right subtree.
 
-The goal mentions none of `T`, `U`, `h + 1`, or `-2`. Read the inspections in order: they
-are the slides for Cases 1 and 2, drawn from the hypotheses for every tree that fits.
+Compare the two inspections that ask whether the left child can become the root.
+Both inspect the same bound tree before the proof names its repair.
 -/
 
 theorem Balanced.children {l r : Tree} {key : Nat} (b : Balanced (.node l key r)) :
@@ -166,77 +167,100 @@ theorem Balanced.mk {l r : Tree} {key : Nat} (bl : Balanced l) (br : Balanced r)
     (fits : height l ≤ height r + 1 ∧ height r ≤ height l + 1) : Balanced (.node l key r) :=
   .node bl br (by simp only [bf]; omega) (by simp only [bf]; omega)
 
-theorem rebalance_after_insert (C V : Tree) (n h : Nat)
-    (bC : Balanced C) (bV : Balanced V) (hC : height C = h + 2) (hV : height V = h)
-    (leans : bf C ≠ 0) :
-    Balanced (rebalance (.node C n V)) := by
-  -- N's left child is two levels taller. C is still a closed triangle.
-  spytial (Tree.node C n V) observing [height, bf]
-    with [.., attribute height, attribute bf selector: lean (Tree.isNode), hideAtom Int,
-      hideField Balanced]
+theorem rebalance_after_insert (left right : Tree) (rootKey baseHeight : Nat)
+    (leftBalanced : Balanced left) (rightBalanced : Balanced right)
+    (leftHeight : height left = baseHeight + 2) (rightHeight : height right = baseHeight)
+    (leans : bf left ≠ 0) :
+    Balanced (rebalance (.node left rootKey right)) := by
+  let tree := Tree.node left rootKey right
+  change Balanced (rebalance tree)
+  spytial tree observing [height, bf]
+    with [.., attribute height, attribute bf, hideAtom Int]
     titled "After the insertion"
-  cases C with
-  | leaf => simp [height] at hC
-  | node T c U =>
-    obtain ⟨bT, bU, lo, hi⟩ := bC.children
-    simp only [bf, height] at hC lo hi leans
-    by_cases outer : bf (.node T c U) < 0
-    · -- Case 1: C leans left, so T is the tall grandchild.
-      simp only [bf] at outer
-      have hT : height T = h + 1 := by omega
-      have hU : height U = h := by omega
-      clear hC lo hi leans outer bC
-      let N := Tree.node (.node T c U) n V
-      spytial N observing [height, bf]
-        with [.., attribute height, attribute bf selector: lean (Tree.isNode), hideAtom Int,
+  cases leftShape : left with
+  | leaf => simp [leftShape, height] at leftHeight
+  | node outer leftKey inner =>
+    rw [leftShape] at leftBalanced leftHeight leans
+    obtain ⟨outerBalanced, innerBalanced, lo, hi⟩ := leftBalanced.children
+    have levels : max (height outer) (height inner) + 1 = baseHeight + 2 := leftHeight
+    simp only [bf] at lo hi leans
+    by_cases outerTaller : height inner < height outer
+    · -- The outside grandchild is taller.
+      have outerHeight : height outer = baseHeight + 1 := by omega
+      have innerHeight : height inner = baseHeight := by omega
+      clear levels lo hi leans outerTaller leftBalanced
+      -- Predict the new root before looking at the return expression.
+      spytial tree observing [height, bf]
+        with [.., attribute height, attribute bf, hideAtom Int]
+        titled "Outer subtree taller. Can the left child become the root?"
+      let rebalanced := rotateRight tree
+      spytial rebalanced observing [height, bf]
+        with [.., attribute height, attribute bf selector: key.univ, hideAtom Int,
           hideField Balanced]
-        titled "Case 1"
-      let rotated := rotateRight N
-      spytial rotated observing [height, bf]
-        with [.., attribute height, attribute bf selector: lean (Tree.isNode), hideAtom Int,
-          hideField Balanced]
-        titled "Case 1: right rotate N"
-      have step : rebalance N = rotated := by
-        simp only [N, rebalance]
+      subst left
+      have step : rebalance tree = rebalanced := by
+        simp only [tree, rebalance]
         rw [if_pos (by simp only [bf, height]; omega), if_pos (by simp only [bf]; omega)]
       rw [step]
-      exact .mk bT (.mk bU bV (by omega)) (by simp only [height]; omega)
-    · -- Case 2: C leans right, so U is the tall grandchild. Open it.
-      simp only [bf] at outer
-      have hU : height U = h + 1 := by omega
-      have hT : height T = h := by omega
-      cases U with
-      | leaf => simp [height] at hU
-      | node X u Y =>
-        obtain ⟨bX, bY, lo', hi'⟩ := bU.children
-        simp only [bf, height] at hU lo' hi'
-        -- X and Y each have height h or h - 1. Neither is fixed.
-        have hX : height X ≤ h ∧ h ≤ height X + 1 := by omega
-        have hY : height Y ≤ h ∧ h ≤ height Y + 1 := by omega
-        have hmax : max (height X) (height Y) = h := by omega
-        clear hC lo hi leans outer bC hU lo' hi' bU
-        let N := Tree.node (.node T c (.node X u Y)) n V
-        spytial N observing [height, bf]
-          with [.., attribute height, attribute bf selector: lean (Tree.isNode), hideAtom Int,
+      exact .mk outerBalanced (.mk innerBalanced rightBalanced (by omega))
+        (by simp only [height]; omega)
+    · -- The inside grandchild is taller.
+      have innerHeight : height inner = baseHeight + 1 := by omega
+      have outerHeight : height outer = baseHeight := by omega
+      clear levels lo hi leans outerTaller leftBalanced
+      spytial tree observing [height, bf]
+        with [.., attribute height, attribute bf selector: key.univ, hideAtom Int,
+          hideField Balanced]
+        titled "Inner subtree taller. Can the left child become the root?"
+      cases innerShape : inner with
+      | leaf => simp [innerShape, height] at innerHeight
+      | node pivotLeft pivotKey pivotRight =>
+        rw [innerShape] at innerBalanced innerHeight
+        obtain ⟨pivotLeftBalanced, pivotRightBalanced, lo', hi'⟩ := innerBalanced.children
+        have pivotMax : max (height pivotLeft) (height pivotRight) = baseHeight :=
+          Nat.succ.inj innerHeight
+        simp only [bf] at lo' hi'
+        -- Either side of the pivot may be shorter by one.
+        have pivotLeftFits : height pivotLeft ≤ baseHeight ∧
+            baseHeight ≤ height pivotLeft + 1 := by omega
+        have pivotRightFits : height pivotRight ≤ baseHeight ∧
+            baseHeight ≤ height pivotRight + 1 := by omega
+        clear lo' hi' innerBalanced
+        spytial tree observing [height, bf]
+          with [.., attribute height, attribute bf selector: key.univ, hideAtom Int,
             hideField Balanced]
-          titled "Case 2"
-        let middle := rotateLeftChild N
-        spytial middle observing [height, bf]
-          with [.., attribute height, attribute bf selector: lean (Tree.isNode), hideAtom Int,
+        let leftChildRotated := rotateLeftChild tree
+        spytial leftChildRotated observing [height, bf]
+          with [.., attribute height, attribute bf selector: key.univ, hideAtom Int,
             hideField Balanced]
-          titled "Case 2: left rotate C"
-        let rotated := rotateRight middle
-        spytial rotated observing [height, bf]
-          with [.., attribute height, attribute bf selector: lean (Tree.isNode), hideAtom Int,
+        let rebalanced := rotateRight leftChildRotated
+        spytial rebalanced observing [height, bf]
+          with [.., attribute height, attribute bf selector: inspectedRoot, hideAtom Int,
             hideField Balanced]
-          titled "Case 2: right rotate N"
-        have step : rebalance N = rotated := by
-          have hU' : height (.node X u Y) = h + 1 := by simp only [height]; omega
-          have hC' : height (.node T c (.node X u Y)) = h + 2 := by simp only [height]; omega
-          simp only [N, rebalance]
-          rw [if_pos (by simp only [bf]; rw [hC', hV]; omega),
-            if_neg (by simp only [bf]; rw [hU', hT]; omega)]
+          titled "Where did the pivot’s two subtrees go?"
+        subst left
+        subst inner
+        have step : rebalance tree = rebalanced := by
+          simp only [tree, rebalance]
+          rw [if_pos (by simp only [bf]; rw [leftHeight, rightHeight]; omega),
+            if_neg (by simp only [bf]; rw [innerHeight, outerHeight]; omega)]
         rw [step]
-        exact .mk (.mk bT bX (by omega)) (.mk bY bV (by omega)) (by simp only [height]; omega)
+        exact .mk (.mk outerBalanced pivotLeftBalanced (by omega))
+          (.mk pivotRightBalanced rightBalanced (by omega)) (by simp only [height]; omega)
+
+/-- Try the outer-heavy branch's repair under the inner-heavy branch's height facts. -/
+theorem singleRotation_fails (outer inner right : Tree) (leftKey rootKey baseHeight : Nat)
+    (outerHeight : height outer = baseHeight) (innerHeight : height inner = baseHeight + 1)
+    (rightHeight : height right = baseHeight) :
+    let candidate := rotateRight (.node (.node outer leftKey inner) rootKey right)
+    ¬ Balanced candidate := by
+  intro candidate
+  spytial candidate observing [height, bf]
+    with [.., attribute height, attribute bf selector: key.univ, hideAtom Int]
+    titled "What is the balance factor at leftKey?"
+  intro ok
+  have fits := ok.children.2.2.2
+  simp only [bf, height] at fits
+  omega
 
 end AVLDemo

@@ -162,7 +162,7 @@ end Arguments
 /-- The meaning of the core fragment in the worlds allowed by a context: carriers, constructor
 and operation functions, values for variables, and the meaning of the base relations. -/
 public structure Semantics (World : Type w) {Ty : Type u} (L : Language.{u, v} Ty)
-    (base : Signature Ty) (context : Iykyk.Metatheory.Context World) where
+    (base : Signature Ty) (context : Context World) where
   Carrier : Ty → Type (max u w)
   constructor : (C : L.Constructor) → Arguments Carrier (L.binders C) → Carrier (L.result C)
   operation : (f : L.Op) → Arguments Carrier (L.params f) → Carrier (L.opResult f)
@@ -173,7 +173,7 @@ public structure Semantics (World : Type w) {Ty : Type u} (L : Language.{u, v} T
 namespace Semantics
 
 variable {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty} {base : Signature Ty}
-  {context : Iykyk.Metatheory.Context World}
+  {context : Context World}
 
 /-- The fixed meaning of a field relation: `field C i` relates `C(args)` to the argument at
 position `i`. This is the semantic contract of every generated field tuple. -/
@@ -252,7 +252,7 @@ end Semantics
 mutual
 /-- Evaluation preserves denotation in every compatible world. -/
 public theorem Eval.sound {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty}
-    {base : Signature Ty} {context : Iykyk.Metatheory.Context World}
+    {base : Signature Ty} {context : Context World}
     {sem : Semantics World L base context} {program : Program L}
     (implements : sem.Implements program) :
     ∀ {sort : Ty} {expression value : Term L sort}, Eval program expression value →
@@ -271,7 +271,7 @@ public theorem Eval.sound {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty
       rw [EvalArgs.sound implements fields world compatible]
 /-- Pointwise evaluation preserves the denotations of an argument list. -/
 public theorem EvalArgs.sound {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty}
-    {base : Signature Ty} {context : Iykyk.Metatheory.Context World}
+    {base : Signature Ty} {context : Context World}
     {sem : Semantics World L base context} {program : Program L}
     (implements : sem.Implements program) :
     ∀ {sorts : List Ty} {args vals : Arguments (Term L) sorts}, EvalArgs program args vals →
@@ -287,7 +287,7 @@ end
 namespace Semantics
 
 variable {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty} {base : Signature Ty}
-  {context : Iykyk.Metatheory.Context World}
+  {context : Context World}
 
 /-- The tuple relating an owner atom to its field atom. Its typing is fixed by the field symbol. -/
 @[expose] public def fieldTuple (sem : Semantics World L base context) (C : L.Constructor)

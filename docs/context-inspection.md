@@ -14,7 +14,9 @@ can still appear. If both `fyi [ih]` and `nvm [ih]` name the same declaration,
 the exclusion wins in either order. `spytial.datum x nvm [ih]` prints the
 corresponding diagram data.
 
-IYKYK extracts and checks the facts before Spytial selects the relevant subset.
+Spytial prepares the context using Aesop normalization with Lean simplification,
+structural eliminators, and selected forward rules. It checks the resulting proof
+terms before selecting the relevant subset. See [evidence and context preparation](evidence.md).
 Spytial starts from the selected root and the symbolic values represented by
 its expression walk, including children exposed by known equalities. Local
 `let` names are expanded for matching; global observers such as `height` stay
@@ -51,6 +53,14 @@ on) instead of being renamed by refinements. A contextual name for a symbolic
 primitive does win over its generated label, and expressions referring to that
 atom use the same contextual name.
 
+To inspect the original input inside a pattern match, keep the match equation.
+For example, in the `.node outer leftKey inner` arm of `match leftShape : left with`,
+the local context contains `leftShape : left = Tree.node outer leftKey inner`.
+`spytial left` can then draw the two child edges. A plain `match left with` can
+leave the branch with independent locals and no evidence identifying them as
+children of `left`. A proof can retain the same evidence with
+`cases leftShape : left with`. [Runnable nested matches](../Demos/AVL.lean#L116)
+
 After a rotation, root-only inspection does not import an old constructor-built
 parent merely because it shares leaves with the new tree. Facts wholly about
 subtrees of the selected result remain relevant, but inequalities involving an
@@ -67,12 +77,10 @@ diagram.
 `spytial.datum` prints the same datum. The widget payload additionally records the
 selected root and its source term so the infoview can identify what was inspected.
 
-The AVL demo renders symbolic `height` and `key` values as attributes and uses
-`hideAtom Nat` to keep arithmetic out of the tree drawing. Scalar facts remain in
-the datum and the context listing. Green and red styles come from proved
-`Balanced` and `¬ Balanced` facts; a neutral node has neither classification.
-Five inspections follow the left-right case from a failed single rotation to a
-successful double rotation, revealing only the inner subtree's root along the way.
+The AVL demo displays the key field and observes `height` and `bf` in each proof
+branch. Two inputs have the same exposed constructors and the same root balance
+factor of −2. The heights of the unopened grandchildren determine whether promoting
+the left child repairs the root. [AVL walkthrough](../Demos/AVL.md)
 
 Contradiction checks still happen before projection. Inconsistency and
 extraction truncation keep their existing behavior. Programmatic callers that
@@ -111,9 +119,9 @@ height(parent, (max ¿x? ¿y?) + 1)
 The observer is residualized before its result is added. Known child heights
 can therefore compute the parent's height, while deterministic symbolic
 results are labelled as expressions over genuinely unknown leaves. In tactic
-mode, Spytial can ask IYKYK focused arithmetic questions needed to simplify a
+mode, Spytial can ask Lean focused arithmetic questions needed to simplify a
 symbolic `max`; successful answers are checked proofs and do not become extra
-facts in the displayed `Afaik`. An independently retained fact such as
+proofs retained for the inspection. An independently retained fact such as
 `height r + 1 < height l` can still introduce `add` and comparison relations.
 See
 [Observations](observations.md) for the evaluation and result-representation

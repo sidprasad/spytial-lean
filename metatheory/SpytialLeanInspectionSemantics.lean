@@ -26,7 +26,7 @@ operational semantics whose rules the model is assumed to validate.
   presentation rows.
 * `Inspection` defines exposure by evaluation or normalized proof refinement, checked decoding,
   the fragment judgment, and canonical assembly from a complete finite inspection plan.
-* `Correctness` composes a sound IYKYK extraction with the owned rules, proving typed soundness,
+* `Correctness` composes a sound context preparation extraction with the owned rules, proving typed soundness,
   ordinary-value containment, shared-witness coherence, origin erasure, and computation/proof
   agreement between independently normalized exposures.
 -/

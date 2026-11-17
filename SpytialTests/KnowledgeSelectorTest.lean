@@ -13,7 +13,7 @@ set_option linter.unusedVariables false
 /-! The same Lean predicates select represented atoms in every inspection context. -/
 
 private meta def viewOf (root : Expr) : MetaM ContextView := do
-  let (_, some view) ← wdykInContext root {} { mechanisms := #[.simp] }
+  let (_, some view) ← inspectInContext root {} { simplify := true }
     | throwError "expected a consistent context view"
   return view
 
@@ -95,7 +95,7 @@ example (n : Nat) : True := by
   knowledge_wire_spec n
   trivial
 
--- IYKYK allocates the existential witness before the inspected list.
+-- context preparation allocates the existential witness before the inspected list.
 -- The layout must select the list itself.
 /-- info: {"constraints": [{"hideAtom": {"selector": "univ - ``atom_1`"}}]} -/
 #guard_msgs in
@@ -293,7 +293,7 @@ example (t : KnowledgeTree) (k : Nat) (h : t.height = k) : True := by
   withLocalDeclD `hr (← mkEq (mkApp height right) (mkNatLit 1)) fun _ => do
     leftHeight.mvarId!.assign (mkNatLit 2)
     let root := mkApp2 (mkConst ``KnowledgeTree.node) left right
-    let (_, some view) ← wdykInContext root {} { mechanisms := #[.simp] } #[mkApp height root]
+    let (_, some view) ← inspectInContext root {} { simplify := true } #[mkApp height root]
       | throwError "expected an observed tree"
     let predicate := mkConst ``hasHeightThree
     assertSelection view predicate #[#["node"]]
@@ -306,7 +306,7 @@ example (t : KnowledgeTree) (k : Nat) (h : t.height = k) : True := by
       | throwError "missing height value"
     unless result.label == "3" do throwError "parent height was not evaluated"
     let observationProofs := view.evidence.proofs.filter fun proof =>
-      !view.afaik.facts.any (·.proof.equal proof)
+      !view.context.proofs.any (·.equal proof)
     unless !observationProofs.isEmpty do throwError "lost observation proofs"
     assertSelection { view with evidence := { view.evidence with proofs := observationProofs } }
       predicate #[#["node"]]

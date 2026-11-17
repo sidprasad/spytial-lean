@@ -2,6 +2,9 @@
 
 Draw Lean values in the VS Code infoview. Inside a proof, `spytial` uses
 local hypotheses to show what is known about a value.
+Context preparation uses Aesop normalization with Lean simplification and forward rules;
+evidence consists of ordinary Lean proof terms checked in their original scope.
+See [evidence and context preparation](docs/evidence.md) for the contract.
 
 ## Install
 
@@ -34,6 +37,10 @@ See [layout specifications](docs/layout.md) to customize a diagram or
 [proof contexts](docs/context-inspection.md) to see which facts it includes.
 Place the cursor on a theorem's name and expand **Spytial inspections** in the
 infoview to [compare its proof inspections](docs/theorem-inspections.md).
+
+The [DCIC tree-set demo](Demos/DCICSetsFromTrees.md) follows one insertion through
+two possible rotations and shows how a root with balance factor zero can hide
+an unbalanced child.
 
 ## Inside a function
 
