@@ -1101,6 +1101,96 @@ private meta def normalizeNatAddition (result : Simp.Result) (context : Simp.Con
   let some proof := proof? | return result
   result.mkEqTrans { expr := normalized, proof? := some proof }
 
+/-- Read a closed `Int`, whatever numeral or constructor spelling it uses. -/
+private meta def intLiteral? (expression : Expr) : MetaM (Option Int) := do
+  if let some value ← getIntValue? expression then return some value
+  let some value ← observationValue? expression | return none
+  if value.isAppOfArity ``Int.ofNat 1 then
+    return value.appArg!.rawNatLit?.map Int.ofNat
+  if value.isAppOfArity ``Int.negSucc 1 then
+    return value.appArg!.rawNatLit?.map Int.negSucc
+  return none
+
+private meta def addIntTerm (terms : Array (Expr × Int)) (term : Expr) (coefficient : Int) :
+    Array (Expr × Int) :=
+  match terms.findIdx? (·.1.equal term) with
+  | some index => terms.modify index fun (existing, total) => (existing, total + coefficient)
+  | none => terms.push (term, coefficient)
+
+/-- Flatten an `Int` sum or difference into integer multiples of symbolic terms
+    and a literal offset. A `Nat` cast contributes its own `Nat` addends. -/
+private meta partial def normalizedIntAddends (expression : Expr) :
+    MetaM (Array (Expr × Int) × Int) := do
+  let combine (left right : Expr) (sign : Int) := do
+    let (leftTerms, leftConstant) ← normalizedIntAddends left
+    let (rightTerms, rightConstant) ← normalizedIntAddends right
+    let terms := rightTerms.foldl (init := leftTerms) fun terms (term, coefficient) =>
+      addIntTerm terms term (sign * coefficient)
+    return (terms, leftConstant + sign * rightConstant)
+  if let some value ← getIntValue? expression then return (#[], value)
+  if expression.isAppOfArity ``HAdd.hAdd 6 || expression.isAppOfArity ``Int.add 2 then
+    return ← combine expression.appFn!.appArg! expression.appArg! 1
+  if expression.isAppOfArity ``HSub.hSub 6 || expression.isAppOfArity ``Int.sub 2 then
+    return ← combine expression.appFn!.appArg! expression.appArg! (-1)
+  if expression.isAppOfArity ``Neg.neg 3 || expression.isAppOfArity ``Int.neg 1 then
+    let (terms, constant) ← normalizedIntAddends expression.appArg!
+    return (terms.map fun (term, coefficient) => (term, -coefficient), -constant)
+  if expression.isAppOfArity ``Nat.cast 3 || expression.isAppOfArity ``NatCast.natCast 3 ||
+      expression.isAppOfArity ``Int.ofNat 1 then
+    let (natTerms, constant) ← normalizedNatAddends expression.appArg!
+    let mut terms := #[]
+    for term in natTerms do
+      terms := addIntTerm terms (← mkAppOptM ``Nat.cast #[mkConst ``Int, none, term]) 1
+    return (terms, constant)
+  if let some value ← intLiteral? expression then return (#[], value)
+  return (#[(expression, 1)], 0)
+
+private meta def mkNormalizedIntAddition (terms : Array (Expr × Int)) (constant : Int) :
+    MetaM Expr := do
+  let mut result? : Option Expr := none
+  for (term, coefficient) in terms do
+    if coefficient == 0 then continue
+    let part ← if coefficient.natAbs == 1 then pure term
+      else mkAppM ``HMul.hMul #[toExpr (coefficient.natAbs : Int), term]
+    result? ← some <$> match result? with
+      | none => if coefficient > 0 then pure part else mkAppM ``Neg.neg #[part]
+      | some result =>
+          mkAppM (if coefficient > 0 then ``HAdd.hAdd else ``HSub.hSub) #[result, part]
+  let some result := result? | return toExpr constant
+  if constant == 0 then return result
+  mkAppM (if constant > 0 then ``HAdd.hAdd else ``HSub.hSub)
+    #[result, toExpr (constant.natAbs : Int)]
+
+/-- `Int` arithmetic gets the same treatment as `Nat` addition: a proposed
+    linear normal form, accepted only with a checked equality proof. -/
+private meta def normalizeIntAddition (result : Simp.Result) (context : Simp.Context)
+    (simprocs : Simp.SimprocsArray) : MetaM Simp.Result := do
+  let expression := result.expr
+  unless expression.isAppOfArity ``HAdd.hAdd 6 || expression.isAppOfArity ``HSub.hSub 6 ||
+      expression.isAppOfArity ``Neg.neg 3 do return result
+  unless (← whnf (← inferType expression)).isConstOf ``Int do return result
+  let (terms, constant) ← normalizedIntAddends expression
+  let normalized ← mkNormalizedIntAddition terms constant
+  if normalized.equal expression then return result
+  -- Omega reads `OfNat` numerals and `Nat.cast`; observation exposes raw
+  -- kernel literals and `Int.ofNat`. Both spellings are definitionally equal.
+  let source := expression.replace fun subexpression =>
+    if subexpression.isAppOfArity ``OfNat.ofNat 3 then some subexpression
+    else if subexpression.isAppOfArity ``Int.ofNat 1 then
+      let argument := subexpression.appArg!
+      let argument := (argument.rawNatLit?.map mkNatLit).getD argument
+      some (mkApp3 (mkConst ``Nat.cast [.zero]) (mkConst ``Int) (mkConst ``instNatCastInt) argument)
+    else subexpression.rawNatLit?.map mkNatLit
+  let proof? ← withoutModifyingState do
+    try
+      let some proof ← proveNatAdditionNormalization? source normalized context simprocs
+        | return none
+      -- Restate the proof about the expression actually displayed.
+      return some (← mkExpectedTypeHint proof (← mkEq expression normalized))
+    catch _ => return none
+  let some proof := proof? | return result
+  result.mkEqTrans { expr := normalized, proof? := some proof }
+
 private meta def natAdditionNormalizationContext : MetaM Simp.Context := do
   let mut theorems ← getSimpTheorems
   for rule in [``Nat.add_assoc, ``Nat.add_comm, ``Nat.add_left_comm] do
@@ -1145,6 +1235,7 @@ public meta def prepareObservations (cfg : WalkConfig) (values : Array Expr)
           let inputMVars ← getMVars application
           let (result, _) ← withNewMCtxDepth <| Simp.main application context (methods := methods)
           let result ← normalizeNatAddition result normalizationContext simprocs
+          let result ← normalizeIntAddition result normalizationContext simprocs
           let expression ← instantiateMVars result.expr
           let proof ← instantiateMVars (← result.proof?.getDM (mkEqRefl application))
           let claim ← mkEq application expression
@@ -1697,6 +1788,10 @@ public meta def addObservation (cfg : WalkConfig) (source result : Expr)
     | none =>
       if reducedResult.equal result then
         symbolicObservationResult cfg result
+      -- An observed `Int` is shown as a number, not as `negSucc 0`. Data values
+      -- of type `Int` still use the lossless constructor walk.
+      else if let some value ← intLiteral? reducedResult then
+        addSymbolicObservationAtom cfg reducedResult (toString value)
       else
         walkExpr cfg reducedResult
   modify fun state =>
