@@ -165,6 +165,27 @@ private meta def node (left right : Expr) : Expr :=
 
 /-! ## Existential identity survives translation -/
 
+-- The same admitted premises give the same datum regardless of where the existential occurs.
+#eval show Lean.Elab.TermElabM Unit from do
+  let nat := mkConst ``Nat
+  withLocalDeclD `R (← mkArrow nat (← mkArrow nat (mkSort Level.zero))) fun R => do
+  withLocalDeclD `x nat fun x => do
+  withLocalDeclD `z nat fun z => do
+    let existence ← withLocalDeclD `y nat fun y => do
+      mkAppM ``Exists #[← mkLambdaFVars #[y] (mkApp2 R x y)]
+    let check (hz : Expr) : Lean.Elab.TermElabM Unit := do
+      for simplify in #[false, true] do
+        let view ← viewOf "consumer.namedWitness" x { simplify }
+        assertCanon "consumer.namedWitness" view.data "Nat|x\nNat|z\nR[Nat,Nat]:0,1"
+        let omitted ← viewOf "consumer.excludedWitness" x {
+          simplify, excludedHypotheses := #[hz.fvarId!] }
+        assertCanon "consumer.excludedWitness" omitted.data
+          "Nat|¿y?\nNat|x\nR[Nat,Nat]:1,0"
+    withLocalDeclD `h existence fun _ => do
+      withLocalDeclD `hz (mkApp2 R x z) check
+    withLocalDeclD `hz (mkApp2 R x z) fun hz => do
+      withLocalDeclD `h existence fun _ => check hz
+
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `α (mkSort Level.one) fun α => do
   withLocalDeclD `measure (← mkArrow α (mkConst ``Nat)) fun measure => do

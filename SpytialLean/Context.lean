@@ -73,18 +73,18 @@ private def existingWitness? (config : InspectionConfig) (proofs : Array Expr)
 /-- Aesop can derive a choice body even when presentation reuses a named witness. Omit those
 extra anonymous occurrences rather than asserting that the choice equals the named value. -/
 private partial def mentionsRedundantWitness (config : InspectionConfig)
-    (ctx : InspectionContext) (term : Expr) : MetaM Bool := do
+    (available : Array Expr) (ctx : InspectionContext) (term : Expr) : MetaM Bool := do
   if term.isAppOfArity ``Classical.choose 3 && !term.hasLooseBVars then
     if ← ctx.witnesses.anyM (sameType term ·) then return false
     let args := term.getAppArgs
-    return (← existingWitness? config ctx.proofs args[0]! args[1]!).isSome
+    return (← existingWitness? config available args[0]! args[1]!).isSome
   term.foldlM (fun found child =>
-    if found then pure true else mentionsRedundantWitness config ctx child) false
+    if found then pure true else mentionsRedundantWitness config available ctx child) false
 
 /-- Select display propositions and shared witnesses using Lean eliminators after inference.
 An unresolved disjunction is kept whole. -/
-private partial def expose (config : InspectionConfig) (ctx : InspectionContext) (proof : Expr) :
-    MetaM InspectionContext := do
+private partial def expose (config : InspectionConfig) (available : Array Expr)
+    (ctx : InspectionContext) (proof : Expr) : MetaM InspectionContext := do
   let proof ← if config.simplify then
     let (result, _) ← simp (← inferType proof) (← Simp.Context.mkDefault)
       #[(← Simp.getSimprocs)]
@@ -93,18 +93,18 @@ private partial def expose (config : InspectionConfig) (ctx : InspectionContext)
   let proof ← instantiateMVars proof
   let proposition ← propositionOf proof
   if proposition.isAppOfArity ``And 2 then
-    let ctx ← expose config ctx (← mkAppM ``And.left #[proof])
-    expose config ctx (← mkAppM ``And.right #[proof])
+    let ctx ← expose config available ctx (← mkAppM ``And.left #[proof])
+    expose config available ctx (← mkAppM ``And.right #[proof])
   else if proposition.isAppOfArity ``Iff 2 then
-    let ctx ← expose config ctx (← mkAppM ``Iff.mp #[proof])
-    expose config ctx (← mkAppM ``Iff.mpr #[proof])
+    let ctx ← expose config available ctx (← mkAppM ``Iff.mp #[proof])
+    expose config available ctx (← mkAppM ``Iff.mpr #[proof])
   else if proposition.isAppOfArity ``Exists 2 then
     let args := proposition.getAppArgs
-    if (← existingWitness? config ctx.proofs args[0]! args[1]!).isSome then return ctx
+    if (← existingWitness? config available args[0]! args[1]!).isSome then return ctx
     let witness ← mkAppM ``Classical.choose #[proof]
     let ctx := if ctx.witnesses.contains witness then ctx
       else { ctx with witnesses := ctx.witnesses.push witness }
-    let ctx ← expose config ctx (← mkAppM ``Classical.choose_spec #[proof])
+    let ctx ← expose config available ctx (← mkAppM ``Classical.choose_spec #[proof])
     -- Witnesses are presentation anchors, not an existential certificate. A vacuous binder
     -- needs no atom and no synthetic `Nonempty` fact.
     let used ← ctx.proofs.anyM fun p => do return ((← inferType p).find? (· == witness)).isSome
@@ -149,12 +149,14 @@ def prepareInspectionContext (subject : Expr) (config : InspectionConfig := {}) 
     forwardInspectionProofs premises rules config.simplify config.maxSteps config.maxHeartbeats
   -- Keep compound premises available to rules that consume them. Decomposition only chooses
   -- display propositions; it must not replace the context supplied to Aesop.
+  -- Witness reuse consults the completed proof collection, not the prefix displayed so far.
+  let available := premises ++ proofs
   ctx := { ctx with proofs := #[], truncated := ctx.truncated || truncated }
   for premise in premises do
-    ctx ← expose config ctx premise
+    ctx ← expose config available ctx premise
   for proof in proofs do
-    unless ← mentionsRedundantWitness config ctx (← inferType proof) do
-      ctx ← expose config ctx proof
+    unless ← mentionsRedundantWitness config available ctx (← inferType proof) do
+      ctx ← expose config available ctx proof
   let contradiction? ← withLCtx ctx.scope searchInstances do inspectionContradiction? ctx.proofs
   return { ctx with contradiction? }
 

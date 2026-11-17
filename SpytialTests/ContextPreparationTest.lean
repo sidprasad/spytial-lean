@@ -149,15 +149,16 @@ elab "check_no_synthetic_witness " root:term " using " "[" rules:term,* "]" : ta
     withMainContext do
   let root ← Term.elabTerm root none
   let rules ← rules.getElems.mapM (Term.elabTerm · none)
-  let context ← prepareInspectionContext root { hypotheses := rules }
-  unless context.witnesses.isEmpty do throwError "allocated an unnecessary witness atom"
-  for proof in context.proofs do
-    let type ← whnf (← inferType proof)
-    if type.isAppOf ``Nonempty then
-      throwError "manufactured an inhabitation fact for the renderer"
-    if (type.find? (·.isAppOf ``Classical.choose)).isSome then
-      throwError "retained a duplicate anonymous witness"
-  assertProofs context #[]
+  for simplify in #[false, true] do
+    let context ← prepareInspectionContext root { hypotheses := rules, simplify }
+    unless context.witnesses.isEmpty do throwError "allocated an unnecessary witness atom"
+    for proof in context.proofs do
+      let type ← whnf (← inferType proof)
+      if type.isAppOf ``Nonempty then
+        throwError "manufactured an inhabitation fact for the renderer"
+      if (type.find? (·.isAppOf ``Classical.choose)).isSome then
+        throwError "retained a duplicate anonymous witness"
+    assertProofs context #[]
 
 -- No displayed relation uses the vacuous binder, so inspection needs no witness atom.
 example (α : Type) (P : Prop) (h : ∃ _ : α, P) : True := by
@@ -167,6 +168,25 @@ example (α : Type) (P : Prop) (h : ∃ _ : α, P) : True := by
 -- A named witness whose body is already represented must not gain a duplicate unknown.
 example (R : Nat → Nat → Prop) (a b : Nat) (known : R a b) (h : ∃ w, R a w) : True := by
   check_no_synthetic_witness a using []
+  trivial
+
+-- Reordering the same premises must not allocate a second, anonymous endpoint.
+example (R : Nat → Nat → Prop) (a b : Nat) (h : ∃ w, R a w) (known : R a b) : True := by
+  check_no_synthetic_witness a using []
+  check_preparation a using [] proves [R a b]
+  trivial
+
+-- The named witness can be established by components of a later conjunction too.
+example (R : Nat → Nat → Prop) (S : Nat → Prop) (a b : Nat)
+    (h : ∃ w, R a w ∧ S w) (known : R a b ∧ S b) : True := by
+  check_no_synthetic_witness a using []
+  check_preparation a using [] proves [R a b, S b]
+  trivial
+
+-- A proof-focused inspection cannot reuse an ambient witness whose evidence was not admitted.
+example (R : Nat → Nat → Prop) (a b : Nat) (h : ∃ w, R a w ∧ R w b)
+    (named : Nat) (known : R a named ∧ R named b) : True := by
+  check_shared_witness h
   trivial
 
 -- Omitting duplicate derived witnesses must not discard an original premise about a choice.

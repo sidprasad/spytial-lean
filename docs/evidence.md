@@ -71,7 +71,9 @@ These steps replace the former adapter batches; they are not proof depth.
 Definitionally equal conclusions are omitted, including choice bodies whose
 proof arguments differ. When an existential already has a represented named
 witness, additional anonymous choice occurrences are omitted; no equality
-between those witnesses is asserted.
+between those witnesses is asserted. Reuse consults the admitted premises and
+exported Aesop proofs together, so a named witness's evidence can occur after the
+existential. Excluded premises and unselected ambient proofs cannot justify reuse.
 
 A passive checkpoint in Aesop's step sequence records the current context and
 Lean state. One extra step detects pending work at the limit; if it succeeds,
