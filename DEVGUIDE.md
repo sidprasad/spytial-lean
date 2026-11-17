@@ -13,7 +13,9 @@ whenever its tracked inputs (sources, rollup configs, `package.json`,
 `pnpm-lock.yaml`) change. The lockfile is committed; dependency changes go
 through `pnpm add` / `pnpm remove` in `widget/`.
 
-The widget uses spytial-core 6.0.0. Core preserves relations by `id`; selectors
+The widget's spytial-core dependency is declared in
+[`widget/package.json`](widget/package.json) and pinned in `pnpm-lock.yaml`.
+Core preserves relations by `id`; selectors
 resolve a `name` to the set union of all records with that name. Lean stores
 relations by ID and emits structural field IDs qualified by the exposed owner
 type. Observations and checked facts use the full constant name or unique local
