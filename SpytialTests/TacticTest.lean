@@ -286,6 +286,16 @@ def Positive (x : Nat) : Prop := 0 < x
 #guard_msgs in
 #spytial 3 observing [Positive]
 
+inductive Observation.IsZero : Nat → Prop where
+  | zero : Observation.IsZero 0
+
+-- Introducing a fact adds a tuple to the same qualified relation used by the layout.
+example (x : Nat) : Observation.IsZero x → Observation.IsZero x := by
+  spytial x observing [Observation.IsZero] with [hideField «Observation.IsZero»]
+  intro hx
+  spytial x observing [Observation.IsZero] with [hideField «Observation.IsZero»]
+  exact hx
+
 -- ordinary negative or unsupported knowledge is silent
 set_option linter.unusedVariables false in
 example (n : Nat) (h : n ≠ 0) : True := by
