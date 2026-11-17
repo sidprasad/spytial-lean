@@ -1,21 +1,25 @@
 # Spytial for Lean
 
-Draw Lean values in the VS Code infoview. Inside a proof, `spytial` uses
-local hypotheses to show what is known about a value.
-Context preparation uses Aesop normalization with Lean simplification and forward rules;
-evidence consists of ordinary Lean proof terms checked in their original scope.
-See [evidence and context preparation](docs/evidence.md) for the contract.
+Draw complete and partially known Lean values in the VS Code infoview. Inspect
+an expression inside a function or proof, using local hypotheses to show its
+known structure and relations.
 
 ## Install
 
-Use the Lean version in [`lean-toolchain`](lean-toolchain). Install Node.js 24
-and pnpm 11 to build the widget. Add this dependency to your `lakefile.lean`.
+The examples below use the development version. Use the Lean version in
+[`lean-toolchain`](lean-toolchain), Node.js 24, and pnpm 11. Add this dependency
+to your `lakefile.lean`:
 
 ```lean
-require spytialLean from git "https://github.com/sidprasad/spytial-lean" @ "v0.2.1"
+require spytialLean from git "https://github.com/sidprasad/spytial-lean" @ "main"
 ```
 
 Run `lake update spytialLean`, then `lake build SpytialLean`.
+
+For the tagged `v0.2.1` release, pin `@ "v0.2.1"` and follow its
+[release README](https://github.com/sidprasad/spytial-lean/blob/v0.2.1/README.md).
+Function-expression inspections and newer evidence controls require the
+development version.
 
 ## Try it
 
@@ -24,7 +28,8 @@ import SpytialLean
 
 #spytial ([7, 8] : List Nat)
 
-example (xs tail : List Nat) (h : xs = 7 :: tail) : xs.head? = some 7 := by
+theorem headOfKnownCons (xs tail : List Nat) (h : xs = 7 :: tail) :
+    xs.head? = some 7 := by
   spytial xs
   simp [h]
 ```
@@ -35,18 +40,13 @@ line. The first draws a complete list. In the proof, the diagram shows that
 
 See [layout specifications](docs/layout.md) to customize a diagram or
 [proof contexts](docs/context-inspection.md) to see which facts it includes.
-Place the cursor on a theorem's name and expand **Spytial inspections** in the
-infoview to [compare its proof inspections](docs/theorem-inspections.md).
-
-The [DCIC tree-set demo](Demos/DCICSetsFromTrees.lean) follows one insertion through
-two possible rotations and shows how a root with balance factor zero can hide
-an unbalanced child.
+Place the cursor on `headOfKnownCons` and expand **Spytial inspections** in the
+infoview to [open its recorded inspection](docs/theorem-inspections.md).
 
 ## Inside a function
 
-On the development branch (`@ "main"`), wrap an expression with `spytial` to
-inspect it while Lean checks the function. The expression supplies the value
-of the surrounding computation.
+Wrap an expression with `spytial` to inspect it while Lean checks the function.
+The expression supplies the value of the surrounding computation.
 
 ```lean
 def swapFirstTwo : List Nat → List Nat
@@ -59,5 +59,13 @@ def swapFirstTwo : List Nat → List Nat
 Place the cursor on either `spytial` line for its diagram, or on `swapFirstTwo`
 and expand **Spytial inspections** to compare the new tail with the result.
 Both views keep the rest of the list symbolic.
+
+## Context and evidence
+
+Function and proof inspections use bounded Aesop normalization with Lean
+simplification and selected forward rules. Evidence consists of ordinary Lean
+proof terms checked in their original scope. Whole-value commands use structural
+computation. See [evidence and context preparation](docs/evidence.md) for the
+contract and adapter responsibilities.
 
 [Development guide](DEVGUIDE.md)
