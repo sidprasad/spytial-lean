@@ -1,6 +1,6 @@
 module
 
-public import IykykMetatheory
+public import SpytialLeanInspectionSemantics.Context
 
 public section
 
@@ -217,14 +217,14 @@ public structure Model (World : Type u) {Ty : Type v} (signature : Signature Ty)
     Arguments Carrier (signature.columns relation) → Prop
 
 /-- A typed term interpreted in every world compatible with the current context. -/
-public abbrev Atom {World : Type u} {Ty : Type v} (context : Iykyk.Metatheory.Context World)
+public abbrev Atom {World : Type u} {Ty : Type v} (context : Context World)
     {signature : Signature Ty} (model : Model World signature) (sort : Ty) :=
   ∀ world, context world → model.Carrier sort
 
 /-- A finite positive relational instance. Atoms and tuples are extensional finite sets, so union
 cannot duplicate a semantic atom or relational row. Every tuple refers only to listed atoms. -/
 public structure Instance {World : Type u} {Ty : Type v}
-    (context : Iykyk.Metatheory.Context World) {signature : Signature Ty}
+    (context : Context World) {signature : Signature Ty}
     (model : Model World signature) where
   atoms : FiniteSet (TypedAtom (Atom context model))
   tuples : FiniteSet (Tuple signature (Atom context model))
@@ -234,7 +234,7 @@ namespace Instance
 
 /-- The instance with no atoms and no relational claims. -/
 @[expose] public def empty {World : Type u} {Ty : Type v}
-    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {context : Context World} {signature : Signature Ty}
     {model : Model World signature} : Instance context model where
   atoms := FiniteSet.empty
   tuples := FiniteSet.empty
@@ -244,7 +244,7 @@ namespace Instance
 
 /-- An instance containing one atom and no relational claims. -/
 @[expose] public def ofAtom {World : Type u} {Ty : Type v}
-    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {context : Context World} {signature : Signature Ty}
     {model : Model World signature} {sort : Ty} (atom : Atom context model sort) :
     Instance context model where
   atoms := FiniteSet.singleton ⟨sort, atom⟩
@@ -255,7 +255,7 @@ namespace Instance
 
 /-- An instance containing one tuple and exactly the atoms used by that tuple. -/
 @[expose] public def ofTuple {World : Type u} {Ty : Type v}
-    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {context : Context World} {signature : Signature Ty}
     {model : Model World signature} (tuple : Tuple signature (Atom context model)) :
     Instance context model where
   atoms := .ofList tuple.atoms
@@ -268,7 +268,7 @@ namespace Instance
 
 /-- Combine independently obtained positive information. -/
 @[expose] public def union {World : Type u} {Ty : Type v}
-    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {context : Context World} {signature : Signature Ty}
     {model : Model World signature} (left right : Instance context model) :
     Instance context model where
   atoms := left.atoms.union right.atoms
@@ -281,7 +281,7 @@ namespace Instance
 
 /-- `larger` retains every atom and tuple reported by `smaller`. -/
 public structure ContainedIn {World : Type u} {Ty : Type v}
-    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {context : Context World} {signature : Signature Ty}
     {model : Model World signature} (smaller larger : Instance context model) : Prop where
   atoms : ∀ atom, atom ∈ smaller.atoms → atom ∈ larger.atoms
   tuples : ∀ tuple, tuple ∈ smaller.tuples → tuple ∈ larger.tuples
@@ -290,14 +290,14 @@ public structure ContainedIn {World : Type u} {Ty : Type v}
 atoms and tuples. Runtime atom IDs are presentation names for these semantic atoms, so this is the
 typed relational isomorphism relevant after origin erasure. -/
 public structure TypedIsomorphic {World : Type u} {Ty : Type v}
-    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {context : Context World} {signature : Signature Ty}
     {model : Model World signature} (left right : Instance context model) : Prop where
   forward : ContainedIn left right
   backward : ContainedIn right left
 
 /-- Equality of canonical typed instances induces a typed relational isomorphism. -/
 public theorem typedIsomorphic_of_eq {World : Type u} {Ty : Type v}
-    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {context : Context World} {signature : Signature Ty}
     {model : Model World signature} {left right : Instance context model}
     (equal : left = right) : TypedIsomorphic left right := by
   subst right
@@ -306,7 +306,7 @@ public theorem typedIsomorphic_of_eq {World : Type u} {Ty : Type v}
 
 /-- Adding information by union retains the left instance. -/
 public theorem containedIn_union_left {World : Type u} {Ty : Type v}
-    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {context : Context World} {signature : Signature Ty}
     {model : Model World signature} (left right : Instance context model) :
     ContainedIn left (left.union right) where
   atoms _ present := Or.inl present
@@ -314,7 +314,7 @@ public theorem containedIn_union_left {World : Type u} {Ty : Type v}
 
 /-- Combining an instance with itself is exactly idempotent, including its atom collection. -/
 public theorem union_self {World : Type u} {Ty : Type v}
-    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {context : Context World} {signature : Signature Ty}
     {model : Model World signature} (data : Instance context model) :
     data.union data = data := by
   cases data with
@@ -325,14 +325,14 @@ public theorem union_self {World : Type u} {Ty : Type v}
 
 /-- Encountering the same typed atom twice still allocates one semantic atom. -/
 public theorem ofAtom_union_self {World : Type u} {Ty : Type v}
-    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {context : Context World} {signature : Signature Ty}
     {model : Model World signature} {sort : Ty} (atom : Atom context model sort) :
     (ofAtom atom).union (ofAtom atom) = ofAtom atom :=
   union_self _
 
 /-- Encountering the same typed tuple twice still emits one relational row. -/
 public theorem ofTuple_union_self {World : Type u} {Ty : Type v}
-    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {context : Context World} {signature : Signature Ty}
     {model : Model World signature} (tuple : Tuple signature (Atom context model)) :
     (ofTuple tuple).union (ofTuple tuple) = ofTuple tuple :=
   union_self _
@@ -341,7 +341,7 @@ end Instance
 
 /-- The proposition denoted by a tuple in one compatible world. -/
 @[expose] public def Tuple.Holds {World : Type u} {Ty : Type v}
-    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {context : Context World} {signature : Signature Ty}
     {model : Model World signature} (tuple : Tuple signature (Atom context model))
     (world : World) (compatible : context world) : Prop :=
   model.holds world tuple.relation
@@ -349,21 +349,21 @@ end Instance
 
 /-- The possible-world fact represented by a tuple. -/
 @[expose] public def Tuple.fact {World : Type u} {Ty : Type v}
-    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {context : Context World} {signature : Signature Ty}
     {model : Model World signature} (tuple : Tuple signature (Atom context model)) :
-    Iykyk.Metatheory.Fact World :=
+    Fact World :=
   fun world => ∀ compatible : context world, tuple.Holds world compatible
 
 /-- Every tuple reported by an instance is true in every world allowed by the context. -/
 @[expose] public def Instance.Sound {World : Type u} {Ty : Type v}
-    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {context : Context World} {signature : Signature Ty}
     {model : Model World signature} (data : Instance context model) : Prop :=
   ∀ tuple, tuple ∈ data.tuples → ∀ world (compatible : context world),
     tuple.Holds world compatible
 
 /-- Combining sound positive instances preserves soundness. -/
 public theorem Instance.sound_union {World : Type u} {Ty : Type v}
-    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {context : Context World} {signature : Signature Ty}
     {model : Model World signature} {left right : Instance context model}
     (leftSound : left.Sound) (rightSound : right.Sound) : (left.union right).Sound := by
   intro tuple present world compatible
@@ -373,7 +373,7 @@ public theorem Instance.sound_union {World : Type u} {Ty : Type v}
 
 /-- The empty instance makes no relational claim and is therefore sound. -/
 public theorem Instance.sound_empty {World : Type u} {Ty : Type v}
-    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {context : Context World} {signature : Signature Ty}
     {model : Model World signature} :
     (Instance.empty (context := context) (model := model)).Sound := by
   intro tuple present
@@ -381,7 +381,7 @@ public theorem Instance.sound_empty {World : Type u} {Ty : Type v}
 
 /-- An atom alone makes no relational claim and is therefore sound. -/
 public theorem Instance.sound_ofAtom {World : Type u} {Ty : Type v}
-    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {context : Context World} {signature : Signature Ty}
     {model : Model World signature} {sort : Ty} (atom : Atom context model sort) :
     (Instance.ofAtom atom).Sound := by
   intro tuple present
@@ -389,7 +389,7 @@ public theorem Instance.sound_ofAtom {World : Type u} {Ty : Type v}
 
 /-- A singleton tuple instance is sound exactly when its tuple holds. -/
 public theorem Instance.sound_ofTuple {World : Type u} {Ty : Type v}
-    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {context : Context World} {signature : Signature Ty}
     {model : Model World signature} (tuple : Tuple signature (Atom context model))
     (holds : ∀ world (compatible : context world), tuple.Holds world compatible) :
     (Instance.ofTuple tuple).Sound := by

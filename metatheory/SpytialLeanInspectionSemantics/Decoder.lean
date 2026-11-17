@@ -35,7 +35,7 @@ public inductive Proposition {Ty : Type u} (L : Language.{u, v} Ty)
 namespace Proposition
 
 variable {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty} {base : Signature Ty}
-  {context : Iykyk.Metatheory.Context World}
+  {context : Context World}
 
 /-- Meaning of a checked proposition at one context-compatible world. -/
 @[expose] public def Holds (sem : Semantics World L base context) :
@@ -48,9 +48,9 @@ variable {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty} {base : Signatu
   | .disjunction left right, world, compatible =>
       left.Holds sem world compatible ∨ right.Holds sem world compatible
 
-/-- The IYKYK fact corresponding to a checked proposition. -/
+/-- The context preparation fact corresponding to a checked proposition. -/
 @[expose] public def fact (sem : Semantics World L base context)
-    (proposition : Proposition L base) : Iykyk.Metatheory.Fact World :=
+    (proposition : Proposition L base) : Fact World :=
   fun world => ∀ compatible : context world, proposition.Holds sem world compatible
 
 end Proposition
@@ -58,7 +58,7 @@ end Proposition
 namespace Semantics
 
 variable {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty} {base : Signature Ty}
-  {context : Iykyk.Metatheory.Context World}
+  {context : Context World}
 
 /-- A checked direct relation application interpreted as a tuple. -/
 @[expose] public def relationTuple (sem : Semantics World L base context)
@@ -178,9 +178,9 @@ public theorem decode_sound (sem : Semantics World L base context)
   | negative proposition => simp [Decodes, decode] at decoded
   | disjunction left right => simp [Decodes, decode] at decoded
 
-/-- A kernel-checked IYKYK fact and successful decoding suffice to prove the emitted tuple. -/
+/-- A kernel-checked context preparation fact and successful decoding suffice to prove the emitted tuple. -/
 public theorem checked_decode_holds (sem : Semantics World L base context)
-    {KnowledgeRoot : Type x} {knowledge : Iykyk.Metatheory.Knowledge World KnowledgeRoot}
+    {KnowledgeRoot : Type x} {knowledge : ContextEvidence World KnowledgeRoot}
     {proposition : Proposition L base}
     {tuple : Tuple (base.withFields L) (Atom context sem.model)}
     (knowledgeSound : knowledge.Sound context)

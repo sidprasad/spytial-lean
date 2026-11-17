@@ -19,7 +19,6 @@ public meta import SpytialLean.LocalSpec
 public meta import SpytialLean.Widget
 public meta import SpytialLean.Explorer
 public meta import SpytialLean.Attr
-public meta import Iykyk.Tactic
 
 namespace SpytialLean
 
@@ -938,14 +937,14 @@ declare_syntax_cat spytialEvidenceClause
 syntax "fyi " "[" term,* "]" : spytialEvidenceClause
 syntax "nvm " "[" ident,* "]" : spytialEvidenceClause
 
-/-- Spytial's `wdyk` configuration. Simp is always enabled: it
+/-- Spytial's context preparation configuration. Simp is always enabled: it
     normalizes each fact before decomposition, so a constructor clash reduces
     to `False` (an inconsistent context) and a same-constructor equation
     splits into the field equalities that refine atoms. -/
-private meta def contextConfig : Iykyk.Config := { mechanisms := #[.simp] }
+private meta def contextConfig : InspectionConfig := { simplify := true }
 
-private meta def resolveContextConfig (clauses : Syntax) : TermElabM Iykyk.Config := do
-  let mut config : Iykyk.Config := contextConfig
+private meta def resolveContextConfig (clauses : Syntax) : TermElabM InspectionConfig := do
+  let mut config : InspectionConfig := contextConfig
   for clause in clauses.getArgs do
     match clause with
     | `(spytialEvidenceClause| fyi [$rules:term,*]) =>
@@ -968,17 +967,17 @@ private meta def resolveContextConfig (clauses : Syntax) : TermElabM Iykyk.Confi
     | _ => throwUnsupportedSyntax
   return config
 
-/-- Extract knowledge with IYKYK and turn it into a Spytial widget payload. -/
+/-- Prepare and inspect the local context, then build the widget payload. -/
 private meta def spytialInContextProps? (subject : Expr)
     (ops? : Option (Array (TSyntax `spytial_op)) := none)
-    (walkConfig : WalkConfig := {}) (config : Iykyk.Config := contextConfig)
+    (walkConfig : WalkConfig := {}) (config : InspectionConfig := contextConfig)
     (observations predicates : Array Expr := #[]) :
     TermElabM (Option Json × ContextViewStatus) := do
-  let (status, view?) ← wdykInContext subject walkConfig config observations predicates
+  let (status, view?) ← inspectInContext subject walkConfig config observations predicates
   let some view := view? | return (none, status)
   let spec? ← match ops? with
     | some ops => do
-      let scope ← scopeForAfaik view.afaik (← scopeForExpr subject) observations
+      let scope ← scopeForContext view.context (← scopeForExpr subject) observations
       let scope := if observations.isEmpty && predicates.isEmpty then scope
         else scopeWithObservedData scope view.data
       some <$> elabUseSiteOps subject ops (some scope)
@@ -1013,7 +1012,7 @@ private meta def spytialInContextProps? (subject : Expr)
         return (← ppExpr e.getAppFn).pretty) ++ (← predicates.mapM fun p => liftM (predicateObservationName p))))
   return (some props, status)
 
-/-- Programmatic entry point for Spytial's IYKYK consumer. -/
+/-- Programmatic entry point for inspecting a term in its current local context. -/
 public meta def spytialInContextProps (subject : Expr)
     (ops? : Option (Array (TSyntax `spytial_op)) := none)
     (walkConfig : WalkConfig := {}) (hypotheses : Array Expr := #[])
@@ -1021,7 +1020,7 @@ public meta def spytialInContextProps (subject : Expr)
     TermElabM (Json × ContextViewStatus) := do
   let (props?, status) ←
     spytialInContextProps? subject ops? walkConfig { contextConfig with hypotheses } observations predicates
-  let some props := props? | throwError "spytial: IYKYK found an inconsistent context"
+  let some props := props? | throwError "spytial: inconsistent context"
   return (props, status)
 
 private meta def inspectionPointProps (subject : Expr) (stx : Syntax) :
@@ -1030,10 +1029,10 @@ private meta def inspectionPointProps (subject : Expr) (stx : Syntax) :
   let (props?, status) ← spytialInContextProps? subject (optionalOps stx[4]) {}
     (← resolveContextConfig stx[3]) observers.functions observers.predicates
   if status.inconsistent then
-    logWarning "spytial: IYKYK found an inconsistent context; no diagram rendered"
+    logWarning "spytial: inconsistent context; no diagram rendered"
     return none
   if status.truncated then
-    logWarning "spytial: IYKYK reached an extraction limit; the diagram may be incomplete"
+    logWarning "spytial: context preparation reached a limit; the diagram may be incomplete"
   return props?
 
 private meta def saveInspectionPoint (invocation : Syntax) (props : Json)
@@ -1051,10 +1050,10 @@ syntax spytialSite := "spytial " term (" observing " "[" term,* "]")?
   spytialEvidenceClause* (" with " "[" spytial_op,*,? "]")? (" titled " str)?
 
 open Tactic in
-/-- `spytial term` asks IYKYK what the current context establishes about
-    `term`, translates that knowledge into relational data, and displays it.
+/-- `spytial term` inspects a term using its computed structure and local proof evidence,
+    translates supported propositions into relational data, and displays it.
     `observing [f₁, ...]` displays function graphs and proved predicate tuples.
-    `fyi [h₁, ...]` supplies proved hypotheses or forward rules to IYKYK;
+    `fyi [h₁, ...]` supplies proofs or forward rules for Aesop;
     `nvm [h₁, ...]` omits local declarations from this extraction;
     `with [...]` supplies Spytial layout operations. -/
 syntax (name := spytialTactic) spytialSite : tactic
@@ -1122,9 +1121,8 @@ meta def spytialDatumKw : Lean.Parser.Parser :=
   Lean.Parser.nonReservedSymbol "spytial.datum" (includeIdent := true)
 
 open Tactic in
-/-- `spytial.datum term` prints Spytial's relational observation of the IYKYK
-    result. It accepts the same observations and optional hypotheses as
-    `spytial`. -/
+/-- `spytial.datum term` prints the relational data produced by context inspection.
+    It accepts the same observations and optional hypotheses as `spytial`. -/
 syntax (name := spytialDatumTactic) spytialDatumKw term
   (" observing " "[" term,* "]")?
   spytialEvidenceClause* : tactic
@@ -1134,14 +1132,14 @@ open Tactic in
 meta def elabSpytialDatumTactic : Tactic := fun stx => withMainContext do
   let subject ← elabTermInstantiated stx[1]
   let observations ← resolveObservations stx[2]
-  let (status, view?) ← wdykInContext subject {}
+  let (status, view?) ← inspectInContext subject {}
     (← resolveContextConfig stx[3]) observations.functions observations.predicates
   if status.inconsistent then
-    logWarning "spytial: IYKYK found an inconsistent context; no datum produced"
+    logWarning "spytial: inconsistent context; no datum produced"
   else if let some view := view? then
     logInfo m!"{(toJson view.data).pretty}"
     if status.truncated then
-      logWarning "spytial: IYKYK reached an extraction limit; the datum may be incomplete"
+      logWarning "spytial: context preparation reached a limit; the datum may be incomplete"
 
 
 /-- A dotted atom never enters the token table — the lexer reads `spytial.proof`

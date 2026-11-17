@@ -50,8 +50,8 @@ Observation has five internal stages:
    in tactic mode, retained proof-backed facts. The result carries a checked
    equality from the source application to its residual expression.
 3. **Focused questions.** Spytial recognizes propositions that could unblock
-   the residual. For a symbolic `max a b`, it may ask IYKYK to prove `a ≤ b`
-   or `b ≤ a` using its bounded `simp` and `omega` query mechanisms. Successful
+   the residual. For a symbolic `max a b`, it may ask Lean to prove `a ≤ b`
+   or `b ≤ a` using bounded `simp` and `omega` queries. Successful
    checked proofs are fed back into simplification; unsuccessful queries leave
    the expression symbolic.
 4. **Proof-backed normalization.** Arithmetic normalizers may propose a more
@@ -66,7 +66,7 @@ Observation has five internal stages:
    input by the requested observation relation and emitted with the rest of
    the datum.
 
-The focused queries do not add facts to the inspected `Afaik`. They only help
+The focused queries do not enlarge the retained context evidence. They only help
 normalize the observation result before the final datum is produced.
 
 ## Relational contract
@@ -123,25 +123,24 @@ of newly observed results.
 
 ## Focused proof questions
 
-Spytial, not IYKYK, decides which propositions would unblock an observed
-computation. IYKYK receives ordinary propositions and returns checked proofs;
-it knows nothing about trees, heights, or visualization.
+Spytial discovers propositions that would unblock an observed computation.
+Its query helpers pass those propositions and the retained proof terms to Lean
+automation, then kernel-check successful proofs in the original scope.
 
 The first supported blocker is `max` over `Nat` or `Int`:
 
 ```text
 residual contains max a b
 Spytial asks       a ≤ b  or  b ≤ a
-IYKYK answers      proved / not proved / truncated
+Lean returns       proved / not proved / truncated
 ```
 
-This is goal-directed rather than arithmetic saturation. Spytial does not ask
-IYKYK to enumerate all consequences of the context, and failure to prove one
-ordering is not evidence for the other. The query loop and each proof attempt
-are bounded.
+This is goal-directed rather than arithmetic saturation. Spytial does not attempt
+to enumerate all consequences of the context, and failure to prove one ordering
+is not evidence for the other. The query loop and each proof attempt are bounded.
 
-Command mode has no `Afaik`, so it performs definition reduction and ordinary
-simplification but no context-backed IYKYK queries.
+Whole-value command mode performs definition reduction and ordinary
+simplification without collecting local proof evidence.
 
 ## Why `max` and addition are not observers
 
@@ -172,15 +171,17 @@ height after  = 1 + max a (1 + max b c)
 ```
 
 It does not order `a`, `b`, and `c`. If the context additionally proves
-`a = b + 1` and `b = c`, IYKYK can discharge the relevant comparisons and the
-labels normalize to `c + 3` and `c + 2`. Without those facts, the maxima remain.
+`a = b + 1` and `b = c`, Lean arithmetic automation can discharge the relevant
+comparisons and the labels normalize to `c + 3` and `c + 2`. Without those facts,
+the maxima remain.
 Arithmetic derives consequences; it does not invent AVL preconditions.
 
 ## Limits and ownership
 
 - Observation evaluation and focused-question discovery belong to Spytial.
-- Proof search, bounds, captured scope, and kernel certification belong to
-  IYKYK.
+- Aesop schedules forward rules and simplification; Lean provides arithmetic
+  proof search. Spytial bounds these calls, exports their proofs to the original
+  scope, and checks evidence before using it.
 - Final atom identity, expression labels, relations, and presentation belong
   to Spytial.
 - Evaluation remains best-effort and bounded. Opaque bodies, unavailable

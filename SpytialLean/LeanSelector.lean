@@ -1,5 +1,7 @@
 module
 
+public meta import SpytialLean.Evidence
+
 public import Lean
 public meta import SpytialLean.Types
 public meta import SpytialLean.Selector
@@ -230,16 +232,8 @@ meta structure PredicateEvidence where
   simpContext : Simp.Context
   simprocs : Simp.SimprocsArray
 
-meta def checkPredicateProof (proposition proof : Expr) : MetaM Expr := do
-  let proof ← instantiateMVars proof
-  let checked := mkApp2 (mkConst ``id [.zero]) proposition proof
-  if checked.hasExprMVar || checked.hasLevelMVar || checked.hasSorry then
-    throwError "Lean selector evidence contains unresolved holes or sorry"
-  -- Local hypotheses can still mention assigned metavariables after the proof is instantiated.
-  let scope ← instantiateLCtxMVars (← getLCtx)
-  match Kernel.check (← getEnv) scope checked with
-  | .error exception => throwError "{exception.toMessageData (← getOptions)}"
-  | .ok _ => return proof
+meta def checkPredicateProof (proposition proof : Expr) : MetaM Expr :=
+  checkInspectionProof proposition proof
 
 meta def preparePredicateEvidence (evidence : SelectorEvidence) :
     MetaM PredicateEvidence := do

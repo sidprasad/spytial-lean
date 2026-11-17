@@ -6,16 +6,15 @@ meta import SpytialTests.WalkCanon
 open SpytialLean Lean Meta
 
 /-!
-# IYKYK consumer tests
+# Inspection in context
 
-These tests exercise the boundary owned by Spytial: IYKYK extracts the
-knowledge, then `relationalizeAfaik` chooses atoms, labels, and relation
-tuples. The extraction engine and its certification are tested in IYKYK.
+These end-to-end tests pin the atoms, labels, relations, and observation behavior produced from
+local proof terms. ContextPreparationTest checks Aesop integration, proof export, and bounds.
 -/
 
-private meta def viewOf (label : String) (root : Expr) (config : Iykyk.Config := {})
+private meta def viewOf (label : String) (root : Expr) (config : InspectionConfig := {})
     (observations : Array Expr := #[]) : MetaM ContextView := do
-  let (status, view?) ← wdykInContext root {} config observations
+  let (status, view?) ← inspectInContext root {} config observations
   if status.inconsistent then throwError "{label}: unexpectedly inconsistent"
   let some view := view? | throwError "{label}: no context view"
   return view
@@ -166,6 +165,27 @@ private meta def node (left right : Expr) : Expr :=
 
 /-! ## Existential identity survives translation -/
 
+-- The same admitted premises give the same datum regardless of where the existential occurs.
+#eval show Lean.Elab.TermElabM Unit from do
+  let nat := mkConst ``Nat
+  withLocalDeclD `R (← mkArrow nat (← mkArrow nat (mkSort Level.zero))) fun R => do
+  withLocalDeclD `x nat fun x => do
+  withLocalDeclD `z nat fun z => do
+    let existence ← withLocalDeclD `y nat fun y => do
+      mkAppM ``Exists #[← mkLambdaFVars #[y] (mkApp2 R x y)]
+    let check (hz : Expr) : Lean.Elab.TermElabM Unit := do
+      for simplify in #[false, true] do
+        let view ← viewOf "consumer.namedWitness" x { simplify }
+        assertCanon "consumer.namedWitness" view.data "Nat|x\nNat|z\nR[Nat,Nat]:0,1"
+        let omitted ← viewOf "consumer.excludedWitness" x {
+          simplify, excludedHypotheses := #[hz.fvarId!] }
+        assertCanon "consumer.excludedWitness" omitted.data
+          "Nat|¿y?\nNat|x\nR[Nat,Nat]:1,0"
+    withLocalDeclD `h existence fun _ => do
+      withLocalDeclD `hz (mkApp2 R x z) check
+    withLocalDeclD `hz (mkApp2 R x z) fun hz => do
+      withLocalDeclD `h existence fun _ => check hz
+
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `α (mkSort Level.one) fun α => do
   withLocalDeclD `measure (← mkArrow α (mkConst ``Nat)) fun measure => do
@@ -204,7 +224,7 @@ private meta def node (left right : Expr) : Expr :=
       unless view.data.atoms.any (·.label == "¿x?") do
         throwError "anonymous witness did not use a neutral name\n{canonInstance view.data}"
 
-/-! ## Explicit IYKYK rules add derived relations -/
+/-! ## Explicit forward rules add derived relations -/
 
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `α (mkSort Level.one) fun α => do
@@ -311,18 +331,18 @@ private def Tree.height : Tree → Nat
          height[Tree,Nat]:0,1;6,5\nlt[Nat,Nat]:2,1"
       assertMatchesReference "consumer.observationContext.reference" oneMore
         { functionGraphs := true, observations := #[leftHeight] }
-      let scope ← scopeForAfaik view.afaik (← SelScope.ofType ``Tree) #[leftHeight]
+      let scope ← scopeForContext view.context (← SelScope.ofType ``Tree) #[leftHeight]
       unless (scope.rels.get? "hAdd").map (·.2) == some (some 3) do
         throwError "consumer.observationContext: expected ternary hAdd"
       unless (scope.rels.get? "hMul").map (·.2) == some (some 3) do
         throwError "consumer.observationContext: expected ternary hMul"
 
-/-! ## IYKYK inconsistency prevents a diagram -/
+/-! ## Inconsistency prevents a diagram -/
 
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `x (mkConst ``Nat) fun x => do
   withLocalDeclD `bad (mkConst ``False) fun _ => do
-    let (status, view?) ← wdykInContext x
+    let (status, view?) ← inspectInContext x
     unless status.inconsistent do throwError "consumer.false: inconsistency was not reported"
     if view?.isSome then throwError "consumer.false: inconsistent knowledge produced a view"
 
@@ -333,6 +353,6 @@ private def Tree.height : Tree → Nat
   withLocalDeclD `y (mkConst ``Nat) fun y => do
   withLocalDeclD `h (← mkAppM ``LT.lt #[x, y]) fun _ => do
     let view ← viewOf "consumer.scope" x
-    let scope ← scopeForAfaik view.afaik (← SelScope.ofType ``Nat)
+    let scope ← scopeForContext view.context (← SelScope.ofType ``Nat)
     unless (scope.rels.get? "lt").map (·.2) == some (some 2) do
       throwError "consumer.scope: expected binary lt"

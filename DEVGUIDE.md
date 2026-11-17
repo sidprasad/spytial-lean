@@ -13,7 +13,9 @@ whenever its tracked inputs (sources, rollup configs, `package.json`,
 `pnpm-lock.yaml`) change. The lockfile is committed; dependency changes go
 through `pnpm add` / `pnpm remove` in `widget/`.
 
-The widget uses spytial-core 6.0.0. Core preserves relations by `id`; selectors
+The widget's spytial-core dependency is declared in
+[`widget/package.json`](widget/package.json) and pinned in `pnpm-lock.yaml`.
+Core preserves relations by `id`; selectors
 resolve a `name` to the set union of all records with that name. Lean stores
 relations by ID and emits structural field IDs qualified by the exposed owner
 type. Observations and checked facts use the full constant name or unique local
@@ -32,6 +34,12 @@ preserves the unchecked round trip for a `LosslessIdentity` value after any chan
 preserving this view and the root. Its corollaries allow arbitrary relation
 renaming and appending relations with nonstructural IDs, with atoms fixed.
 No uniqueness requirement on display names enters these proofs.
+
+## Context inspection
+
+[Evidence and context preparation](docs/evidence.md) describes the preparation,
+normalization, proof-export, and interpretation boundaries shared by functions and
+theorems. Whole-value commands keep the structural computation path.
 
 ## Structural reconstruction
 
@@ -78,8 +86,8 @@ Build the widget JS and Lean library with `just build`, or directly with lake:
 lake build
 ```
 
-The first build also fetches the Lean dependencies (ProofWidgets4) pinned in
-`lake-manifest.json`. Under the hood `just build` runs `pnpm install
+The first build also fetches the Lean dependencies (Aesop, Batteries, and
+ProofWidgets4) pinned in `lake-manifest.json`. Under the hood `just build` runs `pnpm install
 --frozen-lockfile` and `pnpm run build` in `widget/` before compiling Lean.
 
 ### Tests

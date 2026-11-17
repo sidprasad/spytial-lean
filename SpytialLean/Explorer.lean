@@ -19,7 +19,9 @@ structure InspectionJournal where
     unlike diagnostic info trees which deliberately retain failed alternatives.
     It is cleared after each declaration and is never serialized into imports. -/
 initialize inspectionJournal : EnvExtension (Option InspectionJournal) ←
-  registerEnvExtension (pure none)
+  -- A macro can introduce an inspection after `hasInspection` has run, in an async declaration.
+  -- Its absent journal must still support the no-op update in `recordInspection`.
+  registerEnvExtension (pure none) (asyncMode := .local)
 
 def recordInspection (stx : Syntax) (props : Json) : CoreM Unit :=
   modifyEnv fun env => inspectionJournal.modifyState env fun current => current.map fun journal =>

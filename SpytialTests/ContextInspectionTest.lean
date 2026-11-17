@@ -25,8 +25,8 @@ private meta def node (l : Expr) (key : Nat) (r : Expr) : Expr :=
 private meta def height (t : Expr) : Expr := mkApp (mkConst ``Tree.height) t
 
 private meta def view (root : Expr) (rootOnly := true) : MetaM ContextView := do
-  let (status, result) ← wdykInContext root {}
-    { rootOnly, mechanisms := #[.simp] } #[height root]
+  let (status, result) ← inspectInContext root {}
+    { rootOnly, simplify := true } #[height root]
   if status.inconsistent || status.truncated then throwError "unexpected extraction status"
   let some result := result | throwError "missing context view"
   return result
@@ -58,7 +58,7 @@ private meta def assertTrees (label : String) (data : JsonDataInstance) (count :
 private meta def assertInspectionMetadata (view : ContextView) : MetaM Unit := do
   unless view.data.atoms.any (·.id == view.inspection.root) do
     throwError "inspected root is missing from the context-informed datum"
-  unless view.inspection.facts.size == view.afaik.facts.size do
+  unless view.inspection.facts.size == view.context.proofs.size do
     throwError "inspection omitted a certified context fact"
 
 /- The LR branch has facts about subtrees, not just the selected whole tree.
@@ -102,7 +102,7 @@ private meta def assertInspectionMetadata (view : ContextView) : MetaM Unit := d
         assertCanon "named LR structure" structural (canonInstance direct.data)
         unless named.inspection.term == "before" do
           throwError "inspection lost the selected local name"
-        unless named.afaik.facts.size == direct.afaik.facts.size do
+        unless named.context.proofs.size == direct.context.proofs.size do
           throwError "naming changed the retained facts"
 
 /- A context occurrence of the left subtree, nested inside an observation,
@@ -171,7 +171,7 @@ private meta def assertInspectionMetadata (view : ContextView) : MetaM Unit := d
     let yValue := node x 2 leaf
     withLocalDeclD `hx (← mkEq x xValue) fun _ => do
     withLocalDeclD `hy (← mkEq y yValue) fun _ => do
-      let (status, some result) ← wdykInContext x {} { mechanisms := #[.simp] }
+      let (status, some result) ← inspectInContext x {} { simplify := true }
         | throwError "cyclic refinements lost the context view"
       if status.inconsistent then throwError "test context was unexpectedly rejected"
       unless result.data.atoms.any (fun atom =>
@@ -377,11 +377,11 @@ def Tree.combinedHeight : Tree → Nat
   withLocalDeclD `x (mkConst ``Nat) fun x => do
   withLocalDeclD `y (mkConst ``Nat) fun y => do
   withLocalDeclD `h (← mkAppM ``LT.lt #[x, y]) fun _ => do
-    let (_, some result) ← wdykInContext x | throwError "missing scalar context"
+    let (_, some result) ← inspectInContext x | throwError "missing scalar context"
     assertInspectionMetadata result
     assertCount "scalar retains comparison" result.data "lt" 1
   withLetDecl `three (mkConst ``Nat) (mkRawNatLit 3) fun three => do
-    let (_, some result) ← wdykInContext three
+    let (_, some result) ← inspectInContext three
       | throwError "missing refined scalar context"
     let some root := result.data.atoms.find? (·.id == result.inspection.root)
       | throwError "refined scalar has no root atom"
@@ -406,6 +406,26 @@ def Tree.combinedHeight : Tree → Nat
       | throwError "lost the known symbolic height"
     unless (tuples result.data "height").any (·.atoms[1]? == some scalar.id) do
       throwError "the child's observation does not use its known height"
+    let output ← graphResult "known symbolic arithmetic" result.data "height" result.inspection.root
+    unless result.data.atoms.any (fun atom => atom.id == output && atom.label == "n + 1") do
+      throwError "known arithmetic was replaced by an unrelated unknown\n{canonInstance result.data}"
+
+/- An observed result and a local equality about it are one value, including
+   when the latter's RHS reduces from h + 1 to Nat.succ h during extraction. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `l tree fun l => do
+  withLocalDeclD `r tree fun r => do
+  withLocalDeclD `h (mkConst ``Nat) fun h => do
+    let h1 ← mkAppM ``HAdd.hAdd #[h, mkNatLit 1]
+    withLocalDeclD `hl (← mkEq (height l) h) fun _ => do
+    withLocalDeclD `hr (← mkEq (height r) h1) fun _ => do
+      let result ← view (node l 7 r)
+      assertCount "one height per tree" result.data "height" 3
+      if result.data.atoms.any (·.label == "succ") then
+        throwError "context equality created a duplicate successor value"
+      let output ← graphResult "known height offset" result.data "height" result.inspection.root
+      unless result.data.atoms.any (fun atom => atom.id == output && atom.label == "h + 2") do
+        throwError "known height offset did not remain symbolic\n{canonInstance result.data}"
 
 /- An irrelevant unknown key does not prevent height evaluation. Command
    mode has the same reduction semantics, without importing context facts. -/
@@ -471,7 +491,7 @@ def Tree.factorMagnitude (t : Tree) : Nat := t.balanceFactor.natAbs
     assertRootObservation data "factorMagnitude" "¿x?.natAbs"
 
 /- Spytial discovers the comparisons that block symbolic `max` reductions,
-   asks IYKYK's bounded arithmetic query, and then normalizes every derived
+   asks context preparation's bounded arithmetic query, and then normalizes every derived
    height over the one genuinely unknown base value. -/
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `a tree fun a => do
@@ -620,7 +640,7 @@ def negativeThree (_ : Nat) : Int := -3
     unless (← whnf result.expr).equal (mkRawNatLit 3) do
       throwError "preparation did not compute the result"
     let some proof := result.proof? | throwError "missing equality certificate"
-    Iykyk.kernelCheckClaim (← getLCtx) (← mkEq application result.expr) proof
+    discard <| checkInspectionProof (← mkEq application result.expr) proof
     assertMatchesReference "computed observation walkers agree" application cfg
     let hole ← mkFreshExprMVar tree
     let data ← relationalize (node hole 7 hole) {} #[height (node hole 7 hole)]
@@ -692,7 +712,7 @@ private inductive Path (p : Nat → Nat) : Nat → Nat → Prop where
   let pathQ := mkApp (mkConst ``Path) q
   withLocalDeclD `known (mkApp2 pathQ c a) fun _ => do
     for omitStep in [false, true] do
-      let (_, some result) ← wdykInContext a {}
+      let (_, some result) ← inspectInContext a {}
         { rootOnly := false, excludedHypotheses := if omitStep then #[bc.fvarId!] else #[] }
         #[mkApp p a] #[pathP, pathQ] | throwError "missing predicate inspection"
       let labels := fun (tuple : JsonTuple) => tuple.atoms.map fun id =>

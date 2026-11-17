@@ -35,6 +35,15 @@ theorem explorerRollback (n : Nat) : True := by
 
 theorem explorerWithoutInspections : True := by trivial
 
+-- Macro expansion can expose an inspection inside an asynchronously elaborated theorem.
+-- Updating the absent journal must be safe even though the declaration hook did not see it.
+local macro "inspect_from_macro " root:term : tactic => `(tactic| spytial $root)
+
+#guard_msgs in
+theorem explorerMacro (n : Nat) : True := by
+  inspect_from_macro n
+  trivial
+
 namespace Nested
 
 theorem qualified (xs : List Nat) : True := by
@@ -98,7 +107,7 @@ def copyList : List Nat → List Nat
 
 example : copyList [1, 2] = [1, 2] := rfl
 
-/-- warning: spytial: IYKYK found an inconsistent context; no diagram rendered -/
+/-- warning: spytial: inconsistent context; no diagram rendered -/
 #guard_msgs in
 example (h : (some 1 : Option Nat) = none) : Nat := spytial 0
 

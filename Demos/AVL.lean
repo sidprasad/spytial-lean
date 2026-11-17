@@ -3,458 +3,263 @@ import SpytialLean
 open SpytialLean
 
 /-!
-# Inspecting an AVL proof
+# AVL rebalancing
+
+Course slides on AVL trees draw the same picture again and again: an unbalanced root,
+its taller child, and the unopened subtrees drawn as triangles. Each node carries
+its height and its balance factor. After each rotation, the instructor draws the tree again.
+For one example, see Scott Wehrwein's CSCI 241 lecture
+(https://facultyweb.cs.wwu.edu/~wehrwes/courses/csci241_23s/lectures/L11/L11B.pdf).
+
+This file makes those pictures from Lean.
+
+1. Define the tree and draw concrete trees with `#spytial`.
+2. Write `rebalance` as in the slides, with an inspection at each case.
+3. Prove that `rebalance` repairs a node after an insertion. The goal only says
+   `Balanced (rebalance …)`. The inspections draw the slide pictures, with heights
+   `h`, `h + 1`, … and balance factors computed from the hypotheses.
 -/
 
-/-
-Tier 1 and Tier 2 definitions used by the AVL development below.
--/
+namespace AVLDemo
+
+/-! ## 1. The data structure -/
 
 inductive Tree where
   | leaf
   | node (left : Tree) (key : Nat) (right : Tree)
 
-spytial_spec Tree [
-  orientation left - Tree->{t : Tree | @:t = leaf} left below,
-  orientation right - Tree->{t : Tree | @:t = leaf} right below,
-  align {x, y : Tree | @:x != leaf and @:y != leaf and (x.~(left + right) = y.~(left+right))} horizontal,
-  attribute key,
-  flag hideDisconnectedBuiltIns,
-  hideAtom {x : Tree | @:x = leaf}
-]
-
--- And an example tree here.
-#spytial (Tree.node (Tree.node Tree.leaf 1 Tree.leaf) 2 (Tree.node Tree.leaf 3 Tree.leaf))
-
-
-def contains (x : Nat) : Tree → Bool
-  | .leaf => false
-  | .node l y r => x == y || contains x l || contains x r
-
-def IsBST : Tree → Prop
-  | .leaf => True
-  | .node l x r =>
-      (∀ z, contains z l = true → z < x) ∧
-      (∀ z, contains z r = true → x < z) ∧
-      IsBST l ∧ IsBST r
-
-def bstLookup (x : Nat) : Tree → Bool
-  | .leaf => false
-  | .node l y r =>
-      if x < y then bstLookup x l
-      else if y < x then bstLookup x r
-      else true
-
-theorem bstLookup_eq_contains (x : Nat) (t : Tree) (h : IsBST t) :
-    bstLookup x t = contains x t := by
-  induction t with
-  | leaf => rfl
-  | node l y r ihl ihr =>
-    obtain ⟨hl, hr, hbl, hbr⟩ := h
-    simp only [bstLookup, contains]
-    split
-    · rename_i hxy
-      rw [ihl hbl]
-      have hright : contains x r = false := by
-        cases hxr : contains x r with
-        | false => rfl
-        | true => have := hr x hxr; omega
-      simp [hright, Nat.ne_of_lt hxy]
-    · rename_i hnxy
-      split
-      · rename_i hyx
-        rw [ihr hbr]
-        have hleft : contains x l = false := by
-          cases hxl : contains x l with
-          | false => rfl
-          | true => have := hl x hxl; omega
-        have hne : x ≠ y := Nat.ne_of_gt hyx
-        simp [hleft, hne]
-      · rename_i hnyx
-        have hxy : x = y := by omega
-        subst x
-        simp
-
-/-
-Tier 3: height-balanced (AVL) binary search tree.
-
-Still the same `Tree` type from Tier 1. `Balanced` is a *second*, independent
-invariant, orthogonal to `IsBST`. `IsAVL t := IsBST t ∧ Balanced t` refines
-`IsBST` further, and — this is the point of the exercise — `bstLookup` and
-its correctness proof from Tier 2 need *no change at all* to keep working
-here: `avlInsert` only has to (re)establish `IsBST`, and Tier 2's
-`bstLookup_eq_contains` already covers every `IsBST` tree, AVL or not.
--/
-
 def height : Tree → Nat
   | .leaf => 0
-  | .node l _ r => 1 + max (height l) (height r)
+  | .node l _ r => max (height l) (height r) + 1
 
-/-- Every node's two children differ in height by at most one — stated with
-    two `≤`'s rather than a subtraction, since `Nat` subtraction truncates
-    at zero and `height l - height r ≤ 1` would silently be true whenever
-    `l` is merely *shorter*, not just close in height. -/
-def Balanced : Tree → Prop
-  | .leaf => True
-  | .node l _ r =>
-      height l ≤ height r + 1 ∧ height r ≤ height l + 1 ∧
-      Balanced l ∧ Balanced r
+/-- The balance factor, as in the slides: right height minus left height. -/
+def bf : Tree → Int
+  | .leaf => 0
+  | .node l _ r => (height r : Int) - height l
 
-def IsAVL (t : Tree) : Prop := IsBST t ∧ Balanced t
+/-- The AVL property: every node has a balance factor of -1, 0, or 1. -/
+inductive Balanced : Tree → Prop where
+  | leaf : Balanced .leaf
+  | node {l r : Tree} {key : Nat} : Balanced l → Balanced r →
+      -1 ≤ bf (.node l key r) → bf (.node l key r) ≤ 1 → Balanced (.node l key r)
 
-/-- The refinement chain, made literal: every AVL tree's underlying data
-    *is* a BST (same value, extra proof obligation discharged), and every
-    BST's underlying data *is* a plain tree. -/
-def BSTree := {t : Tree // IsBST t}
-def AVLTree := {t : Tree // IsAVL t}
+/-- Insert without rebalancing. -/
+def insertBST (k : Nat) : Tree → Tree
+  | .leaf => .node .leaf k .leaf
+  | .node l x r => if k < x then .node (insertBST k l) x r else .node l x (insertBST k r)
 
-def AVLTree.toBST (t : AVLTree) : BSTree := ⟨t.1, t.2.1⟩
+-- Label each opened node with its key. An unopened subtree gets one box, like a triangle
+-- on the slides. The proof inspections add heights and balance factors.
+spytial_spec Tree [
+  -- Position visible children. Empty child slots all point to the same hidden leaf.
+  orientation inspectedRoot.*(left + right) <: left :> {t : Tree | @:t != leaf} left below,
+  orientation inspectedRoot.*(left + right) <: right :> {t : Tree | @:t != leaf} right below,
+  align let children = inspectedRoot.*(left + right) <: (left + right)
+      :> {t : Tree | @:t != leaf} | ~children.children - iden horizontal,
+  attribute key,
+  hideAtom univ - inspectedRoot.*(left + right),
+  -- Suppress the shared empty child. An inspection of the empty tree itself still has a root.
+  hideAtom {t : Tree | @:t = leaf} - inspectedRoot,
+]
 
--- ---------------------------------------------------------------------
--- Rotations. Local, constant-size tree surgery; no invariant assumed.
--- ---------------------------------------------------------------------
+def keys : List Nat → Tree := List.foldl (fun t k => insertBST k t) .leaf
 
-def rotateRight (t : Tree) : Tree := by
-  spytial t observing [height] with [.., attribute height] -- At entry
-  exact match t with
-    | before@(.node (.node ll lx lr) x r) => by
-        spytial before observing [height] with [.., attribute height] -- Before rotation
-        let after := Tree.node ll lx (.node lr x r)
-        spytial after observing [height] with [.., attribute height] -- After rotation
-        exact after
-    | other => other
+def before : Tree := keys [20, 10, 30, 5, 15, 25, 35, 3, 12, 40]
 
+-- Balanced: every balance factor is -1, 0, or 1.
+#spytial before observing [height, bf]
+  with [.., attribute height, attribute bf, hideAtom Int]
 
+-- Insert 4 as a plain search tree would. Node 5 now has balance factor -2: its left child
+-- is two levels taller than its right child. This is Case 2 below.
+#spytial insertBST 4 before observing [height, bf]
+  with [.., attribute height, attribute bf selector: key.univ, hideAtom Int]
 
-def rotateLeft (t : Tree) : Tree := by
-  spytial t observing [height] with [.., attribute height] -- At entry
-  exact match t with
-    | before@(.node l x (.node rl rx rr)) => by
-        spytial before observing [height] with [.., attribute height] -- Before rotation
-        let after := Tree.node (.node l x rl) rx rr
-        spytial after observing [height]  -- After rotation
-        exact after
-    | other => other
+/-! ## 2. Rebalancing
 
-/-- Re-balance a node whose children are each already balanced but may
-    differ from each other in height by up to 2 (the amount a single
-    insertion can produce). Standard four-case (LL/LR/RL/RR) dispatch. -/
-def balance (t : Tree) : Tree := by
-  spytial t observing [height] with [.., attribute height] -- Before any shape is known
-  exact match t with
-  | .leaf => .leaf
-  | before@(.node l x r) =>
-    if hLeft : height l > height r + 1 then
-      match l with
-      | .node ll lx lr =>
-        if hInner : height lr > height ll then by
-          -- LR: expose the inner subtree so both rotations can compute symbolically.
-          cases lr with
-          | leaf => simp [height] at hInner
-          | node a y b =>
-            let left := Tree.node ll lx (.node a y b)
-            let before := Tree.node left x r
-            spytial before observing [height] with [.., attribute height] -- The left-right bend
-            let middle := Tree.node (rotateLeft left) x r
-            spytial middle observing [height] with [.., attribute height] -- Child rotated left
-            let after := rotateRight middle
-            spytial after observing [height] with [.., attribute height] -- Parent rotated right
-            exact after
-        else by
-          -- LL: rotate the parent right; lr moves across to x's left.
-          let before := Tree.node (.node ll lx lr) x r
-          spytial before observing [height] with [.., attribute height]
-          let after := rotateRight before
-          spytial after observing [height] with [.., attribute height]
-          exact after
-      | .leaf => before
-    else if hRight : height r > height l + 1 then
-      match r with
-      | .node rl rx rr =>
-        if hInner : height rl > height rr then by
-          -- RL: the mirror image, with a right rotation of the child first.
-          cases rl with
-          | leaf => simp [height] at hInner
-          | node a y b =>
-            let right := Tree.node (.node a y b) rx rr
-            let before := Tree.node l x right
-            spytial before observing [height] with [.., attribute height] -- The right-left bend
-            let middle := Tree.node l x (rotateRight right)
-            spytial middle observing [height] with [.., attribute height] -- Child rotated right
-            let after := rotateLeft middle
-            spytial after observing [height] with [.., attribute height] -- Parent rotated left
-            exact after
-        else by
-          -- RR: one left rotation, moving rl across to x's right.
-          let before := Tree.node l x (.node rl rx rr)
-          spytial before observing [height] with [.., attribute height]
-          let after := rotateLeft before
-          spytial after observing [height] with [.., attribute height]
-          exact after
-      | .leaf => before
-    else by
-      -- Neither side exceeds the height threshold: the tree is returned unchanged.
-      spytial before observing [height] with [.., attribute height]
-      exact before
+The slides give this pseudocode.
 
-def avlInsert (x : Nat) : Tree → Tree
-  | .leaf => .node .leaf x .leaf
-  | .node l y r =>
-      if x < y then balance (.node (avlInsert x l) y r)
-      else if y < x then balance (.node l y (avlInsert x r))
-      else .node l y r
+```text
+rebalance(tree):
+  if bal(tree) < -1:
+    if bal(tree.left) < 0: case 1     -- rotate the root right
+    else:                  case 2     -- rotate the left child left, then the root right
+  else if bal(tree) > 1:
+    if bal(tree.right) < 0: case 3    -- rotate the right child right, then the root left
+    else:                   case 4    -- rotate the root left
+```
 
--- ---------------------------------------------------------------------
--- Rotation is just tree surgery: it never adds or removes a value.
--- ---------------------------------------------------------------------
+Cases 3 and 4 mirror cases 1 and 2. Place the cursor on `rebalance` to step through its
+inspections. The named match equations connect the input and its children to their
+patterns inside each branch. A requested height can still contain a symbolic maximum.
+Part 3 supplies the height facts that hold after an insertion.
+-/
 
-theorem contains_rotateRight (z : Nat) (t : Tree) :
-    contains z (rotateRight t) = contains z t := by
-  match t with
-  | .leaf => rfl
-  | .node .leaf _ _ => rfl
-  | .node (.node ll lx lr) x r =>
-    show contains z (Tree.node ll lx (Tree.node lr x r)) =
-      contains z (Tree.node (Tree.node ll lx lr) x r)
-    simp only [contains]
-    ac_rfl
+def rotateRight : Tree → Tree
+  | .node (.node left pivotKey middle) rootKey right =>
+    .node left pivotKey (.node middle rootKey right)
+  | tree => tree
 
-theorem contains_rotateLeft (z : Nat) (t : Tree) :
-    contains z (rotateLeft t) = contains z t := by
-  match t with
-  | .leaf => rfl
-  | .node _ _ .leaf => rfl
-  | .node l x (.node rl rx rr) =>
-    show contains z (Tree.node (Tree.node l x rl) rx rr) =
-      contains z (Tree.node l x (Tree.node rl rx rr))
-    simp only [contains]
-    ac_rfl
+def rotateLeft : Tree → Tree
+  | .node left rootKey (.node middle pivotKey right) =>
+    .node (.node left rootKey middle) pivotKey right
+  | tree => tree
 
-theorem contains_balance (z : Nat) (t : Tree) :
-    contains z (balance t) = contains z t := by
-  cases t with
-  | leaf => rfl
-  | node l x r =>
-    simp only [balance]
-    split
-    · cases l with
-      | leaf => rfl
-      | node ll lx lr =>
-        dsimp only
-        split
-        · rename_i hInner
-          cases lr with
-          | leaf => simp [height] at hInner
-          | node a y b =>
-            dsimp only
-            rw [contains_rotateRight]
-            simp [contains, contains_rotateLeft]
-        · exact contains_rotateRight z _
-    · split
-      · cases r with
-        | leaf => rfl
-        | node rl rx rr =>
-          dsimp only
-          split
-          · rename_i hInner
-            cases rl with
-            | leaf => simp [height] at hInner
-            | node a y b =>
-              dsimp only
-              rw [contains_rotateLeft]
-              simp [contains, contains_rotateRight]
-          · exact contains_rotateLeft z _
-      · rfl
+/-- Rotate the left child left and reattach it to the root. -/
+def rotateLeftChild : Tree → Tree
+  | .node left rootKey right => .node (rotateLeft left) rootKey right
+  | tree => tree
 
--- ---------------------------------------------------------------------
--- Rotation also preserves BST-ness (given as a hypothesis on the specific
--- shape rotation fires on — a leaf can't rotate). This is where the
--- interesting reasoning lives: the pivot's old bound (`lx < x`) has to be
--- *re-derived*, not assumed, since it wasn't stated directly by `IsBST`.
--- ---------------------------------------------------------------------
+-- The inspections use the match equations and field names from the local context.
+set_option linter.unusedVariables false in
+def rebalance (tree : Tree) : Tree :=
+  match rootShape : tree with
+  | .leaf => tree
+  | .node left rootKey right =>
+    if bf tree < -1 then
+      match leftShape : left with
+      | .leaf => tree
+      | .node outer leftKey inner =>
+        let leftFactor := bf (spytial left observing [height] with [.., attribute height])
+        if leftFactor < 0 then
+          let repaired := rotateRight (spytial tree)
+          spytial repaired observing [height, bf]
+            with [.., attribute height, attribute bf selector: key.univ]
+        else
+          match innerShape : inner with
+          | .leaf => tree
+          | .node pivotLeft pivotKey pivotRight =>
+            let leftChildRotated := rotateLeftChild (spytial tree)
+            let repaired := rotateRight (spytial leftChildRotated)
+            spytial repaired
+    else if 1 < bf tree then
+      if bf right < 0 then rotateLeft (.node left rootKey (rotateRight right))
+      else rotateLeft tree
+    else tree
 
-theorem IsBST_rotateRight (x : Nat) (ll : Tree) (lx : Nat) (lr r : Tree)
-    (h : IsBST (.node (.node ll lx lr) x r)) :
-    IsBST (rotateRight (.node (.node ll lx lr) x r)) := by
-  obtain ⟨h1, h2, h3, h4⟩ := h
-  obtain ⟨h3a, h3b, h3c, h3d⟩ := h3
-  have hlxx : lx < x := h1 lx (by simp [contains])
-  show IsBST (.node ll lx (.node lr x r))
-  refine ⟨h3a, ?_, h3c, ?_, h2, h3d, h4⟩
-  · intro z hz
-    rw [contains] at hz
-    rcases Bool.or_eq_true_iff.mp hz with hz | hz
-    · rcases Bool.or_eq_true_iff.mp hz with hz | hz
-      · have : z = x := by simpa using hz
-        omega
-      · exact h3b z hz
-    · have := h2 z hz
-      omega
-  · intro z hz
-    have hzLeft : contains z (.node ll lx lr) = true := by simp [contains, hz]
-    -- Why may lr move from lx's right to x's left? Inspect the old left subtree with an
-    -- arbitrary member z of lr. The dotted edges show membership; the blue bounds give
-    -- lx < z < x. `fyi` instantiates the existing bounds h3b and h1 for the inspection;
-    -- the proof still has to apply h1 below. None of the subtrees needs to be concrete.
-    -- Keep keys as vertices here: unlike the usual tree layout, the ordering is the point.
-    spytial (Tree.node ll lx lr) observing [height] with [.., attribute height, hideField IsBST]
-    exact h1 z hzLeft
+/-- AVL insertion: insert as in a search tree, then rebalance on the way back up. -/
+def insert (k : Nat) : Tree → Tree
+  | .leaf => .node .leaf k .leaf
+  | .node l x r =>
+    if k < x then rebalance (.node (insert k l) x r) else rebalance (.node l x (insert k r))
 
-theorem IsBST_rotateLeft (x : Nat) (l rl : Tree) (rx : Nat) (rr : Tree)
-    (h : IsBST (.node l x (.node rl rx rr))) :
-    IsBST (rotateLeft (.node l x (.node rl rx rr))) := by
-  obtain ⟨h1, h2, h3, h4⟩ := h
-  obtain ⟨h4a, h4b, h4c, h4d⟩ := h4
-  have hxrx : x < rx := h2 rx (by simp [contains])
-  show IsBST (.node (.node l x rl) rx rr)
-  refine ⟨?_, h4b, ⟨h1, ?_, h3, h4c⟩, h4d⟩
-  · intro z hz
-    rw [contains] at hz
-    rcases Bool.or_eq_true_iff.mp hz with hz | hz
-    · rcases Bool.or_eq_true_iff.mp hz with hz | hz
-      · have : z = x := by simpa using hz
-        omega
-      · have := h1 z hz
-        omega
-    · exact h4a z hz
-  · intro z hz
-    exact h2 z (by simp [contains, hz])
+-- The same insertion with rebalancing. Node 4 has moved up between 3 and 5.
+#spytial insert 4 before observing [height, bf]
+  with [.., attribute height, attribute bf selector: key.univ, hideAtom Int]
 
--- ---------------------------------------------------------------------
--- `balance` preserves BST-ness. The LL/RR cases are single rotations, so
--- they're immediate from the lemmas above. LR/RL are a rotation of a
--- rotation: the inner `rotateLeft`/`rotateRight` first has to be shown to
--- land back in `IsBST`, then the outer one applies to *that*.
--- ---------------------------------------------------------------------
+/-! ## 3. Rebalancing after an insertion
 
-theorem IsBST_balance (t : Tree) (h : IsBST t) : IsBST (balance t) := by
-  cases t with
-  | leaf => exact h
-  | node l x r =>
-    obtain ⟨h1, h2, h3, h4⟩ := h
-    -- `simp only [balance]` (an equation lemma, not `unfold`) is what makes the
-    -- rewrite land cleanly on the already-known `.node l x r` shape; a bare
-    -- `unfold` here leaves a redex that later `split`s can't safely case on,
-    -- producing bogus impossible-looking goals. Likewise `dsimp only` right
-    -- after each `cases` collapses the *next* embedded `match` before `split`
-    -- has to look at it.
-    simp only [balance]
-    split
-    · cases l with
-      | leaf => dsimp only; exact ⟨h1, h2, h3, h4⟩
-      | node ll lx lr =>
-        obtain ⟨h3a, h3b, h3c, h3d⟩ := h3
-        dsimp only
-        split
-        · -- Why rotate the child before the parent? The left subtree is too tall, but lr is
-          -- taller than ll. Inspect at the LR decision while both still have symbolic names,
-          -- before exposing lr's shape and constructing the intermediate BST.
-          spytial lr observing [height] with [.., attribute height, hideField IsBST]
-          cases lr with
-          | leaf => exfalso; simp only [height] at *; omega
-          | node rl' rx' rr' =>
-            have hMid :
-                IsBST (.node (rotateLeft (.node ll lx (.node rl' rx' rr'))) x r) := by
-              refine ⟨?_, h2, IsBST_rotateLeft lx ll rl' rx' rr'
-                ⟨h3a, h3b, h3c, h3d⟩, h4⟩
-              intro z hz
-              rw [contains_rotateLeft] at hz
-              exact h1 z hz
-            exact IsBST_rotateRight x (.node ll lx rl') rx' rr' r hMid
-        · exact IsBST_rotateRight x ll lx lr r
-            ⟨h1, h2, ⟨h3a, h3b, h3c, h3d⟩, h4⟩
-    · split
-      · cases r with
-        | leaf => dsimp only; exact ⟨h1, h2, h3, h4⟩
-        | node rl rx rr =>
-          obtain ⟨h4a, h4b, h4c, h4d⟩ := h4
-          dsimp only
-          cases rl with
-          | leaf =>
-            split
-            · exfalso; simp only [height] at *; omega
-            · exact IsBST_rotateLeft x l .leaf rx rr
-                ⟨h1, h2, h3, ⟨h4a, h4b, h4c, h4d⟩⟩
-          | node ll' lx' lr' =>
-            split
-            · have hMid :
-                  IsBST (.node l x (rotateRight (.node (.node ll' lx' lr') rx rr))) := by
-                refine ⟨h1, ?_, h3, IsBST_rotateRight rx ll' lx' lr' rr
-                  ⟨h4a, h4b, h4c, h4d⟩⟩
-                intro z hz
-                rw [contains_rotateRight] at hz
-                exact h2 z hz
-              exact IsBST_rotateLeft x l ll' lx' (.node lr' rx rr) hMid
-            · exact IsBST_rotateLeft x l (.node ll' lx' lr') rx rr
-                ⟨h1, h2, h3, ⟨h4a, h4b, h4c, h4d⟩⟩
-      · exact ⟨h1, h2, h3, h4⟩
+This local repair theorem takes the post-insertion facts as hypotheses. Both children
+are balanced. The left subtree leans and is two levels taller than the right subtree.
 
--- ---------------------------------------------------------------------
--- avlInsert only ever adds `x` to the membership set (same statement,
--- same proof shape as Tier 2's `contains_bstInsert` — `balance` is
--- membership-preserving, so it just slots in via `contains_balance`).
--- ---------------------------------------------------------------------
+Compare the two inspections that ask whether the left child can become the root.
+Both inspect the same bound tree before the proof names its repair.
+-/
 
-theorem contains_avlInsert (x z : Nat) (t : Tree) :
-    contains z (avlInsert x t) = (z == x || contains z t) := by
-  induction t with
-  | leaf => simp [avlInsert, contains]
-  | node l y r ihl ihr =>
-    unfold avlInsert
-    split
-    · rw [contains_balance, contains, ihl, contains]
-      ac_rfl
-    · split
-      · rw [contains_balance, contains, ihr, contains]
-        ac_rfl
-      · rename_i hxy hyx
-        have hxeq : x = y := by omega
-        subst hxeq
-        rw [contains]
-        show ((z == x || contains z l) || contains z r) =
-          (z == x || ((z == x || contains z l) || contains z r))
-        ac_rfl
+theorem Balanced.children {l r : Tree} {key : Nat} (b : Balanced (.node l key r)) :
+    Balanced l ∧ Balanced r ∧ -1 ≤ bf (.node l key r) ∧ bf (.node l key r) ≤ 1 := by
+  cases b with
+  | node bl br lo hi => exact ⟨bl, br, lo, hi⟩
 
--- ---------------------------------------------------------------------
--- The Tier-2 theorem again: `avlInsert` preserves `IsBST`. Identical
--- structure to `IsBST_bstInsert`, with the recursive call now wrapped in
--- `balance` and discharged via `IsBST_balance`.
--- ---------------------------------------------------------------------
+/-- Build a balanced node from the children's heights. -/
+theorem Balanced.mk {l r : Tree} {key : Nat} (bl : Balanced l) (br : Balanced r)
+    (fits : height l ≤ height r + 1 ∧ height r ≤ height l + 1) : Balanced (.node l key r) :=
+  .node bl br (by simp only [bf]; omega) (by simp only [bf]; omega)
 
-theorem IsBST_avlInsert (x : Nat) (t : Tree) (h : IsBST t) : IsBST (avlInsert x t) := by
-  induction t with
-  | leaf => simp [avlInsert, IsBST, contains]
-  | node l y r ihl ihr =>
-    obtain ⟨hl, hr, hbl, hbr⟩ := h
-    unfold avlInsert
-    split
-    · apply IsBST_balance
-      refine ⟨?_, hr, ihl hbl, hbr⟩
-      intro z hz
-      rw [contains_avlInsert] at hz
-      rcases Bool.or_eq_true_iff.mp hz with h1 | h1
-      · have : z = x := by simpa using h1
-        omega
-      · exact hl z h1
-    · split
-      · apply IsBST_balance
-        refine ⟨hl, ?_, hbl, ihr hbr⟩
-        intro z hz
-        rw [contains_avlInsert] at hz
-        rcases Bool.or_eq_true_iff.mp hz with h1 | h1
-        · have : z = x := by simpa using h1
-          omega
-        · exact hr z h1
-      · exact ⟨hl, hr, hbl, hbr⟩
+theorem rebalance_after_insert (left right : Tree) (rootKey baseHeight : Nat)
+    (leftBalanced : Balanced left) (rightBalanced : Balanced right)
+    (leftHeight : height left = baseHeight + 2) (rightHeight : height right = baseHeight)
+    (leans : bf left ≠ 0) :
+    Balanced (rebalance (.node left rootKey right)) := by
+  let tree := Tree.node left rootKey right
+  change Balanced (rebalance tree)
+  spytial tree observing [height, bf]
+    with [.., attribute height, attribute bf, hideAtom Int]
+    titled "After the insertion"
+  cases leftShape : left with
+  | leaf => simp [leftShape, height] at leftHeight
+  | node outer leftKey inner =>
+    rw [leftShape] at leftBalanced leftHeight leans
+    obtain ⟨outerBalanced, innerBalanced, lo, hi⟩ := leftBalanced.children
+    have levels : max (height outer) (height inner) + 1 = baseHeight + 2 := leftHeight
+    simp only [bf] at lo hi leans
+    by_cases outerTaller : height inner < height outer
+    · -- The outside grandchild is taller.
+      have outerHeight : height outer = baseHeight + 1 := by omega
+      have innerHeight : height inner = baseHeight := by omega
+      clear levels lo hi leans outerTaller leftBalanced
+      -- Predict the new root before looking at the return expression.
+      spytial tree observing [height, bf]
+        with [.., attribute height, attribute bf, hideAtom Int]
+        titled "Outer subtree taller. Can the left child become the root?"
+      let rebalanced := rotateRight tree
+      spytial rebalanced observing [height, bf]
+        with [.., attribute height, attribute bf selector: key.univ, hideAtom Int,
+          hideField Balanced]
+      subst left
+      have step : rebalance tree = rebalanced := by
+        simp only [tree, rebalance]
+        rw [if_pos (by simp only [bf, height]; omega), if_pos (by simp only [bf]; omega)]
+      rw [step]
+      exact .mk outerBalanced (.mk innerBalanced rightBalanced (by omega))
+        (by simp only [height]; omega)
+    · -- The inside grandchild is taller.
+      have innerHeight : height inner = baseHeight + 1 := by omega
+      have outerHeight : height outer = baseHeight := by omega
+      clear levels lo hi leans outerTaller leftBalanced
+      spytial tree observing [height, bf]
+        with [.., attribute height, attribute bf selector: key.univ, hideAtom Int,
+          hideField Balanced]
+        titled "Inner subtree taller. Can the left child become the root?"
+      cases innerShape : inner with
+      | leaf => simp [innerShape, height] at innerHeight
+      | node pivotLeft pivotKey pivotRight =>
+        rw [innerShape] at innerBalanced innerHeight
+        obtain ⟨pivotLeftBalanced, pivotRightBalanced, lo', hi'⟩ := innerBalanced.children
+        have pivotMax : max (height pivotLeft) (height pivotRight) = baseHeight :=
+          Nat.succ.inj innerHeight
+        simp only [bf] at lo' hi'
+        -- Either side of the pivot may be shorter by one.
+        have pivotLeftFits : height pivotLeft ≤ baseHeight ∧
+            baseHeight ≤ height pivotLeft + 1 := by omega
+        have pivotRightFits : height pivotRight ≤ baseHeight ∧
+            baseHeight ≤ height pivotRight + 1 := by omega
+        clear lo' hi' innerBalanced
+        spytial tree observing [height, bf]
+          with [.., attribute height, attribute bf selector: key.univ, hideAtom Int,
+            hideField Balanced]
+        let leftChildRotated := rotateLeftChild tree
+        spytial leftChildRotated observing [height, bf]
+          with [.., attribute height, attribute bf selector: key.univ, hideAtom Int,
+            hideField Balanced]
+        let rebalanced := rotateRight leftChildRotated
+        spytial rebalanced observing [height, bf]
+          with [.., attribute height, attribute bf selector: inspectedRoot, hideAtom Int,
+            hideField Balanced]
+          titled "Where did the pivot’s two subtrees go?"
+        subst left
+        subst inner
+        have step : rebalance tree = rebalanced := by
+          simp only [tree, rebalance]
+          rw [if_pos (by simp only [bf]; rw [leftHeight, rightHeight]; omega),
+            if_neg (by simp only [bf]; rw [innerHeight, outerHeight]; omega)]
+        rw [step]
+        exact .mk (.mk outerBalanced pivotLeftBalanced (by omega))
+          (.mk pivotRightBalanced rightBalanced (by omega)) (by simp only [height]; omega)
 
--- ---------------------------------------------------------------------
--- The payoff, made explicit: inserting into an AVL tree and then looking
--- up with the *efficient* `bstLookup` is provably correct — and this
--- required **zero** new lookup-specific reasoning. `IsBST_avlInsert`
--- re-establishes the one hypothesis `bstLookup_eq_contains` (Tier 2)
--- needs, and Tier 2's proof is reused completely unchanged.
--- ---------------------------------------------------------------------
+/-- Try the outer-heavy branch's repair under the inner-heavy branch's height facts. -/
+theorem singleRotation_fails (outer inner right : Tree) (leftKey rootKey baseHeight : Nat)
+    (outerHeight : height outer = baseHeight) (innerHeight : height inner = baseHeight + 1)
+    (rightHeight : height right = baseHeight) :
+    let candidate := rotateRight (.node (.node outer leftKey inner) rootKey right)
+    ¬ Balanced candidate := by
+  intro candidate
+  spytial candidate observing [height, bf]
+    with [.., attribute height, attribute bf selector: key.univ, hideAtom Int]
+    titled "What is the balance factor at leftKey?"
+  intro ok
+  have fits := ok.children.2.2.2
+  simp only [bf, height] at fits
+  omega
 
-theorem avlInsert_bstLookup_eq_contains (x y : Nat) (t : Tree) (h : IsBST t) :
-    bstLookup y (avlInsert x t) = contains y (avlInsert x t) :=
-  bstLookup_eq_contains y (avlInsert x t) (IsBST_avlInsert x t h)
+end AVLDemo

@@ -13,7 +13,7 @@ case split may establish an ordering, or an existential hypothesis may
 guarantee an object whose identity is still unknown.
 
 `spytial v` provides an interrogative interface: at any point in a proof, the
-user can ask, "What does Lean know about `v` here?" IYKYK reads the current
+user can ask, "What does Lean know about `v` here?" Spytial reads the current
 hypotheses and returns facts about `v`. Spytial turns those facts into atoms
 and relations. `spytial.datum v` prints the same data without drawing it.
 
@@ -89,7 +89,7 @@ theorem sorted_orderedInsert (x : Nat) {l : List Nat} (h : Sorted l) :
 
 /-! ## Supplying a useful hypothesis
 
-The `fyi` clause supplies an additional proved hypothesis to IYKYK. Here,
+The `fyi` clause supplies an additional proof or forward rule for inspection. Here,
 `Nat.le_trans` derives `x ≤ b` from `x ≤ a` and `a ≤ b`. The derived relation
 appears even though no local hypothesis states it directly. -/
 
@@ -101,7 +101,7 @@ example (x a b : Nat) (hxa : x ≤ a) (hab : a ≤ b) : True := by
 /-! ## An object whose identity is unknown
 
 The hypothesis `h` guarantees that `l` has a head and that `x` is less than or
-equal to that head. Before `obtain`, the head has no name in the proof. IYKYK
+equal to that head. Before `obtain`, the head has no name in the proof. Spytial
 preserves its existential binder as `¿y?`, and Spytial uses that same atom in
 the list and in the ordering relation. After `obtain`, `y` becomes a local name
 and the equality gives `l` its known list structure. -/

@@ -18,7 +18,7 @@ This file proves the properties needed by the inspection semantics:
 * the evaluation-origin structural trace is ordinary relationalization of the exposed value; and
 * an independently supplied proof representation normalized to the same residual has a typed-
   isomorphic structural trace to direct evaluation, up to the recorded exposure; and
-* `extracted_inspection_correct` composes the sound IYKYK snapshot with all owned inspection rules.
+* `extracted_inspection_correct` composes the sound context preparation snapshot with all owned inspection rules.
 -/
 
 namespace SpytialLean.Semantics
@@ -28,9 +28,9 @@ universe u v w x
 namespace Exposes
 
 variable {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty} {base : Signature Ty}
-  {context : Iykyk.Metatheory.Context World} {sem : Semantics World L base context}
+  {context : Context World} {sem : Semantics World L base context}
   {program : Program L} {KnowledgeRoot : Type x}
-  {knowledge : Iykyk.Metatheory.Knowledge World KnowledgeRoot} {sort : Ty}
+  {knowledge : ContextEvidence World KnowledgeRoot} {sort : Ty}
   {expression value : Term L sort} {exposure : Exposure}
 
 /-- Every exposure, by evaluation or by proof, exposes a value equal to the selected expression. -/
@@ -67,7 +67,7 @@ end Exposes
 
 /-- Pointwise equality of contextual atoms is equality of the semantic terms themselves. -/
 public theorem atom_eq_of_equalInContext {World : Type u} {Ty : Type v}
-    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {context : Context World} {signature : Signature Ty}
     {model : Model World signature} {sort : Ty} {left right : Atom context model sort}
     (equal : EqualInContext left right) : left = right := by
   funext world compatible
@@ -75,9 +75,9 @@ public theorem atom_eq_of_equalInContext {World : Type u} {Ty : Type v}
 
 /-- Every trace derived by inspection contains only justified tuples. -/
 public theorem Inspection.sound {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty}
-    {base : Signature Ty} {context : Iykyk.Metatheory.Context World}
+    {base : Signature Ty} {context : Context World}
     {sem : Semantics World L base context} {program : Program L} {KnowledgeRoot : Type x}
-    {knowledge : Iykyk.Metatheory.Knowledge World KnowledgeRoot} {sort : Ty}
+    {knowledge : ContextEvidence World KnowledgeRoot} {sort : Ty}
     {expression : Term L sort} {result : Trace context sem.model}
     (implements : sem.Implements program) (knowledgeSound : knowledge.Sound context)
     (inspection : Inspection sem program knowledge expression result) : result.Sound := by
@@ -97,9 +97,9 @@ public theorem Inspection.sound {World : Type w} {Ty : Type u} {L : Language.{u,
 namespace ExposureContribution
 
 variable {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty} {base : Signature Ty}
-  {context : Iykyk.Metatheory.Context World} {sem : Semantics World L base context}
+  {context : Context World} {sem : Semantics World L base context}
   {program : Program L} {KnowledgeRoot : Type x}
-  {knowledge : Iykyk.Metatheory.Knowledge World KnowledgeRoot} {sort : Ty}
+  {knowledge : ContextEvidence World KnowledgeRoot} {sort : Ty}
   {expression : Term L sort}
 
 /-- Every inventoried exposure contribution is sound. -/
@@ -113,7 +113,7 @@ end ExposureContribution
 namespace ComputationContribution
 
 variable {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty} {base : Signature Ty}
-  {context : Iykyk.Metatheory.Context World} {sem : Semantics World L base context}
+  {context : Context World} {sem : Semantics World L base context}
   {program : Program L}
 
 /-- Every inventoried computed graph point follows from operational evaluation. -/
@@ -129,8 +129,8 @@ end ComputationContribution
 namespace WitnessContribution
 
 variable {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty} {base : Signature Ty}
-  {context : Iykyk.Metatheory.Context World} {sem : Semantics World L base context}
-  {KnowledgeRoot : Type x} {knowledge : Iykyk.Metatheory.Knowledge World KnowledgeRoot}
+  {context : Context World} {sem : Semantics World L base context}
+  {KnowledgeRoot : Type x} {knowledge : ContextEvidence World KnowledgeRoot}
 
 /-- A retained witness contributes an atom but no unsupported relational claim. -/
 public theorem trace_sound (contribution : WitnessContribution sem knowledge) :
@@ -142,8 +142,8 @@ end WitnessContribution
 namespace KnowledgeContribution
 
 variable {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty} {base : Signature Ty}
-  {context : Iykyk.Metatheory.Context World} {sem : Semantics World L base context}
-  {KnowledgeRoot : Type x} {knowledge : Iykyk.Metatheory.Knowledge World KnowledgeRoot}
+  {context : Context World} {sem : Semantics World L base context}
+  {KnowledgeRoot : Type x} {knowledge : ContextEvidence World KnowledgeRoot}
 
 /-- Every inventoried decoded tuple is sound by the checked knowledge contract. -/
 public theorem trace_sound (contribution : KnowledgeContribution sem knowledge)
@@ -156,7 +156,7 @@ end KnowledgeContribution
 /-- If computation and checked decoding produce one graph point, union emits one row while
 retaining both justifications. -/
 public theorem computed_and_proved_graph_keep_both_origins
-    {World : Type w} {Ty : Type u} {context : Iykyk.Metatheory.Context World}
+    {World : Type w} {Ty : Type u} {context : Context World}
     {signature : Signature Ty} {model : Model World signature}
     (tuple : Tuple signature (Atom context model)) :
     let combined := (Trace.ofTuple .computation tuple).union
@@ -168,9 +168,9 @@ public theorem computed_and_proved_graph_keep_both_origins
 /-- The canonical inspection result retains any exposure contribution listed in its plan. -/
 public theorem inspect_contains_exposure
     {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty} {base : Signature Ty}
-    {context : Iykyk.Metatheory.Context World} {sem : Semantics World L base context}
+    {context : Context World} {sem : Semantics World L base context}
     {program : Program L} {KnowledgeRoot : Type x}
-    {knowledge : Iykyk.Metatheory.Knowledge World KnowledgeRoot} {sort : Ty}
+    {knowledge : ContextEvidence World KnowledgeRoot} {sort : Ty}
     {expression : Term L sort} (plan : InspectionPlan sem program knowledge expression)
     (contribution : ExposureContribution sem program knowledge expression)
     (present : contribution ∈ plan.exposures) :
@@ -185,9 +185,9 @@ public theorem inspect_contains_exposure
 /-- The canonical inspection result retains any checked tuple listed in its plan. -/
 public theorem inspect_contains_knowledge
     {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty} {base : Signature Ty}
-    {context : Iykyk.Metatheory.Context World} {sem : Semantics World L base context}
+    {context : Context World} {sem : Semantics World L base context}
     {program : Program L} {KnowledgeRoot : Type x}
-    {knowledge : Iykyk.Metatheory.Knowledge World KnowledgeRoot} {sort : Ty}
+    {knowledge : ContextEvidence World KnowledgeRoot} {sort : Ty}
     {expression : Term L sort} (plan : InspectionPlan sem program knowledge expression)
     (contribution : KnowledgeContribution sem knowledge)
     (present : contribution ∈ plan.tuples) :
@@ -202,9 +202,9 @@ public theorem inspect_contains_knowledge
 /-- The canonical result retains every witness atom listed in its extraction plan. -/
 public theorem inspect_contains_witness
     {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty} {base : Signature Ty}
-    {context : Iykyk.Metatheory.Context World} {sem : Semantics World L base context}
+    {context : Context World} {sem : Semantics World L base context}
     {program : Program L} {KnowledgeRoot : Type x}
-    {knowledge : Iykyk.Metatheory.Knowledge World KnowledgeRoot} {sort : Ty}
+    {knowledge : ContextEvidence World KnowledgeRoot} {sort : Ty}
     {expression : Term L sort} (plan : InspectionPlan sem program knowledge expression)
     (contribution : WitnessContribution sem knowledge)
     (present : contribution ∈ plan.witnesses) :
@@ -217,9 +217,9 @@ public theorem inspect_contains_witness
 /-- The canonical result retains every computed graph point listed in its plan. -/
 public theorem inspect_contains_computation
     {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty} {base : Signature Ty}
-    {context : Iykyk.Metatheory.Context World} {sem : Semantics World L base context}
+    {context : Context World} {sem : Semantics World L base context}
     {program : Program L} {KnowledgeRoot : Type x}
-    {knowledge : Iykyk.Metatheory.Knowledge World KnowledgeRoot} {sort : Ty}
+    {knowledge : ContextEvidence World KnowledgeRoot} {sort : Ty}
     {expression : Term L sort} (plan : InspectionPlan sem program knowledge expression)
     (contribution : ComputationContribution sem program)
     (present : contribution ∈ plan.computations) :
@@ -233,9 +233,9 @@ public theorem inspect_contains_computation
 /-- Canonical inspection contains only justified tuples. -/
 public theorem inspect_sound
     {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty} {base : Signature Ty}
-    {context : Iykyk.Metatheory.Context World} {sem : Semantics World L base context}
+    {context : Context World} {sem : Semantics World L base context}
     {program : Program L} {KnowledgeRoot : Type x}
-    {knowledge : Iykyk.Metatheory.Knowledge World KnowledgeRoot} {sort : Ty}
+    {knowledge : ContextEvidence World KnowledgeRoot} {sort : Ty}
     {expression : Term L sort} (plan : InspectionPlan sem program knowledge expression)
     (knowledgeSound : knowledge.Sound context) (implements : sem.Implements program) :
     (inspect sem program knowledge expression plan).Sound := by
@@ -267,16 +267,16 @@ One existential proof produces one contextual atom satisfying both projected fac
 -/
 public theorem checked_existential_has_shared_atom
     {World : Type u} {Ty : Type v} {KnowledgeRoot : Type w}
-    {context : Iykyk.Metatheory.Context World} {signature : Signature Ty}
+    {context : Context World} {signature : Signature Ty}
     {model : Model World signature} {sort : Ty}
-    {knowledge : Iykyk.Metatheory.Knowledge World KnowledgeRoot}
+    {knowledge : ContextEvidence World KnowledgeRoot}
     {left right : World → model.Carrier sort → Prop}
     (knowledgeSound : knowledge.Sound context)
     (known : (fun world => ∃ value, left world value ∧ right world value) ∈ knowledge.facts) :
     ∃ witness : Atom context model sort,
       (∀ world (compatible : context world), left world (witness world compatible)) ∧
       (∀ world (compatible : context world), right world (witness world compatible)) := by
-  have proof : Iykyk.Metatheory.Entails context
+  have proof : Entails context
       (fun world => ∃ value, left world value ∧ right world value) :=
     knowledgeSound known
   let witness := fun world compatible => Classical.choose (proof world compatible)
@@ -291,9 +291,9 @@ The plan contains one witness term; intrinsic argument positions show that both 
 the final inspection trace reuse its denotation rather than allocate unrelated witnesses. -/
 public theorem inspect_reuses_existential_witness
     {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty} {base : Signature Ty}
-    {context : Iykyk.Metatheory.Context World} {sem : Semantics World L base context}
+    {context : Context World} {sem : Semantics World L base context}
     {program : Program L} {KnowledgeRoot : Type x}
-    {knowledge : Iykyk.Metatheory.Knowledge World KnowledgeRoot} {rootSort : Ty}
+    {knowledge : ContextEvidence World KnowledgeRoot} {rootSort : Ty}
     {expression : Term L rootSort} (plan : InspectionPlan sem program knowledge expression)
     (complete : plan.Complete) (witness : WitnessContribution sem knowledge)
     (witnessPresent : witness ∈ plan.witnesses)
@@ -331,9 +331,9 @@ public theorem inspect_reuses_existential_witness
 section Agreement
 
 variable {World : Type w} {Ty : Type u} {L : Language.{u, v} Ty} {base : Signature Ty}
-  {context : Iykyk.Metatheory.Context World} {sem : Semantics World L base context}
+  {context : Context World} {sem : Semantics World L base context}
   {program : Program L} {KnowledgeRoot : Type x}
-  {knowledge : Iykyk.Metatheory.Knowledge World KnowledgeRoot} {sort : Ty}
+  {knowledge : ContextEvidence World KnowledgeRoot} {sort : Ty}
   {expression representation value : Term L sort}
 
 /-- If `e -->op v`, the evaluation-origin structural trace of `e` is, after erasing the exposure
