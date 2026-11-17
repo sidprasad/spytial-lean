@@ -1,7 +1,28 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { JSONDataInstance, SGraphQueryEvaluator } from 'spytial-core';
 import { withLeanScalarTypes } from '../dist/inspection.js';
+
+test('Lean atom unions and products parse in the bundled browser evaluator', () => {
+  // Consume the exact output pinned by Lean's lowering tests.
+  const golden = readFileSync(new URL(
+    '../../SpytialTests/SelectorLoweringTest.golden.tsv', import.meta.url), 'utf8');
+  const selectors = new Map(golden.trim().split('\n').map(line => line.split('\t')));
+  const instance = new JSONDataInstance({
+    atoms: [0, 1, 2].map(n => ({ id: `atom_${n}`, type: 'Tree', label: 'node' })),
+    // An atom literal must select its ID, even when a relation has that name.
+    relations: [{ id: 'atom_0', name: 'atom_0', types: ['Tree'],
+      tuples: [{ atoms: ['atom_2'], types: ['Tree'] }] }],
+  });
+  const evaluator = new SGraphQueryEvaluator();
+  evaluator.initialize({ sourceData: instance });
+  assert.deepEqual(evaluator.evaluate('atom_0').selectedAtoms(), ['atom_2']);
+  assert.deepEqual(evaluator.evaluate(selectors.get('atoms.union')).selectedAtoms().sort(),
+    ['atom_0', 'atom_1']);
+  assert.deepEqual(evaluator.evaluate(selectors.get('atoms.product')).selectedTuplesAll(),
+    [['atom_0', 'atom_1']]);
+});
 
 test('Lean payload preserves relation IDs while selectors union matching names', () => {
   const tuple = (owner, child) => ({ atoms: [owner, child], types: ['Cell', 'Nat'] });

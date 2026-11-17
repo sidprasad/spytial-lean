@@ -38,14 +38,14 @@ elab_rules : tactic
     logInfo ((props.getObjValAs? String "cndSpec").toOption.getD "missing spec")
 
 -- The attached spec selects the symbolic tree from its height fact.
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_0"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_0`"}}]} -/
 #guard_msgs in
 example (t : KnowledgeTree) (h : t.height = 3) : True := by
   knowledge_wire_spec t
   trivial
 
 -- The use-site form has the same interpretation.
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_0"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_0`"}}]} -/
 #guard_msgs in
 example (t : KnowledgeTree) (h : t.height = 3) : True := by
   knowledge_wire_spec t with [hideAtom lean (fun n : KnowledgeTree => n.height = 3)]
@@ -66,7 +66,7 @@ example (t : KnowledgeTree) (h : t.height = 3) : True := by
   trivial
 
 -- Captured proof-local parameters and undecidable predicates are allowed.
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_0"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_0`"}}]} -/
 #guard_msgs in
 example (P : Nat → Prop) (x : Nat) (h : P x) : True := by
   knowledge_wire_spec x with [hideAtom lean (P)]
@@ -182,7 +182,7 @@ use a narrower predicate or inspection
 -- The imported attached predicate is also valid in command mode.
 #spytial KnowledgeTree.leaf
 
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_0"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_0`"}}]} -/
 #guard_msgs in
 #spytial.spec threeHigh with [hideAtom lean (hasHeightThree)]
 
@@ -190,7 +190,7 @@ use a narrower predicate or inspection
 #spytial threeHigh
 
 -- Bool-valued predicates can use the same contextual equalities.
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_0"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_0`"}}]} -/
 #guard_msgs in
 example (t : KnowledgeTree) (h : t.height = 3) : True := by
   knowledge_wire_spec t with [hideAtom lean (fun n : KnowledgeTree => n.height == 3)]
@@ -206,7 +206,7 @@ def inspectHeightBranch (t : KnowledgeTree) : KnowledgeTree := by
   else t
 
 -- Selectors can capture a local threshold without requiring a concrete tree.
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_0"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_0`"}}]} -/
 #guard_msgs in
 example (t : KnowledgeTree) (k : Nat) (h : t.height = k) : True := by
   knowledge_wire_spec t with [hideAtom lean (fun n : KnowledgeTree => n.height = k)]
@@ -376,7 +376,7 @@ opaque hiddenProperty (n : Nat) : Prop := n = 3
 
 -- Classical decidability is not an executable decision procedure. It must
 -- not block a predicate already supported by a retained fact.
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_0"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_0`"}}]} -/
 #guard_msgs in
 example (h : hiddenProperty 3) : True := by
   classical
@@ -384,7 +384,7 @@ example (h : hiddenProperty 3) : True := by
   trivial
 
 -- Nor may a local Decidable instance escape into the compiled evaluator.
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_0"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_0`"}}]} -/
 #guard_msgs in
 example [DecidablePred hiddenProperty] (h : hiddenProperty 3) : True := by
   knowledge_wire_spec (3 : Nat) with [hideAtom lean (hiddenProperty)]

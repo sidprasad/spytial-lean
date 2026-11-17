@@ -145,6 +145,9 @@ private meta def emit (label : String) (lowered : Except String String) :
 private meta def corpus : Array (String × String) :=
   StateT.run (m := Id) (do
     for (nm, s) in bases do emit s!"base.{nm}" s.toSGQ
+    -- Multiple atom prefixes must not lex as a single backquoted identifier.
+    for op in [Sgq.OpId.«union», .«product»] do
+      emit s!"atoms.{name op}" (binary op (.atomLit "atom_0") (.atomLit "atom_1")).toSGQ
     for k in constants do emit s!"base.{name k}" (nullary k).toSGQ
     for u in relUnaries do
       let nm := name u

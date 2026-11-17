@@ -9,7 +9,9 @@ base.relSlashy	util/ordering
 base.relDbl	//
 base.var	x
 base.varUni	`σ`
-base.atom	`atom_0
+base.atom	``atom_0`
+atoms.union	``atom_0` + ``atom_1`
+atoms.product	``atom_0`->``atom_1`
 base.emptySet	none
 base.universe	univ
 base.identity	iden
@@ -24,7 +26,7 @@ un.transpose.relSlashy	~util/ordering
 un.transpose.relDbl	~//
 un.transpose.var	~x
 un.transpose.varUni	~`σ`
-un.transpose.atom	~`atom_0
+un.transpose.atom	~``atom_0`
 un.transpose.over.union	~(a + b)
 un.transpose.under.union.l	~a + b
 un.transpose.under.union.r	a + ~b
@@ -61,7 +63,7 @@ un.transitiveClosure.relSlashy	^util/ordering
 un.transitiveClosure.relDbl	^//
 un.transitiveClosure.var	^x
 un.transitiveClosure.varUni	^`σ`
-un.transitiveClosure.atom	^`atom_0
+un.transitiveClosure.atom	^``atom_0`
 un.transitiveClosure.over.union	^(a + b)
 un.transitiveClosure.under.union.l	^a + b
 un.transitiveClosure.under.union.r	a + ^b
@@ -98,7 +100,7 @@ un.reflexiveTransitiveClosure.relSlashy	*util/ordering
 un.reflexiveTransitiveClosure.relDbl	*//
 un.reflexiveTransitiveClosure.var	*x
 un.reflexiveTransitiveClosure.varUni	*`σ`
-un.reflexiveTransitiveClosure.atom	*`atom_0
+un.reflexiveTransitiveClosure.atom	*``atom_0`
 un.reflexiveTransitiveClosure.over.union	*(a + b)
 un.reflexiveTransitiveClosure.under.union.l	*a + b
 un.reflexiveTransitiveClosure.under.union.r	a + *b
