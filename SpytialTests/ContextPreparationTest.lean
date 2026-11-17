@@ -82,6 +82,11 @@ example (P Q S : Prop) (h : P ↔ Q) (finish : (P → Q) → S) : True := by
   check_normalization [h] using [finish] proves [S]
   trivial
 
+-- Contradiction derived during normalization is exported as checked False evidence.
+example (P : Prop) (hp : P) (reject : P → False) : True := by
+  check_normalization [hp] using [reject] proves [False]
+  trivial
+
 -- Display decomposition must not erase premises needed by a supplied forward rule.
 example (P Q S : Prop) (h : P ∧ Q) (finish : (P ∧ Q) → S) : True := by
   check_preparation h using [finish] proves [P, Q, S]

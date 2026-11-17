@@ -94,7 +94,10 @@ def forwardInspectionProofs (facts rules : Array Expr) (simplify : Bool)
       | some .unchanged => pure (goal, false)
       | some (.proved _) =>
           if (← steps.get) <= maxSteps then
-            resultType.mvarId!.assign (mkConst ``False)
+            -- Closing the placeholder goal only supplies contradiction evidence if its type
+            -- is still compatible with False. Never overwrite a type chosen by automation.
+            unless ← isDefEq resultType (mkConst ``False) do
+              throwError "spytial: Aesop closed an inspection goal at a type other than False"
             let proof ← checkInspectionProof (mkConst ``False) (← instantiateMVars target)
             return (#[proof], false)
           else
@@ -118,7 +121,8 @@ def forwardInspectionProofs (facts rules : Array Expr) (simplify : Bool)
       enriched.assign proof
       let proof ← whnf (← instantiateMVars target)
       let proposition ← inferType proof
-      resultType.mvarId!.assign proposition
+      unless ← isDefEq resultType proposition do
+        throwError "spytial: exported evidence conflicts with the inspection goal's type"
       checkInspectionProof proposition proof
     return (proofs, truncated)
 
