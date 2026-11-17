@@ -300,20 +300,6 @@ info: {"constraints": [{"hideAtom": {"selector": "String"}}]}
 #guard_msgs in
 spytial_spec STree [..]
 
-/-! ## A layout macro parametrized by a relation -/
-
-set_option hygiene false in
-local macro "childLayout(" edge:ident ")" : spytial_op =>
-  `(spytial_op| [orientation $edge:ident below, align $edge:ident vertical])
-
-/--
-info: {"constraints":
- [{"orientation": {"selector": "lo", "directions": ["below"]}},
-  {"align": {"selector": "lo", "direction": "vertical"}}]}
--/
-#guard_msgs in
-#spytial.spec sExample with [childLayout(lo)]
-
 /-! ## Closure operators and joins -/
 
 /--

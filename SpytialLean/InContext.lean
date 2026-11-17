@@ -2,6 +2,7 @@ module
 
 public meta import Iykyk.Query
 public meta import SpytialLean.Relationalizer
+public meta import SpytialLean.PredicateObservation
 public meta import SpytialLean.SelectorElab
 
 namespace SpytialLean
@@ -573,7 +574,7 @@ private meta def projectToRepresentation (afaik : Iykyk.Afaik) (baseConfig : Wal
 
 /-- Ask IYKYK what is known, then translate a successful result for Spytial. -/
 public meta def wdykInContext (subject : Expr) (walkConfig : WalkConfig := {})
-    (wdykConfig : Iykyk.Config := {}) (observations : Array Expr := #[]) :
+    (wdykConfig : Iykyk.Config := {}) (observations predicates : Array Expr := #[]) :
     MetaM (ContextViewStatus × Option ContextView) := do
   match ← Iykyk.wdyk subject { wdykConfig with rootOnly := false } with
   | .inconsistent _ => return ({ inconsistent := true }, none)
@@ -583,6 +584,7 @@ public meta def wdykInContext (subject : Expr) (walkConfig : WalkConfig := {})
       else pure afaik
       let (data, prov, datum, inspection, evidence) ←
         relationalizeAfaikInspection afaik walkConfig observations (some subject)
+      let (data, evidence) ← observePredicates ⟨datum, data, prov, evidence, inspection.root⟩ predicates
       let inspection := { inspection with term := (← ppExpr subject).pretty }
       return ({ truncated := afaik.truncated }, some { afaik, data, prov, datum, inspection, evidence })
 

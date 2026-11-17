@@ -56,6 +56,10 @@ public meta inductive Sel where
   /-- A type reference. Keeps the resolved Lean name next to the sig string, so
       a stored spec still says which type it meant. -/
   | sig (typeName : Name) (sig : String)
+  /-- A type binder in this proof. Resolve its signature in the context used to walk the datum. -/
+  | localType (id : FVarId)
+  /-- The distinguished atom of the value at this inspection site. -/
+  | inspectedRoot
   | rel (name : String)
   /-- One of the engine's named builtins (`add`, `sum`). A separate vocabulary
       from the relations: `sum` is a reserved word that `quoteIfNeeded` would
@@ -264,6 +268,8 @@ public meta partial def Sel.toSGQCtx (ctx : Nat) : Sel → Except String String
   | .str s => .ok (sgqStringLit s!"\"{s}\"")
   | .ctorLit c => .ok (sgqStringLit (shortName c))
   | .boolLit b => .ok (toString b)
+  | .localType _ => .error "a proof-local type reached the lowering unresolved"
+  | .inspectedRoot => .error "inspectedRoot reached the lowering without a rooted datum"
   | .leanRel _ => .error "a `lean (…)` selector reached the lowering unresolved"
   | .node c op args => do
     let cd := Sgq.Construct.of c
@@ -375,7 +381,7 @@ binder would capture. -/
 public meta partial def Sel.freeVars : Sel → Array Name
   | .var x => #[x]
   | .sig .. | .rel .. | .builtin .. | .num .. | .str .. | .ctorLit .. | .boolLit ..
-  | .leanRel .. => #[]
+  | .leanRel .. | .localType .. | .inspectedRoot => #[]
   | .node _ _ args => Id.run do
     let mut bound : Array Name := #[]
     let mut out : Array Name := #[]

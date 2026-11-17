@@ -692,4 +692,39 @@ def Tree.rotateLeft : Tree → Tree
     assertCount "partial structured results do not request height" paired "height" 0
     assertCount "partial structured results do not request addition" paired "hAdd" 0
 
+private inductive Path (p : Nat → Nat) : Nat → Nat → Prop where
+  | refl (a) : Path p a a
+  | step {a b c} : p a = b → Path p b c → Path p a c
+
+-- Neither p's pointer chain nor an established path for p may be attributed to q.
+-- Excluding the second pointer removes exactly the evidence for the two-step query.
+#eval show Lean.Elab.TermElabM Unit from do
+  let nat := mkConst ``Nat
+  let mapType ← mkArrow nat nat
+  withLocalDeclD `p mapType fun p => do
+  withLocalDeclD `q mapType fun q => do
+  withLocalDeclD `a nat fun a => do
+  withLocalDeclD `b nat fun b => do
+  withLocalDeclD `c nat fun c => do
+  withLocalDeclD `ab (← mkEq (mkApp p a) b) fun _ => do
+  withLocalDeclD `bc (← mkEq (mkApp p b) c) fun bc => do
+  let pathP := mkApp (mkConst ``Path) p
+  let pathQ := mkApp (mkConst ``Path) q
+  withLocalDeclD `known (mkApp2 pathQ c a) fun _ => do
+    for omitStep in [false, true] do
+      let (_, some result) ← wdykInContext a {}
+        { rootOnly := false, excludedHypotheses := if omitStep then #[bc.fvarId!] else #[] }
+        #[mkApp p a] #[pathP, pathQ] | throwError "missing predicate inspection"
+      let labels := fun (tuple : JsonTuple) => tuple.atoms.map fun id =>
+        (result.data.atoms.find? (·.id == id)).map (·.label)
+      let has := fun (rel : String) (x y : String) =>
+        (tuples result.data rel).any fun t => labels t == #[some x, some y]
+      let relP ← predicateObservationName pathP
+      let relQ ← predicateObservationName pathQ
+      unless has relP "a" "b" && has relP "a" "a" && has relQ "c" "a" do
+        throwError "lost a parent step, reflexivity, or an explicitly proved path"
+      unless has relP "a" "c" == !omitStep do throwError "incorrect two-step observation"
+      if has relQ "a" "c" || has relP "c" "a" then throwError "mixed predicate captures"
+      for proof in result.evidence.proofs do checkWithKernel proof
+
 end ContextInspectionTest

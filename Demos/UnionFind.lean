@@ -1,30 +1,41 @@
 import SpytialLean
 
 /-!
-# Union-find: which pointer does union change?
+# Union-find
 
-Two searches start at `x` and `y` and return `rx` and `ry`. Suppose the roots are
-distinct and `x` lies below `rx`. Setting the parent of `x` to `y` would move the
-branch under `x`. Even `rx` itself would stay behind. Which pointer moves the whole set?
+Each vertex has one parent. A root is its own parent. To find a representative, follow
+parents until one points back to itself. To unite two sets, change the parent of the
+first root to the second root.
 
-Start at `union_roots` and follow the three `spytial x` calls. The first two observe
-the same parent function on either side of a proof. The third observes the function
-union will return. All four vertices are variables, and the roots may coincide.
+Why update the root? If the roots differ and `x` lies below its root, redirecting `x`
+would leave its old root and any other branches behind.
+
+![The two searches before and after linking their roots](figures/union-roots.png)
 -/
 
 namespace UnionFindDemo
 
-variable {α : Type u} [DecidableEq α]
+variable {α : Type u}
 
 /-- Zero or more parent steps. A vertex can reach itself in zero steps. -/
 inductive Reaches (parent : α → α) : α → α → Prop where
   | refl (x) : Reaches parent x x
   | step {x next root} : parent x = next → Reaches parent next root → Reaches parent x root
 
+/-- Extend a path by one parent step at its endpoint. -/
+theorem Reaches.append_step {parent : α → α} {x r s : α}
+    (path : Reaches parent x r) (edge : parent r = s) : Reaches parent x s := by
+  induction path with
+  | refl => exact .step edge (.refl s)
+  | step first _ ih => exact .step first (ih edge)
+
+variable [DecidableEq α]
+
 /-- Redirect one pointer. -/
 def link (parent : α → α) (x root : α) : α → α :=
   fun v => if v = x then root else parent v
 
+/-- Check at most `fuel` vertices for a self-parent. -/
 def find? (parent : α → α) : Nat → α → Option α
   | 0, _ => none
   | fuel + 1, x => if parent x = x then some x else find? parent fuel (parent x)
@@ -35,27 +46,7 @@ def union? (parent : α → α) (fuel : Nat) (x y : α) : Option (α → α) := 
   let ry ← find? parent fuel y
   return link parent rx ry
 
-/-! ## Reading the forest
-
-In the Spytial-CLRS forest view, parent arrows point up and vertices at equal
-depth share a row. Here the depth of `x` is unknown. A `found` arrow leads upward
-to the search result in one drawn edge, however many parent steps the search took.
-
-A self-loop identifies a vertex of known depth zero. The layout aligns these
-roots using the map `p` we are inspecting. Passing `link` at the last call makes
-the row depend on the updated map. [Spytial-CLRS disjoint sets](https://github.com/sidprasad/spytial-clrs/blob/1a1e5e044b797197dcdadcc722a93a0bf0a93829/src/disjoint-sets.ipynb)
--/
-
-open SpytialLean in
-set_option hygiene false in
-local macro "forestView(" p:ident ")" : spytial_op =>
-  `(spytial_op| [
-    orientation ($p:ident + found) - iden above,
-    align let roots = ($p:ident & iden).univ | (roots -> roots) - iden horizontal
-  ])
-
-/-- Each successful recursive call supplies a path from the next vertex to the root.
-Prepending the first parent step gives a path from the original query. -/
+/-- A successful search returns a root reachable from its starting vertex. -/
 theorem find?_sound (parent : α → α) (fuel : Nat) (x root : α)
     (found : find? parent fuel x = some root) :
     Reaches parent x root ∧ parent root = root := by
@@ -68,69 +59,67 @@ theorem find?_sound (parent : α → α) (fuel : Nat) (x root : α)
       exact ⟨.refl x, hx⟩
     · have rest : find? parent fuel (parent x) = some root := by
         simpa [find?, hx] using found
-      generalize edge : parent x = next at rest
-      obtain ⟨path, isRoot⟩ := ih next rest
-      exact ⟨.step edge path, isRoot⟩
+      obtain ⟨path, isRoot⟩ := ih (parent x) rest
+      exact ⟨.step rfl path, isRoot⟩
 
-theorem Reaches.link_target {parent : α → α} {x target : α}
-    (path : Reaches parent x target) (root : α) :
-    Reaches (link parent target root) x root := by
-  induction path with
-  | refl => exact .step (by simp [link]) (.refl root)
-  | @step x next target edge _ ih =>
-    by_cases hx : x = target
-    · subst x
-      exact .step (by simp [link]) (.refl root)
-    · exact .step (by simpa [link, hx] using edge) ih
-
-theorem Reaches.link_root {parent : α → α} {x root : α}
-    (path : Reaches parent x root) (target : α) :
-    Reaches (link parent target root) x root := by
+/-- Redirecting a root preserves every old path. Any step out of the old root was a self-loop
+and can be skipped. -/
+theorem Reaches.link_of_root {parent : α → α} {x r old : α}
+    (path : Reaches parent x r) (isRoot : parent old = old) (target : α) :
+    Reaches (link parent old target) x r := by
   induction path with
   | refl => exact .refl _
-  | @step x next root edge _ ih =>
-    by_cases hx : x = target
-    · subst x
-      exact .step (by simp [link]) (.refl root)
-    · exact .step (by simpa [link, hx] using edge) ih
+  | @step v next _ edge _ ih =>
+    by_cases h : v = old
+    · subst v
+      simpa only [← edge, isRoot] using ih
+    · exact .step (by simpa [link, h] using edge) ih
 
-theorem link_isRoot (parent : α → α) (target root : α) (hr : parent root = root) :
-    link parent target root root = root := by
-  simp [link, hr]
+/-- If the searches from `x` and `y` return `rx` and `ry`, union returns the map on the right.
 
-/-! ## Inspecting `x` during the proof
+```text
+Before the link              After the link
 
-The goal names a new parent function, `link parent rx ry`. To justify this choice,
-we need to know where the old paths end and what the new function does at those
-endpoints. The proof never needs a list of the intermediate vertices.
--/
+x ~~> rx --> rx              x ~~> rx --+
+                                        |
+                                        v
+y ~~> ry --> ry              y ~~~~~~~> ry --> ry
 
+  -->  one parent pointer
+  ~~>  zero or more parent pointers
+```
+
+Both vertices now reach `ry`, which is still its own parent. The roots may already coincide. -/
 theorem union_roots (parent : α → α) (fuel : Nat) (x y rx ry : α)
     (hx : find? parent fuel x = some rx) (hy : find? parent fuel y = some ry) :
     union? parent fuel x y = some (link parent rx ry) ∧
       Reaches (link parent rx ry) x ry ∧ Reaches (link parent rx ry) y ry ∧
       link parent rx ry ry = ry := by
-  -- Read “found v r” as “the search from v returned r.”
-  let found (v r : α) := find? parent fuel v = some r
-  change found x rx at hx
-  change found y ry at hy
-  -- Follow the two arrows out of x. The search returns rx, while parent x is
-  -- still unknown. Even parent rx is open. What tells us the search stopped at a root?
-  spytial x observing [parent] with [forestView(parent)]
+  obtain ⟨pathX, rootX⟩ := find?_sound parent fuel x rx hx
+  obtain ⟨pathY, rootY⟩ := find?_sound parent fuel y ry hy
+  spytial_spec α [hideAtom univ - α]
+  -- A dashed edge records a proved path, even if its intermediate vertices are unknown.
+  spytial x observing [parent, Reaches parent] with [..,
+    edgeStyle «Reaches parent» (lineStyle dashed),
+    hideField «Reaches parent» filter: (iden + parent),
+    orientation «Reaches parent» - iden above
+  ] titled "Before the link"
 
-  let reaches := Reaches parent
-  obtain ⟨pathX, rootX⟩ : reaches x rx ∧ parent rx = rx := find?_sound parent fuel x rx hx
-  obtain ⟨pathY, rootY⟩ : reaches y ry ∧ parent ry = ry := find?_sound parent fuel y ry hy
-  -- Inspect the same x and the same map. Now rx and ry have self-loops and share
-  -- a row. The reaches edge takes x to rx. Every path ending there can use the
-  -- same new step from rx to ry, whatever its first step was.
-  spytial x observing [parent] with [forestView(parent)]
+  let joined := link parent rx ry
+  have xToRx : Reaches joined x rx := pathX.link_of_root rootX ry
+  have yToRy : Reaches joined y ry := pathY.link_of_root rootX ry
 
-  -- Follow link from rx to ry, then around ry's self-loop. At x the new parent
-  -- is still conditional because x could itself be rx. The goal asks where x
-  -- can reach, so the path proof can finish with that first step still open.
-  spytial x observing [link parent rx ry] with [forestView(link)]
-  exact ⟨by simp_all [union?, found], pathX.link_target ry,
-    pathY.link_root rx, link_isRoot parent rx ry rootY⟩
+  have newEdge : joined rx = ry := by simp [joined, link]
+  have ryIsRoot : joined ry = ry := by simp [joined, link, rootY]
+  -- In the joined map the old x-to-rx path can take the new parent step to ry.
+  spytial x observing [joined, Reaches joined] fyi [Reaches.append_step (parent := joined)]
+    nvm [rootX, rootY] with [..,
+      edgeStyle «Reaches joined» (lineStyle dashed),
+      hideField «Reaches joined» filter: (iden + joined),
+      orientation «Reaches joined» - iden above
+    ] titled "After the link"
+
+  have xToRy := xToRx.append_step newEdge
+  exact ⟨by simp [union?, hx, hy], xToRy, yToRy, ryIsRoot⟩
 
 end UnionFindDemo
