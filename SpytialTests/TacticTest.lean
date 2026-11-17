@@ -274,21 +274,15 @@ example {R : Nat → Nat → Prop} (measure : Nat → Nat) (x y : Nat)
   spytial x observing [measure] fyi [symmetric] with [attribute measure]
   trivial
 
--- predicates remain proof-backed facts rather than data observations
+-- Predicates contribute proved tuples over existing atoms in both entry points.
 set_option linter.unusedVariables false in
-/--
-error: 'observing' expects a data-returning function, not a predicate
--/
 #guard_msgs in
-example (P : Nat → Prop) (x : Nat) : True := by
+example (P : Nat → Prop) (x : Nat) (hx : P x) : True := by
   spytial x observing [P]
   trivial
 
 def Positive (x : Nat) : Prop := 0 < x
 
-/--
-error: 'observing' expects a data-returning function, not a predicate
--/
 #guard_msgs in
 #spytial 3 observing [Positive]
 

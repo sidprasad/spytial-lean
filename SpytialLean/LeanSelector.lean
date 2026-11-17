@@ -123,6 +123,7 @@ meta structure LeanSelCtx where
   di : JsonDataInstance
   prov : Provenance
   evidence : SelectorEvidence := {}
+  root? : Option String := none
 
 /-- The walker's sig is a short name, so the definitional check is what keeps a
     same-named type's atoms out of the array, which would otherwise make the
@@ -229,7 +230,7 @@ meta structure PredicateEvidence where
   simpContext : Simp.Context
   simprocs : Simp.SimprocsArray
 
-private meta def checkPredicateProof (proposition proof : Expr) : MetaM Expr := do
+meta def checkPredicateProof (proposition proof : Expr) : MetaM Expr := do
   let proof ← instantiateMVars proof
   let checked := mkApp2 (mkConst ``id [.zero]) proposition proof
   if checked.hasExprMVar || checked.hasLevelMVar || checked.hasSorry then
@@ -240,7 +241,7 @@ private meta def checkPredicateProof (proposition proof : Expr) : MetaM Expr := 
   | .error exception => throwError "{exception.toMessageData (← getOptions)}"
   | .ok _ => return proof
 
-private meta def preparePredicateEvidence (evidence : SelectorEvidence) :
+meta def preparePredicateEvidence (evidence : SelectorEvidence) :
     MetaM PredicateEvidence := do
   let mut theorems ← getSimpTheorems
   let mut facts := #[]
@@ -260,7 +261,7 @@ private meta def preparePredicateEvidence (evidence : SelectorEvidence) :
 
 /-- Establish a proposition without assigning any of the inspected holes.
     Failure to establish it is not evidence for its negation. -/
-private meta def provePredicate? (evidence : PredicateEvidence) (proposition : Expr) :
+meta def provePredicate? (evidence : PredicateEvidence) (proposition : Expr) :
     MetaM (Option Expr) := withoutModifyingState <| withNewMCtxDepth do
   for (fact, proof) in evidence.facts do
     if ← isDefEq proposition fact then
@@ -276,7 +277,7 @@ private meta def provePredicate? (evidence : PredicateEvidence) (proposition : E
 /-- Candidates come only from represented atoms with correctly typed Lean
     terms. Aliases must denote the representative value: a coarser identity
     classifier is not a proof of Lean equality. -/
-private meta def predicateColumn (ctx : LeanSelCtx) (evidence : PredicateEvidence)
+meta def predicateColumn (ctx : LeanSelCtx) (evidence : PredicateEvidence)
     (domain : Expr) : MetaM (Array (String × Expr)) := do
   let mut column := #[]
   for atom in ctx.di.atoms do
@@ -398,6 +399,10 @@ private meta def tupleUnion (tuples : Array (Array String)) : Sel := Id.run do
 
 meta partial def Sel.resolveLean (ctx : LeanSelCtx) (evidence : PredicateEvidence) :
     Sel → MetaM Sel
+  | .localType id => return .sig id.name (← sigOfType (mkFVar id))
+  | .inspectedRoot => do
+    let some root := ctx.root? | throwError "inspectedRoot requires a rooted datum"
+    return .atomLit root
   | .leanRel fn => return tupleUnion (← evalLeanRelPrepared ctx evidence fn)
   | .node c op args =>
     return .node c op (← args.mapM (·.mapExprsM (·.resolveLean ctx evidence)))
@@ -417,31 +422,41 @@ Resolution needs the walked datum, and walking it is not free — it also asks
 each type for a `SpytialIdentity`, which reports when it cannot derive one. A
 spec with no raw Lean selector needs none of that, so callers check first. -/
 
-meta partial def Sel.hasLeanRel : Sel → Bool
-  | .leanRel _ => true
-  | .node _ _ args => args.any fun a => a.subExprs.any Sel.hasLeanRel
-  | .sig .. | .rel .. | .builtin .. | .var .. | .num .. | .str .. | .ctorLit ..
-  | .boolLit .. => false
+private meta partial def Sel.containsSelector (matchesLeaf : Sel → Bool) : Sel → Bool
+  | .node _ _ args => args.any fun a => a.subExprs.any (Sel.containsSelector matchesLeaf)
+  | leaf => matchesLeaf leaf
 
-meta partial def FieldVal.hasLeanRel : FieldVal → Bool
-  | .sel s => s.hasLeanRel
-  | .block fs => fs.any fun (_, v) => v.hasLeanRel
+private meta partial def FieldVal.containsSelector (matchesLeaf : Sel → Bool) : FieldVal → Bool
+  | .sel s => s.containsSelector matchesLeaf
+  | .block fs => fs.any fun (_, v) => v.containsSelector matchesLeaf
   | .rel .. | .str .. | .«enum» .. | .enums .. | .num .. | .bool .. => false
 
+meta def Sel.hasLeanRel (s : Sel) : Bool := s.containsSelector (· matches .leanRel _)
+meta def FieldVal.hasLeanRel (v : FieldVal) : Bool := v.containsSelector (· matches .leanRel _)
 meta def SpytialSpec.hasLeanRel (spec : SpytialSpec) : Bool :=
   spec.any fun op => op.fields.any fun (_, v) => v.hasLeanRel
+
+meta def SpytialSpec.needsDatum (spec : SpytialSpec) : Bool :=
+  spec.any fun op => op.fields.any fun (_, v) =>
+    v.containsSelector (fun s => s matches .inspectedRoot | .localType _ | .leanRel _)
+
+/-- A proof-local layout can be reused while its captured Lean terms remain in scope. -/
+meta def SpytialSpec.hasMissingLocals (spec : SpytialSpec) (lctx : LocalContext) : Bool :=
+  spec.any fun op => op.fields.any fun (_, v) => v.containsSelector fun
+    | .localType id => !lctx.contains id
+    | .leanRel fn => fn.hasFVar && (fn.find? fun e => e.isFVar && !lctx.contains e.fvarId!).isSome
+    | _ => false
 
 /-- Only the fields are rewritten: an op's stamp stays the user's own text, so
     a conflict report cites what they wrote, not the atom ids it resolved to. -/
 meta def resolveLeanSelectors (datum : Expr) (di : JsonDataInstance)
-    (prov : Provenance) (spec : SpytialSpec) (evidence : SelectorEvidence := {}) :
+    (prov : Provenance) (spec : SpytialSpec) (evidence : SelectorEvidence := {})
+    (root? : Option String := none) :
     MetaM SpytialSpec := withoutModifyingState <| withNewMCtxDepth do
-  unless spec.hasLeanRel do return spec
-  let ctx : LeanSelCtx := { datum, di, prov, evidence }
-  let prepared ← preparePredicateEvidence evidence
+  unless spec.needsDatum do return spec
+  let ctx : LeanSelCtx := { datum, di, prov, evidence, root? }
+  let prepared ← preparePredicateEvidence (if spec.hasLeanRel then evidence else {})
   spec.mapM fun op => return { op with
     fields := ← op.fields.mapM fun (f, v) => return (f, ← v.resolveLean ctx prepared) }
 
 end
-
-end SpytialLean

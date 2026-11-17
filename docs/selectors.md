@@ -49,7 +49,7 @@ sel ::=
   | "@:" sel | "@str:" sel | "@bool:" sel        (* 17: label projections; value *)
   | "@num:" sel                                  (* 17: numeric projection; integer *)
   | ident                                        (* 18: relation, sig, binder, or ctor label *)
-  | "univ" | "iden" | "none"
+  | "univ" | "iden" | "none" | "inspectedRoot"
   | "{" binders "|" sel "}"                      (* 18: comprehension; arity = #binders *)
   | "{" sel* "}"                                 (* 18: block, a conjunction *)
   | "(" sel ")"
@@ -84,6 +84,11 @@ it is upstream, so `!=`, `not =`, `!in`, `not in`, `!ni` and `not ni` are one
 rule with that slot filled, and so are the integer comparisons `!<` through
 `!>=`. `a is b` parses and is rejected — the manifest records that the engine
 refuses to evaluate it.
+
+`inspectedRoot` selects the atom for the expression passed to `spytial`. For example,
+`inspectedRoot.*(left + right)` includes that tree and every subtree reachable
+through its child fields, even if another tree in the proof shares a child.
+Use `«inspectedRoot»` for a data field of the same name.
 
 A selector lexes under its own token table, which holds the engine's symbols
 and nothing else. Two things follow. Lean's keywords are ordinary names here,

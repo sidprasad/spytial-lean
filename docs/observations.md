@@ -11,7 +11,36 @@ Observation retains a checked symbolic residual when the result is not
 concrete. Deterministic results are displayed as expressions over genuinely
 unknown observation leaves, rather than as unrelated fresh values.
 
-## Stages
+## Observing a predicate
+
+A named predicate can appear alongside a data-returning function:
+
+```lean
+spytial x observing [parent, Reaches parent]
+```
+
+`parent` contributes a pointer for each represented vertex. Applying `Reaches`
+to that particular map leaves two vertex arguments. The observation produces a
+binary relation named `Reaches parent`. A proof of `Reaches parent x rx` puts
+`(x, rx)` in it even if the proof context gives no individual steps of that path.
+The relation exists in the datum and can be styled with
+`edgeStyle «Reaches parent» (lineStyle dashed)`.
+
+An observation can also establish new tuples. Given `parent a = b` and
+`parent b = c`, the constructors `Reaches.step` and `Reaches.refl` provide a proof
+of `Reaches parent a c`. The inspector checks the proof with Lean's kernel.
+For an opaque path followed by one pointer, the union-find demo supplies the
+ordinary path-extension lemma through `fyi [Reaches.append_step (parent := joined)]`.
+This lets it display `Reaches joined x ry` before the proof names that fact.
+
+The candidates are tuples of compatible atoms in the datum, including represented
+results of value observations. Predicates accept one to four nondependent arguments.
+For each candidate, the observer tries retained evidence, simplification, and
+bounded search using the predicate's constructors. Search has depth eight and
+enumeration allows up to 4,096 candidates per predicate. An absent tuple means
+the observation found no proof. Observations add no hypotheses to the Lean goal.
+
+## Stages of a value observation
 
 Observation has five internal stages:
 

@@ -27,6 +27,28 @@ splice in the type's default. Structures inherit parent specs before their own
 operations. Use `spytial_ops` to name operations for reuse with `..name`.
 Selectors can use the [relational language](selectors.md) or [Lean predicates](lean-selectors.md).
 
+## Defaults inside a proof
+
+Inside `by`, `spytial_spec` sets a default for inspections whose subject has that Lean type.
+Each type can have its own layout. For example, this proof gives vertices of type `α` a
+reachability edge and gives values of type `β` a different size.
+
+```lean
+example (α β : Type) (x y : α) (b : β) (R : α → α → Prop) : R x y → True := by
+  spytial_spec α [hideAtom univ - α, inferredEdge reaches lean (R)]
+  spytial_spec β [size β 72 40]
+  intro h
+  spytial x
+  spytial b
+  trivial
+```
+
+The declaration captures `R`. Each inspection uses the evidence available at its own line,
+so `spytial x` can draw the edge established by `h`. A declaration applies in its goal and
+subsequent subgoals while its captured variables are in scope. The latest applicable default
+for a type wins. Include `..` in a local declaration to extend the prior default, or in a
+call's `with [...]` to extend the active default for that inspection. [Union-find example](../Demos/UnionFind.lean)
+
 ## Layout constraints
 
 | Operation | Description |
