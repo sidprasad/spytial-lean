@@ -58,7 +58,9 @@ public meta def observePredicates (ctx : LeanSelCtx) (predicates : Array Expr) :
       -- Captures with the same pretty-printed name can be different local declarations.
       let id := if captures.isEmpty then headId else s!"{headId}:observed:{index}:{name}"
       let existing := data.relations.findIdx? (·.id == id)
-      let relation := (existing.map (data.relations[·]!)).getD { id, name, types, tuples := #[] }
+      let relation : JsonRelation := match existing with
+        | some i => { data.relations[i]! with name }
+        | none => { id, name, types, tuples := #[] }
       let points := columns.foldl (fun n column => n * column.size) 1
       if points > 4096 then
         throwError "observing {name} would query {points} tuples; the limit is 4096"
