@@ -37,15 +37,81 @@ elab_rules : tactic
       (ops.map fun ops => ops.getElems)
     logInfo ((props.getObjValAs? String "cndSpec").toOption.getD "missing spec")
 
+-- The two types have separate defaults. Only the left branch overrides the first one.
+/--
+info: {"constraints": [{"size": {"width": 50, "selector": "univ", "height": 30}}]}
+---
+info: {"directives":
+ [{"inferredEdge": {"selector": "``atom_0`->``atom_1`", "name": "path"}}]}
+---
+info: {"constraints": [{"hideAtom": {"selector": "univ - `β`"}}]}
+-/
+#guard_msgs in
+example (α β : Type) (x y : α) (z : β) (R : α → α → Prop) : R x y → True ∧ True := by
+  spytial_spec α [inferredEdge path lean (R)]
+  spytial_spec β [hideAtom univ - β]
+  intro h
+  constructor
+  · spytial_spec α [size univ 50 30]
+    knowledge_wire_spec x
+    trivial
+  · knowledge_wire_spec x with [..]
+    knowledge_wire_spec z
+    trivial
+
+-- A local default can extend a global one. An explicit use-site layout still overrides it.
+/--
+info: {"constraints":
+ [{"hideAtom": {"selector": "``atom_0`"}},
+  {"align": {"selector": "left", "direction": "vertical"}}]}
+---
+info: {"constraints": [{"hideAtom": {"selector": "KnowledgeTree"}}]}
+-/
+#guard_msgs in
+example (t : KnowledgeTree) (h : t.height = 3) : True := by
+  spytial_spec KnowledgeTree [.., align left vertical]
+  knowledge_wire_spec t
+  knowledge_wire_spec t with [hideAtom KnowledgeTree]
+  trivial
+
+-- Clearing or reverting a captured local is an ordinary proof step. When its capture
+-- leaves scope, the previous applicable default takes over.
+/-- info: {"constraints": [{"hideAtom": {"selector": "Nat"}}]} -/
+#guard_msgs in
+example (P : Nat → Prop) (x : Nat) : True := by
+  spytial_spec Nat [hideAtom Nat]
+  spytial_spec Nat [hideAtom lean (P)]
+  clear P
+  knowledge_wire_spec x
+  revert x
+  intro x
+  trivial
+
+-- A failed tactic alternative and an earlier proof leave no default in the next goal.
+/-- info: missing spec -/
+#guard_msgs in
+example (n : Nat) : True := by
+  first | (spytial_spec Nat [hideAtom Nat]; fail) | skip
+  knowledge_wire_spec n
+  trivial
+
+-- IYKYK allocates the existential witness before the inspected list.
+-- The layout must select the list itself.
+/-- info: {"constraints": [{"hideAtom": {"selector": "univ - ``atom_1`"}}]} -/
+#guard_msgs in
+example (xs : List Nat) (h : ∃ y, xs = [y, y]) : True := by
+  knowledge_wire_spec xs with [hideAtom univ - inspectedRoot]
+  trivial
+
 -- The attached spec selects the symbolic tree from its height fact.
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_0"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_0`"}}]} -/
 #guard_msgs in
 example (t : KnowledgeTree) (h : t.height = 3) : True := by
   knowledge_wire_spec t
   trivial
 
 -- The use-site form has the same interpretation.
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_0"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_0`"}}]} -/
 #guard_msgs in
 example (t : KnowledgeTree) (h : t.height = 3) : True := by
   knowledge_wire_spec t with [hideAtom lean (fun n : KnowledgeTree => n.height = 3)]
@@ -66,7 +132,7 @@ example (t : KnowledgeTree) (h : t.height = 3) : True := by
   trivial
 
 -- Captured proof-local parameters and undecidable predicates are allowed.
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_0"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_0`"}}]} -/
 #guard_msgs in
 example (P : Nat → Prop) (x : Nat) (h : P x) : True := by
   knowledge_wire_spec x with [hideAtom lean (P)]
@@ -182,7 +248,7 @@ use a narrower predicate or inspection
 -- The imported attached predicate is also valid in command mode.
 #spytial KnowledgeTree.leaf
 
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_0"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_0`"}}]} -/
 #guard_msgs in
 #spytial.spec threeHigh with [hideAtom lean (hasHeightThree)]
 
@@ -190,7 +256,7 @@ use a narrower predicate or inspection
 #spytial threeHigh
 
 -- Bool-valued predicates can use the same contextual equalities.
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_0"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_0`"}}]} -/
 #guard_msgs in
 example (t : KnowledgeTree) (h : t.height = 3) : True := by
   knowledge_wire_spec t with [hideAtom lean (fun n : KnowledgeTree => n.height == 3)]
@@ -206,7 +272,7 @@ def inspectHeightBranch (t : KnowledgeTree) : KnowledgeTree := by
   else t
 
 -- Selectors can capture a local threshold without requiring a concrete tree.
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_0"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_0`"}}]} -/
 #guard_msgs in
 example (t : KnowledgeTree) (k : Nat) (h : t.height = k) : True := by
   knowledge_wire_spec t with [hideAtom lean (fun n : KnowledgeTree => n.height = k)]
@@ -376,7 +442,7 @@ opaque hiddenProperty (n : Nat) : Prop := n = 3
 
 -- Classical decidability is not an executable decision procedure. It must
 -- not block a predicate already supported by a retained fact.
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_0"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_0`"}}]} -/
 #guard_msgs in
 example (h : hiddenProperty 3) : True := by
   classical
@@ -384,7 +450,7 @@ example (h : hiddenProperty 3) : True := by
   trivial
 
 -- Nor may a local Decidable instance escape into the compiled evaluator.
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_0"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_0`"}}]} -/
 #guard_msgs in
 example [DecidablePred hiddenProperty] (h : hiddenProperty 3) : True := by
   knowledge_wire_spec (3 : Nat) with [hideAtom lean (hiddenProperty)]

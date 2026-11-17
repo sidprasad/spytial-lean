@@ -56,6 +56,10 @@ public meta inductive Sel where
   /-- A type reference. Keeps the resolved Lean name next to the sig string, so
       a stored spec still says which type it meant. -/
   | sig (typeName : Name) (sig : String)
+  /-- A type binder in this proof. Resolve its signature in the context used to walk the datum. -/
+  | localType (id : FVarId)
+  /-- The distinguished atom of the value at this inspection site. -/
+  | inspectedRoot
   | rel (name : String)
   /-- One of the engine's named builtins (`add`, `sum`). A separate vocabulary
       from the relations: `sum` is a reserved word that `quoteIfNeeded` would
@@ -124,16 +128,18 @@ public meta def sgqBareName (s : String) : Bool :=
   | c :: cs => Sgq.bareHead c && cs.all Sgq.bareRest
   | [] => false
 
+private meta def quoteSgqName (s : String) : String :=
+  let esc := s.foldl (init := "") fun acc c =>
+    if Sgq.quoteMustEscape.contains c then (acc.push Sgq.quoteEscape).push c else acc.push c
+  s!"{Sgq.quoteDelimiter}{esc}{Sgq.quoteDelimiter}"
+
 /-- FIXME: the empty name has no spelling at all (`Sgq.quoteMinLength` is 1),
     and this still emits the invalid `` `` `` for it. Nothing produces one
     today: sigs and relations come from resolved Lean names and binders from
     binder names. Fixing it properly means an error path through every caller. -/
 public meta def quoteIfNeeded (s : String) : String :=
   if sgqBareName s && s.length ≥ Sgq.bareMinLength && !Sgq.reserved.contains s then s
-  else
-    let esc := s.foldl (init := "") fun acc c =>
-      if Sgq.quoteMustEscape.contains c then (acc.push Sgq.quoteEscape).push c else acc.push c
-    s!"{Sgq.quoteDelimiter}{esc}{Sgq.quoteDelimiter}"
+  else quoteSgqName s
 
 /-- How SGQ spells `c` inside a double-quoted literal. `none` = no spelling at
     all (C0/DEL without a readable escape, which the JSON hop mangles). -/
@@ -262,6 +268,8 @@ public meta partial def Sel.toSGQCtx (ctx : Nat) : Sel → Except String String
   | .str s => .ok (sgqStringLit s!"\"{s}\"")
   | .ctorLit c => .ok (sgqStringLit (shortName c))
   | .boolLit b => .ok (toString b)
+  | .localType _ => .error "a proof-local type reached the lowering unresolved"
+  | .inspectedRoot => .error "inspectedRoot reached the lowering without a rooted datum"
   | .leanRel _ => .error "a `lean (…)` selector reached the lowering unresolved"
   | .node c op args => do
     let cd := Sgq.Construct.of c
@@ -304,7 +312,10 @@ private meta partial def renderItems (cd : Sgq.Construct) (op : Option Sgq.OpId)
     | .name _ =>
       let a ← argAt cd args i
       let .name s := a | wrongArg cd i "a name" a
-      out := out.push (quoteIfNeeded s, {})
+      -- Atom literals have a backtick prefix. Always quote their name as well:
+      -- otherwise two prefixes in a union/product lex as one quoted identifier.
+      let rendered := if cd.id == .«atomLiteral» then quoteSgqName s else quoteIfNeeded s
+      out := out.push (rendered, {})
       i := i + 1
     | .operator | .constant =>
       -- `constant` is the `const` alternation; the numeric and string literals
@@ -370,7 +381,7 @@ binder would capture. -/
 public meta partial def Sel.freeVars : Sel → Array Name
   | .var x => #[x]
   | .sig .. | .rel .. | .builtin .. | .num .. | .str .. | .ctorLit .. | .boolLit ..
-  | .leanRel .. => #[]
+  | .leanRel .. | .localType .. | .inspectedRoot => #[]
   | .node _ _ args => Id.run do
     let mut bound : Array Name := #[]
     let mut out : Array Name := #[]

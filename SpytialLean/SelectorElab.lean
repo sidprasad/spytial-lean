@@ -972,8 +972,8 @@ private meta partial def elabLet (scope : SelScope) (env : LEnv) (stx : Syntax) 
   let (_, env') ← elabBinders scope env false "let" stx[1].getSepArgs
   elabExpr scope env' stx[2][1]
 
-/-- Resolution order: the engine's own word constants, a local binding, a
-    constructor label, then the vocabulary. -/
+/-- Resolution order: the engine's own word constants, a local binding, the
+    inspected root, a constructor label, then the vocabulary. -/
 private meta partial def resolveIdent (scope : SelScope) (env : LEnv)
     (stx : TSyntax `ident) : TermElabM EExpr := do
   -- Source text, not the name, decides: `«univ»` is a field spelled differently
@@ -1002,6 +1002,9 @@ private meta partial def resolveIdent (scope : SelScope) (env : LEnv)
               to '{n}', which a nearer binder shadows — the substitution would \
               be captured; rename the inner binder"
       return e
+  if let .ident _ raw _ _ := stx.raw then
+    if raw.toString == "inspectedRoot" then
+      return { sel := .inspectedRoot, kind := .relation, arity := some 1 }
   if let some v ← resolveCtorLit? scope stx then
     return { sel := v, kind := .«string» }
   let s := name.toString (escape := false)
@@ -1015,6 +1018,10 @@ private meta partial def resolveIdent (scope : SelScope) (env : LEnv)
   unknownName scope stx s!"name '{s}'" { sel := Sel.rel s, kind := .relation }
 where
   resolveTypeRef? : TermElabM (Option EExpr) := do
+    if let some decl := (← getLCtx).findFromUserName? stx.getId then
+      if (← whnf decl.type).isSort then
+        Term.addTermInfo' stx decl.toExpr
+        return some { sel := .localType decl.fvarId, kind := .relation, arity := some 1 }
     let some constName ← resolveGlobal? stx | return none
     match (← getEnv).find? constName with
     | some (.inductInfo _) =>

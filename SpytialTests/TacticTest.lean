@@ -274,23 +274,27 @@ example {R : Nat → Nat → Prop} (measure : Nat → Nat) (x y : Nat)
   spytial x observing [measure] fyi [symmetric] with [attribute measure]
   trivial
 
--- predicates remain proof-backed facts rather than data observations
+-- Predicates contribute proved tuples over existing atoms in both entry points.
 set_option linter.unusedVariables false in
-/--
-error: 'observing' expects a data-returning function, not a predicate
--/
 #guard_msgs in
-example (P : Nat → Prop) (x : Nat) : True := by
+example (P : Nat → Prop) (x : Nat) (hx : P x) : True := by
   spytial x observing [P]
   trivial
 
 def Positive (x : Nat) : Prop := 0 < x
 
-/--
-error: 'observing' expects a data-returning function, not a predicate
--/
 #guard_msgs in
 #spytial 3 observing [Positive]
+
+inductive Observation.IsZero : Nat → Prop where
+  | zero : Observation.IsZero 0
+
+-- Introducing a fact adds a tuple to the same qualified relation used by the layout.
+example (x : Nat) : Observation.IsZero x → Observation.IsZero x := by
+  spytial x observing [Observation.IsZero] with [hideField «Observation.IsZero»]
+  intro hx
+  spytial x observing [Observation.IsZero] with [hideField «Observation.IsZero»]
+  exact hx
 
 -- ordinary negative or unsupported knowledge is silent
 set_option linter.unusedVariables false in
@@ -659,7 +663,7 @@ example (h : (some 1 : Option Nat) = none) : True := by
 -- a predicate runs on the values the refinement established
 set_option linter.unusedVariables false in
 set_option spytial.source false in
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_1"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_1`"}}]} -/
 #guard_msgs in
 example (xs : List Nat) (h : xs = [1]) : True := by
   spytial_wire_spec xs with [hideAtom lean (fun n : Nat => n == 1)]
@@ -685,7 +689,7 @@ def listElems : Spytial.Sel (List Nat) Nat := ⟨fun xs => xs⟩
 
 set_option linter.unusedVariables false in
 set_option spytial.source false in
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_1"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_1`"}}]} -/
 #guard_msgs in
 example (xs : List Nat) (h : xs = [1]) : True := by
   spytial_wire_spec xs with [hideAtom lean (listElems)]
@@ -712,7 +716,7 @@ spytial_spec SelCrate [hideAtom lean (fun n : Nat => n == 5)]
 
 set_option linter.unusedVariables false in
 set_option spytial.source false in
-/-- info: {"constraints": [{"hideAtom": {"selector": "`atom_1"}}]} -/
+/-- info: {"constraints": [{"hideAtom": {"selector": "``atom_1`"}}]} -/
 #guard_msgs in
 example (c : SelCrate) (h : c = ⟨5⟩) : True := by
   spytial_wire_spec c

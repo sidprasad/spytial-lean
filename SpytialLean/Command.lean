@@ -15,6 +15,7 @@ public meta import SpytialLean.Relationalizer
 public meta import SpytialLean.Reify
 public meta import SpytialLean.InContext
 public meta import SpytialLean.LeanSelector
+public meta import SpytialLean.LocalSpec
 public meta import SpytialLean.Widget
 public meta import SpytialLean.Explorer
 public meta import SpytialLean.Attr
@@ -580,9 +581,7 @@ meta def elabSpytialOps (scope : SelScope) (ops : Array (TSyntax `spytial_op))
       scope := introduce scope o
   return spec.toList
 
-/-- A term whose type has no head constant gets a fully lenient scope. -/
-meta def scopeForExpr (e : Expr) : MetaM SelScope := do
-  let ty ← inferType e
+private meta def scopeForType (ty : Expr) : MetaM SelScope := do
   match ← typeHead? ty with
   | some n =>
     let seeds ← ty.getAppArgs.filterMapM fun a => do
@@ -590,16 +589,20 @@ meta def scopeForExpr (e : Expr) : MetaM SelScope := do
     SelScope.ofType n seeds
   | none => return { root := `_anonymous, lenient := true }
 
+/-- A term whose type has no head constant gets a fully lenient scope. -/
+meta def scopeForExpr (e : Expr) : MetaM SelScope := do
+  scopeForType (← inferType e)
+
 /-! ## Widget payload
 
 The commands and tactics below differ only in whether Prop-typed fields are
 filtered; `spytialPayloadProps` is the single place that decides what the widget
 receives. -/
 
-/-- Try to find a Spytial spec attached to the head type of an expression.
-    For structures, walks the parent chain and composes specs (parent-first). -/
-private meta def lookupTypeSpec (e : Expr) : MetaM (Option SpytialSpec) := do
-  let ty ← inferType e
+/-- Prefer the current proof's default for the exact type. Global structure defaults
+    compose along the parent chain, parent first. -/
+private meta def lookupSpecForType (ty : Expr) : MetaM (Option SpytialSpec) := do
+  if let some spec ← getProofLayout? ty then return some spec
   let tyHead := (← whnf ty).getAppFn
   match tyHead with
   | .const n _ => do
@@ -615,58 +618,82 @@ private meta def lookupTypeSpec (e : Expr) : MetaM (Option SpytialSpec) := do
       return getSpytialSpec? env n
   | _ => return none
 
+private meta def lookupTypeSpec (e : Expr) : MetaM (Option SpytialSpec) := do
+  lookupSpecForType (← inferType e)
+
 private meta def elabTermInstantiated (t : Syntax) : TermElabM Expr := do
   let e ← Term.elabTerm t none
   Term.synthesizeSyntheticMVarsNoPostponing
   instantiateMVars e
 
-/-- Elaborate named unary data functions into typed templates. The placeholder
-    records the observer's own domain; it is replaced by every compatible
-    represented value later, so the selected root need not itself have that
-    domain (for example, inspect both trees inside a pair with `height`). -/
+private meta structure Observations where
+  functions : Array Expr := #[]
+  predicates : Array Expr := #[]
+
+/-- Value observers carry an argument template for the walk. Predicate observers
+keep the user's partial application so captured arguments never become columns. -/
 private meta def resolveObservationTerms (observerSyntaxes : Array Syntax) :
-    TermElabM (Array Expr) :=
-  observerSyntaxes.mapM fun observerSyntax => do
+    TermElabM Observations := do
+  let mut result : Observations := {}
+  for observerSyntax in observerSyntaxes do
     let observer ← elabTermInstantiated observerSyntax
     let (arguments, binderInfos, _) ← forallMetaTelescopeReducing (← inferType observer)
     let explicitArguments := (arguments.zip binderInfos).filterMap fun (argument, info) =>
       if info.isExplicit then some argument else none
-    unless explicitArguments.size == 1 do
-      throwErrorAt observerSyntax m!"'observing' expects a unary function, but \
-        '{observerSyntax}' has type {← inferType observer}"
     let observation := mkAppN observer arguments
     if ← isProp observation then
-      throwErrorAt observerSyntax "'observing' expects a data-returning function, not a predicate"
-    let resultType ← whnf (← inferType observation)
-    if resultType.isSort then
-      throwErrorAt observerSyntax "'observing' expects a function returning a data value"
-    unless (← graphSide? observation).isSome do
-      throwErrorAt observerSyntax "'observing' expects a named function"
-    return observation
+      unless (← relationHeadName? observer.getAppFn).isSome do
+        throwErrorAt observerSyntax "'observing' expects a named predicate"
+      if observer.hasMVar then
+        throwErrorAt observerSyntax "fix the predicate's parameters before observing it"
+      discard <| classifyLeanRel observer
+      unless result.predicates.contains observer do
+        result := { result with predicates := result.predicates.push observer }
+    else
+      unless explicitArguments.size == 1 do
+        throwErrorAt observerSyntax m!"'observing' expects a unary function, but \
+          '{observerSyntax}' has type {← inferType observer}"
+      let resultType ← whnf (← inferType observation)
+      if resultType.isSort then
+        throwErrorAt observerSyntax "'observing' expects a function returning a data value"
+      unless (← graphSide? observation).isSome do
+        throwErrorAt observerSyntax "'observing' expects a named function"
+      result := { result with functions := result.functions.push observation }
+  return result
 
-private meta def resolveObservations (stx : Syntax) :
-    TermElabM (Array Expr) :=
-  if stx.getNumArgs == 0 then pure #[]
+private meta def resolveObservations (stx : Syntax) : TermElabM Observations :=
+  if stx.getNumArgs == 0 then pure {}
   else resolveObservationTerms stx[2].getSepArgs
 
 /-- Elaborate a term to a fully instantiated expression and relationalize it,
     keeping the provenance raw Lean selectors resolve against. -/
 private meta def elabRelationalized (t : Syntax) (cfg : WalkConfig := {})
     (observerSyntaxes : Array Syntax := #[]) :
-    TermElabM (Expr × Array Expr × JsonDataInstance × Provenance × SelectorEvidence) := do
+    TermElabM (Expr × Observations × RootedJsonDataInstance × Provenance × SelectorEvidence) := do
   let e ← elabTermInstantiated t
   let observations ← resolveObservationTerms observerSyntaxes
-  let (datum, prov, evidence) ← Reify.relationalizeWithEvidence e cfg observations
-  return (e, observations, datum.data, prov, evidence)
+  if observations.predicates.isEmpty then
+    let (datum, prov, evidence) ← Reify.relationalizeWithEvidence e cfg observations.functions
+    return (e, observations, datum, prov, evidence)
+  let (datum, prov, evidence) ← relationalizeRootedWithEvidence e cfg observations.functions
+  let (data, evidence) ← observePredicates ⟨e, datum.data, prov, evidence, datum.root⟩
+    observations.predicates
+  let datum := { datum with data }
+  Reify.certifyReificationIfRequested e datum
+  return (e, observations, datum, prov, evidence)
+
+private meta def elabOpsWithDefault (type : Expr) (ops : Array (TSyntax `spytial_op))
+    (scope? : Option SelScope := none) : TermElabM SpytialSpec := do
+  let attached? ← lookupSpecForType type
+  if attached?.isNone then
+    if let some splice := ops.find? (·.raw.isOfKind ``spytialSpliceStx) then
+      logWarningAt splice m!"`..` splices the attached spec, but {type} has none"
+  elabSpytialOps (← scope?.getDM (scopeForType type)) ops (some (attached?.getD []))
 
 /-- `scope?` overrides the scope for callers that know more than `e`'s type does. -/
 private meta def elabUseSiteOps (e : Expr) (ops : Array (TSyntax `spytial_op))
     (scope? : Option SelScope := none) : TermElabM SpytialSpec := do
-  let attached? ← lookupTypeSpec e
-  if attached?.isNone then
-    if let some splice := ops.find? (·.raw.isOfKind ``spytialSpliceStx) then
-      logWarningAt splice m!"`..` splices the attached spec, but {← inferType e} has none"
-  elabSpytialOps (← scope?.getDM (scopeForExpr e)) ops (some (attached?.getD []))
+  elabOpsWithDefault (← inferType e) ops scope?
 
 /-- Extend a value's ordinary selector scope with explicitly requested
     function graphs. -/
@@ -716,14 +743,15 @@ private meta def elabSpytialPayload (t : Syntax) (ops? : Option (Array (TSyntax 
   -- scope needs `SpytialEnum` — so wrapping only the walk would leave the spec
   -- half persisting its own. Both results are plain data.
   withoutModifyingEnv do
-    let (e, observations, di, prov, evidence) ← elabRelationalized t cfg observerSyntaxes
+    let (e, observations, rooted, prov, evidence) ← elabRelationalized t cfg observerSyntaxes
+    let di := rooted.data
     let spec? ← match ops? with
       | some ops => do
-        let scope ← scopeForObservations (← scopeForExpr e) observations
-        let scope := if observations.isEmpty then scope else scopeWithObservedData scope di
+        let scope ← scopeForObservations (← scopeForExpr e) observations.functions
+        let scope := if observerSyntaxes.isEmpty then scope else scopeWithObservedData scope di
         some <$> elabUseSiteOps e ops (some scope)
       | none => lookupTypeSpec e
-    let spec? ← spec?.mapM fun s => liftM (resolveLeanSelectors e di prov s evidence)
+    let spec? ← spec?.mapM fun s => liftM (resolveLeanSelectors e di prov s evidence rooted.root)
     return (di, ← spec?.mapM fun s => Lean.ofExcept (SpytialSpec.render s))
 
 private meta def spytialProps (di : JsonDataInstance) (cndSpec? : Option String) : Json :=
@@ -750,8 +778,8 @@ private meta def optionalTerms (stx : Syntax) : Array Syntax :=
   if stx.getNumArgs == 0 then #[] else stx[2].getSepArgs
 
 /-- `#spytial <term>` displays a spatial relational diagram in the Lean infoview.
-    `observing [f₁, …]` adds each named function's graph over every compatible
-    value in the datum. A `with [<ops>]` list overrides the type's attached
+    `observing [f₁, …]` adds function graphs and proved predicate tuples over
+    compatible represented values. A `with [<ops>]` list overrides the type's attached
     `spytial_spec`; `..` in the list splices it back in:
     ```
     #spytial myTree with [orientation left left below, atomStyle Tree (borderStyle "#0066ff")]
@@ -781,6 +809,19 @@ meta def elabSpytialSpecCmd : CommandElab := fun
       let spec ← elabSpytialOps scope ops.getElems
       setSpytialSpec declName spec
   | stx => throwError "Unexpected syntax {stx}."
+
+/-- Set the default layout for inspections of this type in the current goal and its descendants. -/
+syntax (name := spytialSpecTactic) "spytial_spec " term:max " [" spytial_op,*,? "]" : tactic
+
+open Tactic in
+@[tactic spytialSpecTactic]
+meta def elabSpytialSpecTactic : Tactic := fun
+  | `(tactic| spytial_spec $root:term [$ops,*]) => withMainContext do
+    let type ← instantiateMVars (← Term.withSynthesize <| Term.elabType root)
+    if type.hasMVar then throwErrorAt root "a proof-local layout requires a fully specified type"
+    let spec ← elabOpsWithDefault type ops.getElems
+    replaceMainGoal [← attachProofLayout (← getMainGoal) type spec]
+  | _ => throwUnsupportedSyntax
 
 /-- `spytial_ops <name> : <Type> [<ops>]` binds a reusable op list, elaborated
     against `<Type>` as root. The name is declared as an `SpytialOps` constant,
@@ -849,11 +890,10 @@ meta def elabSpytialSpecDebug : CommandElab := fun
     let specStr ← liftTermElabM do
       let e ← elabTermInstantiated t
       let spec ← elabUseSiteOps e ops.getElems
-      -- the walk only resolves raw Lean selectors; skipping it also skips asking
-      -- each walked type for a `SpytialIdentity`
-      if spec.hasLeanRel then
-        let (di, prov, evidence) ← relationalizeWithEvidence e
-        Lean.ofExcept (← resolveLeanSelectors e di prov spec evidence).render
+      -- Plain relational selectors can lower without walking the term.
+      if spec.needsDatum then
+        let (rooted, prov, evidence) ← Reify.relationalizeWithEvidence e
+        Lean.ofExcept (← resolveLeanSelectors e rooted.data prov spec evidence rooted.root).render
       else
         Lean.ofExcept spec.render
     logInfo m!"{specStr}"
@@ -868,7 +908,7 @@ syntax (name := spytialDatumDebug) "#spytial.datum " term
 meta def elabSpytialDatumDebug : CommandElab := fun stx => do
   let (_, _, di, _, _) ← liftTermElabM do
     elabRelationalized stx[1] {} (optionalTerms stx[2])
-  logInfo m!"{(toJson di).pretty}"
+  logInfo m!"{(toJson di.data).pretty}"
 
 /-- `#spytial.proof <term>` draws a proof term without filtering Prop-typed fields. -/
 syntax (name := spytialProofCmd) "#spytial.proof " term (" with " "[" spytial_op,*,? "]")? : command
@@ -891,7 +931,7 @@ syntax (name := spytialProofDatumDebug) "#spytial.proof.datum " term : command
 meta def elabSpytialProofDatumDebug : CommandElab := fun
   | `(#spytial.proof.datum $t:term) => do
     let (_, _, di, _, _) ← liftTermElabM <| elabRelationalized t { filterProofs := false }
-    logInfo m!"{(toJson di).pretty}"
+    logInfo m!"{(toJson di.data).pretty}"
   | stx => throwError "Unexpected syntax {stx}."
 
 declare_syntax_cat spytialEvidenceClause
@@ -932,21 +972,21 @@ private meta def resolveContextConfig (clauses : Syntax) : TermElabM Iykyk.Confi
 private meta def spytialInContextProps? (subject : Expr)
     (ops? : Option (Array (TSyntax `spytial_op)) := none)
     (walkConfig : WalkConfig := {}) (config : Iykyk.Config := contextConfig)
-    (observations : Array Expr := #[]) :
+    (observations predicates : Array Expr := #[]) :
     TermElabM (Option Json × ContextViewStatus) := do
-  let (status, view?) ← wdykInContext subject walkConfig config observations
+  let (status, view?) ← wdykInContext subject walkConfig config observations predicates
   let some view := view? | return (none, status)
   let spec? ← match ops? with
     | some ops => do
       let scope ← scopeForAfaik view.afaik (← scopeForExpr subject) observations
-      let scope := if observations.isEmpty then scope
+      let scope := if observations.isEmpty && predicates.isEmpty then scope
         else scopeWithObservedData scope view.data
       some <$> elabUseSiteOps subject ops (some scope)
     | none => lookupTypeSpec subject
   -- Both selector styles range over this datum. Lean predicates retain the
   -- represented terms and checked evidence instead of reading display labels.
   let spec? ← spec?.mapM fun s =>
-    liftM (resolveLeanSelectors view.datum view.data view.prov s view.evidence)
+    liftM (resolveLeanSelectors view.datum view.data view.prov s view.evidence view.inspection.root)
   let props := spytialProps view.data
     (← spec?.mapM fun s => Lean.ofExcept (SpytialSpec.render s))
   -- Only exact Lean free-variable identities establish cross-view correspondence.
@@ -969,25 +1009,26 @@ private meta def spytialInContextProps? (subject : Expr)
   let props := props.setObjVal! "inspection" (toJson view.inspection)
     |>.setObjVal! "identities" (toJson identities)
     |>.setObjVal! "localContext" (toJson context)
-    |>.setObjVal! "observations" (toJson (← observations.mapM fun e =>
-        return (← ppExpr e.getAppFn).pretty))
+    |>.setObjVal! "observations" (toJson ((← observations.mapM fun e =>
+        return (← ppExpr e.getAppFn).pretty) ++ (← predicates.mapM fun p => liftM (predicateObservationName p))))
   return (some props, status)
 
 /-- Programmatic entry point for Spytial's IYKYK consumer. -/
 public meta def spytialInContextProps (subject : Expr)
     (ops? : Option (Array (TSyntax `spytial_op)) := none)
     (walkConfig : WalkConfig := {}) (hypotheses : Array Expr := #[])
-    (observations : Array Expr := #[]) :
+    (observations predicates : Array Expr := #[]) :
     TermElabM (Json × ContextViewStatus) := do
   let (props?, status) ←
-    spytialInContextProps? subject ops? walkConfig { contextConfig with hypotheses } observations
+    spytialInContextProps? subject ops? walkConfig { contextConfig with hypotheses } observations predicates
   let some props := props? | throwError "spytial: IYKYK found an inconsistent context"
   return (props, status)
 
 private meta def inspectionPointProps (subject : Expr) (stx : Syntax) :
     TermElabM (Option Json) := do
+  let observers ← resolveObservations stx[2]
   let (props?, status) ← spytialInContextProps? subject (optionalOps stx[4]) {}
-    (← resolveContextConfig stx[3]) (← resolveObservations stx[2])
+    (← resolveContextConfig stx[3]) observers.functions observers.predicates
   if status.inconsistent then
     logWarning "spytial: IYKYK found an inconsistent context; no diagram rendered"
     return none
@@ -1012,8 +1053,7 @@ syntax spytialSite := "spytial " term (" observing " "[" term,* "]")?
 open Tactic in
 /-- `spytial term` asks IYKYK what the current context establishes about
     `term`, translates that knowledge into relational data, and displays it.
-    `observing [f₁, ...]` parameterizes that translation and displays each
-    function over every compatible represented value;
+    `observing [f₁, ...]` displays function graphs and proved predicate tuples.
     `fyi [h₁, ...]` supplies proved hypotheses or forward rules to IYKYK;
     `nvm [h₁, ...]` omits local declarations from this extraction;
     `with [...]` supplies Spytial layout operations. -/
@@ -1095,7 +1135,7 @@ meta def elabSpytialDatumTactic : Tactic := fun stx => withMainContext do
   let subject ← elabTermInstantiated stx[1]
   let observations ← resolveObservations stx[2]
   let (status, view?) ← wdykInContext subject {}
-    (← resolveContextConfig stx[3]) observations
+    (← resolveContextConfig stx[3]) observations.functions observations.predicates
   if status.inconsistent then
     logWarning "spytial: IYKYK found an inconsistent context; no datum produced"
   else if let some view := view? then
