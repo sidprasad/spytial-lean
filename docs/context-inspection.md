@@ -80,7 +80,7 @@ selected root and its source term so the infoview can identify what was inspecte
 The AVL demo displays the key field and observes `height` and `bf` in each proof
 branch. Two inputs have the same exposed constructors and the same root balance
 factor of −2. The heights of the unopened grandchildren determine whether promoting
-the left child repairs the root. [AVL walkthrough](../Demos/AVL.md)
+the left child repairs the root. [AVL demo](../Demos/AVL.lean)
 
 Contradiction checks still happen before projection. Inconsistency and
 extraction truncation keep their existing behavior. Programmatic callers that

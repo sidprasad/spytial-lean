@@ -38,7 +38,7 @@ See [layout specifications](docs/layout.md) to customize a diagram or
 Place the cursor on a theorem's name and expand **Spytial inspections** in the
 infoview to [compare its proof inspections](docs/theorem-inspections.md).
 
-The [DCIC tree-set demo](Demos/DCICSetsFromTrees.md) follows one insertion through
+The [DCIC tree-set demo](Demos/DCICSetsFromTrees.lean) follows one insertion through
 two possible rotations and shows how a root with balance factor zero can hide
 an unbalanced child.
 

@@ -13,9 +13,7 @@ is worth keeping. The next inspection shows which subtree can supply a pivot.
 
 This experiment specializes Alexander Gillon’s verified map to natural-number keys
 and retains balance, cached heights and the in-order key sequence. The trial rotation
-is our question. Gillon’s implementation takes the successful branch. See the
-[full development](../examples/mathlib/gillon/Gillon.lean) and
-[illustrated walkthrough](GillonAVL.md).
+is our question. Gillon’s implementation takes the successful branch.
 -/
 
 namespace GillonAVL

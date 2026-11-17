@@ -11,8 +11,7 @@ its height and its balance factor. After each rotation, the instructor draws the
 For one example, see Scott Wehrwein's CSCI 241 lecture
 (https://facultyweb.cs.wwu.edu/~wehrwes/courses/csci241_23s/lectures/L11/L11B.pdf).
 
-This file makes those pictures from Lean. The companion walkthrough in `Demos/AVL.md`
-starts at the branch where the reader can predict which key will become the new root.
+This file makes those pictures from Lean.
 
 1. Define the tree and draw concrete trees with `#spytial`.
 2. Write `rebalance` as in the slides, with an inspection at each case.

@@ -7,8 +7,7 @@ The last exercise of DCIC’s *Sets from Trees*, §18.2.3,
 asks whether a double rotation can leave a height gap of two. The answer depends on **where
 in the insertion** we inspect the tree. Start at the three `#spytial` commands. Then select
 the name of either repair theorem in the infoview and expand **Spytial inspections**.
-[DCIC chapter](https://dcic-world.org/2025-08-27/sets-from-trees.html) ·
-[Illustrated walkthrough](DCICSetsFromTrees.md)
+[DCIC chapter](https://dcic-world.org/2025-08-27/sets-from-trees.html)
 
 We use DCIC’s names. The old root is `p`, its left child is `q`, and `q.right` has root `r`.
 The four subtrees, in key order, are `A`, `B₁`, `B₂`, and `C`. Let `k` be the height of `C`.
