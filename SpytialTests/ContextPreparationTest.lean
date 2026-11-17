@@ -28,15 +28,22 @@ private meta def assertProofs (context : InspectionContext) (claims : Array Expr
     unless ← context.proofs.anyM (fun proof => do isDefEq (← inferType proof) claim) do
       throwError "missing expected evidence for {claim}"
 
+/-- Match `fyi`: preserve a bare local rule, including its implicit instance binders. -/
+private meta def elabRule (rule : Syntax) : TermElabM Expr := do
+  if rule.isIdent then
+    if let some e@(.fvar _) ← Term.resolveId? rule then return e
+  Term.elabTerm rule none
+
 elab "check_preparation " root:term " using " "[" rules:term,* "]"
     " proves " "[" claims:term,* "]" : tactic => withMainContext do
   let root ← Term.elabTerm root none
-  let rules ← rules.getElems.mapM (Term.elabTerm · none)
+  let rules ← rules.getElems.mapM (elabRule ·)
   let claims ← claims.getElems.mapM (Term.elabType ·)
   let goal ← getMainGoal
-  let context ← prepareInspectionContext root { hypotheses := rules }
-  if context.truncated || context.contradiction?.isSome then throwError "unexpected status"
-  assertProofs context claims
+  for simplify in #[false, true] do
+    let context ← prepareInspectionContext root { hypotheses := rules, simplify }
+    if context.truncated || context.contradiction?.isSome then throwError "unexpected status"
+    assertProofs context claims
   if ← goal.isAssigned then throwError "inspection solved the user's goal"
 
 elab "check_normalization " "[" facts:term,* "]" " using " "[" rules:term,* "]"
@@ -73,6 +80,21 @@ example (P Q S : Prop) (hp : P) (produce : P → ¬¬Q) (finish : Q → S) : Tru
 
 example (P Q S : Prop) (h : P ↔ Q) (finish : (P → Q) → S) : True := by
   check_normalization [h] using [finish] proves [S]
+  trivial
+
+-- Display decomposition must not erase premises needed by a supplied forward rule.
+example (P Q S : Prop) (h : P ∧ Q) (finish : (P ∧ Q) → S) : True := by
+  check_preparation h using [finish] proves [P, Q, S]
+  trivial
+
+example (P : Nat → Prop) (S : Prop) (h : ∃ x, P x) (finish : (∃ x, P x) → S) : True := by
+  check_preparation h using [finish] proves [P (Classical.choose h), S]
+  trivial
+
+-- Non-Prop instances are typing data, even when the selected subject is a single proof.
+example (α : Type) [Inhabited α] (P Q : α → Prop) (x : α) (h : P x)
+    (rule : ∀ [Inhabited α] (x : α), P x → Q x) : True := by
+  check_preparation h using [rule] proves [Q x]
   trivial
 
 elab "check_derived_witness " root:term " using " rule:term : tactic => withMainContext do
@@ -147,6 +169,12 @@ example (R : Nat → Nat → Prop) (a b : Nat) (known : R a b) (h : ∃ w, R a w
   check_no_synthetic_witness a using []
   trivial
 
+-- Omitting duplicate derived witnesses must not discard an original premise about a choice.
+example (R : Nat → Nat → Prop) (a b : Nat) (known : R a b) (h : ∃ w, R a w)
+    (value : Classical.choose h = 7) : True := by
+  check_preparation a using [] proves [Classical.choose h = 7]
+  trivial
+
 example (P : Nat → Prop) (R : Nat → Nat → Prop) (a b : Nat) (known : R a b)
     (hp : P a) (witness : ∀ n, P n → ∃ w, R n w) : True := by
   check_no_synthetic_witness a using [witness]
@@ -203,7 +231,7 @@ elab "check_excluded_premise " root:term " using " rule:term
     " without " omittedName:ident : tactic =>
   withMainContext do
     let root ← Term.elabTerm root none
-    let rule ← Term.elabTerm rule none
+    let rule ← elabRule rule
     let omitted ← getFVarId omittedName
     let context ← prepareInspectionContext root {
       hypotheses := #[rule], excludedHypotheses := #[omitted] }
@@ -214,13 +242,28 @@ example (P : Nat → Prop) (h : P 0) (step : P 0 → False) : True := by
   check_excluded_premise (0 : Nat) using step without h
   trivial
 
+-- Explicit exclusion also prevents an ambient data instance from instantiating a rule.
+example (α : Type) [inst : Inhabited α] (P : α → Prop) (x : α) (h : P x)
+    (reject : ∀ [Inhabited α], P x → False) : True := by
+  check_excluded_premise h using reject without inst
+  trivial
+
 elab "check_proof_focus " root:term " using " rule:term : tactic => withMainContext do
   let root ← Term.elabTerm root none
-  let rule ← Term.elabTerm rule none
+  let rule ← elabRule rule
   let context ← prepareInspectionContext root { hypotheses := #[rule] }
   if context.contradiction?.isSome then throwError "proof inspection used an ambient premise"
   assertProofs context #[]
 
 example (P Q : Prop) (hp : P) (hq : Q) (reject : Q → False) : True := by
   check_proof_focus hp using reject
+  trivial
+
+-- A Prop-valued instance is a premise, so it cannot leak into a focused proof inspection.
+private class PropInstance (P : Prop) : Prop where
+  proof : P
+
+example (P Q : Prop) [PropInstance P] (hq : Q)
+    (reject : ∀ [PropInstance P], Q → False) : True := by
+  check_proof_focus hq using reject
   trivial

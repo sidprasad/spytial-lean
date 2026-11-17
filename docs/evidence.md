@@ -21,26 +21,27 @@ branch as an unconditional tuple.
 
 ## Preparation, inference, and interpretation
 
-1. Collect permitted local proofs, or decompose the selected proof subject.
+1. Collect permitted local proofs, or select the proof subject itself.
    `nvm` excludes a declaration as an evidence source for this inspection;
    `fyi` supplies additional proofs or forward rules. Exclusion takes precedence
    for the same bare local declaration. It does not retract assumptions from
    the user's theorem or invalidate other proofs that depend on them.
-2. Use Lean's simplifier and eliminators to expose conjunctions, equivalence
-   directions, and shared existential witnesses. Simplification is enabled at
-   the user-facing inspection entry points. Named applications keep the
-   vocabulary of their proof types for display.
-3. Run Aesop's normalization engine once, with selected forward rules and Lean's
-   simplifier. Standard conjunction eliminators, `Iff.mp`/`Iff.mpr`,
+2. Pass those proofs intact to Aesop's normalization engine, with selected forward
+   rules and Lean's simplifier. Standard conjunction eliminators, `Iff.mp`/`Iff.mpr`,
    `Classical.choose_spec`, and `Or.resolve_left`/`Or.resolve_right` participate
    in that same engine. Aesop exposes a derived existential, feeds its body to
    subsequent rules, and simplifies intermediate conclusions. Spytial does not
    schedule those steps or restart inference after each conclusion. The engine
    matches admitted proof premises; it does not enumerate arbitrary values to
-   instantiate universal statements.
-4. Export derived proofs from the temporary proof state and check them in the
+   instantiate universal statements. A rule can consume either a compound premise
+   or its components; display decomposition does not discard the original premise.
+3. Export derived proofs from the temporary proof state and check them in the
    original scope. A hypothesis introduced by automation is not itself evidence
    in the original scope until its derivation has been discharged.
+4. Use Lean's simplifier and eliminators to select display propositions and shared
+   existential witnesses from the original and derived proofs. Simplification is
+   enabled at the user-facing inspection entry points. Named applications keep
+   the vocabulary of their proof types for display.
 5. Select the proofs relevant to the values actually represented by the root,
    then decode supported propositions as relations and equalities as refinements.
 6. Evaluate requested observations. Particular residual expressions can generate
@@ -55,14 +56,16 @@ questions, relation decoding, and visualization belong to Spytial.
 proof terms, witness terms, and operational status. The scope interprets terms;
 it does not automatically authorize every ambient proposition as a search premise.
 The temporary forward context exposes only admitted proofs to Aesop matching.
+Non-Prop instances remain available to instantiate rules; Prop-valued instances
+must be admitted evidence. Explicitly excluded instances are unavailable to search.
 The record is an internal integration object, not an unforgeable theorem type.
 The checking boundary is `checkInspectionProof`.
 
 ## Bounds and state
 
 Preparation uses Aesop's default normalization budget (currently 100 successful
-steps), caps admission at 128 propositions, and has one heartbeat budget for the
-normalization call.
+steps), caps both input premises and retained display propositions at 128, and has
+one heartbeat budget for the normalization call.
 A step can apply a forward rule to multiple matches or simplify hypotheses.
 These steps replace the former adapter batches; they are not proof depth.
 Definitionally equal conclusions are omitted, including choice bodies whose
@@ -158,7 +161,7 @@ Ordinary `saturate` does not run `simp` between applications. For example,
 Spytial uses Aesop's existing normalization driver, which handles that
 alternation too. Direct adapter tests exercise both examples without calling
 Spytial's structural preparation, and check nested dependent choices in the
-original scope. The structural traversal before and after automation serves
+original scope. The structural traversal runs after automation and serves
 presentation: selecting leaf propositions and retaining shared witness labels.
 
 The integration uses the normalization API in the pinned Aesop dependency,

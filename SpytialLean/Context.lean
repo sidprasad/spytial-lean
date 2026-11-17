@@ -81,7 +81,8 @@ private partial def mentionsRedundantWitness (config : InspectionConfig)
   term.foldlM (fun found child =>
     if found then pure true else mentionsRedundantWitness config ctx child) false
 
-/-- Structural preparation uses Lean eliminators. An unresolved disjunction is kept whole. -/
+/-- Select display propositions and shared witnesses using Lean eliminators after inference.
+An unresolved disjunction is kept whole. -/
 private partial def expose (config : InspectionConfig) (ctx : InspectionContext) (proof : Expr) :
     MetaM InspectionContext := do
   let proof ← if config.simplify then
@@ -114,6 +115,8 @@ private def forwardRules (config : InspectionConfig) : MetaM (Array Expr) := do
   let mut rules := #[]
   for rule in config.hypotheses do
     if rule.isFVar && config.excludedHypotheses.contains rule.fvarId! then continue
+    -- `fyi` makes both directions usable as rules. Aesop's structural Iff eliminators only
+    -- expose implications as premises; derived implications are not themselves registered rules.
     if (← propositionOf rule).isAppOfArity ``Iff 2 then
       rules := rules.push (← mkAppM ``Iff.mp #[rule])
       rules := rules.push (← mkAppM ``Iff.mpr #[rule])
@@ -131,21 +134,28 @@ def prepareInspectionContext (subject : Expr) (config : InspectionConfig := {}) 
   let mut ctx : InspectionContext := {
     root, scope := ← instantiateLCtxMVars (← getLCtx), localInstances := ← getLocalInstances }
   ctx ← withLCtx ctx.scope ctx.localInstances do
-    if ← isProp (← inferType root) then expose config ctx root
+    if ← isProp (← inferType root) then admit config ctx root
     else
       let mut initial := ctx
       for decl in ← getLCtx do
         unless decl.isImplementationDetail || config.excludedHypotheses.contains decl.fvarId do
-          if ← isProp decl.type then initial ← expose config initial (mkFVar decl.fvarId)
+          if ← isProp decl.type then initial ← admit config initial (mkFVar decl.fvarId)
       return initial
   let rules ← forwardRules config
-  let (proofs, truncated) ← withLCtx ctx.scope ctx.localInstances do
-    forwardInspectionProofs ctx.proofs rules config.simplify config.maxSteps config.maxHeartbeats
-  ctx := { ctx with truncated := ctx.truncated || truncated }
+  let premises := ctx.proofs
+  let searchInstances := ctx.localInstances.filter fun inst =>
+    !config.excludedHypotheses.contains inst.fvar.fvarId!
+  let (proofs, truncated) ← withLCtx ctx.scope searchInstances do
+    forwardInspectionProofs premises rules config.simplify config.maxSteps config.maxHeartbeats
+  -- Keep compound premises available to rules that consume them. Decomposition only chooses
+  -- display propositions; it must not replace the context supplied to Aesop.
+  ctx := { ctx with proofs := #[], truncated := ctx.truncated || truncated }
+  for premise in premises do
+    ctx ← expose config ctx premise
   for proof in proofs do
     unless ← mentionsRedundantWitness config ctx (← inferType proof) do
       ctx ← expose config ctx proof
-  let contradiction? ← withLCtx ctx.scope ctx.localInstances do inspectionContradiction? ctx.proofs
+  let contradiction? ← withLCtx ctx.scope searchInstances do inspectionContradiction? ctx.proofs
   return { ctx with contradiction? }
 
 end

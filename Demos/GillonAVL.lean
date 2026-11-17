@@ -11,7 +11,9 @@ The keys and the height of the untouched right subtree are unknown. Yet Lean kno
 return value* with those facts in scope. Its two child heights decide whether the code
 is worth keeping. The next inspection shows which subtree can supply a pivot.
 
-This experiment specializes Alexander Gillon’s verified map to natural-number keys
+This experiment specializes
+[Alexander Gillon’s verified map, Appendix A](https://www.andrew.cmu.edu/user/avigad/Students/gillon_landc_thesis.pdf#page=6)
+to natural-number keys
 and retains balance, cached heights and the in-order key sequence. The trial rotation
 is our question. Gillon’s implementation takes the successful branch.
 -/

@@ -22,12 +22,13 @@ public meta def checkInspectionProof (proposition proof : Expr) : MetaM Expr := 
   | .ok _ => return proof
 
 /-- Keep ambient declarations available for typing, but expose only admitted evidence to tactics
-that search the local context. The caller asserts its copies of those proofs in this scope. -/
+that search the local context. Data instances remain available for rule instantiation; Prop-valued
+instances must be admitted evidence. The caller asserts its copies of those proofs in this scope. -/
 public meta def withInspectionScope (proofs : Array Expr) (action : MetaM α) : MetaM α := do
   let mut scope ← getLCtx
   for decl in scope do scope := scope.setKind decl.fvarId .implDetail
-  let instances := (← getLocalInstances).filter fun localInstance =>
-    proofs.any (· == localInstance.fvar)
+  let instances ← (← getLocalInstances).filterM fun localInstance => do
+    return !(← isProp (← inferType localInstance.fvar)) || proofs.any (· == localInstance.fvar)
   withLCtx scope instances action
 
 /-- Lean's contradiction tactic decides when the retained premises forbid an ordinary diagram.
