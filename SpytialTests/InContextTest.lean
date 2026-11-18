@@ -281,6 +281,36 @@ private meta def node (left right : Expr) : Expr :=
     assertCanon "consumer.knownObservation" view.data
       "Nat|x\nNat|3\nNat|¿x?\nmeasure[Nat,Nat]:0,1;1,2"
 
+/- A successor in a fact is a number, not a `Nat.succ` node with field `n`. It
+   reuses the observed result `h + 1`, even though the fact spells `1` with `OfNat`. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `measure (← mkArrow (mkConst ``Nat) (mkConst ``Nat)) fun measure => do
+  withLocalDeclD `R (← mkArrow (mkConst ``Nat) (← mkArrow (mkConst ``Nat)
+      (mkSort Level.zero))) fun R => do
+  withLocalDeclD `x (mkConst ``Nat) fun x => do
+  withLocalDeclD `h (mkConst ``Nat) fun h => do
+    let successor ← mkAppM ``HAdd.hAdd #[h, mkNatLit 1]
+    withLocalDeclD `known (← mkAppM ``Eq #[mkApp measure x, successor]) fun _ => do
+    withLocalDeclD `related (mkApp2 R x successor) fun _ => do
+      let view ← viewOf "consumer.factSuccessor" x {} #[mkApp measure x]
+      assertCanon "consumer.factSuccessor" view.data
+        "Nat|x\nNat|h + 1\nR[Nat,Nat]:0,1\nmeasure[Nat,Nat]:0,1"
+
+/- Without observations, the label names its operands by their drawn atoms. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `measure (← mkArrow (mkConst ``Nat) (mkConst ``Nat)) fun measure => do
+  withLocalDeclD `R (← mkArrow (mkConst ``Nat) (← mkArrow (mkConst ``Nat)
+      (mkSort Level.zero))) fun R => do
+  withLocalDeclD `x (mkConst ``Nat) fun x => do
+  withLocalDeclD `k (mkConst ``Nat) fun k => do
+  withLocalDeclD `byLocal (mkApp2 R x (← mkAppM ``HAdd.hAdd #[k, mkNatLit 1])) fun _ => do
+  withLocalDeclD `byMeasure
+      (mkApp2 R x (← mkAppM ``HAdd.hAdd #[mkApp measure x, mkNatLit 1])) fun _ => do
+    let view ← viewOf "consumer.unobservedSuccessor" x
+    assertCanon "consumer.unobservedSuccessor" view.data
+      "Nat|x\nNat|k\nNat|k + 1\nNat|¿x?\nNat|¿x? + 1\n\
+       R[Nat,Nat]:0,2;0,4\nmeasure[Nat,Nat]:0,3"
+
 private def Tree.height : Tree → Nat
   | .leaf _ => 0
   | .node left right => 1 + max (height left) (height right)

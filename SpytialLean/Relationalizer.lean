@@ -1409,6 +1409,39 @@ private meta def walkSymbolicResult? (cfg : WalkConfig) (e : Expr) :
     return some (← symbolicObservationResult cfg e)
   return none
 
+/-- In a proof context, an open successor such as `k + 1` is a number, not a
+    `Nat.succ` node with field `n`. Reuse the atom of an observation result with
+    the same value; otherwise label a new value atom by its operands' labels. -/
+private meta def walkSymbolicSuccessor? (cfg : WalkConfig) (e : Expr)
+    (recurse : Expr → StateT WalkState MetaM String) :
+    StateT WalkState MetaM (Option String) := do
+  unless cfg.shareSymbolicValues && (e.hasFVar || e.hasMVar) do return none
+  unless e.isAppOfArity ``HAdd.hAdd 6 || e.isAppOfArity ``Nat.add 2 ||
+      e.isAppOfArity ``Nat.succ 1 do return none
+  unless (← whnf (← inferType e)).isConstOf ``Nat do return none
+  unless (← whnf e).isAppOfArity ``Nat.succ 1 do return none
+  -- Observation results are keyed by their simplified spelling, which writes
+  -- numerals as raw literals rather than `OfNat.ofNat`.
+  let normalized ← normalizeReferenceTerm e
+  for key in [e, normalized] do
+    if let some id := (← get).applicationAtoms[(⟨key⟩ : ExprStructEq)]? then return some id
+  let indexes ← dataArgumentIndexesOf e
+  let mut operands : Array RenderedObservationExpression := #[]
+  for index in indexes do
+    let argument := e.getAppArgs[index]!
+    if let some value ← observationValue? argument then
+      operands := operands.push { text := (← ppExpr value).pretty, atomic := true }
+    else
+      let id ← recurse argument
+      let label ← match (← get).atoms.find? (·.id == id) with
+        | some atom => pure atom.label
+        | none => pure (← ppExpr argument).pretty
+      operands := operands.push { text := label, atomic := !label.contains ' ' }
+  let id ← addSymbolicObservationAtom cfg e (← renderObservationApplication e indexes operands)
+  modify fun state => { state with
+    applicationAtoms := state.applicationAtoms.insert ⟨normalized⟩ id }
+  return some id
+
 /-- Emit a named application `f xs` as the graph point `f[xs, f xs]`.
     Repeated applications reuse the same output atom. -/
 private meta def emitFunctionGraph? (cfg : WalkConfig)
@@ -1692,6 +1725,9 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
   -- the source spelling of named computations that depend on an observed
   -- application; only other expressions WHNF to expose data constructors.
   let sourceFunctionGraph := (← observedGraphSideCached? cfg eOrig).isSome
+  unless sourceFunctionGraph do
+    if let some id ← walkSymbolicSuccessor? cfg eOrig
+        (fun c => walkExpr cfg c { mode, ancestors := ctx.ancestors }) then return id
   let e ← if sourceFunctionGraph then pure eOrig else Meta.whnf eOrig
   if let some (_, ancestorId) := ctx.ancestors.find? (fun (a, _) => a.equal e) then
     return ancestorId
@@ -1896,6 +1932,9 @@ public meta partial def referenceRelationalize (e : Expr) (cfg : WalkConfig := {
         (fun nested value => refWalk nested value { ctx with mode }) then return id
     if let some id ← walkSymbolicResult? cfg eOrig then return id
     let sourceFunctionGraph := (← observedGraphSideCached? cfg eOrig).isSome
+    unless sourceFunctionGraph do
+      if let some id ← walkSymbolicSuccessor? cfg eOrig
+          (fun c => refWalk cfg c { mode, ancestors := ctx.ancestors }) then return id
     let e ← if sourceFunctionGraph then pure eOrig else Meta.whnf eOrig
     if let some (_, ancestorId) := ctx.ancestors.find? (fun (a, _) => a.equal e) then
       return ancestorId
