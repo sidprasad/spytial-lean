@@ -12,6 +12,8 @@ export interface InspectedValue {
   root: string;
   term: string;
   facts: string[];
+  generatedAtoms?: string[];
+  placeholders?: string[];
 }
 
 export interface InspectionPoint {
@@ -31,6 +33,21 @@ export interface LayoutState {
 
 export function pointTitle(point: InspectionPoint): string {
   return point.point?.title ?? point.inspection?.term ?? 'Inspection';
+}
+
+/** Give each inspection its own placeholder names, including references in
+ * symbolic expressions. The underlying datum is still used for selectors. */
+export function inspectionDisplayData(data: RelationalData, inspection?: InspectedValue,
+  pointNumber?: number): RelationalData {
+  if (pointNumber === undefined || !inspection?.placeholders?.length) return data;
+  const generated = new Set(inspection.generatedAtoms);
+  const patterns = [...inspection.placeholders].sort((a, b) => b.length - a.length)
+    .map(label => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const placeholder = new RegExp(patterns.join('|'), 'g');
+  const suffix = String(pointNumber).replace(/\d/g, digit => '₀₁₂₃₄₅₆₇₈₉'[Number(digit)]);
+  return { ...data, atoms: data.atoms.map(atom => generated.has(atom.id)
+    ? { ...atom, label: atom.label.replace(placeholder, label => label + suffix) }
+    : atom) };
 }
 
 /** Bijection supported by exact Lean identities in the same goal. Never infer

@@ -299,6 +299,10 @@ public meta structure InspectedValue where
   root : String
   term : String
   facts : Array String
+  /-- Atoms whose rendered labels can contain generated placeholders. -/
+  generatedAtoms : Array String := #[]
+  /-- The allocated placeholder spellings, also used inside symbolic expressions. -/
+  placeholders : Array String := #[]
   deriving ToJson, Inhabited
 
 private meta def rootWalkAtomIds (root : String) (witnessIds : Array String)
@@ -437,8 +441,12 @@ private meta def relationalizeContextInspection (context : InspectionContext)
     let state ← labelRefinedLocals (selectedRoot?.getD context.root) rootId refinements state
     let facts ← context.proofs.mapM fun fact => do
       return (← ppExpr (← displayedProposition fact)).pretty
+    let generated := state.atoms.filter fun atom => state.generatedAtoms.contains atom.id
     let inspection : InspectedValue := {
-      root := rootId, term := (← ppExpr context.root).pretty, facts }
+      root := rootId, term := (← ppExpr context.root).pretty, facts
+      generatedAtoms := generated.map (·.id)
+      placeholders := generated.filterMap fun atom =>
+        if state.generatedLabels.contains atom.label then some atom.label else none }
     return (state.toDataInstance, state.provenance,
       substituteKnown refinements 8 context.root, inspection, {
         terms := state.selectorTerms

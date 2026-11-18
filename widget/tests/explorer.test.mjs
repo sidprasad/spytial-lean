@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { correspondingAtoms, continuityOptions, pointTitle } from '../dist/inspection.js';
+import { correspondingAtoms, continuityOptions, inspectionDisplayData, pointTitle } from '../dist/inspection.js';
 
 function point(ids = ['atom_0', 'atom_1'], scope = 'goal', identities = ['a', 'b']) {
   return { point: { scope }, inspection: { term: 'input' },
@@ -11,6 +11,24 @@ function point(ids = ['atom_0', 'atom_1'], scope = 'goal', identities = ['a', 'b
 test('titles use authored captions, otherwise the actual Lean expression', () => {
   assert.equal(pointTitle(point()), 'input');
   assert.equal(pointTitle({ ...point(), point: { title: 'After repaint' } }), 'After repaint');
+});
+
+test('inspection numbers qualify generated names and their symbolic references', () => {
+  const data = { atoms: ['¿x?', '¿x??', '(max ¿x? ¿x??) + 1', 'x', '¿x?', '¿x₁?']
+    .map((label, i) => ({ id: `atom_${i}`, type: 'Nat', label })), relations: [] };
+  const inspection = {
+    generatedAtoms: ['atom_0', 'atom_1', 'atom_2', 'atom_5'],
+    placeholders: ['¿x?', '¿x??', '¿x₁?'],
+  };
+  const display = inspectionDisplayData(data, inspection, 12);
+  assert.deepEqual(display.atoms.map(a => a.label), [
+    '¿x?₁₂', '¿x??₁₂', '(max ¿x?₁₂ ¿x??₁₂) + 1', 'x', '¿x?', '¿x₁?₁₂',
+  ]);
+  assert.deepEqual(display.atoms.map(a => a.id), data.atoms.map(a => a.id));
+  assert.equal(display.relations, data.relations);
+  assert.equal(data.atoms[0].label, '¿x?');
+  assert.equal(inspectionDisplayData(data, inspection), data);
+  assert.equal(inspectionDisplayData(data, {}, 12), data);
 });
 
 test('rotated subtree b follows its Lean identity despite changed traversal IDs', () => {

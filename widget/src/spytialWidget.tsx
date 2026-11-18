@@ -4,7 +4,7 @@ import spytialcore from 'spytial-core';
 // @ts-ignore — virtual module for components bundle (provides mountErrorMessageModal, ErrorAPI)
 import spytialComponents from 'spytial-core-components';
 import {
-  withLeanScalarTypes, pointTitle, correspondingAtoms, continuityOptions,
+  withLeanScalarTypes, pointTitle, inspectionDisplayData, correspondingAtoms, continuityOptions,
   type InspectionPoint, type LayoutState,
 } from './inspection';
 
@@ -292,11 +292,12 @@ function InspectionExplorer({ name, points }: { name: string; points: Inspection
                 disabled={mode === 'compare' && i === (slot === 0 ? right : left)}>
                 {i + 1}. {pointTitle(p)} (line {p.point?.line ?? '?'})
               </option>)}
-            </select> : <strong>{pointTitle(point)}</strong>}
+            </select> : <strong>{multiple && `${index + 1}. `}<span>{pointTitle(point)}</span></strong>}
             <span>Line {point.point?.line ?? '?'}</span>
           </div>
           {point.point?.branch && <p className="spytial-inspection-note">Case {point.point.branch}</p>}
-          {!waiting ? <DiagramWidget {...point} prior={prior?.point !== point ? prior : undefined}
+          {!waiting ? <DiagramWidget {...point} pointNumber={multiple ? index + 1 : undefined}
+            prior={prior?.point !== point ? prior : undefined}
             onSettled={slot === 0 ? state => {
               const settled = { point, state };
               history.current = settled;
@@ -314,7 +315,7 @@ function InspectionExplorer({ name, points }: { name: string; points: Inspection
 }
 
 function DiagramWidget(props: InspectionPoint & {
-  prior?: SettledInspection; onSettled?: (state?: LayoutState) => void;
+  pointNumber?: number; prior?: SettledInspection; onSettled?: (state?: LayoutState) => void;
 }) {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const graphRef = React.useRef<any>();
@@ -392,7 +393,10 @@ function DiagramWidget(props: InspectionPoint & {
         const evaluator = new SGraphQueryEvaluator();
         evaluator.initialize({ sourceData: instance });
         const layoutInstance = new LayoutInstance(spec, evaluator, 0, true);
-        const result = layoutInstance.generateLayout(instance);
+        const displayData = inspectionDisplayData(data, props.inspection, props.pointNumber);
+        const displayInstance = displayData === data ? instance :
+          new JSONDataInstance(withLeanScalarTypes(displayData));
+        const result = layoutInstance.generateLayout(displayInstance);
 
         // Dispatch errors via ErrorAPI (same pattern as sterling-ts / spytial-py)
         if (result.error && CnDCore.ErrorAPI) {
@@ -451,7 +455,7 @@ function DiagramWidget(props: InspectionPoint & {
       graphRef.current = undefined;
       if (containerRef.current) containerRef.current.innerHTML = '';
     };
-  }, [data, props.cndSpec]);
+  }, [data, props.cndSpec, props.inspection, props.pointNumber]);
 
   return (
     <details open={true}>

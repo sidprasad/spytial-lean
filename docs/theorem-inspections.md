@@ -43,6 +43,12 @@ order alone does not establish that two values are successive states of one
 running data structure. Different goals and case branches use independent
 layouts, even when their displayed names or traversal IDs coincide.
 
+In an explorer with multiple points, generated unknowns carry their inspection
+number after the closing question mark, for example `¿x?₁` and `¿x?₂`. It follows
+the point when you switch panes or step through the proof, and appears wherever
+that placeholder is used in a symbolic expression. Lean local names keep their
+original spelling.
+
 Within the **same Lean goal**, an exact shared free-variable identity can
 establish a correspondence. The adapter retains each atom's Lean local-variable
 evidence. It accepts only a one-to-one match of compatible atoms; ambiguous

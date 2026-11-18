@@ -147,6 +147,11 @@ async function main() {
     assert.equal(new Set(points.map(p => p.point.scope)).size, 1);
     assert.ok(points.every(p => p.localContext.some(d => d.name === 'h') &&
       p.observations.some(o => o.endsWith('List.length')) && p.inspection.facts.length));
+    for (const p of points) {
+      const generated = p.dataInstance.atoms.find(a => a.label === '¿x?');
+      assert.ok(p.inspection.generatedAtoms.includes(generated?.id));
+      assert.ok(p.inspection.placeholders.includes(generated.label));
+    }
     for (let i = 0; i < points.length; i++) {
       const widgets = await doc.widgets(lineOf(['spytial input', 'spytial rotated', 'spytial repaired'][i]));
       assert.equal(widgets.length, 1, 'one ordinary widget at each proof line');
@@ -220,8 +225,12 @@ async function main() {
 
     browser = await chromium.launch({ headless: true });
     const { page, errors } = await browserPage(browser, header.props);
+    const unknownLabels = () => page.locator('webcola-cnd-graph').evaluateAll(graphs =>
+      graphs.map(g => Array.from((g.shadowRoot ?? g).querySelectorAll('g.node .label'),
+        n => n.textContent.trim()).filter(label => label.startsWith('¿'))));
     await expandExplorer(page, 3);
     await settled(page, 2);
+    assert.deepEqual(await unknownLabels(), [['¿x?₁'], ['¿x?₃']]);
     assert.deepEqual(errors, [], 'opening the explorer');
     assert.equal(await page.getByLabel('Left inspection point').inputValue(), '0');
     assert.equal(await page.getByLabel('Right inspection point').inputValue(), '2');
@@ -230,6 +239,7 @@ async function main() {
     assert.deepEqual(errors, [], 'changing the right inspection');
     await page.getByLabel('Left inspection point').selectOption('2');
     await settled(page, 2);
+    assert.deepEqual(await unknownLabels(), [['¿x?₃'], ['¿x?₂']]);
     assert.deepEqual(errors, [], 'changing the left inspection');
     const summary = page.getByText('Spytial inspections (3)', { exact: true });
     await summary.click();
@@ -241,6 +251,7 @@ async function main() {
     assert.equal(await page.getByLabel('Right inspection point').inputValue(), '1');
     await page.getByRole('button', { name: 'Step through', exact: true }).click();
     await settled(page, 1);
+    assert.deepEqual(await unknownLabels(), [['¿x?₁']]);
     assert.deepEqual(errors, [], 'switching to stepping');
     await page.getByRole('button', { name: 'Next', exact: true }).click();
     assert.equal(await page.getByLabel('Inspection point', { exact: true }).inputValue(), '1');
@@ -248,6 +259,7 @@ async function main() {
     assert.equal(await page.getByLabel('Inspection point', { exact: true }).inputValue(), '0');
     await page.getByRole('button', { name: 'All points', exact: true }).click();
     await settled(page, 3);
+    assert.deepEqual(await unknownLabels(), [['¿x?₁'], ['¿x?₂'], ['¿x?₃']]);
     assert.equal(await page.getByText('After rotation', { exact: true }).count(), 1);
     assert.equal(await page.getByText('After repaint', { exact: true }).count(), 1);
     assert.deepEqual(errors, []);
