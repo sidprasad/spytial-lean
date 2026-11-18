@@ -1016,8 +1016,10 @@ private meta def observationMethods (cfg : WalkConfig) (simprocs : Simp.Simprocs
           -- into OfNat notation, which would start the same evaluation again.
           unless value.equal e do return .done { expr := value }
       -- A named helper may expose the constructor on which the observer
-      -- recurses, even when the whole observation is still symbolic.
-      if hasObservedHead cfg e then
+      -- recurses, even when the whole observation is still symbolic. Only a
+      -- constant can unfold on it: for a local observer, simp would fold
+      -- `Nat.succ k` back into `k + 1` and repeat this rewrite without end.
+      if hasObservedHead cfg e && e.getAppFn.isConst then
         if let some argument ← observationArgument? e then
           let value ← withTransparency .default <| whnf argument
           unless value.equal argument do
@@ -1477,18 +1479,28 @@ private meta def walkSymbolicArithmetic? (cfg : WalkConfig) (e : Expr) (observed
       isArithmeticApplication e do
     return none
   unless ← isNumber e do return none
-  if let some id ← drawnNumber? e then return some id
-  if let some id ← equalNumber? cfg e then return some id
-  let id ← addSymbolicObservationAtom cfg e (← renderArithmetic e recurse).text
-  let normalized ← normalizeReferenceTerm e
-  modify fun state => { state with
-    applicationAtoms := state.applicationAtoms.insert ⟨normalized⟩ id }
+  let id ← match ← drawnNumber? e with
+    | some id => pure id
+    | none => match ← equalNumber? cfg e with
+      | some id => pure id
+      | none => do
+        let id ← addSymbolicObservationAtom cfg e (← renderArithmetic e recurse).text
+        let normalized ← normalizeReferenceTerm e
+        modify fun state => { state with
+          applicationAtoms := state.applicationAtoms.insert ⟨normalized⟩ id }
+        pure id
+  -- The value is represented, so observers whose domain is a number see it too.
+  -- Record the spelling the walker used before: the source form when observed,
+  -- else its WHNF. Simp folds `Nat.succ k` back into `k + 1`, so an observation
+  -- of `k + 1` would rewrite to `Nat.succ k` and back again without end.
+  let term ← if observed then pure e else whnf e
+  rememberObservationTerm (cfg.recordTerms || !cfg.observations.isEmpty) term id
   return some id
 
 /-- In a proof context, an unobserved call that returns a number over symbolic
     arguments stays one point of the function's graph. Unfolding it would draw
     its implementation, such as the `Decidable.rec` behind `max`. -/
-private meta def keepsSymbolicCall (cfg : WalkConfig) (e : Expr) : MetaM Bool := do
+public meta def keepsSymbolicCall (cfg : WalkConfig) (e : Expr) : MetaM Bool := do
   unless cfg.shareSymbolicValues && cfg.functionGraphs && (e.hasFVar || e.hasMVar) do
     return false
   let type ← whnf (← inferType e)

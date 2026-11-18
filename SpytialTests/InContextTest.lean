@@ -296,6 +296,29 @@ private meta def node (left right : Expr) : Expr :=
       assertCanon "consumer.factSuccessor" view.data
         "Nat|x\nNat|h + 1\nR[Nat,Nat]:0,1\nmeasure[Nat,Nat]:0,1"
 
+/- An arithmetic value is represented, so an observer over numbers sees it. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `measure (← mkArrow (mkConst ``Nat) (mkConst ``Nat)) fun measure => do
+  withLocalDeclD `R (← mkArrow (mkConst ``Nat) (mkSort Level.zero)) fun R => do
+  withLocalDeclD `k (mkConst ``Nat) fun k => do
+    withLocalDeclD `fact (mkApp R (← mkAppM ``HAdd.hAdd #[k, mkNatLit 1])) fun _ => do
+      let view ← viewOf "consumer.arithmeticDomain" k {} #[mkApp measure k]
+      assertCanon "consumer.arithmeticDomain" view.data
+        "Nat|k\nNat|¿x?\nNat|k + 1\nNat|¿y?\nR[Nat]:2\nmeasure[Nat,Nat]:0,1;2,3"
+
+private def inc (n : Nat) : Nat := n + 1
+
+/- A call kept as a graph point is also in the selector scope. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `R (← mkArrow (mkConst ``Nat) (mkSort Level.zero)) fun R => do
+  withLocalDeclD `x (mkConst ``Nat) fun x => do
+    withLocalDeclD `fact (mkApp R (mkApp (mkConst ``inc) x)) fun _ => do
+      let view ← viewOf "consumer.keptCallScope" x
+      assertCanon "consumer.keptCallScope" view.data "Nat|x\nNat|¿x?\nR[Nat]:1\ninc[Nat,Nat]:0,1"
+      let scope ← scopeForContext view.context (← SelScope.ofType ``Nat)
+      unless scope.rels.contains "inc" do
+        throwError "consumer.keptCallScope: expected inc in scope"
+
 /- Integer arithmetic over a cast is one number, not the `match` behind `Int`
    subtraction or an `Int.ofNat` node for the literal. -/
 #eval show Lean.Elab.TermElabM Unit from do

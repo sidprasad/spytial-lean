@@ -626,7 +626,11 @@ private meta def isWitnessTerm (context : InspectionContext) (expression : Expr)
 private meta partial def functionGraphScopeEntries (context : InspectionContext) (cfg : WalkConfig)
     (value : Expr) : MetaM (Array (String × Nat) × Array (Option Name)) := do
   let value ← instantiateMVars value
-  let value ← if (← observedGraphSide? cfg value).isSome then pure value else whnf value
+  -- Match the walker: observed calls and unobserved numeric calls over symbolic
+  -- arguments stay graph points, so their relations belong in scope.
+  let keep := (← observedGraphSide? cfg value).isSome ||
+    (← keepsSymbolicCall { cfg with shareSymbolicValues := true } value)
+  let value ← if keep then pure value else whnf value
   if isWitnessTerm context value then
     return (#[], #[← typeHead? (← inferType value)])
   let mut relations := #[]
