@@ -281,9 +281,101 @@ private meta def node (left right : Expr) : Expr :=
     assertCanon "consumer.knownObservation" view.data
       "Nat|x\nNat|3\nNat|¿x?\nmeasure[Nat,Nat]:0,1;1,2"
 
+/- A successor in a fact is a number, not a `Nat.succ` node with field `n`. It
+   reuses the observed result `h + 1`, even though the fact spells `1` with `OfNat`. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `measure (← mkArrow (mkConst ``Nat) (mkConst ``Nat)) fun measure => do
+  withLocalDeclD `R (← mkArrow (mkConst ``Nat) (← mkArrow (mkConst ``Nat)
+      (mkSort Level.zero))) fun R => do
+  withLocalDeclD `x (mkConst ``Nat) fun x => do
+  withLocalDeclD `h (mkConst ``Nat) fun h => do
+    let successor ← mkAppM ``HAdd.hAdd #[h, mkNatLit 1]
+    withLocalDeclD `known (← mkAppM ``Eq #[mkApp measure x, successor]) fun _ => do
+    withLocalDeclD `related (mkApp2 R x successor) fun _ => do
+      let view ← viewOf "consumer.factSuccessor" x {} #[mkApp measure x]
+      assertCanon "consumer.factSuccessor" view.data
+        "Nat|x\nNat|h + 1\nR[Nat,Nat]:0,1\nmeasure[Nat,Nat]:0,1"
+
+/- An arithmetic value is represented, so an observer over numbers sees it. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `measure (← mkArrow (mkConst ``Nat) (mkConst ``Nat)) fun measure => do
+  withLocalDeclD `R (← mkArrow (mkConst ``Nat) (mkSort Level.zero)) fun R => do
+  withLocalDeclD `k (mkConst ``Nat) fun k => do
+    withLocalDeclD `fact (mkApp R (← mkAppM ``HAdd.hAdd #[k, mkNatLit 1])) fun _ => do
+      let view ← viewOf "consumer.arithmeticDomain" k {} #[mkApp measure k]
+      assertCanon "consumer.arithmeticDomain" view.data
+        "Nat|k\nNat|¿x?\nNat|k + 1\nNat|¿y?\nR[Nat]:2\nmeasure[Nat,Nat]:0,1;2,3"
+
+private def inc (n : Nat) : Nat := n + 1
+
+/- A call kept as a graph point is also in the selector scope. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `R (← mkArrow (mkConst ``Nat) (mkSort Level.zero)) fun R => do
+  withLocalDeclD `x (mkConst ``Nat) fun x => do
+    withLocalDeclD `fact (mkApp R (mkApp (mkConst ``inc) x)) fun _ => do
+      let view ← viewOf "consumer.keptCallScope" x
+      assertCanon "consumer.keptCallScope" view.data "Nat|x\nNat|¿x?\nR[Nat]:1\ninc[Nat,Nat]:0,1"
+      let scope ← scopeForContext view.context (← SelScope.ofType ``Nat)
+      unless scope.rels.contains "inc" do
+        throwError "consumer.keptCallScope: expected inc in scope"
+
+/- Integer arithmetic over a cast is one number, not the `match` behind `Int`
+   subtraction or an `Int.ofNat` node for the literal. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `R (← mkArrow (mkConst ``Int) (mkSort Level.zero)) fun R => do
+  withLocalDeclD `k (mkConst ``Nat) fun k => do
+    let cast ← mkAppOptM ``Nat.cast #[mkConst ``Int, none, k]
+    let two ← mkAppOptM ``OfNat.ofNat #[mkConst ``Int, mkRawNatLit 2, none]
+    withLocalDeclD `fact (mkApp R (← mkAppM ``HSub.hSub #[cast, two])) fun _ => do
+      let view ← viewOf "consumer.intArithmetic" k
+      assertCanon "consumer.intArithmetic" view.data "Nat|k\nInt|↑k - 2\nR[Int]:1"
+
+/- Without observations, the label names its operands by their drawn atoms. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `measure (← mkArrow (mkConst ``Nat) (mkConst ``Nat)) fun measure => do
+  withLocalDeclD `R (← mkArrow (mkConst ``Nat) (← mkArrow (mkConst ``Nat)
+      (mkSort Level.zero))) fun R => do
+  withLocalDeclD `x (mkConst ``Nat) fun x => do
+  withLocalDeclD `k (mkConst ``Nat) fun k => do
+  withLocalDeclD `byLocal (mkApp2 R x (← mkAppM ``HAdd.hAdd #[k, mkNatLit 1])) fun _ => do
+  withLocalDeclD `byMeasure
+      (mkApp2 R x (← mkAppM ``HAdd.hAdd #[mkApp measure x, mkNatLit 1])) fun _ => do
+    let view ← viewOf "consumer.unobservedSuccessor" x
+    assertCanon "consumer.unobservedSuccessor" view.data
+      "Nat|x\nNat|k\nNat|k + 1\nNat|¿x?\nNat|¿x? + 1\n\
+       R[Nat,Nat]:0,2;0,4\nmeasure[Nat,Nat]:0,3"
+
 private def Tree.height : Tree → Nat
   | .leaf _ => 0
   | .node left right => 1 + max (height left) (height right)
+
+/- An unobserved numeric call stays one point of its graph. Unfolding
+   `height (node left right)` would draw the `Decidable.rec` behind `max`. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `R (← mkArrow (mkConst ``Nat) (mkSort Level.zero)) fun R => do
+  withLocalDeclD `left tree fun left => do
+  withLocalDeclD `right tree fun right => do
+    let root := node left right
+    withLocalDeclD `fact (mkApp R (mkApp (mkConst ``Tree.height) root)) fun _ => do
+      let view ← viewOf "consumer.unobservedCall" root
+      assertCanon "consumer.unobservedCall" view.data
+        "Tree|node\nTree|left\nTree|right\nNat|¿x?\nR[Nat]:3\n\
+         height[Tree,Nat]:0,3\nleft[Tree,Tree]:0,1\nright[Tree,Tree]:0,2"
+
+/- A local equation gives the call its value everywhere it occurs. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `R (← mkArrow (mkConst ``Nat) (mkSort Level.zero)) fun R => do
+  withLocalDeclD `left tree fun left => do
+  withLocalDeclD `right tree fun right => do
+  withLocalDeclD `k (mkConst ``Nat) fun k => do
+    let root := node left right
+    let call := mkApp (mkConst ``Tree.height) root
+    withLocalDeclD `fact (mkApp R call) fun _ => do
+    withLocalDeclD `known (← mkAppM ``Eq #[call, k]) fun _ => do
+      let view ← viewOf "consumer.equationCall" root
+      assertCanon "consumer.equationCall" view.data
+        "Tree|node\nTree|left\nTree|right\nNat|k\nR[Nat]:3\n\
+         height[Tree,Nat]:0,3\nleft[Tree,Tree]:0,1\nright[Tree,Tree]:0,2"
 
 /- An observer is lifted over the represented domain. Selecting a parent
    therefore observes the parent and both symbolic child trees. -/
@@ -311,9 +403,9 @@ private def Tree.height : Tree → Nat
       "Tree|left\nNat|¿x?\nTree|right\nNat|¿y?\n\
        edge[Tree,Tree]:0,2\nheight[Tree,Nat]:0,1;2,3"
 
-/- Observations parameterize fact relationalization. The source computation
-    containing `height` remains `height`/`hAdd`/`hMul`/`lt`; WHNF must not expose
-    the implementation-level `Nat.succ` constructor and its `n` field. -/
+/- Observations parameterize fact relationalization. Arithmetic around `height`
+    is one value labelled by its operands, not `hAdd`/`hMul` tuples with literal
+    atoms; WHNF must not expose the `Nat.succ` constructor and its `n` field. -/
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `left tree fun left => do
   withLocalDeclD `right tree fun right => do
@@ -324,18 +416,15 @@ private def Tree.height : Tree → Nat
     withLocalDeclD `branch (← mkAppM ``LT.lt #[oneMore, leftHeight]) fun _ => do
       let view ← viewOf "consumer.observationContext" left {} #[leftHeight]
       assertCanon "consumer.observationContext" view.data
-        "Tree|left\nNat|¿x?\nNat|¿y?\n\
-         Nat|¿z?\nNat|2\nNat|¿a?\n\
-         Tree|right\nNat|1\n\
-         hAdd[Nat,Nat,Nat]:3,7,2\nhMul[Nat,Nat,Nat]:4,5,3\n\
-         height[Tree,Nat]:0,1;6,5\nlt[Nat,Nat]:2,1"
-      assertMatchesReference "consumer.observationContext.reference" oneMore
+        "Tree|left\nNat|¿x?\nNat|¿y?\nTree|right\nNat|(2 * ¿y?) + 1\n\
+         height[Tree,Nat]:0,1;3,2\nlt[Nat,Nat]:4,1"
+      -- The arithmetic value's operands are linked only through its label, and the
+      -- reference keeps only the root's tuple component, so compare the observed call.
+      assertMatchesReference "consumer.observationContext.reference" rightHeight
         { functionGraphs := true, observations := #[leftHeight] }
       let scope ← scopeForContext view.context (← SelScope.ofType ``Tree) #[leftHeight]
-      unless (scope.rels.get? "hAdd").map (·.2) == some (some 3) do
-        throwError "consumer.observationContext: expected ternary hAdd"
-      unless (scope.rels.get? "hMul").map (·.2) == some (some 3) do
-        throwError "consumer.observationContext: expected ternary hMul"
+      if scope.rels.contains "hAdd" || scope.rels.contains "hMul" then
+        throwError "consumer.observationContext: arithmetic operators are not relations"
 
 /-! ## Inconsistency prevents a diagram -/
 

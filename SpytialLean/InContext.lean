@@ -355,6 +355,26 @@ private meta def prepareContextObservations (context : InspectionContext) (confi
       domain (contextProofs ++ answers)
   return prepared
 
+/-- A local equation such as `height t = k + 1` gives the value of an unobserved
+    numeric call. Every occurrence of the call is then drawn as that value, with
+    the equation as its proof, instead of being unfolded into its definition. -/
+private meta def addEquationResults (context : InspectionContext) (config : WalkConfig) :
+    MetaM WalkConfig := do
+  let mut results := config.observationResults
+  for fact in context.proofs do
+    let some (_, lhs, rhs) := (← displayedProposition fact).eq? | continue
+    let (call, value, proof) ←
+      if (← graphSide? lhs).isSome then pure (lhs, rhs, fact)
+      else if (← graphSide? rhs).isSome then pure (rhs, lhs, ← mkEqSymm fact)
+      else continue
+    unless call.hasFVar || call.hasMVar do continue
+    if results.contains ⟨call⟩ then continue
+    if config.observations.any (·.getAppFn.equal call.getAppFn) then continue
+    if (value.find? (·.equal call)).isSome then continue
+    unless ← isPrimitiveLabelType (← inferType call) do continue
+    results := results.insert ⟨call⟩ { expr := value, proof? := some proof }
+  return { config with observationResults := results }
+
 /-- Translate local evidence into Spytial's relational data. The proof types determine which
     relations and refinements can be displayed. Requested observations parameterize the
     expression walk and add their function graphs over every represented value
@@ -389,6 +409,7 @@ private meta def relationalizeContextInspection (context : InspectionContext)
             if refinements[variableId]?.any (·.equal value) then continue
           anchors ← walkFact config fact anchors
       config ← prepareContextObservations context config (discovery.observationTerms.map (·.1))
+    config ← addEquationResults context config
     let (rootId, state) ← StateT.run (s := {}) do
       -- Witnesses first: a witness can occur inside the refined root, and the
       -- walk reuses its atom only when it is already registered.
@@ -605,13 +626,19 @@ private meta def isWitnessTerm (context : InspectionContext) (expression : Expr)
 private meta partial def functionGraphScopeEntries (context : InspectionContext) (cfg : WalkConfig)
     (value : Expr) : MetaM (Array (String × Nat) × Array (Option Name)) := do
   let value ← instantiateMVars value
-  let value ← if (← observedGraphSide? cfg value).isSome then pure value else whnf value
+  -- Match the walker: observed calls and unobserved numeric calls over symbolic
+  -- arguments stay graph points, so their relations belong in scope.
+  let keep := (← observedGraphSide? cfg value).isSome ||
+    (← keepsSymbolicCall { cfg with shareSymbolicValues := true } value)
+  let value ← if keep then pure value else whnf value
   if isWitnessTerm context value then
     return (#[], #[← typeHead? (← inferType value)])
   let mut relations := #[]
   let mut heads := #[]
   if let some (name, arguments) ← graphSide? value then
-    relations := relations.push (name, arguments.size + 1)
+    -- Arithmetic is drawn inside value labels, so its operators are not relations.
+    unless isArithmeticApplication value && (← isPrimitiveLabelType (← inferType value)) do
+      relations := relations.push (name, arguments.size + 1)
     for argument in arguments do
       heads := heads.push (← typeHead? (← inferType argument))
     heads := heads.push (← typeHead? (← inferType value))
