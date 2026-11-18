@@ -1410,7 +1410,7 @@ private meta def walkSymbolicResult? (cfg : WalkConfig) (e : Expr) :
   return none
 
 /-- Arithmetic drawn as one number rather than unfolded into its implementation. -/
-private meta def isArithmeticApplication (e : Expr) : Bool :=
+public meta def isArithmeticApplication (e : Expr) : Bool :=
   e.isAppOfArity ``HAdd.hAdd 6 || e.isAppOfArity ``HSub.hSub 6 ||
     e.isAppOfArity ``HMul.hMul 6 || e.isAppOfArity ``HDiv.hDiv 6 ||
     e.isAppOfArity ``HMod.hMod 6 || e.isAppOfArity ``Neg.neg 3 ||
@@ -1425,6 +1425,19 @@ private meta def isNumber (e : Expr) : MetaM Bool := do
 private meta def drawnNumber? (e : Expr) : StateT WalkState MetaM (Option String) := do
   for key in [e, ← normalizeReferenceTerm e] do
     if let some id := (← get).applicationAtoms[(⟨key⟩ : ExprStructEq)]? then return some id
+  return none
+
+/-- An atom already drawn for a different spelling of the same number. With
+    `height A = k + 1` known, `height A + 1` is the atom drawn for `k + 2`. -/
+private meta def equalNumber? (cfg : WalkConfig) (e : Expr) :
+    StateT WalkState MetaM (Option String) := do
+  let value := e.replace fun subterm =>
+    cfg.observationResults[(⟨subterm⟩ : ExprStructEq)]?.map (·.expr)
+  let type ← inferType e
+  for (key, id) in (← get).applicationAtoms.toArray do
+    unless isArithmeticApplication key.val do continue
+    unless ← isDefEq (← inferType key.val) type do continue
+    if ← withNewMCtxDepth <| isDefEq key.val value then return some id
   return none
 
 /-- Label open arithmetic by its operands: drawn atoms by their labels, literals
@@ -1457,13 +1470,15 @@ private meta partial def renderArithmetic (e : Expr)
 /-- In a proof context, open arithmetic such as `k + 1` or `↑k - 2` is one number,
     not a `Nat.succ` node or the `match` behind `Int` subtraction. Reuse the atom
     of an observation result with the same value; otherwise label a new atom. -/
-private meta def walkSymbolicArithmetic? (cfg : WalkConfig) (e : Expr)
+private meta def walkSymbolicArithmetic? (cfg : WalkConfig) (e : Expr) (observed : Bool)
     (recurse : Expr → StateT WalkState MetaM String) :
     StateT WalkState MetaM (Option String) := do
-  unless cfg.shareSymbolicValues && (e.hasFVar || e.hasMVar) && isArithmeticApplication e do
+  unless (cfg.shareSymbolicValues || observed) && (e.hasFVar || e.hasMVar) &&
+      isArithmeticApplication e do
     return none
   unless ← isNumber e do return none
   if let some id ← drawnNumber? e then return some id
+  if let some id ← equalNumber? cfg e then return some id
   let id ← addSymbolicObservationAtom cfg e (← renderArithmetic e recurse).text
   let normalized ← normalizeReferenceTerm e
   modify fun state => { state with
@@ -1527,6 +1542,13 @@ private meta def walkComputed? (cfg : WalkConfig) (e : Expr)
   -- Resolve the result before minting an atom for the application. Removing
   -- this entry also guards self-referential residual rewrites.
   let nested := { cfg with observationResults := cfg.observationResults.erase ⟨e⟩ }
+  -- Arithmetic is drawn as its value. Its operands appear in the value's label,
+  -- not as `hAdd`-style tuples with an atom for each literal.
+  if isArithmeticApplication e && (← isNumber e) then
+    let resultId ← recurse nested result.expr
+    modify fun state =>
+      { state with applicationAtoms := state.applicationAtoms.insert ⟨e⟩ resultId }
+    return some resultId
   let mut ids := #[]
   let mut types := #[]
   for argument in arguments do
@@ -1764,9 +1786,8 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
   -- the source spelling of named computations that depend on an observed
   -- application; only other expressions WHNF to expose data constructors.
   let sourceFunctionGraph := (← observedGraphSideCached? cfg eOrig).isSome
-  unless sourceFunctionGraph do
-    if let some id ← walkSymbolicArithmetic? cfg eOrig
-        (fun c => walkExpr cfg c { mode, ancestors := ctx.ancestors }) then return id
+  if let some id ← walkSymbolicArithmetic? cfg eOrig sourceFunctionGraph
+      (fun c => walkExpr cfg c { mode, ancestors := ctx.ancestors }) then return id
   let sourceFunctionGraph := sourceFunctionGraph || (← keepsSymbolicCall cfg eOrig)
   let e ← if sourceFunctionGraph then pure eOrig else Meta.whnf eOrig
   if let some (_, ancestorId) := ctx.ancestors.find? (fun (a, _) => a.equal e) then
@@ -1972,9 +1993,8 @@ public meta partial def referenceRelationalize (e : Expr) (cfg : WalkConfig := {
         (fun nested value => refWalk nested value { ctx with mode }) then return id
     if let some id ← walkSymbolicResult? cfg eOrig then return id
     let sourceFunctionGraph := (← observedGraphSideCached? cfg eOrig).isSome
-    unless sourceFunctionGraph do
-      if let some id ← walkSymbolicArithmetic? cfg eOrig
-          (fun c => refWalk cfg c { mode, ancestors := ctx.ancestors }) then return id
+    if let some id ← walkSymbolicArithmetic? cfg eOrig sourceFunctionGraph
+        (fun c => refWalk cfg c { mode, ancestors := ctx.ancestors }) then return id
     let sourceFunctionGraph := sourceFunctionGraph || (← keepsSymbolicCall cfg eOrig)
     let e ← if sourceFunctionGraph then pure eOrig else Meta.whnf eOrig
     if let some (_, ancestorId) := ctx.ancestors.find? (fun (a, _) => a.equal e) then

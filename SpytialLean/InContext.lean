@@ -632,7 +632,9 @@ private meta partial def functionGraphScopeEntries (context : InspectionContext)
   let mut relations := #[]
   let mut heads := #[]
   if let some (name, arguments) ← graphSide? value then
-    relations := relations.push (name, arguments.size + 1)
+    -- Arithmetic is drawn inside value labels, so its operators are not relations.
+    unless isArithmeticApplication value && (← isPrimitiveLabelType (← inferType value)) do
+      relations := relations.push (name, arguments.size + 1)
     for argument in arguments do
       heads := heads.push (← typeHead? (← inferType argument))
     heads := heads.push (← typeHead? (← inferType value))

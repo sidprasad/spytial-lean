@@ -380,9 +380,9 @@ private def Tree.height : Tree → Nat
       "Tree|left\nNat|¿x?\nTree|right\nNat|¿y?\n\
        edge[Tree,Tree]:0,2\nheight[Tree,Nat]:0,1;2,3"
 
-/- Observations parameterize fact relationalization. The source computation
-    containing `height` remains `height`/`hAdd`/`hMul`/`lt`; WHNF must not expose
-    the implementation-level `Nat.succ` constructor and its `n` field. -/
+/- Observations parameterize fact relationalization. Arithmetic around `height`
+    is one value labelled by its operands, not `hAdd`/`hMul` tuples with literal
+    atoms; WHNF must not expose the `Nat.succ` constructor and its `n` field. -/
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `left tree fun left => do
   withLocalDeclD `right tree fun right => do
@@ -393,18 +393,15 @@ private def Tree.height : Tree → Nat
     withLocalDeclD `branch (← mkAppM ``LT.lt #[oneMore, leftHeight]) fun _ => do
       let view ← viewOf "consumer.observationContext" left {} #[leftHeight]
       assertCanon "consumer.observationContext" view.data
-        "Tree|left\nNat|¿x?\nNat|¿y?\n\
-         Nat|¿z?\nNat|2\nNat|¿a?\n\
-         Tree|right\nNat|1\n\
-         hAdd[Nat,Nat,Nat]:3,7,2\nhMul[Nat,Nat,Nat]:4,5,3\n\
-         height[Tree,Nat]:0,1;6,5\nlt[Nat,Nat]:2,1"
-      assertMatchesReference "consumer.observationContext.reference" oneMore
+        "Tree|left\nNat|¿x?\nNat|¿y?\nTree|right\nNat|(2 * ¿y?) + 1\n\
+         height[Tree,Nat]:0,1;3,2\nlt[Nat,Nat]:4,1"
+      -- The arithmetic value's operands are linked only through its label, and the
+      -- reference keeps only the root's tuple component, so compare the observed call.
+      assertMatchesReference "consumer.observationContext.reference" rightHeight
         { functionGraphs := true, observations := #[leftHeight] }
       let scope ← scopeForContext view.context (← SelScope.ofType ``Tree) #[leftHeight]
-      unless (scope.rels.get? "hAdd").map (·.2) == some (some 3) do
-        throwError "consumer.observationContext: expected ternary hAdd"
-      unless (scope.rels.get? "hMul").map (·.2) == some (some 3) do
-        throwError "consumer.observationContext: expected ternary hMul"
+      if scope.rels.contains "hAdd" || scope.rels.contains "hMul" then
+        throwError "consumer.observationContext: arithmetic operators are not relations"
 
 /-! ## Inconsistency prevents a diagram -/
 
