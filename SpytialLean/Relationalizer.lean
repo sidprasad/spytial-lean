@@ -1409,35 +1409,63 @@ private meta def walkSymbolicResult? (cfg : WalkConfig) (e : Expr) :
     return some (← symbolicObservationResult cfg e)
   return none
 
-/-- In a proof context, an open successor such as `k + 1` is a number, not a
-    `Nat.succ` node with field `n`. Reuse the atom of an observation result with
-    the same value; otherwise label a new value atom by its operands' labels. -/
-private meta def walkSymbolicSuccessor? (cfg : WalkConfig) (e : Expr)
-    (recurse : Expr → StateT WalkState MetaM String) :
-    StateT WalkState MetaM (Option String) := do
-  unless cfg.shareSymbolicValues && (e.hasFVar || e.hasMVar) do return none
-  unless e.isAppOfArity ``HAdd.hAdd 6 || e.isAppOfArity ``Nat.add 2 ||
-      e.isAppOfArity ``Nat.succ 1 do return none
-  unless (← whnf (← inferType e)).isConstOf ``Nat do return none
-  unless (← whnf e).isAppOfArity ``Nat.succ 1 do return none
-  -- Observation results are keyed by their simplified spelling, which writes
-  -- numerals as raw literals rather than `OfNat.ofNat`.
-  let normalized ← normalizeReferenceTerm e
-  for key in [e, normalized] do
+/-- Arithmetic drawn as one number rather than unfolded into its implementation. -/
+private meta def isArithmeticApplication (e : Expr) : Bool :=
+  e.isAppOfArity ``HAdd.hAdd 6 || e.isAppOfArity ``HSub.hSub 6 ||
+    e.isAppOfArity ``HMul.hMul 6 || e.isAppOfArity ``HDiv.hDiv 6 ||
+    e.isAppOfArity ``HMod.hMod 6 || e.isAppOfArity ``Neg.neg 3 ||
+    e.isAppOfArity ``Nat.cast 3 || e.isAppOfArity ``Nat.succ 1 || e.isAppOfArity ``Nat.add 2
+
+private meta def isNumber (e : Expr) : MetaM Bool := do
+  let type ← whnf (← inferType e)
+  return type.isConstOf ``Nat || type.isConstOf ``Int
+
+/-- An atom already drawn for `e`. Observation results are keyed by their
+    simplified spelling, which writes numerals as raw literals, not `OfNat.ofNat`. -/
+private meta def drawnNumber? (e : Expr) : StateT WalkState MetaM (Option String) := do
+  for key in [e, ← normalizeReferenceTerm e] do
     if let some id := (← get).applicationAtoms[(⟨key⟩ : ExprStructEq)]? then return some id
+  return none
+
+/-- Label open arithmetic by its operands: drawn atoms by their labels, literals
+    as numbers, and inner arithmetic inline. Other operands are walked. -/
+private meta partial def renderArithmetic (e : Expr)
+    (recurse : Expr → StateT WalkState MetaM String) :
+    StateT WalkState MetaM RenderedObservationExpression := do
   let indexes ← dataArgumentIndexesOf e
   let mut operands : Array RenderedObservationExpression := #[]
   for index in indexes do
     let argument := e.getAppArgs[index]!
-    if let some value ← observationValue? argument then
-      operands := operands.push { text := (← ppExpr value).pretty, atomic := true }
-    else
-      let id ← recurse argument
-      let label ← match (← get).atoms.find? (·.id == id) with
+    let atoms := (← get).atoms
+    let drawn? := (← drawnNumber? argument).bind fun id => atoms.find? (·.id == id)
+    let label ← if let some atom := drawn? then
+        pure atom.label
+      else if !(argument.hasFVar || argument.hasMVar) then
+        if let some value ← intLiteral? argument then pure (toString value)
+        else pure (← ppExpr argument).pretty
+      else if isArithmeticApplication argument && (← isNumber argument) then
+        pure (← renderArithmetic argument recurse).text
+      else
+        let id ← recurse argument
+        match (← get).atoms.find? (·.id == id) with
         | some atom => pure atom.label
         | none => pure (← ppExpr argument).pretty
-      operands := operands.push { text := label, atomic := !label.contains ' ' }
-  let id ← addSymbolicObservationAtom cfg e (← renderObservationApplication e indexes operands)
+    operands := operands.push { text := label, atomic := !label.contains ' ' }
+  let text ← renderObservationApplication e indexes operands
+  return { text, atomic := !text.contains ' ' }
+
+/-- In a proof context, open arithmetic such as `k + 1` or `↑k - 2` is one number,
+    not a `Nat.succ` node or the `match` behind `Int` subtraction. Reuse the atom
+    of an observation result with the same value; otherwise label a new atom. -/
+private meta def walkSymbolicArithmetic? (cfg : WalkConfig) (e : Expr)
+    (recurse : Expr → StateT WalkState MetaM String) :
+    StateT WalkState MetaM (Option String) := do
+  unless cfg.shareSymbolicValues && (e.hasFVar || e.hasMVar) && isArithmeticApplication e do
+    return none
+  unless ← isNumber e do return none
+  if let some id ← drawnNumber? e then return some id
+  let id ← addSymbolicObservationAtom cfg e (← renderArithmetic e recurse).text
+  let normalized ← normalizeReferenceTerm e
   modify fun state => { state with
     applicationAtoms := state.applicationAtoms.insert ⟨normalized⟩ id }
   return some id
@@ -1737,7 +1765,7 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
   -- application; only other expressions WHNF to expose data constructors.
   let sourceFunctionGraph := (← observedGraphSideCached? cfg eOrig).isSome
   unless sourceFunctionGraph do
-    if let some id ← walkSymbolicSuccessor? cfg eOrig
+    if let some id ← walkSymbolicArithmetic? cfg eOrig
         (fun c => walkExpr cfg c { mode, ancestors := ctx.ancestors }) then return id
   let sourceFunctionGraph := sourceFunctionGraph || (← keepsSymbolicCall cfg eOrig)
   let e ← if sourceFunctionGraph then pure eOrig else Meta.whnf eOrig
@@ -1945,7 +1973,7 @@ public meta partial def referenceRelationalize (e : Expr) (cfg : WalkConfig := {
     if let some id ← walkSymbolicResult? cfg eOrig then return id
     let sourceFunctionGraph := (← observedGraphSideCached? cfg eOrig).isSome
     unless sourceFunctionGraph do
-      if let some id ← walkSymbolicSuccessor? cfg eOrig
+      if let some id ← walkSymbolicArithmetic? cfg eOrig
           (fun c => refWalk cfg c { mode, ancestors := ctx.ancestors }) then return id
     let sourceFunctionGraph := sourceFunctionGraph || (← keepsSymbolicCall cfg eOrig)
     let e ← if sourceFunctionGraph then pure eOrig else Meta.whnf eOrig

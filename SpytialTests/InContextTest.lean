@@ -296,6 +296,17 @@ private meta def node (left right : Expr) : Expr :=
       assertCanon "consumer.factSuccessor" view.data
         "Nat|x\nNat|h + 1\nR[Nat,Nat]:0,1\nmeasure[Nat,Nat]:0,1"
 
+/- Integer arithmetic over a cast is one number, not the `match` behind `Int`
+   subtraction or an `Int.ofNat` node for the literal. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `R (← mkArrow (mkConst ``Int) (mkSort Level.zero)) fun R => do
+  withLocalDeclD `k (mkConst ``Nat) fun k => do
+    let cast ← mkAppOptM ``Nat.cast #[mkConst ``Int, none, k]
+    let two ← mkAppOptM ``OfNat.ofNat #[mkConst ``Int, mkRawNatLit 2, none]
+    withLocalDeclD `fact (mkApp R (← mkAppM ``HSub.hSub #[cast, two])) fun _ => do
+      let view ← viewOf "consumer.intArithmetic" k
+      assertCanon "consumer.intArithmetic" view.data "Nat|k\nInt|↑k - 2\nR[Int]:1"
+
 /- Without observations, the label names its operands by their drawn atoms. -/
 #eval show Lean.Elab.TermElabM Unit from do
   withLocalDeclD `measure (← mkArrow (mkConst ``Nat) (mkConst ``Nat)) fun measure => do
