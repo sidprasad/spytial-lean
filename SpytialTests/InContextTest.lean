@@ -315,6 +315,34 @@ private def Tree.height : Tree → Nat
   | .leaf _ => 0
   | .node left right => 1 + max (height left) (height right)
 
+/- An unobserved numeric call stays one point of its graph. Unfolding
+   `height (node left right)` would draw the `Decidable.rec` behind `max`. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `R (← mkArrow (mkConst ``Nat) (mkSort Level.zero)) fun R => do
+  withLocalDeclD `left tree fun left => do
+  withLocalDeclD `right tree fun right => do
+    let root := node left right
+    withLocalDeclD `fact (mkApp R (mkApp (mkConst ``Tree.height) root)) fun _ => do
+      let view ← viewOf "consumer.unobservedCall" root
+      assertCanon "consumer.unobservedCall" view.data
+        "Tree|node\nTree|left\nTree|right\nNat|¿x?\nR[Nat]:3\n\
+         height[Tree,Nat]:0,3\nleft[Tree,Tree]:0,1\nright[Tree,Tree]:0,2"
+
+/- A local equation gives the call its value everywhere it occurs. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `R (← mkArrow (mkConst ``Nat) (mkSort Level.zero)) fun R => do
+  withLocalDeclD `left tree fun left => do
+  withLocalDeclD `right tree fun right => do
+  withLocalDeclD `k (mkConst ``Nat) fun k => do
+    let root := node left right
+    let call := mkApp (mkConst ``Tree.height) root
+    withLocalDeclD `fact (mkApp R call) fun _ => do
+    withLocalDeclD `known (← mkAppM ``Eq #[call, k]) fun _ => do
+      let view ← viewOf "consumer.equationCall" root
+      assertCanon "consumer.equationCall" view.data
+        "Tree|node\nTree|left\nTree|right\nNat|k\nR[Nat]:3\n\
+         height[Tree,Nat]:0,3\nleft[Tree,Tree]:0,1\nright[Tree,Tree]:0,2"
+
 /- An observer is lifted over the represented domain. Selecting a parent
    therefore observes the parent and both symbolic child trees. -/
 #eval show Lean.Elab.TermElabM Unit from do

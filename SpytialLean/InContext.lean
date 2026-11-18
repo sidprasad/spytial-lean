@@ -355,6 +355,26 @@ private meta def prepareContextObservations (context : InspectionContext) (confi
       domain (contextProofs ++ answers)
   return prepared
 
+/-- A local equation such as `height t = k + 1` gives the value of an unobserved
+    numeric call. Every occurrence of the call is then drawn as that value, with
+    the equation as its proof, instead of being unfolded into its definition. -/
+private meta def addEquationResults (context : InspectionContext) (config : WalkConfig) :
+    MetaM WalkConfig := do
+  let mut results := config.observationResults
+  for fact in context.proofs do
+    let some (_, lhs, rhs) := (← displayedProposition fact).eq? | continue
+    let (call, value, proof) ←
+      if (← graphSide? lhs).isSome then pure (lhs, rhs, fact)
+      else if (← graphSide? rhs).isSome then pure (rhs, lhs, ← mkEqSymm fact)
+      else continue
+    unless call.hasFVar || call.hasMVar do continue
+    if results.contains ⟨call⟩ then continue
+    if config.observations.any (·.getAppFn.equal call.getAppFn) then continue
+    if (value.find? (·.equal call)).isSome then continue
+    unless ← isPrimitiveLabelType (← inferType call) do continue
+    results := results.insert ⟨call⟩ { expr := value, proof? := some proof }
+  return { config with observationResults := results }
+
 /-- Translate local evidence into Spytial's relational data. The proof types determine which
     relations and refinements can be displayed. Requested observations parameterize the
     expression walk and add their function graphs over every represented value
@@ -389,6 +409,7 @@ private meta def relationalizeContextInspection (context : InspectionContext)
             if refinements[variableId]?.any (·.equal value) then continue
           anchors ← walkFact config fact anchors
       config ← prepareContextObservations context config (discovery.observationTerms.map (·.1))
+    config ← addEquationResults context config
     let (rootId, state) ← StateT.run (s := {}) do
       -- Witnesses first: a witness can occur inside the refined root, and the
       -- walk reuses its atom only when it is already registered.

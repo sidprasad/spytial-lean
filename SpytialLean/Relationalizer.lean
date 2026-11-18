@@ -1442,6 +1442,17 @@ private meta def walkSymbolicSuccessor? (cfg : WalkConfig) (e : Expr)
     applicationAtoms := state.applicationAtoms.insert ⟨normalized⟩ id }
   return some id
 
+/-- In a proof context, an unobserved call that returns a number over symbolic
+    arguments stays one point of the function's graph. Unfolding it would draw
+    its implementation, such as the `Decidable.rec` behind `max`. -/
+private meta def keepsSymbolicCall (cfg : WalkConfig) (e : Expr) : MetaM Bool := do
+  unless cfg.shareSymbolicValues && cfg.functionGraphs && (e.hasFVar || e.hasMVar) do
+    return false
+  let type ← whnf (← inferType e)
+  unless type.isConstOf ``Nat || type.isConstOf ``Int do return false
+  if (← graphSide? e).isNone then return false
+  return (← observationValue? e).isNone
+
 /-- Emit a named application `f xs` as the graph point `f[xs, f xs]`.
     Repeated applications reuse the same output atom. -/
 private meta def emitFunctionGraph? (cfg : WalkConfig)
@@ -1728,6 +1739,7 @@ public meta partial def walkExpr (cfg : WalkConfig := {}) (eOrig : Expr)
   unless sourceFunctionGraph do
     if let some id ← walkSymbolicSuccessor? cfg eOrig
         (fun c => walkExpr cfg c { mode, ancestors := ctx.ancestors }) then return id
+  let sourceFunctionGraph := sourceFunctionGraph || (← keepsSymbolicCall cfg eOrig)
   let e ← if sourceFunctionGraph then pure eOrig else Meta.whnf eOrig
   if let some (_, ancestorId) := ctx.ancestors.find? (fun (a, _) => a.equal e) then
     return ancestorId
@@ -1935,6 +1947,7 @@ public meta partial def referenceRelationalize (e : Expr) (cfg : WalkConfig := {
     unless sourceFunctionGraph do
       if let some id ← walkSymbolicSuccessor? cfg eOrig
           (fun c => refWalk cfg c { mode, ancestors := ctx.ancestors }) then return id
+    let sourceFunctionGraph := sourceFunctionGraph || (← keepsSymbolicCall cfg eOrig)
     let e ← if sourceFunctionGraph then pure eOrig else Meta.whnf eOrig
     if let some (_, ancestorId) := ctx.ancestors.find? (fun (a, _) => a.equal e) then
       return ancestorId
