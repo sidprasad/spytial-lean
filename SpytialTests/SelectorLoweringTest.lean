@@ -121,6 +121,7 @@ private meta def ints : List (String × Sel) :=
    ("sub", call "subtract" #[unary .«cardinality» a, unary .«labelNumber» b]),
    ("div", call "divide" #[.num 1, .num 2]),
    ("rem", call "remainder" #[.num 1, .num 2]),
+   ("lexCompare", call "lexCompare" #[.str "10", .str "2"]),
    ("abs", call "abs" #[.num 1]), ("sign", call "sign" #[.num 1]),
    ("floor", call "floor" #[.num 1]), ("ceil", call "ceil" #[.num 1]),
    ("sum", call "sum" #[unary .«labelNumber» a]),

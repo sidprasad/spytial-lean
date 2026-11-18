@@ -979,6 +979,26 @@ info: {"directives":
   atomStyle {x : SRB | min[SRB.key] <= 3} (borderStyle "red")
 ]
 
+/--
+info: {"constraints":
+ [{"align":
+   {"selector":
+    "{x, y : SBDD | lexCompare[@:x, @:y] < 0 and lexCompare[x, y] != 0}",
+    "direction": "horizontal"}}]}
+-/
+#guard_msgs in
+#spytial.spec sExample with [
+  align {x, y : SBDD | lexCompare[@:x, @:y] < 0 && lexCompare[x, y] != 0} horizontal
+]
+
+/-- error: 'lexCompare' expects a string or a singleton unary relation -/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom {x : SBDD | lexCompare[1, "ff"] = 0}]
+
+/-- error: 'lexCompare' expects a string or a singleton unary relation -/
+#guard_msgs in
+#spytial.spec sExample with [hideAtom {x : SBDD | lexCompare[lo, x] = 0}]
+
 -- Counting idiom and relational box join (`a[b] ≡ b.a`), which is kept as
 -- written rather than desugared: the engine takes both forms.
 /--

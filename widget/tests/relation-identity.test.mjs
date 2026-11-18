@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { JSONDataInstance, SGraphQueryEvaluator } from 'spytial-core';
 import { withLeanScalarTypes } from '../dist/inspection.js';
 
-test('Lean atom unions and products parse in the bundled browser evaluator', () => {
+test('Selectors lowered by Lean evaluate in the bundled evaluator', () => {
   // Consume the exact output pinned by Lean's lowering tests.
   const golden = readFileSync(new URL(
     '../../SpytialTests/SelectorLoweringTest.golden.tsv', import.meta.url), 'utf8');
@@ -22,6 +22,7 @@ test('Lean atom unions and products parse in the bundled browser evaluator', () 
     ['atom_0', 'atom_1']);
   assert.deepEqual(evaluator.evaluate(selectors.get('atoms.product')).selectedTuplesAll(),
     [['atom_0', 'atom_1']]);
+  assert.equal(evaluator.evaluate(selectors.get('int.lexCompare')).prettyPrint(), '-1');
 });
 
 test('Lean payload preserves relation IDs while selectors union matching names', () => {

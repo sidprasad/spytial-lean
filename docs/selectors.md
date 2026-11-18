@@ -149,9 +149,14 @@ so `#a = b` is an error rather than a coercion.
 literals, `@num:e` (numeric projection), the builtins `add subtract multiply
 divide remainder abs sign floor ceil`, the aggregators `sum[e]`, `min[e]`, and `max[e]`
 (lowered through `@num:` — the engine aggregates numeric labels, not atom
-ids), the `sum x : A | ie` aggregation quantifier, and the int comparisons.
-Integer positions accept exactly these forms; tuple positions reject them.
-Counting selectors like `#{x : T | φ} = 2` and `@num:(x.key) < 5` work.
+ids), and the `sum x : A | ie` aggregation quantifier. Counting selectors
+like `#{x : T | φ} = 2` and `@num:(x.key) < 5` work.
+
+**String ordering.** `lexCompare[a, b]` takes two strings or singleton unary
+relations and returns `-1`, `0`, or `1`. Use a label projection to order
+by displayed labels, as in `{x, y : T | lexCompare[@:x, @:y] < 0}`.
+Passing bound atoms directly compares their IDs. The result fits anywhere
+an integer expression is accepted.
 
 **Label comparisons** accept nullary constructors (`@:x = nil`), string
 literals, another projection (`@:vr = @:(y.v)`), or, opposite a `@bool:`

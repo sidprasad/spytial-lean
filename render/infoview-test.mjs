@@ -127,6 +127,53 @@ export async function settled(page, count) {
   }
 }
 
+async function checkNodeDrag(browser) {
+  const type = 'Cell';
+  const types = [type, type];
+  const { page, errors } = await browserPage(browser, {
+    dataInstance: {
+      atoms: ['a', 'b', 'c'].map(id => ({ id, label: id, type })),
+      relations: [{
+        id: 'next', name: 'next', types,
+        tuples: [['a', 'b'], ['b', 'c']].map(atoms => ({ atoms, types })),
+      }],
+    },
+    cndSpec: JSON.stringify({ constraints: [
+      { orientation: { selector: 'next', directions: ['right'] } },
+      { align: { selector: 'next', direction: 'horizontal' } },
+    ] }),
+  });
+  try {
+    await settled(page, 1);
+    const graph = page.locator('webcola-cnd-graph');
+    const positions = () => graph.evaluate(g => g.getLayoutState().positions);
+    const before = await positions();
+    assert.equal(before.length, 3);
+    const rightmost = before.reduce((right, p) => p.x > right.x ? p : right);
+    const node = graph.locator('g.node').filter({ has: page.getByText(rightmost.id, { exact: true }) });
+    await node.hover();
+    const box = await node.boundingBox();
+    const x = box.x + box.width / 2, y = box.y + box.height / 2;
+    const settledCount = await page.evaluate(() =>
+      window.__spytialEvents.filter(event => event === 'layout-complete').length);
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + 120, y, { steps: 12 });
+    await page.mouse.up();
+    await page.waitForFunction(count =>
+      window.__spytialEvents.filter(event => event === 'layout-complete').length > count,
+    settledCount);
+    const after = new Map((await positions()).map(p => [p.id, p]));
+    assert.ok(after.get(rightmost.id).x - rightmost.x > 60, 'the dragged node keeps its new position');
+    for (const neighbor of before.filter(p => p.id !== rightmost.id)) {
+      const { x, y } = after.get(neighbor.id);
+      assert.ok(Math.hypot(x - neighbor.x, y - neighbor.y) < 1,
+        `dragging the end node leaves neighbor ${neighbor.id} in place`);
+    }
+    assert.deepEqual(errors, []);
+  } finally { await page.close(); }
+}
+
 async function main() {
   const file = 'SpytialTests/ExplorerTest.lean';
   const text = fs.readFileSync(file, 'utf8');
@@ -219,6 +266,7 @@ async function main() {
     }
 
     browser = await chromium.launch({ headless: true });
+    await checkNodeDrag(browser);
     const { page, errors } = await browserPage(browser, header.props);
     await expandExplorer(page, 3);
     await settled(page, 2);
@@ -285,7 +333,7 @@ async function main() {
     assert.equal(updated.props.explorer.points[2].point.title, 'Repainted caption');
     assert.deepEqual(doc.diagnostics.flatMap(d => d.diagnostics).filter(d => d.severity === 1), []);
     fs.writeFileSync('.lake/explorer-props.json', JSON.stringify(header.props, null, 2));
-    console.log('Infoview RPC + Chromium: collapsed theorem disclosure, lazy diagrams, reopen selections, line widgets, captions, comparisons, stepping, all points, single point, branch isolation, rollback and edits passed.');
+    console.log('Infoview RPC + Chromium: node dragging, collapsed theorem disclosure, lazy diagrams, reopen selections, line widgets, captions, comparisons, stepping, all points, single point, branch isolation, rollback and edits passed.');
   } finally { await browser?.close(); doc.close(); }
 }
 

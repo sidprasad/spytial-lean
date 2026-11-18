@@ -911,9 +911,18 @@ private meta partial def elabBuiltinCall? (scope : SelScope) (env : LEnv) (stx :
   let name := raw.toString
   let args := stx[li].getSepArgs
   if let some n := builtinArity? name then
+    -- The manifest lists builtin arities. SGQ's lexCompare also accepts
+    -- string scalars and singleton unary relations as its operands.
+    let comparesStrings := name == "lexCompare"
     unless args.size == n do
-      throwErrorAt stx m!"'{name}' takes {n} integer argument(s), got {args.size}"
-    let es ← args.mapM fun a => elabAt scope env a (some .number)
+      let argument := if comparesStrings then "argument" else "integer argument"
+      throwErrorAt stx m!"'{name}' takes {n} {argument}(s), got {args.size}"
+    let es ← args.mapM fun a => do
+      if !comparesStrings then return ← elabAt scope env a (some .number)
+      let e ← elabExpr scope env a
+      unless e.kind == .«string» || (e.kind == .relation && e.arity.getD 1 == 1) do
+        throwErrorAt a "'lexCompare' expects a string or a singleton unary relation"
+      return e
     return some { sel := .node c none #[.expr (.builtin name), .exprs (es.map (·.sel))],
                   kind := .number }
   if Sgq.setBuiltins.contains name then
