@@ -967,12 +967,16 @@ private meta def resolveContextConfig (clauses : Syntax) : TermElabM InspectionC
     | _ => throwUnsupportedSyntax
   return config
 
+private meta structure InspectionPayload where
+  props : Json
+  propositions : Array Expr
+
 /-- Prepare and inspect the local context, then build the widget payload. -/
 private meta def spytialInContextProps? (subject : Expr)
     (ops? : Option (Array (TSyntax `spytial_op)) := none)
     (walkConfig : WalkConfig := {}) (config : InspectionConfig := contextConfig)
     (observations predicates : Array Expr := #[]) :
-    TermElabM (Option Json × ContextViewStatus) := do
+    TermElabM (Option InspectionPayload × ContextViewStatus) := do
   let (status, view?) ← inspectInContext subject walkConfig config observations predicates
   let some view := view? | return (none, status)
   let spec? ← match ops? with
@@ -996,8 +1000,11 @@ private meta def spytialInContextProps? (subject : Expr)
         ("atom", toJson atom), ("identity", toJson id.name.toString)])
     | _ => none
   let mut context := #[]
+  let mut hypotheses : Std.HashMap FVarId Nat := {}
   for localDecl in ← getLCtx do
     if localDecl.isImplementationDetail then continue
+    if !config.excludedHypotheses.contains localDecl.fvarId && (← isProp localDecl.type) then
+      hypotheses := hypotheses.insert localDecl.fvarId context.size
     let type ← ppExpr localDecl.type
     let value ← localDecl.value?.mapM fun e => return (← ppExpr e).pretty
     let entry := Json.mkObj [
@@ -1005,12 +1012,19 @@ private meta def spytialInContextProps? (subject : Expr)
       ("value", toJson value)]
     context := context.push (if config.excludedHypotheses.contains localDecl.fvarId then
       entry.setObjVal! "excluded" (toJson true) else entry)
+  -- Keep references to the actual local entries, including for projections and
+  -- proofs that use several hypotheses. Display names can be shadowed.
+  let sources := view.context.proofs.map fun proof =>
+    ((collectFVars {} proof).fvarIds.filterMap (fun id => hypotheses[id]?)).qsort (· < ·)
   let props := props.setObjVal! "inspection" (toJson view.inspection)
+    |>.setObjVal! "factSources" (toJson sources)
     |>.setObjVal! "identities" (toJson identities)
     |>.setObjVal! "localContext" (toJson context)
     |>.setObjVal! "observations" (toJson ((← observations.mapM fun e =>
         return (← ppExpr e.getAppFn).pretty) ++ (← predicates.mapM fun p => liftM (predicateObservationName p))))
-  return (some props, status)
+  let propositions ← withLCtx view.context.scope view.context.localInstances do
+    view.context.proofs.mapM fun proof => do instantiateMVars (← inferType proof)
+  return (some { props, propositions }, status)
 
 /-- Programmatic entry point for inspecting a term in its current local context. -/
 public meta def spytialInContextProps (subject : Expr)
@@ -1018,13 +1032,13 @@ public meta def spytialInContextProps (subject : Expr)
     (walkConfig : WalkConfig := {}) (hypotheses : Array Expr := #[])
     (observations predicates : Array Expr := #[]) :
     TermElabM (Json × ContextViewStatus) := do
-  let (props?, status) ←
+  let (payload?, status) ←
     spytialInContextProps? subject ops? walkConfig { contextConfig with hypotheses } observations predicates
-  let some props := props? | throwError "spytial: inconsistent context"
-  return (props, status)
+  let some payload := payload? | throwError "spytial: inconsistent context"
+  return (payload.props, status)
 
 private meta def inspectionPointProps (subject : Expr) (stx : Syntax) :
-    TermElabM (Option Json) := do
+    TermElabM (Option InspectionPayload) := do
   let observers ← resolveObservations stx[2]
   let (props?, status) ← spytialInContextProps? subject (optionalOps stx[4]) {}
     (← resolveContextConfig stx[3]) observers.functions observers.predicates
@@ -1035,11 +1049,13 @@ private meta def inspectionPointProps (subject : Expr) (stx : Syntax) :
     logWarning "spytial: context preparation reached a limit; the diagram may be incomplete"
   return props?
 
-private meta def saveInspectionPoint (invocation : Syntax) (props : Json)
+private meta def saveInspectionPoint (invocation : Syntax) (payload : InspectionPayload)
     (scope : String) (branch : Name := .anonymous) : CoreM Unit := do
   let fileMap ← getFileMap
   let line := invocation.getPos?.map fun p => (fileMap.toPosition p).line
   let caption? := invocation[5][1].isStrLit?
+  let props := if let some ids := (← inspectionFactIds? payload.propositions) then
+    payload.props.setObjVal! "factIds" (toJson ids) else payload.props
   let props := props.setObjVal! "point" (Json.mkObj [
     ("title", toJson caption?), ("line", toJson line),
     ("scope", toJson scope), ("branch", toJson (if branch.isAnonymous then "" else branch.toString))])

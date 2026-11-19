@@ -127,6 +127,24 @@ export async function settled(page, count) {
   }
 }
 
+// Read the text actually covered in SVG coordinates so a misplaced marker
+// (or a marker painted on top of the glyphs) fails the interaction test.
+async function markedLines(graph) {
+  return graph.locator('.label-highlight-marker').evaluateAll(marks => marks.map(mark => {
+    const box = mark.getBBox();
+    const label = mark.parentElement.querySelector('text.linklabel, text.label');
+    if (!(mark.compareDocumentPosition(label) & Node.DOCUMENT_POSITION_FOLLOWING)) return null;
+    const edge = label.matches('.linklabel');
+    const candidates = edge ? [label] : [...label.querySelectorAll('tspan')];
+    const line = candidates.find(line => {
+      const r = line.getBBox();
+      return box.x <= r.x && box.x + box.width >= r.x + r.width &&
+        box.y <= r.y + r.height / 2 && r.y + r.height / 2 <= box.y + box.height;
+    });
+    return [edge ? 'edge' : label.querySelector('.main-label-tspan').textContent, line?.textContent];
+  }).sort());
+}
+
 async function main() {
   const file = 'SpytialTests/ExplorerTest.lean';
   const text = fs.readFileSync(file, 'utf8');
@@ -201,6 +219,24 @@ async function main() {
     const [empty, nonempty] = guarded.props.explorer.points;
     assert.notEqual(empty.point.scope, nonempty.point.scope);
     assert.ok(empty.localContext.some(d => d.name === 'h'));
+    assert.notDeepEqual(empty.factIds, nonempty.factIds);
+    const [factChanges] = await doc.widgets(lineOf('theorem explorerFactChanges'));
+    const [pq, r, all] = factChanges.props.explorer.points;
+    assert.deepEqual(pq.inspection.facts, ['P x', 'Q x']);
+    assert.deepEqual(r.inspection.facts, ['R x']);
+    assert.deepEqual(pq.factSources.map(s => s.map(i => pq.localContext[i].name)), [['hpq'], ['hpq']]);
+    assert.deepEqual(all.factIds, [...pq.factIds, ...r.factIds]);
+    const [heights] = await doc.widgets(lineOf('def explorerHeightContext'));
+    const [heightPoint] = heights.props.explorer.points;
+    const heightsFact = heightPoint.inspection.factTargets[heightPoint.inspection.facts.indexOf('a.length < b.length')];
+    const names = new Map(heightPoint.dataInstance.atoms.map(a => [a.id, a.label]));
+    assert.deepEqual(heightsFact.tuples.filter(t =>
+      heightPoint.dataInstance.relations.find(r => r.id === t.relation)?.name === 'length')
+      .map(t => names.get(t.atoms[0])).sort(), ['a', 'b']);
+    const [branchFacts] = await doc.widgets(lineOf('theorem explorerBranchFacts'));
+    const [branchA, branchB] = branchFacts.props.explorer.points;
+    assert.deepEqual(branchA.inspection.facts, branchB.inspection.facts);
+    assert.notDeepEqual(branchA.factIds, branchB.factIds, 'same spelling, distinct branch locals');
     const [delayed] = await doc.widgets(lineOf('def mapIdentity'));
     assert.equal(delayed.props.explorer.points.length, 1);
     const [resolved] = await doc.widgets(lineOf('List.map (spytial id)'));
@@ -265,6 +301,93 @@ async function main() {
     assert.deepEqual(errors, []);
     await page.screenshot({ path: '.lake/explorer-all.png', fullPage: true });
     await page.close();
+    const facts = await browserPage(browser, factChanges.props);
+    await expandExplorer(facts.page, 3);
+    const leftSelect = facts.page.getByLabel('Left inspection point', { exact: true });
+    const rightSelect = facts.page.getByLabel('Right inspection point', { exact: true });
+    const diff = facts.page.getByLabel('Context fact comparison');
+    await rightSelect.selectOption('1');
+    assert.deepEqual(await diff.locator('.spytial-only-left li').allTextContents(), ['P x', 'Q x']);
+    assert.deepEqual(await diff.locator('.spytial-only-right li').allTextContents(), ['R x']);
+    await facts.page.getByRole('button', { name: 'Next pair' }).click();
+    assert.deepEqual([await leftSelect.inputValue(), await rightSelect.inputValue()], ['1', '2']);
+    assert.deepEqual(await diff.locator('.spytial-only-right li').allTextContents(), ['P x', 'Q x']);
+    const shared = diff.locator('details');
+    assert.equal(await shared.evaluate(el => el.open), false);
+    await shared.locator('summary').click();
+    assert.equal(await shared.locator('li').innerText(), 'R x');
+    await facts.page.getByRole('button', { name: 'Previous pair' }).click();
+    await leftSelect.selectOption('1');
+    assert.equal(await rightSelect.inputValue(), '1', 'both selectors can use the same point');
+    assert.match(await diff.locator(':scope > summary').innerText(), /No differences/);
+    await rightSelect.selectOption('2');
+    await settled(facts.page, 2);
+    await facts.page.getByRole('button', { name: 'Step through' }).click();
+    await settled(facts.page, 1);
+    const source = facts.page.locator('.spytial-context-decl details');
+    assert.match(await source.locator('summary').innerText(), /hpq : P x ∧ Q x/);
+    await source.locator('summary').click();
+    assert.deepEqual(await source.getByRole('button').allTextContents(), ['P x', 'Q x']);
+    const pFact = source.getByRole('button', { name: 'P x', exact: true });
+    const factGraph = facts.page.locator('webcola-cnd-graph');
+    const strokes = () => factGraph.locator('path[data-link-id]').evaluateAll(paths =>
+      paths.map(path => [getComputedStyle(path).stroke, getComputedStyle(path).strokeWidth]));
+    const originalStrokes = await strokes();
+    assert.ok(await factGraph.getByText('Q witness x', { exact: true }).isVisible());
+    await source.getByRole('button', { name: 'Q x', exact: true }).hover();
+    assert.deepEqual(await markedLines(factGraph), [['edge', 'Q']]);
+    await pFact.focus();
+    assert.equal(await pFact.getAttribute('data-active'), 'true');
+    assert.deepEqual(await markedLines(factGraph), [['edge', 'P']]);
+    assert.deepEqual(await factGraph.locator('g.highlighted .main-label-tspan').allTextContents(), ['x']);
+    assert.deepEqual(await strokes(), originalStrokes);
+    await pFact.press('Enter');
+    assert.equal(await pFact.getAttribute('aria-pressed'), 'true');
+    await pFact.press('Escape');
+    assert.equal(await factGraph.locator('.highlighted, .label-highlight-marker').count(), 0);
+    assert.deepEqual(facts.errors, []);
+    await facts.page.close();
+    const heightView = await browserPage(browser, heightPoint);
+    await heightView.page.setViewportSize({ width: 420, height: 520 });
+    // Other proof information below the widget makes the infoview itself scrollable.
+    await heightView.page.evaluate(() => { document.body.style.minHeight = '200vh'; });
+    await settled(heightView.page, 1);
+    const divider = heightView.page.getByRole('separator', { name: 'Diagram height' });
+    await divider.press('End');
+    assert.equal(await divider.getAttribute('aria-valuenow'), '80');
+    const declarations = heightView.page.getByRole('region', { name: 'Context declarations and facts' });
+    const graph = heightView.page.locator('webcola-cnd-graph');
+    await declarations.scrollIntoViewIfNeeded();
+    const graphY = (await graph.boundingBox()).y;
+    await declarations.hover();
+    await heightView.page.mouse.wheel(0, 800);
+    await heightView.page.waitForFunction(() => document.querySelector('.spytial-context-scroll').scrollTop > 0);
+    await heightView.page.mouse.wheel(0, 800);
+    await heightView.page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal((await graph.boundingBox()).y, graphY);
+    const outer = declarations.getByRole('button', { name: 'outer : a.length < b.length' });
+    await outer.hover();
+    assert.ok(await graph.getByText('Observed length a.length', { exact: true }).isVisible());
+    const lengthLines = [['a', 'length: a.length'], ['b', 'length: b.length']];
+    const markedNodeLines = async () => (await markedLines(graph)).filter(([kind]) => kind !== 'edge');
+    assert.deepEqual(await markedNodeLines(), lengthLines);
+    assert.deepEqual((await graph.locator('g.highlighted .main-label-tspan').allTextContents())
+      .filter(name => ['a', 'b', 'c'].includes(name)).sort(), ['a', 'b']);
+    await outer.click();
+    await graph.hover();
+    assert.deepEqual(await markedNodeLines(), lengthLines);
+    await heightView.page.getByRole('button', { name: 'Clear pin' }).click();
+    assert.equal(await graph.locator('.highlighted, .label-highlight-marker').count(), 0);
+    // Fact previews share the graph with core's constraint inspector.
+    await graph.evaluate(g => {
+      const node = [...g.shadowRoot.querySelectorAll('g.node')].find(n => n.__data__.label === 'a');
+      g.highlightNodes([node.__data__.id]);
+    });
+    await outer.focus();
+    await outer.press('Escape');
+    assert.deepEqual(await graph.locator('g.highlighted .main-label-tspan').allTextContents(), ['a']);
+    assert.deepEqual(heightView.errors, []);
+    await heightView.page.close();
     const one = await browserPage(browser, single.props);
     await expandExplorer(one.page, 1);
     await settled(one.page, 1);
@@ -278,8 +401,7 @@ async function main() {
     const linePage = await browserPage(browser, omitted);
     await settled(linePage.page, 1);
     assert.equal(await linePage.page.getByLabel('Spytial inspection explorer').count(), 0);
-    await linePage.page.locator('.spytial-context summary').click();
-    assert.match(await linePage.page.locator('.spytial-context').innerText(),
+    assert.match(await linePage.page.getByLabel('Context declarations and facts').innerText(),
       /h : x = 7\s+\(omitted from this inspection\)/);
     await linePage.page.close();
 
@@ -297,7 +419,7 @@ async function main() {
     assert.equal(updated.props.explorer.points[2].point.title, 'Repainted caption');
     assert.deepEqual(doc.diagnostics.flatMap(d => d.diagnostics).filter(d => d.severity === 1), []);
     fs.writeFileSync('.lake/explorer-props.json', JSON.stringify(header.props, null, 2));
-    console.log('Infoview RPC + Chromium: collapsed theorem disclosure, lazy diagrams, reopen selections, line widgets, captions, comparisons, stepping, all points, single point, branch isolation, rollback and edits passed.');
+    console.log('Infoview RPC + Chromium passed: point selection, fact comparisons, context scrolling, keyboard and pinned highlights, native node highlights, edge captions and attribute markers, branch isolation, rollback and edits.');
   } finally { await browser?.close(); doc.close(); }
 }
 

@@ -5,8 +5,11 @@ import spytialcore from 'spytial-core';
 import spytialComponents from 'spytial-core-components';
 import {
   withLeanScalarTypes, pointTitle, inspectionDisplayData, correspondingAtoms, continuityOptions,
+  compareFacts,
   type InspectionPoint, type LayoutState,
 } from './inspection';
+import { ContextPane } from './ContextPane';
+import { renderedFactHighlights, type FactGraph, type FactHighlight } from './factHighlights';
 
 const { JSONDataInstance, LayoutInstance, parseLayoutSpec, SGraphQueryEvaluator } = spytialcore;
 const { isPositionalConstraintError, isGroupOverlapError, isHiddenNodeConflictError } =
@@ -41,7 +44,7 @@ function injectCss() {
     .spytial-explorer-summary { cursor: pointer; margin: 6px 0; }
     .spytial-toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
     .spytial-toolbar strong { overflow-wrap: anywhere; margin-right: auto; }
-    .spytial-toolbar button, .spytial-point-header select {
+    .spytial-toolbar button, .spytial-point-select {
       color: var(--vscode-foreground); background: var(--vscode-editorWidget-background);
       border: 1px solid var(--vscode-panel-border, #777); border-radius: 4px; padding: 4px 8px;
     }
@@ -49,12 +52,55 @@ function injectCss() {
     .spytial-toolbar button:disabled { opacity: .4; }
     .spytial-panes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 12px; }
     .spytial-point-header { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
-    .spytial-point-header select { max-width: 100%; min-width: 0; }
+    .spytial-point-select { max-width: 100%; min-width: 0; }
+    .spytial-pair-selectors { display: flex; flex-wrap: wrap; gap: 6px 12px; margin: 8px 0; }
+    .spytial-pair-selectors label { flex: 1 1 12em; min-width: 0; display: grid; gap: 2px; }
     .spytial-context { font-size: 12px; margin-top: 8px; }
     .spytial-context code { white-space: pre-wrap; overflow-wrap: anywhere; }
     .spytial-facts { margin: 8px 0; font-size: 12px; }
     .spytial-facts code { white-space: pre-wrap; overflow-wrap: anywhere; }
-    .spytial-facts li { margin: 5px 0; }
+    .spytial-facts summary { cursor: pointer; }
+    .spytial-facts ul { margin: 4px 0; padding-inline-start: 20px; }
+    .spytial-split { height: min(72vh, 680px); display: grid; min-width: 0; }
+    .spytial-divider {
+      position: relative; cursor: row-resize; touch-action: none; outline-offset: -2px;
+    }
+    .spytial-divider::after {
+      content: ''; display: block; width: 36px; height: 3px; border-radius: 2px;
+      margin: 4px auto; background: var(--vscode-descriptionForeground, #888);
+    }
+    .spytial-divider:hover::after, .spytial-divider:focus-visible::after {
+      background: var(--vscode-focusBorder, #087aba);
+    }
+    .spytial-context-pane { min-height: 0; min-width: 0; display: flex; flex-direction: column; font-size: 12px; }
+    .spytial-context-pane header {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 3px 8px; padding: 3px 6px;
+      border-bottom: 1px solid var(--vscode-panel-border, #8886);
+    }
+    .spytial-context-pane header span, .spytial-context-pane small { color: var(--vscode-descriptionForeground); }
+    .spytial-context-pane header small, .spytial-context-pane header button { margin-inline-start: auto; }
+    .spytial-context-scroll { min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+    .spytial-context-pane code { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .spytial-context-decl { padding: 2px 0; border-bottom: 1px solid var(--vscode-panel-border, #8883); }
+    .spytial-context-text, .spytial-context-fact, .spytial-context-decl summary { padding: 3px 6px; }
+    .spytial-context-decl summary { cursor: pointer; }
+    .spytial-context-decl summary small, .spytial-context-fact small { margin-inline-start: .5em; }
+    .spytial-derived { margin: 2px 0 2px 1em; border-inline-start: 1px solid var(--vscode-panel-border, #888); }
+    .spytial-context-fact {
+      display: block; width: 100%; text-align: start; font: inherit; color: inherit; cursor: pointer;
+      border: 0; border-inline-start: 2px solid transparent; background: transparent;
+    }
+    .spytial-context-fact[data-active=true] { background: var(--vscode-list-hoverBackground, #8882);
+      border-inline-start-color: var(--vscode-focusBorder, #087aba); }
+    .spytial-context-pane :focus-visible, .spytial-divider:focus-visible {
+      outline: 1px solid var(--vscode-focusBorder, #087aba); outline-offset: -1px;
+    }
+    .spytial-fact-diff { border-top: 1px solid var(--vscode-panel-border, #888); padding-top: 8px; }
+    .spytial-fact-diff .spytial-panes { margin: 6px 0; }
+    .spytial-fact-diff ul { max-height: 10rem; overflow-y: auto; }
+    .spytial-only-left, .spytial-only-right { padding: 4px 8px; min-width: 0; }
+    .spytial-only-left { border-inline-start: 3px solid var(--vscode-charts-orange, #bb793c); }
+    .spytial-only-right { border-inline-start: 3px solid var(--vscode-charts-blue, #4285bd); }
     .spytial-container {
       position: relative;
       overflow: hidden;
@@ -223,6 +269,31 @@ export default function SpytialWidget(props: SpytialWidgetProps) {
 
 interface SettledInspection { point: InspectionPoint; state?: LayoutState }
 
+function FactList({ facts }: { facts: string[] }) {
+  return <ul>{facts.map((fact, i) => <li key={i}><code>{fact}</code></li>)}</ul>;
+}
+
+function FactComparison({ left, right, leftNumber, rightNumber }: {
+  left: InspectionPoint; right: InspectionPoint; leftNumber: number; rightNumber: number;
+}) {
+  const { leftOnly, rightOnly, shared } = compareFacts(left, right);
+  const differences = leftOnly.length + rightOnly.length;
+  if (!differences && !shared.length) return <p className="spytial-facts">Neither point has retained facts.</p>;
+  return <details open className="spytial-facts spytial-fact-diff" aria-label="Context fact comparison">
+    <summary>Context facts · {differences ? `${differences} ${differences === 1 ? 'difference' : 'differences'}` : 'No differences'}</summary>
+    {differences > 0 && <div className="spytial-panes">
+      {([['left', leftNumber, leftOnly], ['right', rightNumber, rightOnly]] as const).map(([side, n, facts]) =>
+        <div key={side} className={`spytial-only-${side}`}>
+          <strong>Only at point {n} ({facts.length})</strong>
+          {facts.length > 0 && <FactList facts={facts} />}
+        </div>)}
+    </div>}
+    {shared.length > 0 && <details><summary>In both points ({shared.length})</summary>
+      <FactList facts={shared} />
+    </details>}
+  </details>;
+}
+
 function InspectionExplorer({ name, points }: { name: string; points: InspectionPoint[] }) {
   const [expanded, setExpanded] = React.useState(false);
   const [mode, setMode] = React.useState('compare');
@@ -246,11 +317,23 @@ function InspectionExplorer({ name, points }: { name: string; points: Inspection
   const visible = selected.filter(i => points[i] !== undefined);
   const first = points[visible[0]];
   const anchorReady = anchor?.point === first;
+  const comparing = multiple && mode === 'compare' && visible.length === 2;
   const choose = (index: number, slot: number) => {
     if (mode === 'step') { setStepPrior(history.current); setStep(index); }
     else if (slot === 0) setLeft(index);
     else setRight(index);
   };
+  const shiftPair = (delta: number) => {
+    setLeft(left + delta);
+    setRight(right + delta);
+  };
+  const pointSelect = (index: number, slot: number, label: string) =>
+    <select className="spytial-point-select" aria-label={label} value={index}
+      onChange={e => choose(Number(e.target.value), slot)}>
+      {points.map((p, i) => <option key={i} value={i}>
+        {i + 1}. {pointTitle(p)} (line {p.point?.line ?? '?'})
+      </option>)}
+    </select>;
   return <details className="spytial-theorem-inspections" open={expanded} onToggle={event => {
     const open = event.currentTarget.open;
     setExpanded(open);
@@ -269,6 +352,20 @@ function InspectionExplorer({ name, points }: { name: string; points: Inspection
             onClick={() => setMode(key)}>{label}</button>)}
       </div>}
     </div>
+    {comparing && <>
+      <div className="spytial-pair-selectors">
+        <label>Left point{pointSelect(left, 0, 'Left inspection point')}</label>
+        <label>Right point{pointSelect(right, 1, 'Right inspection point')}</label>
+      </div>
+      {points.length > 2 && <div className="spytial-toolbar" role="group" aria-label="Move both inspection points">
+        <button type="button" disabled={Math.min(left, right) === 0}
+          onClick={() => shiftPair(-1)}>Previous pair</button>
+        <button type="button" disabled={Math.max(left, right) === points.length - 1}
+          onClick={() => shiftPair(1)}>Next pair</button>
+      </div>}
+      <FactComparison left={points[left]} right={points[right]}
+        leftNumber={left + 1} rightNumber={right + 1} />
+    </>}
     {multiple && mode === 'step' && <div className="spytial-toolbar">
       <button type="button" disabled={step === 0} onClick={() => choose(step - 1, 0)}>Previous</button>
       <span aria-live="polite">{step + 1} / {points.length}</span>
@@ -285,25 +382,20 @@ function InspectionExplorer({ name, points }: { name: string; points: Inspection
         const waiting = mode !== 'step' && slot > 0 && !anchorReady;
         return <section key={slot} aria-label={pointTitle(point)}>
           <div className="spytial-point-header">
-            {multiple && mode !== 'all' ? <select
-              aria-label={mode === 'step' ? 'Inspection point' : slot === 0 ? 'Left inspection point' : 'Right inspection point'}
-              value={index} onChange={e => choose(Number(e.target.value), slot)}>
-              {points.map((p, i) => <option key={i} value={i}
-                disabled={mode === 'compare' && i === (slot === 0 ? right : left)}>
-                {i + 1}. {pointTitle(p)} (line {p.point?.line ?? '?'})
-              </option>)}
-            </select> : <strong>{multiple && `${index + 1}. `}<span>{pointTitle(point)}</span></strong>}
+            {multiple && mode === 'step' ? pointSelect(index, slot, 'Inspection point') :
+              <strong>{multiple && `${index + 1}. `}<span>{pointTitle(point)}</span></strong>}
             <span>Line {point.point?.line ?? '?'}</span>
           </div>
           {point.point?.branch && <p className="spytial-inspection-note">Case {point.point.branch}</p>}
           {!waiting ? <DiagramWidget {...point} pointNumber={multiple ? index + 1 : undefined}
+            showPointFacts={!comparing}
             prior={prior?.point !== point ? prior : undefined}
             onSettled={slot === 0 ? state => {
               const settled = { point, state };
               history.current = settled;
               setAnchor(previous => previous?.point === point ? previous : settled);
             } : undefined} /> : <div className="spytial-loading">Waiting for comparison layout…</div>}
-          {(slot > 0 || mode === 'step' && prior) && !waiting && <p className="spytial-inspection-note" role="status">
+          {(slot > 0 || mode === 'step' && prior) && prior?.point !== point && !waiting && <p className="spytial-inspection-note" role="status">
             {matches.length && prior?.state ? `Stability hints for ${matches.length} shared Lean identities; layout constraints still apply.` :
               'Independent layout: no shared bindings established for these points.'}
           </p>}
@@ -315,6 +407,7 @@ function InspectionExplorer({ name, points }: { name: string; points: Inspection
 }
 
 function DiagramWidget(props: InspectionPoint & {
+  showPointFacts?: boolean;
   pointNumber?: number; prior?: SettledInspection; onSettled?: (state?: LayoutState) => void;
 }) {
   const containerRef = React.useRef<HTMLDivElement>(null);
@@ -323,6 +416,9 @@ function DiagramWidget(props: InspectionPoint & {
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [height, setHeight] = React.useState(DEFAULT_HEIGHT);
+  const [share, setShare] = React.useState(62);
+  const [factHighlights, setFactHighlights] = React.useState<FactHighlight[]>();
+  const split = props.showPointFacts !== false && !!(props.localContext?.length || props.inspection?.facts.length);
   const errorMountedRef = React.useRef(false);
   const data = props.dataInstance;
   const onSettledRef = React.useRef(props.onSettled);
@@ -378,6 +474,7 @@ function DiagramWidget(props: InspectionPoint & {
     if (!containerRef.current) return;
     setLoading(true);
     setError(null);
+    setFactHighlights(undefined);
     if (CnDCore.ErrorAPI) CnDCore.ErrorAPI.clearAllErrors();
     let cancelled = false;
 
@@ -418,7 +515,7 @@ function DiagramWidget(props: InspectionPoint & {
         if (!container || cancelled) return;
         container.innerHTML = '';
 
-        const graphEl = document.createElement('webcola-cnd-graph');
+        const graphEl = document.createElement('webcola-cnd-graph') as FactGraph;
         graphRef.current = graphEl;
         container.appendChild(graphEl);
 
@@ -432,6 +529,9 @@ function DiagramWidget(props: InspectionPoint & {
             // positions are valid hints. Frame the pane's own settled graph.
             (graphEl as any).resetViewToFitContent?.();
             onSettledRef.current?.((graphEl as any).getLayoutState());
+            const targets = props.inspection?.factTargets;
+            if (targets?.length) setFactHighlights(renderedFactHighlights(graphEl, displayData, targets,
+              displayInstance.generateGraph(false, false), layoutInstance));
           }
         }, { once: true });
         const prior = priorRef.current;
@@ -469,19 +569,34 @@ function DiagramWidget(props: InspectionPoint & {
         {loading && <div className="spytial-loading">Loading diagram...</div>}
         {error && <div className="spytial-error">Error: {error}</div>}
         <div ref={errorMountRef} />
-        <div className="spytial-container" style={{ height }}>
-          <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
-          <div className="spytial-resize-handle" onMouseDown={onResizeStart} />
+        <div className={split ? 'spytial-split' : undefined} style={split ? {
+          gridTemplateRows: `minmax(0, ${share}fr) 12px minmax(0, ${100 - share}fr)`,
+        } : undefined}>
+          <div className="spytial-container" style={split ? undefined : { height }}>
+            <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+            {!split && <div className="spytial-resize-handle" onMouseDown={onResizeStart} />}
+          </div>
+          {split && <>
+            <div className="spytial-divider" role="separator" tabIndex={0} aria-orientation="horizontal"
+              aria-label="Diagram height" aria-valuemin={25} aria-valuemax={80} aria-valuenow={share}
+              aria-valuetext={`${share}%`}
+              onPointerDown={e => { if (e.button === 0) e.currentTarget.setPointerCapture(e.pointerId); }}
+              onPointerMove={e => {
+                if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+                const bounds = e.currentTarget.parentElement!.getBoundingClientRect();
+                setShare(Math.max(25, Math.min(80, Math.round(100 * (e.clientY - bounds.top) / bounds.height))));
+              }}
+              onKeyDown={e => {
+                const next = { ArrowUp: share - 5, ArrowDown: share + 5, Home: 25, End: 80 }[e.key];
+                if (next === undefined) return;
+                e.preventDefault(); setShare(Math.max(25, Math.min(80, next)));
+              }} />
+            <ContextPane key={props.pointNumber ?? props.point?.line} point={props} highlights={factHighlights} />
+          </>}
         </div>
-        {props.inspection && props.inspection.facts.length > 0 &&
-          <details className="spytial-facts" open>
-            <summary>Context facts ({props.inspection.facts.length})</summary>
-            <ul>{props.inspection.facts.map((fact, index) =>
-              <li key={index}><code>{fact}</code></li>)}</ul>
-          </details>}
         {!!props.observations?.length && <p className="spytial-inspection-note">
           Observing: <code>{props.observations.join(', ')}</code></p>}
-        {!!props.localContext?.length && <details className="spytial-context">
+        {!split && !!props.localContext?.length && <details className="spytial-context">
           <summary>Local context ({props.localContext.length})</summary>
           <ul>{props.localContext.map((local, i) => <li key={i}><code>
             {local.name} : {local.type}{local.value != null ? ` := ${local.value}` : ''}

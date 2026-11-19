@@ -6,6 +6,8 @@ its proof. Diagrams and comparison controls are loaded only after expansion.
 The points appear in source order. With two or more points, the explorer
 initially compares the first and last. Choose any two points with the selectors,
 use **Step through** to inspect one point at a time, or choose **All points**.
+Both selectors offer every point. **Next pair** moves both selections forward
+one position, for example from (1, 2) to (2, 3). **Previous pair** moves them back.
 A theorem with one inspection shows that view after expansion.
 Collapsing and reopening the explorer preserves the selected view and points.
 
@@ -18,6 +20,23 @@ here. Select the function name to compare the marked expressions in source order
 Each `spytial` line still has its ordinary infoview widget. The explorer retains
 the same payload: inspected term, relational data, resolved layout specification,
 observations, extracted proof facts, and the local context at that line.
+
+In a single inspection, **Local context** scrolls beneath the diagram. Drag
+the divider to resize the panes, or focus it and use the up and down arrows.
+Declarations follow Lean's order. Expand `hpq : P x ∧ Q x` to inspect its
+two derived facts. A derivation with several local sources appears once,
+under its last source, with all their names.
+
+Hover or keyboard-focus a linked fact to highlight its visible nodes. A yellow
+marker picks out the edge captions or attribute lines for the fact’s relation tuples.
+Click the fact or press Enter to pin the highlight while
+inspecting the diagram. **Clear pin** releases it. A proposition can remain
+readable even when the layout hides all its targets.
+
+In **Side by side**, the fact comparison sits just below the selectors.
+Each column shows the facts unique to its point. Expand **In both points**
+to see the shared facts. The comparison uses Lean propositions, so two
+branches can each display `P x` as unique when their `x`s are different locals.
 
 Titles default to the inspected binder name or the displayed Lean expression.
 Add an optional `titled` clause at the end of a tactic for an authored caption:

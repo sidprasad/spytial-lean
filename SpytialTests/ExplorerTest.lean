@@ -119,3 +119,21 @@ theorem explorerExclusion (x : Nat) (h : x = 7) : x = 7 := by
 def termExclusion (x : Nat) (h : x = 7) :=
   spytial x nvm [h]
 example (x : Nat) (h : x = 7) : termExclusion x h = x := rfl
+
+theorem explorerFactChanges (x : Nat) (P Q R : Nat → Prop)
+    (hpq : P x ∧ Q x) (hr : R x) : True := by
+  spytial x nvm [hr] with [tag univ "P witness" lean (P), tag univ "Q witness" lean (Q)]
+  spytial x nvm [hpq]
+  spytial x
+  trivial
+
+theorem explorerBranchFacts (P : Nat → Prop) (h : (∃ x, P x) ∨ (∃ x, P x)) : True := by
+  rcases h with ⟨x, hx⟩ | ⟨x, hx⟩
+  · spytial x
+    trivial
+  · spytial x
+    trivial
+
+def explorerHeightContext (a b c : List Nat) (x₁ x₂ x₃ x₄ x₅ x₆ : Nat)
+    (outer : a.length < b.length) :=
+  spytial (a, (b, c)) observing [List.length] with [attribute length, tag univ "Observed length" length]

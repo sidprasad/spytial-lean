@@ -71,8 +71,13 @@ the relationships retained by its root-only projection. Opaque relation
 endpoints may extend that datum, but a second constructor-built recursive value
 does not overwrite the selected structure's shape. Use `rootOnly := false`
 programmatically when the full extracted context, including alternate
-structures, is required. The retained context facts are listed below the
-diagram.
+structures, is required. The scrollable **Local context** below a single
+diagram shows each retained proposition at its source. Hover or focus a linked
+fact to highlight the values and tuples the walk recorded for it. For example,
+when `height` is an attribute, `height B < height A` can highlight both
+subtrees and put a yellow marker behind their height lines. Click to pin the highlight.
+In the declaration explorer, **Side by side** shows which facts are unique to
+each selected point.
 
 `spytial.datum` prints the same datum. The widget payload additionally records the
 selected root and its source term so the infoview can identify what was inspected.

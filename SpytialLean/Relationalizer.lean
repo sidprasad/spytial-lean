@@ -46,6 +46,12 @@ public meta structure SelectorEvidence where
   proofs : Array Expr := #[]
   deriving Inhabited
 
+/-- One emitted tuple, identified independently of display labels. -/
+public meta structure InspectionTuple where
+  relation : String
+  atoms : Array String
+  deriving ToJson, BEq, Inhabited
+
 public meta structure WalkState where
   atoms : Array JsonAtom := #[]
   relations : Std.HashMap String RelationalizerCore.RelationData := {}
@@ -100,6 +106,8 @@ public meta structure WalkState where
   /-- Per-atom index for duplicate checks in `rememberSelectorTerm`. The flat
       array above preserves encounter order for selector evidence. -/
   selectorTermIndex : Std.HashMap String (Array Expr) := {}
+  /-- Source expressions for tuple and attribute highlighting in a context inspection. -/
+  termTuples : ExprStructMap (Array InspectionTuple) := {}
   /-- `r w w` per closed subterm on the `.eqv` route — see `identityVerdict`. -/
   eqvRefl : ExprStructMap Bool := {}
   reprInstCache : ExprStructMap (Option Expr) := {}
@@ -201,6 +209,13 @@ public meta def WalkState.rememberSelectorTerm (state : WalkState) (term : Expr)
     selectorTerms := state.selectorTerms.push (term, atomId)
     selectorTermIndex := state.selectorTermIndex.insert atomId (terms.push term) }
 
+public meta def WalkState.rememberTuple (state : WalkState) (term : Expr)
+    (relation : String) (atoms : Array String) : WalkState := Id.run do
+  let tuples := state.termTuples.getD ⟨term⟩ #[]
+  let tuple := { relation, atoms : InspectionTuple }
+  if tuples.contains tuple then return state
+  return { state with termTuples := state.termTuples.insert ⟨term⟩ (tuples.push tuple) }
+
 /-- Remember a term that an active-domain observation can apply to. Identity
     merging can send several terms to one atom; its first representative is
     enough, and matches the representative whose structure was drawn. -/
@@ -261,6 +276,8 @@ public meta structure WalkConfig where
   shareSymbolicValues : Bool := false
   /-- Retain term-to-atom associations for Lean predicate selectors. -/
   recordSelectorTerms : Bool := false
+  /-- Record the tuple references needed by the final context-fact view. -/
+  recordFactTargets : Bool := false
   /-- Over this, the function stays a leaf instead of tabulating. -/
   maxTableTuples : Nat := 512
   /-- Equational refinements: a hypothesis variable in this map draws the term
@@ -1530,14 +1547,15 @@ private meta def emitFunctionGraph? (cfg : WalkConfig)
   types := types.push typeName
   let tuple : JsonTuple := { atoms := ids, types }
   let relationId ← headRelationId e.getAppFn types
-  modify fun state => state.addTuple relName types tuple relationId
+  modify fun state =>
+    let state := state.addTuple relName types tuple relationId
+    if cfg.recordFactTargets then state.rememberTuple e relationId ids else state
   return true
 
 /-- A reduced source application may already have emitted this same graph
     point through its residual (for example after simplifying numeral syntax). -/
-private meta def addComputedTuple (head : Expr) (relation : String) (types ids : Array String) :
+private meta def addComputedTuple (id relation : String) (types ids : Array String) :
     StateT WalkState MetaM Unit := do
-  let id ← headRelationId head types
   if let some previous := (← get).relations[id]? then
     if previous.tuples.any (·.atoms == ids) then return
   modify fun state => state.addTuple relation types { atoms := ids, types } id
@@ -1569,8 +1587,11 @@ private meta def walkComputed? (cfg : WalkConfig) (e : Expr)
   let resultId ← recurse nested result.expr
   ids := ids.push resultId
   types := types.push (← sigOfType (← inferType e))
-  addComputedTuple e.getAppFn relation types ids
+  let relationId ← headRelationId e.getAppFn types
+  addComputedTuple relationId relation types ids
   modify fun state =>
+    let state := if cfg.recordFactTargets then
+      state.rememberTuple e relationId ids else state
     { state with applicationAtoms := state.applicationAtoms.insert ⟨e⟩ resultId }
   return some resultId
 
@@ -1910,6 +1931,8 @@ public meta def addObservation (cfg : WalkConfig) (source result : Expr)
       |>.insert (⟨reducedResult⟩ : ExprStructEq) resultId
     { state with applicationAtoms := applications }
   atomIds := atomIds.push resultId
+  if cfg.recordFactTargets then
+    modify (·.rememberTuple source relationId atomIds)
   let state ← get
   if let some stored := state.relations[relationId]? then
     if stored.tuples.any (fun tuple => tuple.atoms == atomIds) then return
