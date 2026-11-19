@@ -523,16 +523,27 @@ private meta def recursiveConstructorValue? (e : Expr) : MetaM (Option (Name × 
   unless shape.ctors.any (·.ctorName == ctorName) do return none
   return some (typeName, value)
 
-/-- A root-only fact must not extend an explicit observation to an alternate
-    constructor-built recursive value when the selected representation already
-    contains that recursive type. Opaque endpoints remain admissible, as do
-    observations wholly about represented subterms. -/
-private meta partial def observesAlternateRecursiveValue (cfg : WalkConfig)
+/-- A root-only fact must not draw an alternate constructor-built recursive
+    value when the selected representation already contains that recursive type.
+    For example, after a rotation, `height (node B₁ r B₂) = k + 1` is about a
+    subtree the result no longer contains; drawing it would add a node that the
+    inspected value does not have. This holds for every named application, observed
+    or not. Opaque endpoints remain admissible, as do facts wholly about
+    represented subterms. -/
+private meta partial def mentionsAlternateRecursiveValue (cfg : WalkConfig)
     (representedTerms : Std.HashSet ExprStructEq)
     (representedTypes : Std.HashSet Name)
     (expression : Expr) : MetaM Bool := do
   let expression ← contextTerm cfg expression
-  if let some (_, arguments) ← observedGraphSide? cfg expression then
+  -- A term that denotes a drawn value is about the inspected value, however it
+  -- was computed: `rotateRight t` is the drawn root even though `t` is not.
+  if representedTerms.contains ⟨expression⟩ then return false
+  if let some (_, value) ← recursiveConstructorValue? expression then
+    if representedTerms.contains ⟨value⟩ then return false
+  -- An equation describes one value by two terms, so it adds no alternate value
+  -- itself; the applications inside it are still checked below.
+  let isEquation := expression.isAppOfArity ``Eq 3
+  if let some (_, arguments) ← if isEquation then pure none else graphSide? expression then
     for argument in arguments do
       let argument ← contextTerm cfg argument
       unless representedTerms.contains ⟨argument⟩ do
@@ -540,7 +551,7 @@ private meta partial def observesAlternateRecursiveValue (cfg : WalkConfig)
           if !representedTerms.contains ⟨value⟩ && representedTypes.contains typeName then
             return true
   for argument in ← dataArgsOf expression do
-    if ← observesAlternateRecursiveValue cfg representedTerms representedTypes argument then
+    if ← mentionsAlternateRecursiveValue cfg representedTerms representedTypes argument then
       return true
   return false
 
@@ -582,7 +593,7 @@ private meta def projectToRepresentation (context : InspectionContext) (baseConf
     let proposition ← displayedProposition context.proofs[index]!
     let isRefinement := (← refinementOf? proposition).isSome
     let isStale ← if isRefinement then pure false else
-      observesAlternateRecursiveValue cfg representedTerms representedTypes proposition
+      mentionsAlternateRecursiveValue cfg representedTerms representedTypes proposition
     stale := stale.push isStale
   let mut selected : Std.HashSet Nat := {}
   let mut changed := true

@@ -377,6 +377,28 @@ private def Tree.height : Tree → Nat
         "Tree|node\nTree|left\nTree|right\nNat|k\nR[Nat]:3\n\
          height[Tree,Nat]:0,3\nleft[Tree,Tree]:0,1\nright[Tree,Tree]:0,2"
 
+private def Tree.swap : Tree → Tree
+  | .node left right => .node right left
+  | tree => tree
+
+/- After `swap`, `node left right` is no longer part of the value. A fact about
+   it must not draw it as an extra node, even without `observing`. A fact about
+   `swap (node left right)` is about the drawn root and stays. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `left tree fun left => do
+  withLocalDeclD `right tree fun right => do
+  withLocalDeclD `j (mkConst ``Nat) fun j => do
+  withLocalDeclD `k (mkConst ``Nat) fun k => do
+    let before := node left right
+    let after := mkApp (mkConst ``Tree.swap) before
+    let height := mkApp (mkConst ``Tree.height)
+    withLocalDeclD `old (← mkAppM ``Eq #[height before, j]) fun _ => do
+    withLocalDeclD `new (← mkAppM ``Eq #[height after, k]) fun _ => do
+      let view ← viewOf "consumer.oldSubtree" after
+      assertCanon "consumer.oldSubtree" view.data
+        "Tree|node\nTree|right\nTree|left\nNat|k\n\
+         height[Tree,Nat]:0,3\nleft[Tree,Tree]:0,1\nright[Tree,Tree]:0,2"
+
 /- An observer is lifted over the represented domain. Selecting a parent
    therefore observes the parent and both symbolic child trees. -/
 #eval show Lean.Elab.TermElabM Unit from do
