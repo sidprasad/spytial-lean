@@ -399,6 +399,19 @@ private def Tree.swap : Tree → Tree
         "Tree|node\nTree|right\nTree|left\nNat|k\n\
          height[Tree,Nat]:0,3\nleft[Tree,Tree]:0,1\nright[Tree,Tree]:0,2"
 
+private structure Sized (tree : Tree) (n : Nat) : Prop where
+  height : Tree.height tree = n
+
+/- A `Prop` structure hypothesis is unpacked into its fields, so `hx : Sized t k`
+   gives `height t = k` without `have := hx.height`. The structure stays too. -/
+#eval show Lean.Elab.TermElabM Unit from do
+  withLocalDeclD `t tree fun t => do
+  withLocalDeclD `k (mkConst ``Nat) fun k => do
+    withLocalDeclD `hx (mkApp2 (mkConst ``Sized) t k) fun _ => do
+      let view ← viewOf "consumer.structureFields" t {} #[mkApp (mkConst ``Tree.height) t]
+      assertCanon "consumer.structureFields" view.data
+        "Tree|t\nNat|k\nSized[Tree,Nat]:0,1\nheight[Tree,Nat]:0,1"
+
 /- An observer is lifted over the represented domain. Selecting a parent
    therefore observes the parent and both symbolic child trees. -/
 #eval show Lean.Elab.TermElabM Unit from do
