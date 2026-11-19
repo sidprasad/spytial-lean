@@ -333,11 +333,12 @@ async function main() {
     const strokes = () => factGraph.locator('path[data-link-id]').evaluateAll(paths =>
       paths.map(path => [getComputedStyle(path).stroke, getComputedStyle(path).strokeWidth]));
     const originalStrokes = await strokes();
+    assert.ok(await factGraph.getByText('Q witness x', { exact: true }).isVisible());
     await source.getByRole('button', { name: 'Q x', exact: true }).hover();
-    assert.deepEqual(await markedLines(factGraph), [['edge', 'Q'], ['x', 'Q witness x']]);
+    assert.deepEqual(await markedLines(factGraph), [['edge', 'Q']]);
     await pFact.focus();
     assert.equal(await pFact.getAttribute('data-active'), 'true');
-    assert.deepEqual(await markedLines(factGraph), [['edge', 'P'], ['x', 'P witness x']]);
+    assert.deepEqual(await markedLines(factGraph), [['edge', 'P']]);
     assert.deepEqual(await factGraph.locator('g.highlighted .main-label-tspan').allTextContents(), ['x']);
     assert.deepEqual(await strokes(), originalStrokes);
     await pFact.press('Enter');
@@ -366,8 +367,8 @@ async function main() {
     assert.equal((await graph.boundingBox()).y, graphY);
     const outer = declarations.getByRole('button', { name: 'outer : a.length < b.length' });
     await outer.hover();
-    const lengthLines = [['a', 'Observed length a.length'], ['a', 'length: a.length'],
-      ['b', 'Observed length b.length'], ['b', 'length: b.length']];
+    assert.ok(await graph.getByText('Observed length a.length', { exact: true }).isVisible());
+    const lengthLines = [['a', 'length: a.length'], ['b', 'length: b.length']];
     const markedNodeLines = async () => (await markedLines(graph)).filter(([kind]) => kind !== 'edge');
     assert.deepEqual(await markedNodeLines(), lengthLines);
     assert.deepEqual((await graph.locator('g.highlighted .main-label-tspan').allTextContents())
@@ -418,7 +419,7 @@ async function main() {
     assert.equal(updated.props.explorer.points[2].point.title, 'Repainted caption');
     assert.deepEqual(doc.diagnostics.flatMap(d => d.diagnostics).filter(d => d.severity === 1), []);
     fs.writeFileSync('.lake/explorer-props.json', JSON.stringify(header.props, null, 2));
-    console.log('Infoview RPC + Chromium passed: point selection, fact comparisons, context scrolling, keyboard and pinned highlights, native node highlights, edge-label, attribute and tag markers, branch isolation, rollback and edits.');
+    console.log('Infoview RPC + Chromium passed: point selection, fact comparisons, context scrolling, keyboard and pinned highlights, native node highlights, edge captions and attribute markers, branch isolation, rollback and edits.');
   } finally { await browser?.close(); doc.close(); }
 }
 

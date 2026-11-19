@@ -75,9 +75,7 @@ structures, is required. The scrollable **Local context** below a single
 diagram shows each retained proposition at its source. Hover or focus a linked
 fact to highlight the values and tuples the walk recorded for it. For example,
 when `height` is an attribute, `height B < height A` can highlight both
-subtrees and put a yellow marker behind their height lines. A fact such as
-`below A q` also marks a tag on `A` whose value comes from `lean (below)`.
-Click to pin the highlight.
+subtrees and put a yellow marker behind their height lines. Click to pin the highlight.
 In the declaration explorer, **Side by side** shows which facts are unique to
 each selected point.
 

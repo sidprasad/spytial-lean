@@ -28,8 +28,7 @@ two derived facts. A derivation with several local sources appears once,
 under its last source, with all their names.
 
 Hover or keyboard-focus a linked fact to highlight its visible nodes. A yellow
-marker picks out its edge labels, attribute lines and tag lines. Tags link
-to facts when their value selector names a relation or its Lean function.
+marker picks out the edge captions or attribute lines for the fact’s relation tuples.
 Click the fact or press Enter to pin the highlight while
 inspecting the diagram. **Clear pin** releases it. A proposition can remain
 readable even when the layout hides all its targets.

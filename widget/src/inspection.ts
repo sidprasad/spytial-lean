@@ -30,8 +30,6 @@ export interface InspectionPoint {
   localContext?: Array<{ name: string; type: string; value?: string | null; excluded?: boolean }>;
   /** For each retained fact, the local context entries used by its proof. */
   factSources?: number[][];
-  /** Relation IDs behind each tag's value selector, in directive order. */
-  tagRelations?: string[][];
   /** Proposition IDs shared by all inspection points in this declaration. */
   factIds?: number[];
   observations?: string[];

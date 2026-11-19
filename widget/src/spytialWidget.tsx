@@ -531,8 +531,7 @@ function DiagramWidget(props: InspectionPoint & {
             onSettledRef.current?.((graphEl as any).getLayoutState());
             const targets = props.inspection?.factTargets;
             if (targets?.length) setFactHighlights(renderedFactHighlights(graphEl, displayData, targets,
-              displayInstance.generateGraph(false, false), layoutInstance, evaluator, spec.directives.tags,
-              props.tagRelations));
+              displayInstance.generateGraph(false, false), layoutInstance));
           }
         }, { once: true });
         const prior = priorRef.current;
@@ -556,7 +555,7 @@ function DiagramWidget(props: InspectionPoint & {
       graphRef.current = undefined;
       if (containerRef.current) containerRef.current.innerHTML = '';
     };
-  }, [data, props.cndSpec, props.inspection, props.pointNumber, props.tagRelations]);
+  }, [data, props.cndSpec, props.inspection, props.pointNumber]);
 
   return (
     <details open={true}>

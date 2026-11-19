@@ -971,22 +971,6 @@ private meta structure InspectionPayload where
   props : Json
   propositions : Array Expr
 
-/-- In tag order, retain the relation supplying each directly sourced tag.
-    Resolving a Lean selector to literal tuples otherwise erases this identity. -/
-private meta def tagRelationIds (spec : SpytialSpec) (data : JsonDataInstance) :
-    MetaM (List (Array String)) := do
-  (spec.filter (·.item == .tag)).mapM fun op => do
-    match op.field? .value with
-    | some (.sel (.rel name)) =>
-      return (data.relations.filter (·.name == name)).map (·.id)
-    | some (.sel (.leanRel fn)) =>
-      let head := (← instantiateMVars fn).eta.getAppFn
-      unless head.isConst || head.isFVar do return #[]
-      let relations ← data.relations.filterM fun r => do
-        return r.id == (← headRelationId head r.types)
-      return relations.map (·.id)
-    | _ => return #[]
-
 /-- Prepare and inspect the local context, then build the widget payload. -/
 private meta def spytialInContextProps? (subject : Expr)
     (ops? : Option (Array (TSyntax `spytial_op)) := none)
@@ -1002,15 +986,12 @@ private meta def spytialInContextProps? (subject : Expr)
         else scopeWithObservedData scope view.data
       some <$> elabUseSiteOps subject ops (some scope)
     | none => lookupTypeSpec subject
-  let tagRelations ← tagRelationIds (spec?.getD []) view.data
   -- Both selector styles range over this datum. Lean predicates retain the
   -- represented terms and checked evidence instead of reading display labels.
   let spec? ← spec?.mapM fun s =>
     liftM (resolveLeanSelectors view.datum view.data view.prov s view.evidence view.inspection.root)
   let props := spytialProps view.data
     (← spec?.mapM fun s => Lean.ofExcept (SpytialSpec.render s))
-  let props := if tagRelations.any (!·.isEmpty) then
-    props.setObjVal! "tagRelations" (toJson tagRelations) else props
   -- Only exact Lean free-variable identities establish cross-view correspondence.
   -- Atom IDs and pretty names are local to one walk and cannot establish it.
   let identities := view.evidence.terms.filterMap fun (term, atom) =>
