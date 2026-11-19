@@ -78,11 +78,6 @@ jobs:
             .lake/packages
           key: lake-${{ hashFiles('lean-toolchain') }}-${{ hashFiles('lake-manifest.json') }}
 
-      - name: Resolve the published dependency for this PR
-        run: |
-          pnpm install --lockfile-only --no-frozen-lockfile
-          git diff -- pnpm-lock.yaml
-
       - name: Build, test, demos
         run: just build test demos
 
