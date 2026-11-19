@@ -272,6 +272,8 @@ private meta def walkFact (cfg : WalkConfig)
   unless ((← get).relations[relationId]?).any (fun stored =>
       stored.tuples.any (·.atoms == atomIds)) do
     modify fun state => state.addTuple relation types { atoms := atomIds, types } relationId
+  if cfg.recordFactTargets then
+    modify (·.rememberTuple proposition relationId atomIds)
   return anchors
 
 private meta def contextWalkConfig (context : InspectionContext) (baseConfig : WalkConfig)
@@ -294,11 +296,49 @@ private meta def contextWalkConfig (context : InspectionContext) (baseConfig : W
     observations := observations
     shareSymbolicValues := true }
 
+public meta structure FactTargets where
+  atoms : Array String := #[]
+  tuples : Array InspectionTuple := #[]
+  deriving ToJson, Inhabited
+
+/-- Link a retained proposition and the data it mentions to this walk. In
+    particular, a disjunct or a negated predicate can mention an atom without
+    justifying the corresponding positive edge. -/
+private meta partial def targetsForFact (proposition : Expr) (state : WalkState)
+    (terms : ExprStructMap (Array String)) (cfg : WalkConfig) : MetaM FactTargets := do
+  let rec visit (e : Expr) (top : Bool) : StateT FactTargets MetaM Unit := do
+    unless e.hasLooseBVars do
+      let ty ← inferType e
+      let prop ← isProp e
+      if !prop && ((← isProofArg e) || (← isClass? ty).isSome) then return
+      if top || !prop then
+        let mut tuples := state.termTuples.getD ⟨e⟩ #[]
+        if !prop && tuples.isEmpty && e.isApp && e.hasFVar then
+          tuples := state.termTuples.getD ⟨← contextArgument cfg e⟩ #[]
+        let mut atoms := terms.getD ⟨e⟩ #[]
+        if atoms.isEmpty && e.isFVar then
+          if let some id ← atomForRefinedLocal? e.fvarId! cfg.refinements state then
+            atoms := #[id]
+        modify fun found => {
+          atoms := (atoms ++ tuples.flatMap (·.atoms)).foldl
+            (fun acc id => if acc.contains id then acc else acc.push id) found.atoms
+          tuples := tuples.foldl (fun acc t => if acc.contains t then acc else acc.push t) found.tuples }
+        -- A represented data value is already a precise target. Its constructor
+        -- children or witness proof are not separate premises of this fact.
+        if !prop && (!atoms.isEmpty || !tuples.isEmpty) then return
+    match e with
+    | .forallE _ domain body _ | .lam _ domain body _ => visit domain false; visit body false
+    | .letE _ _ value body _ => visit value false; visit body false
+    | .mdata _ body | .proj _ _ body => visit body false
+    | _ => for arg in e.getAppArgs do visit arg false
+  return (← (visit proposition true).run {}).2
+
 /-- Metadata shown alongside one context-informed inspection. -/
 public meta structure InspectedValue where
   root : String
   term : String
   facts : Array String
+  factTargets : Array FactTargets := #[]
   /-- Atoms whose rendered labels can contain generated placeholders. -/
   generatedAtoms : Array String := #[]
   /-- The allocated placeholder spellings, also used inside symbolic expressions. -/
@@ -414,6 +454,7 @@ private meta def relationalizeContextInspection (context : InspectionContext)
           anchors ← walkFact config fact anchors
       config ← prepareContextObservations context config (discovery.observationTerms.map (·.1))
     config ← addEquationResults context config
+    config := { config with recordFactTargets := !context.proofs.isEmpty }
     let (rootId, state) ← StateT.run (s := {}) do
       -- Witnesses first: a witness can occur inside the refined root, and the
       -- walk reuses its atom only when it is already registered.
@@ -439,11 +480,16 @@ private meta def relationalizeContextInspection (context : InspectionContext)
       addActiveDomainObservations config observations
       return rootId
     let state ← labelRefinedLocals (selectedRoot?.getD context.root) rootId refinements state
-    let facts ← context.proofs.mapM fun fact => do
-      return (← ppExpr (← displayedProposition fact)).pretty
+    let propositions ← context.proofs.mapM displayedProposition
+    let facts ← propositions.mapM fun p => return (← ppExpr p).pretty
+    let factTargets ← if propositions.isEmpty then pure #[] else do
+      let mut terms : ExprStructMap (Array String) := {}
+      for (e, id) in state.selectorTerms do
+        terms := terms.insert ⟨e⟩ ((terms.getD ⟨e⟩ #[]).push id)
+      propositions.mapM fun p => targetsForFact p state terms config
     let generated := state.atoms.filter fun atom => state.generatedAtoms.contains atom.id
     let inspection : InspectedValue := {
-      root := rootId, term := (← ppExpr context.root).pretty, facts
+      root := rootId, term := (← ppExpr context.root).pretty, facts, factTargets
       generatedAtoms := generated.map (·.id)
       placeholders := generated.filterMap fun atom =>
         if state.generatedLabels.contains atom.label then some atom.label else none }

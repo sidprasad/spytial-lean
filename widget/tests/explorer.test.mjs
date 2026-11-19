@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { correspondingAtoms, continuityOptions, inspectionDisplayData, pointTitle } from '../dist/inspection.js';
+import { compareFacts, correspondingAtoms, continuityOptions, factsInContext,
+  inspectionDisplayData, pointTitle } from '../dist/inspection.js';
 
 function point(ids = ['atom_0', 'atom_1'], scope = 'goal', identities = ['a', 'b']) {
   return { point: { scope }, inspection: { term: 'input' },
@@ -11,6 +12,29 @@ function point(ids = ['atom_0', 'atom_1'], scope = 'goal', identities = ['a', 'b
 test('titles use authored captions, otherwise the actual Lean expression', () => {
   assert.equal(pointTitle(point()), 'input');
   assert.equal(pointTitle({ ...point(), point: { title: 'After repaint' } }), 'After repaint');
+});
+
+test('facts stay in declaration order with one row per fact, including multi-source derivations', () => {
+  const inspection = { facts: ['P x', 'Q x', 'R x', 'S x'] };
+  const localContext = [{ type: 'Nat' }, { type: 'P x' }, { type: 'T x' }];
+  assert.deepEqual(factsInContext({ inspection, localContext, factSources: [[1], [1, 2], [1], []] }), {
+    locals: [{ derived: [], direct: undefined }, { derived: [2], direct: 0 },
+      { derived: [1], direct: undefined }], other: [3],
+  });
+  assert.deepEqual(factsInContext({ inspection }), { locals: [], other: [0, 1, 2, 3] });
+});
+
+test('fact comparisons use proposition identity even when different locals print alike', () => {
+  const left = { inspection: { facts: ['P x', 'Q x'] }, factIds: [0, 1] };
+  const right = { inspection: { facts: ['Q y', 'P x'] }, factIds: [1, 2] };
+  assert.deepEqual(compareFacts(left, right), {
+    leftOnly: ['P x'], rightOnly: ['P x'], shared: ['Q x'],
+  });
+  assert.deepEqual(compareFacts(left, left), { leftOnly: [], rightOnly: [], shared: left.inspection.facts });
+  assert.deepEqual(compareFacts({}, right), { leftOnly: [], rightOnly: right.inspection.facts, shared: [] });
+  assert.deepEqual(compareFacts({ inspection: left.inspection }, { inspection: right.inspection }), {
+    leftOnly: ['Q x'], rightOnly: ['Q y'], shared: ['P x'],
+  });
 });
 
 test('inspection numbers qualify generated names and their symbolic references', () => {

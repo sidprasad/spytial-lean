@@ -13,6 +13,7 @@ public meta section
 structure InspectionJournal where
   declaration : Syntax
   points : Array (Syntax × Json) := #[]
+  propositions : Std.HashMap Expr Nat := {}
   deriving Inhabited
 
 /-- A transient, environment-owned journal: tactic backtracking restores it,
@@ -22,6 +23,22 @@ initialize inspectionJournal : EnvExtension (Option InspectionJournal) ←
   -- A macro can introduce an inspection after `hasInspection` has run, in an async declaration.
   -- Its absent journal must still support the no-op update in `recordInspection`.
   registerEnvExtension (pure none) (asyncMode := .local)
+
+/-- Compare propositions across this declaration's points using Lean expressions.
+    Two branches can print the same local name for different free variables. -/
+def inspectionFactIds? (facts : Array Expr) : CoreM (Option (Array Nat)) := do
+  let some journal := inspectionJournal.getState (← getEnv) | return none
+  let mut propositions := journal.propositions
+  let mut ids := #[]
+  for fact in facts do
+    if let some id := propositions[fact]? then
+      ids := ids.push id
+    else
+      let id := propositions.size
+      propositions := propositions.insert fact id
+      ids := ids.push id
+  modifyEnv fun env => inspectionJournal.setState env (some { journal with propositions })
+  return some ids
 
 def recordInspection (stx : Syntax) (props : Json) : CoreM Unit :=
   modifyEnv fun env => inspectionJournal.modifyState env fun current => current.map fun journal =>

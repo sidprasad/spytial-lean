@@ -12,8 +12,14 @@ export interface InspectedValue {
   root: string;
   term: string;
   facts: string[];
+  factTargets?: FactTargets[];
   generatedAtoms?: string[];
   placeholders?: string[];
+}
+
+export interface FactTargets {
+  atoms: string[];
+  tuples: Array<{ relation: string; atoms: string[] }>;
 }
 
 export interface InspectionPoint {
@@ -22,6 +28,12 @@ export interface InspectionPoint {
   inspection?: InspectedValue;
   identities?: Array<{ atom: string; identity: string }>;
   localContext?: Array<{ name: string; type: string; value?: string | null; excluded?: boolean }>;
+  /** For each retained fact, the local context entries used by its proof. */
+  factSources?: number[][];
+  /** Relation IDs behind each tag's value selector, in directive order. */
+  tagRelations?: string[][];
+  /** Proposition IDs shared by all inspection points in this declaration. */
+  factIds?: number[];
   observations?: string[];
   point?: { title?: string | null; line?: number; scope: string; branch: string };
 }
@@ -33,6 +45,38 @@ export interface LayoutState {
 
 export function pointTitle(point: InspectionPoint): string {
   return point.point?.title ?? point.inspection?.term ?? 'Inspection';
+}
+
+/** Place a fact after its last source, where every hypothesis it uses is in scope. */
+export function factsInContext(point: InspectionPoint) {
+  const locals = (point.localContext ?? []).map(() => ({
+    direct: undefined as number | undefined, derived: [] as number[],
+  }));
+  const other: number[] = [];
+  for (const [i, fact] of (point.inspection?.facts ?? []).entries()) {
+    const sources = point.factSources?.[i] ?? [];
+    const last = Math.max(...sources);
+    const row = locals[last];
+    if (!row) other.push(i);
+    else if (sources.length === 1 && row.direct === undefined && point.localContext![last].type === fact)
+      row.direct = i;
+    else row.derived.push(i);
+  }
+  return { locals, other };
+}
+
+export function compareFacts(left: InspectionPoint, right: InspectionPoint) {
+  // Older widgets persisted only the displayed propositions.
+  const useIds = left.factIds !== undefined && right.factIds !== undefined;
+  const entries = (point: InspectionPoint) => new Map(
+    (point.inspection?.facts ?? []).map((text, i) => [useIds ? point.factIds![i] : text, text]));
+  const a = entries(left);
+  const b = entries(right);
+  return {
+    leftOnly: [...a].filter(([id]) => !b.has(id)).map(([, text]) => text),
+    rightOnly: [...b].filter(([id]) => !a.has(id)).map(([, text]) => text),
+    shared: [...a].filter(([id]) => b.has(id)).map(([, text]) => text),
+  };
 }
 
 /** Give each inspection its own placeholder names, including references in
