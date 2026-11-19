@@ -1093,6 +1093,21 @@ meta def elabSelector (scope : SelScope) (accepts : List ArityForm)
         and last columns of each tuple"
   return e.sel
 
+/-- An attribute in a reusable layout can style a unary function graph before
+    an inspection supplies its tuples. Use the same graph name as the walker. -/
+private meta def functionAttribute? (scope : SelScope) (stx : TSyntax `ident) :
+    TermElabM (Option String) := do
+  let some name ← resolveGlobal? stx | return none
+  let fn ← mkConstWithLevelParams name
+  forallTelescopeReducing (← inferType fn) fun args result => do
+    if (← whnf result).isSort || (← isProp result) then return none
+    let explicit ← args.filterM fun arg => return (← arg.fvarId!.getDecl).binderInfo.isExplicit
+    let #[source] := explicit | return none
+    let some owner ← typeHead? (← inferType source) | return none
+    unless scope.types.contains owner do return none
+    let some (field, #[arg]) ← graphSide? (mkAppN fn args) | return none
+    return if arg == source then some field else none
+
 /-- A relation name, in the `<item>.<field>` position named by `position`. A
     spec-introduced name is resolved only where the manifest says it is. -/
 meta def elabFieldName (scope : SelScope) (position : String) (stx : TSyntax `ident) :
@@ -1104,6 +1119,8 @@ meta def elabFieldName (scope : SelScope) (position : String) (stx : TSyntax `id
     unless i.referencedBy.contains position do
       warnUnresolvedName stx position s
     return s
+  if position == "attribute.field" then
+    if let some field ← functionAttribute? scope stx then return field
   unknownName scope stx s!"relation '{s}'" s
 
 end

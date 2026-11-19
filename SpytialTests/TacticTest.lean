@@ -737,3 +737,31 @@ set_option spytial.source false in
 example (c : SelCrate) (h : c = ⟨5⟩) : True := by
   spytial_wire_spec c
   trivial
+
+-- A default styles the function graph wherever an inspection supplies tuples.
+set_option spytial.source false in
+spytial_spec Nat [attribute twice (textStyle large)]
+
+/--
+info: {"directives":
+ [{"attribute": {"textStyle": {"size": "large"}, "field": "twice"}}]}
+-/
+#guard_msgs in
+#spytial.spec (3 : Nat) with [..]
+
+open Lean in
+run_elab
+  let n ← `(3)
+  let hasTwice (props : Json) : Except String Bool := do
+    let data : JsonDataInstance ← fromJson? (← props.getObjVal? "dataInstance")
+    return data.relations.any (·.name == "twice")
+  let plain ← spytialPayloadProps n
+  let observed ← spytialPayloadProps n (observerSyntaxes := #[← `(twice)])
+  unless plain.getObjValD "cndSpec" == observed.getObjValD "cndSpec" &&
+      !(← Lean.ofExcept (hasTwice plain)) && (← Lean.ofExcept (hasTwice observed)) do
+    throwError "expected one shared layout and a twice tuple only when observed"
+
+open String (length) in
+/-- error: unknown relation 'length'; vocabulary of 'Nat': Nat, scrutinee -/
+#guard_msgs in
+spytial_spec Nat [attribute length]

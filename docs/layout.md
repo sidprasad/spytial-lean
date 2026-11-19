@@ -1,7 +1,7 @@
 # Layout specifications
 
-Attach a default layout to a type with `spytial_spec`. Field names in the spec
-come from the structure fields or constructor arguments.
+Attach a default layout to a type with `spytial_spec`. Structure fields and
+named constructor arguments are available as relations.
 
 ```lean
 import SpytialLean
@@ -10,17 +10,27 @@ inductive Tree where
   | leaf (value : Nat)
   | node (left right : Tree)
 
+def height : Tree → Nat
+  | .leaf _ => 0
+  | .node l r => max (height l) (height r) + 1
+
 spytial_spec Tree [
   orientation left left below,
   orientation right right below,
   attribute value,
+  attribute height (textStyle large),
   flag hideDisconnectedBuiltIns
 ]
 
 def tree := Tree.node (.leaf 1) (.leaf 2)
-#spytial tree
+#spytial tree observing [height]
 #spytial tree with [.., atomStyle Tree (borderStyle "blue")]
 ```
+
+`attribute height (textStyle large)` displays available height values in large
+type. An attribute can name a unary data function on the tree or one of its
+field types. At an inspection, `observing [height]` asks Lean to compute those
+values. The same layout also styles height facts supplied by the proof context.
 
 An explicit `with [...]` supplies the layout for one diagram. Include `..` to
 splice in the type's default. Structures inherit parent specs before their own

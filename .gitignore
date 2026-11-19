@@ -7,3 +7,5 @@ widget/dist/
 render/cases/
 render/out/
 render/dist/
+.DS_Store
+output/
