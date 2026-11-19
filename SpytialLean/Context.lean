@@ -81,6 +81,15 @@ private partial def mentionsRedundantWitness (config : InspectionConfig)
   term.foldlM (fun found child =>
     if found then pure true else mentionsRedundantWitness config available ctx child) false
 
+/-- The fields of a `Prop` structure such as `BlackAt t h`, each a proof that its
+projection exposes. Classes are instance arguments, not hypotheses to unpack. -/
+private def propStructureFields? (proposition : Expr) : MetaM (Option (Array Name)) := do
+  let .const name _ := proposition.getAppFn | return none
+  let env ← getEnv
+  unless isStructure env name do return none
+  if isClass env name then return none
+  return some (getStructureFields env name)
+
 /-- Select display propositions and shared witnesses using Lean eliminators after inference.
 An unresolved disjunction is kept whole. -/
 private partial def expose (config : InspectionConfig) (available : Array Expr)
@@ -109,6 +118,13 @@ private partial def expose (config : InspectionConfig) (available : Array Expr)
     -- needs no atom and no synthetic `Nonempty` fact.
     let used ← ctx.proofs.anyM fun p => do return ((← inferType p).find? (· == witness)).isSome
     return if used then ctx else { ctx with witnesses := ctx.witnesses.filter (· != witness) }
+  else if let some fields ← propStructureFields? proposition then
+    -- Keep the structure itself, which names the relation, and also each field:
+    -- `hx : BlackAt x h` gives `blackHeight x = h` without `have ex := hx.height`.
+    let mut ctx ← admit config ctx proof
+    for field in fields do
+      ctx ← expose config available ctx (← mkProjection proof field)
+    return ctx
   else admit config ctx proof
 
 private def forwardRules (config : InspectionConfig) : MetaM (Array Expr) := do
