@@ -6,7 +6,7 @@ import spytialComponents from 'spytial-core-components';
 import {
   withLeanScalarTypes, pointTitle, inspectionDisplayData, correspondingAtoms, continuityOptions,
   compareFacts,
-  type InspectionPoint, type LayoutState,
+  type InspectionPoint, type InspectionEntry, type ConflictPoint, type LayoutState,
 } from './inspection';
 import { ContextPane } from './ContextPane';
 import { renderedFactHighlights, type FactGraph, type FactHighlight } from './factHighlights';
@@ -263,7 +263,8 @@ function injectCss() {
 }
 
 interface SpytialWidgetProps extends Partial<InspectionPoint> {
-  explorer?: { name: string; points: InspectionPoint[] };
+  diagnosis?: ConflictPoint['diagnosis'];
+  explorer?: { name: string; points: InspectionEntry[] };
 }
 
 const MIN_HEIGHT = 200;
@@ -271,13 +272,43 @@ const DEFAULT_HEIGHT = 500;
 
 export default function SpytialWidget(props: SpytialWidgetProps) {
   if (props.explorer) return <InspectionExplorer key={props.explorer.name} {...props.explorer} />;
+  if (props.diagnosis) return <ContradictionPanel diagnosis={props.diagnosis} />;
   if (!props.dataInstance) return <div>No inspection data.</div>;
   return <DiagramWidget {...props as InspectionPoint} />;
 }
 
+function ContradictionPanel({ diagnosis }: ConflictPoint) {
+  const [index, setIndex] = React.useState(0);
+  React.useEffect(() => { setIndex(0); }, [diagnosis]);
+  const previews = diagnosis.previews;
+  const preview = previews[index] ?? previews[0];
+  return <section aria-label={`Contradictory evidence for ${diagnosis.term}`}>
+    <strong>Contradictory evidence for <code>{diagnosis.term}</code></strong>
+    {diagnosis.conflicts.map((sources, i) => <div key={i}>
+      {sources.length ? <>Lean derived <code>False</code> using
+        <ul>{sources.map((source, j) => <li key={j}><code>{source}</code></li>)}</ul></>
+        : <>Lean derived <code>False</code> without a named local hypothesis.</>}
+    </div>)}
+    {previews.length > 1 && <label>Counterfactual inspection{' '}
+      <select value={index < previews.length ? index : 0}
+        onChange={event => setIndex(Number(event.target.value))}>
+        {previews.map((p, i) => <option key={p.command} value={i}>{p.command}</option>)}
+      </select>
+    </label>}
+    {preview ? <div>
+      <p>Result of <code>{preview.command}</code></p>
+      {'view' in preview ? <>
+        {preview.truncated && <p>Context preparation reached a limit. This diagram may be incomplete.</p>}
+        <DiagramWidget key={preview.command} {...preview.view} />
+      </> : <p role="status">{preview.error}</p>}
+    </div> : <p>No counterfactual preview found.</p>}
+    {diagnosis.limited && <p>Counterfactual search reached its limit. Other omissions may be possible.</p>}
+  </section>;
+}
+
 interface SettledInspection { point: InspectionPoint; state?: LayoutState }
 
-function InspectionExplorer({ name, points }: { name: string; points: InspectionPoint[] }) {
+function InspectionExplorer({ name, points }: { name: string; points: InspectionEntry[] }) {
   const [expanded, setExpanded] = React.useState(false);
   const [mode, setMode] = React.useState('compare');
   const [left, setLeft] = React.useState(0);
@@ -292,9 +323,11 @@ function InspectionExplorer({ name, points }: { name: string; points: Inspection
     setLeft(0); setRight(points.length - 1); setStep(0);
     setAnchor(undefined); setStepPrior(undefined); history.current = undefined;
   }, [points]);
-  const onlyHere = React.useMemo(() =>
-    expanded && mode === 'compare' && points.length > 1 && points[left] && points[right]
-      ? compareFacts(points[left], points[right]) : undefined, [expanded, mode, points, left, right]);
+  const onlyHere = React.useMemo(() => {
+    const a = points[left], b = points[right];
+    if (expanded && mode === 'compare' && points.length > 1 && a && b &&
+        !('diagnosis' in a) && !('diagnosis' in b)) return compareFacts(a, b);
+  }, [expanded, mode, points, left, right]);
   if (!points.length) return <div>No proof inspections.</div>;
   const multiple = points.length > 1;
   const selected = !multiple ? [0] : mode === 'compare' ? [left, right] :
@@ -360,10 +393,11 @@ function InspectionExplorer({ name, points }: { name: string; points: Inspection
       {visible.map((index, slot) => {
         const point = points[index];
         const prior = mode === 'step' ? stepPrior : slot > 0 && anchorReady ? anchor : undefined;
-        const matches = prior && prior.point !== point ? correspondingAtoms(prior.point, point) : [];
+        const diagram = !('diagnosis' in point);
+        const matches = diagram && prior && prior.point !== point ? correspondingAtoms(prior.point, point) : [];
         // Followers wait for settled anchor positions, as in Cope and Drag's
         // temporal panes, rather than copying a pre-solve layout.
-        const waiting = mode !== 'step' && slot > 0 && !anchorReady;
+        const waiting = diagram && mode !== 'step' && slot > 0 && first && !('diagnosis' in first) && !anchorReady;
         return <section key={slot} aria-label={pointTitle(point)}
           data-spytial-compare-side={comparing ? (slot === 0 ? 'left' : 'right') : undefined}>
           <div className="spytial-point-header">
@@ -372,7 +406,7 @@ function InspectionExplorer({ name, points }: { name: string; points: Inspection
             <span>Line {point.point?.line ?? '?'}</span>
           </div>
           {point.point?.branch && <p className="spytial-inspection-note">Case {point.point.branch}</p>}
-          {!waiting ? <DiagramWidget {...point} pointNumber={multiple ? index + 1 : undefined}
+          {!diagram ? <ContradictionPanel diagnosis={point.diagnosis} /> : !waiting ? <DiagramWidget {...point} pointNumber={multiple ? index + 1 : undefined}
             onlyHere={onlyHere?.[slot]}
             prior={prior?.point !== point ? prior : undefined}
             onSettled={slot === 0 ? state => {
@@ -380,7 +414,7 @@ function InspectionExplorer({ name, points }: { name: string; points: Inspection
               history.current = settled;
               setAnchor(previous => previous?.point === point ? previous : settled);
             } : undefined} /> : <div className="spytial-loading">Waiting for comparison layout…</div>}
-          {(slot > 0 || mode === 'step' && prior) && prior?.point !== point && !waiting && <p className="spytial-inspection-note" role="status">
+          {diagram && (slot > 0 || mode === 'step' && prior) && prior?.point !== point && !waiting && <p className="spytial-inspection-note" role="status">
             {matches.length && prior?.state ? `Stability hints for ${matches.length} shared Lean identities; layout constraints still apply.` :
               'Independent layout: no shared bindings established for these points.'}
           </p>}

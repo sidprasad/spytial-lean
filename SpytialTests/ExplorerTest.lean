@@ -107,7 +107,7 @@ def copyList : List Nat → List Nat
 
 example : copyList [1, 2] = [1, 2] := rfl
 
-/-- warning: spytial: inconsistent context; no diagram rendered -/
+/-- warning: spytial: inconsistent context; see the inspection for conflicts and counterfactuals -/
 #guard_msgs in
 example (h : (some 1 : Option Nat) = none) : Nat := spytial 0
 
@@ -137,3 +137,19 @@ theorem explorerBranchFacts (P : Nat → Prop) (h : (∃ x, P x) ∨ (∃ x, P x
 def explorerHeightContext (a b c : List Nat) (x₁ x₂ x₃ x₄ x₅ x₆ : Nat)
     (outer : a.length < b.length) :=
   spytial (a, (b, c)) observing [List.length] with [attribute length, tag univ "Observed length" length]
+
+set_option spytial.source false in
+/-- warning: spytial: inconsistent context; see the inspection for conflicts and counterfactuals -/
+#guard_msgs in
+theorem explorerCounterfactual (x : Nat) (hx : x = 3) (r : ∀ n, n = 3 → n = 4)
+    (ignored : False) : True := by
+  spytial x fyi [r] nvm [ignored] with [atomStyle Nat (borderStyle "#0066ff")] titled "Conflicting rule"
+  spytial x fyi [r] nvm [ignored] nvm [r] with [atomStyle Nat (borderStyle "#0066ff")] titled "Conflicting rule"
+  trivial
+
+/-- warning: spytial: inconsistent context; see the inspection for conflicts and counterfactuals -/
+#guard_msgs in
+theorem explorerIndependentConflicts (x y : Nat) (hx3 : x = 3) (hx4 : 4 = x)
+    (hy0 : y = 0) (hy1 : y = 1) : True := by
+  spytial x
+  trivial

@@ -86,8 +86,21 @@ statuses claims logical completeness.
 A proof returned by Lean's `contradiction` operation prevents an ordinary diagram.
 Absence of a detected contradiction does not establish consistency. This includes
 Lean's standard checks for reflexive disequalities and impossible inductive
-premises. The contradiction is checked before
-root projection; an unwanted contradictory source must be explicitly excluded.
+premises. Competing refinements of a local to closed values also supply their
+transitive equality to the same check. The contradiction is checked before
+root projection. At a tactic or expression inspection, Spytial lists the local
+hypotheses used by the checked proofs of `False` it found. For each
+counterfactual it shows the inspection command with extra `nvm` omissions
+and the diagram computed with those omissions. The original proof state is
+unchanged. A successful preview means the rerun found no contradiction.
+
+The search starts with one proof and tries inclusion-minimal sets of nameable
+hypotheses that hit the recorded conflicts. A contradiction in a rerun supplies
+another proof and refines those candidates. It tries up to 16 reruns and bounds
+the candidate frontier, reporting when either budget cuts off exploration.
+The recorded proofs need not be minimal cores. Proof subjects, shadowed names,
+and evidence supplied by a compound `fyi` term can prevent a named omission
+from yielding a preview. The raw datum API still requires an ordinary inspection.
 
 Preparation and proof queries restore their temporary metavariable state. Exported
 proofs contain no unresolved metavariables. Shared choice terms stay in the

@@ -292,3 +292,23 @@ example (P Q : Prop) [PropInstance P] (hq : Q)
     (reject : ∀ [PropInstance P], Q → False) : True := by
   check_proof_focus hq using reject
   trivial
+
+-- Two overlapping conflicts have two minimal omissions, of different sizes. A second
+-- independent conflict must also be hit in every successful replay.
+elab "check_counterfactuals " root:term : tactic => withMainContext do
+  let root ← Term.elabTerm root none
+  let config : InspectionConfig := { simplify := true }
+  let some proof := (← prepareInspectionContext root config).contradiction?
+    | throwError "expected a contradiction"
+  let report ← inspectCounterfactuals root config proof
+  let omissions ← report.previews.mapM fun p => p.omitted.mapM (·.getUserName)
+  let expected := #[#[`hp, `bad], #[`hn, `hn', `bad]]
+  unless !report.limited && omissions.size == expected.size && expected.all omissions.contains do
+    throwError "unexpected counterfactuals {omissions}"
+  let bounded ← inspectCounterfactuals root config proof (maxReplays := 0)
+  unless bounded.limited && bounded.previews.isEmpty && bounded.conflicts.size == 1 do
+    throwError "the replay bound hid the original explanation or advertised an untested preview"
+
+example (x : Nat) (hp : x = 3) (hn hn' : x ≠ 3) (bad : False) : True := by
+  check_counterfactuals x
+  trivial
