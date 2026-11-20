@@ -1,30 +1,12 @@
-import Demos.AVL
 import Demos.UnionFind
 
 /-! # Inspecting a value with contradictory evidence
 
 Select an inconsistent inspection to see which hypotheses Lean used to derive
-`False` and what the same inspection produces with particular hypotheses omitted. -/
+`False` and what the same inspection produces with particular hypotheses omitted.
+The [AVL demo](AVL.lean) shows how conflicting insertion traces affect the choice of rotation. -/
 
 set_option linter.unusedVariables false
-
-/-! ## Which AVL rotation does this insertion need?
-
-Two traces disagree about which branch key `k` took at 20 during insertion.
-Both give the root at 30 a height of 4 and a balance factor of −2. Compare
-the balance factor at 20. Keeping `outerTrace` gives −1, which selects a
-single right rotation at 30. Keeping `innerTrace` gives +1, which selects
-a left rotation at 20 followed by a right rotation at 30. -/
-
-open AVLDemo in
-example (k : Nat) (outer inner right : Tree) (rightHeight : height right = 1)
-    (outerTrace : compare k 20 = .lt ∧ height outer = 2 ∧ height inner = 1)
-    (innerTrace : compare k 20 ≠ .lt ∧ height outer = 1 ∧ height inner = 2) :
-    let tree := Tree.node (.node outer 20 inner) 30 right
-    bf tree = -2 := by
-  intro tree
-  spytial tree observing [height, bf]
-  simp [tree, bf, height, outerTrace.2.1, outerTrace.2.2, rightHeight]
 
 /-! ## Can a parent search from `x` reach `root`?
 

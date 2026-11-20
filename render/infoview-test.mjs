@@ -332,7 +332,7 @@ async function main() {
     assert.equal(await singlePanel.page.locator('.spytial-conflict-proof pre code').textContent(),
       conflict.diagnosis.conflicts[0].join('\n'));
     assert.equal(await singlePanel.page.getByRole('combobox', { name: 'Hypotheses to omit', exact: true }).count(), 0);
-    await singlePanel.page.getByText('Here’s what the diagram of x shows with r set aside.', { exact: true }).waitFor();
+    await singlePanel.page.getByText("Here's what x would look like if r were dropped.", { exact: true }).waitFor();
     assert.equal(await singlePanel.page.locator('.spytial-replay-command').textContent(), replay.command);
     await settled(singlePanel.page, 1);
     assert.deepEqual(singlePanel.errors, []);

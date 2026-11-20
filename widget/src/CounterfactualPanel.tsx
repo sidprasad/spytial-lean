@@ -64,7 +64,7 @@ export function CounterfactualPanel({ diagnosis }: ConflictPoint) {
     {preview && 'view' in preview ? <>
       {diagnosis.previews.length === 1 && <p><strong>
         {preview.omitted?.length
-          ? <>Here’s what the diagram of <code>{diagnosis.term}</code> shows with <code>{preview.omitted.join(', ')}</code> set aside.</>
+          ? <>Here's what <code>{diagnosis.term}</code> would look like if <code>{preview.omitted.join(', ')}</code> were dropped.</>
           : <>Here’s the counterfactual diagram of <code>{diagnosis.term}</code>.</>}
       </strong></p>}
       <p>Showing <code className="spytial-replay-command">{preview.command}</code></p>
