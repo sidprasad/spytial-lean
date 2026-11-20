@@ -1,4 +1,5 @@
-import SpytialLean
+import Demos.AVL
+import Demos.UnionFind
 
 /-! # Inspecting a value with contradictory evidence
 
@@ -6,6 +7,43 @@ Select an inconsistent inspection to see which hypotheses Lean used to derive
 `False` and what the same inspection produces with particular hypotheses omitted. -/
 
 set_option linter.unusedVariables false
+
+/-! ## Which AVL rotation does this insertion need?
+
+Two traces disagree about which branch key `k` took at 20 during insertion.
+Both give the root at 30 a height of 4 and a balance factor of −2. Compare
+the balance factor at 20. Keeping `outerTrace` gives −1, which selects a
+single right rotation at 30. Keeping `innerTrace` gives +1, which selects
+a left rotation at 20 followed by a right rotation at 30. -/
+
+open AVLDemo in
+example (k : Nat) (outer inner right : Tree) (rightHeight : height right = 1)
+    (outerTrace : compare k 20 = .lt ∧ height outer = 2 ∧ height inner = 1)
+    (innerTrace : compare k 20 ≠ .lt ∧ height outer = 1 ∧ height inner = 2) :
+    let tree := Tree.node (.node outer 20 inner) 30 right
+    bf tree = -2 := by
+  intro tree
+  spytial tree observing [height, bf]
+  simp [tree, bf, height, outerTrace.2.1, outerTrace.2.2, rightHeight]
+
+/-! ## Can a parent search from `x` reach `root`?
+
+Two links are disputed independently. Each preview keeps one report per link.
+Keep both links to see two solid parent arrows and a dashed edge from `x` to
+`root` for the whole path through `hub`. Keep just the first and the next parent
+after `hub` is unknown. Keep just the second and `hub` still points to `root`,
+while the parent of `x` is unknown. -/
+
+open UnionFindDemo in
+example {Vertex : Type} (parent : Vertex → Vertex) (x hub root : Vertex)
+    (isRoot : parent root = root)
+    (firstLink : parent x = hub) (noFirstLink : parent x ≠ hub)
+    (secondLink : parent hub = root) (noSecondLink : parent hub ≠ root) :
+    Reaches parent x root := by
+  spytial x observing [parent, Reaches parent] with [
+    edgeStyle «Reaches parent» (lineStyle dashed),
+    hideField «Reaches parent» filter: (iden + parent)]
+  exact .step firstLink (.step secondLink (.refl root))
 
 /-! ## Baseline -/
 
