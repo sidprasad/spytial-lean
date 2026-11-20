@@ -13,6 +13,7 @@ public meta import SpytialLean.Selector
 public meta import SpytialLean.SelectorElab
 public meta import SpytialLean.Relationalizer
 public meta import SpytialLean.Reify
+public meta import SpytialLean.CounterfactualContext
 public meta import SpytialLean.InContext
 public meta import SpytialLean.LeanSelector
 public meta import SpytialLean.LocalSpec
@@ -972,12 +973,12 @@ private meta structure InspectionPayload where
   propositions : Array Expr
 
 /-- Prepare and inspect the local context, then build the widget payload. -/
-private meta def spytialInContextProps? (subject : Expr)
+private meta def preparedContextProps? (subject : Expr) (prepared : InspectionContext)
     (ops? : Option (Array (TSyntax `spytial_op)) := none)
     (walkConfig : WalkConfig := {}) (config : InspectionConfig := contextConfig)
     (observations predicates : Array Expr := #[]) :
     TermElabM (Option InspectionPayload × ContextViewStatus) := do
-  let (status, view?) ← inspectInContext subject walkConfig config observations predicates
+  let (status, view?) ← inspectPreparedContext subject prepared walkConfig config observations predicates
   let some view := view? | return (none, status)
   let spec? ← match ops? with
     | some ops => do
@@ -1032,19 +1033,63 @@ public meta def spytialInContextProps (subject : Expr)
     (walkConfig : WalkConfig := {}) (hypotheses : Array Expr := #[])
     (observations predicates : Array Expr := #[]) :
     TermElabM (Json × ContextViewStatus) := do
-  let (payload?, status) ←
-    spytialInContextProps? subject ops? walkConfig { contextConfig with hypotheses } observations predicates
+  let config := { contextConfig with hypotheses }
+  let (payload?, status) ← preparedContextProps? subject (← prepareInspectionContext subject config)
+    ops? walkConfig config observations predicates
   let some payload := payload? | throwError "spytial: inconsistent context"
   return (payload.props, status)
+
+/-- Print the original inspection with one additional evidence clause, keeping its
+    observations, layout, title, explicit rules and previous omissions. -/
+private meta def omissionCommand (stx : Syntax) (omitted : Array FVarId) : TermElabM String := do
+  let names ← omitted.mapM fun id => return mkIdent (← id.getUserName)
+  let clause ← `(spytialEvidenceClause| nvm [$names:ident,*])
+  if let .original .. := stx[0].getHeadInfo then
+    if let some range := stx.getRange? true then
+      if let some cut := (#[stx[3], stx[2], stx[1]].findSome? (·.getTailPos? true)) then
+        let source := (← getFileMap).source
+        let before := (Substring.Raw.mk source range.start cut).toString
+        let after := (Substring.Raw.mk source cut range.stop).toString
+        let extra := (← PrettyPrinter.ppCategory `spytialEvidenceClause clause).pretty
+        return s!"{before} {extra}{after}"
+  let site := stx.setArg 3 (mkNullNode (stx[3].getArgs.push clause.raw))
+  return (← PrettyPrinter.ppCategory `tactic (mkNode `SpytialLean.spytialTactic #[site])).pretty
+
+private meta def contradictionPayload (subject : Expr) (stx : Syntax) (report : ContradictionReport)
+    (observations predicates : Array Expr) : TermElabM InspectionPayload := do
+  let conflicts ← report.conflicts.mapM fun ids => ids.mapM fun id => do
+    return s!"{← ppExpr (mkFVar id)} : {← ppExpr (← id.getType)}"
+  let mut previews := #[]
+  for preview in report.previews do
+    let command ← omissionCommand stx preview.omitted
+    let omitted ← preview.omitted.mapM fun id => return (← id.getUserName).toString
+    -- A layout may refer to a relation that disappears when its evidence is omitted.
+    -- Keep a failed replay local to that command; other previews may still render.
+    let entry ← try
+      let (some payload, status) ← preparedContextProps? subject preview.context
+        (optionalOps stx[4]) {} preview.config observations predicates | unreachable!
+      pure <| Json.mkObj [("command", toJson command), ("view", payload.props),
+        ("truncated", toJson status.truncated)]
+    catch ex =>
+      let .error _ message := ex | throw ex
+      pure <| Json.mkObj [("command", toJson command), ("error", toJson (← message.toString))]
+    previews := previews.push (entry.setObjVal! "omitted" (toJson omitted))
+  let diagnosis := Json.mkObj [("term", toJson (← ppExpr subject).pretty),
+    ("conflicts", toJson conflicts), ("previews", Json.arr previews), ("limited", toJson report.limited)]
+  return { props := Json.mkObj [("diagnosis", diagnosis)], propositions := #[] }
 
 private meta def inspectionPointProps (subject : Expr) (stx : Syntax) :
     TermElabM (Option InspectionPayload) := do
   let observers ← resolveObservations stx[2]
-  let (props?, status) ← spytialInContextProps? subject (optionalOps stx[4]) {}
-    (← resolveContextConfig stx[3]) observers.functions observers.predicates
-  if status.inconsistent then
-    logWarning "spytial: inconsistent context; no diagram rendered"
-    return none
+  let config ← resolveContextConfig stx[3]
+  let prepared ← prepareInspectionContext subject config
+  if let some proof := prepared.contradiction? then
+    let report ← inspectCounterfactuals subject config proof
+    let payload ← contradictionPayload subject stx report observers.functions observers.predicates
+    logWarning "spytial: inconsistent context; see the inspection for conflicts and counterfactuals"
+    return some payload
+  let (props?, status) ← preparedContextProps? subject prepared (optionalOps stx[4]) {}
+    config observers.functions observers.predicates
   if status.truncated then
     logWarning "spytial: context preparation reached a limit; the diagram may be incomplete"
   return props?

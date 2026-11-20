@@ -6,9 +6,10 @@ import spytialComponents from 'spytial-core-components';
 import {
   withLeanScalarTypes, pointTitle, inspectionDisplayData, correspondingAtoms, continuityOptions,
   compareFacts,
-  type InspectionPoint, type LayoutState,
+  type InspectionPoint, type InspectionEntry, type ConflictPoint, type LayoutState,
 } from './inspection';
 import { ContextPane } from './ContextPane';
+import { CounterfactualPanel } from './CounterfactualPanel';
 import { renderedFactHighlights, type FactGraph, type FactHighlight } from './factHighlights';
 
 const { JSONDataInstance, LayoutInstance, parseLayoutSpec, SGraphQueryEvaluator } = spytialcore;
@@ -40,6 +41,20 @@ function injectCss() {
       color: var(--vscode-errorForeground);
     }
     .spytial-inspection-note { font-size: 12px; margin: 6px 0; }
+    .spytial-counterfactual { min-width: 0; }
+    .spytial-counterfactual p { margin: .6em 0; }
+    .spytial-conflict-proof pre {
+      margin: .3em 0 .7em; padding: .5em .8em; white-space: pre-wrap; overflow-wrap: anywhere;
+      border-inline-start: 2px solid var(--vscode-editorWarning-foreground, #b48b26);
+      background: var(--vscode-textCodeBlock-background, #8881);
+    }
+    .spytial-replay-choices { margin: .8em 0; padding: 0; border: 0; min-width: 0; }
+    .spytial-replay-choices legend { padding: 0; font-weight: 600; }
+    .spytial-replay-group { display: flex; flex-wrap: wrap; align-items: baseline; gap: .4em .8em; margin-top: .4em; }
+    .spytial-replay-group label { display: inline-flex; align-items: baseline; gap: .35em; cursor: pointer; }
+    .spytial-replay-group input { margin: 0; accent-color: var(--vscode-focusBorder, #087aba); }
+    .spytial-replay-group small { color: var(--vscode-descriptionForeground); }
+    .spytial-replay-group code, .spytial-replay-command { white-space: pre-wrap; overflow-wrap: anywhere; }
     .spytial-explorer { margin: 8px 0; }
     .spytial-explorer-summary { cursor: pointer; margin: 6px 0; }
     .spytial-toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
@@ -263,21 +278,28 @@ function injectCss() {
 }
 
 interface SpytialWidgetProps extends Partial<InspectionPoint> {
-  explorer?: { name: string; points: InspectionPoint[] };
+  diagnosis?: ConflictPoint['diagnosis'];
+  explorer?: { name: string; points: InspectionEntry[] };
 }
 
 const MIN_HEIGHT = 200;
 const DEFAULT_HEIGHT = 500;
 
 export default function SpytialWidget(props: SpytialWidgetProps) {
+  React.useEffect(injectCss, []);
   if (props.explorer) return <InspectionExplorer key={props.explorer.name} {...props.explorer} />;
+  if (props.diagnosis) return <CounterfactualPanel diagnosis={props.diagnosis} renderDiagram={renderPreviewDiagram} />;
   if (!props.dataInstance) return <div>No inspection data.</div>;
   return <DiagramWidget {...props as InspectionPoint} />;
 }
 
+function renderPreviewDiagram(view: InspectionPoint) {
+  return <DiagramWidget {...view} />;
+}
+
 interface SettledInspection { point: InspectionPoint; state?: LayoutState }
 
-function InspectionExplorer({ name, points }: { name: string; points: InspectionPoint[] }) {
+function InspectionExplorer({ name, points }: { name: string; points: InspectionEntry[] }) {
   const [expanded, setExpanded] = React.useState(false);
   const [mode, setMode] = React.useState('compare');
   const [left, setLeft] = React.useState(0);
@@ -286,15 +308,16 @@ function InspectionExplorer({ name, points }: { name: string; points: Inspection
   const [anchor, setAnchor] = React.useState<SettledInspection>();
   const [stepPrior, setStepPrior] = React.useState<SettledInspection>();
   const history = React.useRef<SettledInspection>();
-  React.useEffect(() => { injectCss(); }, []);
   // A refreshed Lean payload invalidates every settled position and selection.
   React.useEffect(() => {
     setLeft(0); setRight(points.length - 1); setStep(0);
     setAnchor(undefined); setStepPrior(undefined); history.current = undefined;
   }, [points]);
-  const onlyHere = React.useMemo(() =>
-    expanded && mode === 'compare' && points.length > 1 && points[left] && points[right]
-      ? compareFacts(points[left], points[right]) : undefined, [expanded, mode, points, left, right]);
+  const onlyHere = React.useMemo(() => {
+    const a = points[left], b = points[right];
+    if (expanded && mode === 'compare' && points.length > 1 && a && b &&
+        !('diagnosis' in a) && !('diagnosis' in b)) return compareFacts(a, b);
+  }, [expanded, mode, points, left, right]);
   if (!points.length) return <div>No proof inspections.</div>;
   const multiple = points.length > 1;
   const selected = !multiple ? [0] : mode === 'compare' ? [left, right] :
@@ -360,10 +383,11 @@ function InspectionExplorer({ name, points }: { name: string; points: Inspection
       {visible.map((index, slot) => {
         const point = points[index];
         const prior = mode === 'step' ? stepPrior : slot > 0 && anchorReady ? anchor : undefined;
-        const matches = prior && prior.point !== point ? correspondingAtoms(prior.point, point) : [];
+        const diagram = !('diagnosis' in point);
+        const matches = diagram && prior && prior.point !== point ? correspondingAtoms(prior.point, point) : [];
         // Followers wait for settled anchor positions, as in Cope and Drag's
         // temporal panes, rather than copying a pre-solve layout.
-        const waiting = mode !== 'step' && slot > 0 && !anchorReady;
+        const waiting = diagram && mode !== 'step' && slot > 0 && first && !('diagnosis' in first) && !anchorReady;
         return <section key={slot} aria-label={pointTitle(point)}
           data-spytial-compare-side={comparing ? (slot === 0 ? 'left' : 'right') : undefined}>
           <div className="spytial-point-header">
@@ -372,7 +396,7 @@ function InspectionExplorer({ name, points }: { name: string; points: Inspection
             <span>Line {point.point?.line ?? '?'}</span>
           </div>
           {point.point?.branch && <p className="spytial-inspection-note">Case {point.point.branch}</p>}
-          {!waiting ? <DiagramWidget {...point} pointNumber={multiple ? index + 1 : undefined}
+          {!diagram ? <CounterfactualPanel diagnosis={point.diagnosis} renderDiagram={renderPreviewDiagram} /> : !waiting ? <DiagramWidget {...point} pointNumber={multiple ? index + 1 : undefined}
             onlyHere={onlyHere?.[slot]}
             prior={prior?.point !== point ? prior : undefined}
             onSettled={slot === 0 ? state => {
@@ -380,7 +404,7 @@ function InspectionExplorer({ name, points }: { name: string; points: Inspection
               history.current = settled;
               setAnchor(previous => previous?.point === point ? previous : settled);
             } : undefined} /> : <div className="spytial-loading">Waiting for comparison layout…</div>}
-          {(slot > 0 || mode === 'step' && prior) && prior?.point !== point && !waiting && <p className="spytial-inspection-note" role="status">
+          {diagram && (slot > 0 || mode === 'step' && prior) && prior?.point !== point && !waiting && <p className="spytial-inspection-note" role="status">
             {matches.length && prior?.state ? `Stability hints for ${matches.length} shared Lean identities; layout constraints still apply.` :
               'Independent layout: no shared bindings established for these points.'}
           </p>}
@@ -413,7 +437,6 @@ function DiagramWidget(props: InspectionPoint & {
   const priorRef = React.useRef(props.prior);
   priorRef.current = props.prior;
 
-  React.useEffect(() => { injectCss(); }, []);
 
   // Switching between one, two, and all panes resizes retained graphs. Wait
   // for core's own resize handling before fitting the new pane dimensions.

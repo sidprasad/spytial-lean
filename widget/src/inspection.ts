@@ -36,13 +36,30 @@ export interface InspectionPoint {
   point?: { title?: string | null; line?: number; scope: string; branch: string };
 }
 
+export interface ConflictPoint {
+  point?: InspectionPoint['point'];
+  diagnosis: {
+    term: string;
+    conflicts: string[][];
+    previews: CounterfactualPreview[];
+    limited: boolean;
+  };
+}
+
+/** Additional nvm names; older payloads carry only the full command. */
+export type CounterfactualPreview = { command: string; omitted?: string[] } & (
+  { view: InspectionPoint; truncated: boolean } | { error: string }
+);
+
+export type InspectionEntry = InspectionPoint | ConflictPoint;
+
 export interface LayoutState {
   positions: Array<{ id: string; x: number; y: number }>;
   transform: { k: number; x: number; y: number };
 }
 
-export function pointTitle(point: InspectionPoint): string {
-  return point.point?.title ?? point.inspection?.term ?? 'Inspection';
+export function pointTitle(point: InspectionEntry): string {
+  return point.point?.title ?? ('diagnosis' in point ? point.diagnosis.term : point.inspection?.term) ?? 'Inspection';
 }
 
 /** Place a fact after its last source, where every hypothesis it uses is in scope. */

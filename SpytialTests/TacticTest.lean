@@ -128,7 +128,7 @@ example (x : Nat) (h : x = 7) (bad : False) : x = 7 := by
 
 -- Excluding one source still admits the same fact from another local declaration.
 set_option linter.unusedVariables false in
-/-- warning: spytial: inconsistent context; no diagram rendered -/
+/-- warning: spytial: inconsistent context; see the inspection for conflicts and counterfactuals -/
 #guard_msgs in
 example (x : Nat) (h other : False) : False := by
   spytial x nvm [h]
@@ -136,7 +136,7 @@ example (x : Nat) (h other : False) : False := by
 
 -- Exclusion also takes precedence for a forward rule with implicit parameters.
 set_option linter.unusedVariables false in
-/-- warning: spytial: inconsistent context; no diagram rendered -/
+/-- warning: spytial: inconsistent context; see the inspection for conflicts and counterfactuals -/
 #guard_msgs in
 example (x : Nat) (P : Nat → Prop) (hx : P x) (step : ∀ {n}, P n → False) : False := by
   spytial x fyi [step] nvm [step]

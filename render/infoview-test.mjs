@@ -259,7 +259,62 @@ async function main() {
         atomType, name);
     }
 
+    const [counterfactual] = await doc.widgets(lineOf('theorem explorerCounterfactual'));
+    const [conflict, manual] = counterfactual.props.explorer.points;
+    assert.deepEqual(conflict.diagnosis.conflicts.map(group => group.map(s => s.split(' : ')[0])), [['r']]);
+    assert.equal(conflict.diagnosis.limited, false);
+    assert.equal(conflict.diagnosis.previews.length, 1);
+    const [replay] = conflict.diagnosis.previews;
+    assert.deepEqual(replay.omitted, ['r'], 'the chooser names only the additional omission');
+    assert.equal(replay.command.replace(/\s+/g, ' ').trim(),
+      'spytial x fyi [r] nvm [ignored] nvm [r] with [atomStyle Nat (borderStyle "#0066ff")] titled "Conflicting rule"');
+    for (const key of ['dataInstance', 'inspection', 'localContext', 'factSources', 'cndSpec']) {
+      assert.deepEqual(replay.view[key], manual[key], `counterfactual matches manual nvm: ${key}`);
+    }
+    assert.equal(replay.view.dataInstance.atoms.find(a => a.id === replay.view.inspection.root).label, '3');
+    const [independent] = await doc.widgets(lineOf('theorem explorerIndependentConflicts'));
+    const [multiple] = independent.props.explorer.points;
+    assert.deepEqual(multiple.diagnosis.conflicts.map(g => g.map(s => s.split(' : ')[0]).join(' ')).sort(),
+      ['hx3 hx4', 'hy0 hy1']);
+    assert.deepEqual(multiple.diagnosis.previews.map(p => p.command).sort(), [
+      'spytial x nvm [hx3, hy0]', 'spytial x nvm [hx3, hy1]',
+      'spytial x nvm [hx4, hy0]', 'spytial x nvm [hx4, hy1]',
+    ]);
     browser = await chromium.launch({ headless: true });
+    const singlePanel = await browserPage(browser, conflict);
+    await singlePanel.page.getByText('Could not draw a diagram because the context exposed contradictory facts.',
+      { exact: true }).waitFor();
+    assert.equal(await singlePanel.page.locator('.spytial-conflict-proof pre code').textContent(),
+      conflict.diagnosis.conflicts[0].join('\n'));
+    assert.equal(await singlePanel.page.getByRole('radio').count(), 0);
+    assert.equal(await singlePanel.page.locator('strong .spytial-replay-command').textContent(), replay.command);
+    await settled(singlePanel.page, 1);
+    assert.deepEqual(singlePanel.errors, []);
+    await singlePanel.page.close();
+
+    const panel = await browserPage(browser, multiple);
+    await panel.page.getByRole('group', { name: 'Choose hypotheses to omit' }).waitFor();
+    assert.deepEqual(await panel.page.locator('.spytial-conflict-proof pre code').allTextContents(),
+      multiple.diagnosis.conflicts.map(group => group.join('\n')));
+    const choices = panel.page.locator('.spytial-replay-group');
+    assert.equal(await choices.count(), 2, 'the four commands produce two distinct row diagrams');
+    for (const choice of await choices.all()) {
+      assert.equal(await choice.getByRole('radio').count(), 2);
+    }
+    for (const preview of multiple.diagnosis.previews) {
+      const radio = panel.page.getByRole('radio', { name: `Omit ${preview.omitted.join(', ')}`, exact: true });
+      await radio.check();
+      await panel.page.locator('strong .spytial-replay-command').filter({ hasText: preview.command }).waitFor();
+      assert.ok(await radio.isChecked());
+      await settled(panel.page, 1);
+      assert.equal(await panel.page.locator('.spytial-context-decl').filter({ hasText: 'omitted from this inspection' }).count(), 2);
+      for (const name of preview.omitted) {
+        const decl = panel.page.locator('.spytial-context-decl').filter({ has: panel.page.getByText(name, { exact: true }) });
+        assert.match(await decl.innerText(), /omitted from this inspection/);
+      }
+    }
+    assert.deepEqual(panel.errors, []);
+    await panel.page.close();
     const { page, errors } = await browserPage(browser, header.props);
     const unknownLabels = () => page.locator('webcola-cnd-graph').evaluateAll(graphs =>
       graphs.map(g => Array.from((g.shadowRoot ?? g).querySelectorAll('g.node .label'),

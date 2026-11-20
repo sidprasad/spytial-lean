@@ -55,6 +55,9 @@ public meta def propTupleShape? (proposition : Expr) : MetaM (Option PropTupleSh
 private meta def refinementOf? (proposition : Expr) : MetaM (Option (FVarId × Expr)) := do
   let some (_, lhs, rhs) := proposition.eq? | return none
   let pick (id : FVarId) (other : Expr) : MetaM (Option (FVarId × Expr)) := do
+    -- Numeral notation can survive simp as an OfNat application. Reduce the actual
+    -- instance so a concrete numeral refines the root just like a raw literal.
+    let other ← if other.isAppOfArity ``OfNat.ofNat 3 then whnf other else pure other
     if other.containsFVar id then return none
     if (← graphSide? other).isSome then return none
     return some (id, other)
@@ -666,12 +669,10 @@ private meta def projectToRepresentation (context : InspectionContext) (baseConf
     (root.find? (·.equal witness)).isSome ||
       propositions.any (fun proposition => (proposition.find? (·.equal witness)).isSome)) }
 
-/-- Enrich the local context with standard proof-producing operations, then select and interpret
-    the evidence relevant to this inspection. The caller's proof state is unchanged. -/
-public meta def inspectInContext (subject : Expr) (walkConfig : WalkConfig := {})
-    (inspectionConfig : InspectionConfig := {}) (observations predicates : Array Expr := #[]) :
+/-- Project and draw already prepared evidence, including on a counterfactual replay. -/
+public meta def inspectPreparedContext (subject : Expr) (context : InspectionContext)
+    (walkConfig : WalkConfig) (inspectionConfig : InspectionConfig) (observations predicates : Array Expr) :
     MetaM (ContextViewStatus × Option ContextView) := do
-  let context ← prepareInspectionContext subject inspectionConfig
   if context.contradiction?.isSome then return ({ inconsistent := true }, none)
   withLCtx context.scope context.localInstances do
     let context ← if inspectionConfig.rootOnly && !(← isProp (← inferType subject)) then
@@ -683,6 +684,14 @@ public meta def inspectInContext (subject : Expr) (walkConfig : WalkConfig := {}
     let inspection := { inspection with term := (← ppExpr subject).pretty }
     return ({ truncated := context.truncated },
       some { context, data, prov, datum, inspection, evidence })
+
+/-- Enrich the local context with standard proof-producing operations, then select and interpret
+    the evidence relevant to this inspection. The caller's proof state is unchanged. -/
+public meta def inspectInContext (subject : Expr) (walkConfig : WalkConfig := {})
+    (inspectionConfig : InspectionConfig := {}) (observations predicates : Array Expr := #[]) :
+    MetaM (ContextViewStatus × Option ContextView) := do
+  let context ← prepareInspectionContext subject inspectionConfig
+  inspectPreparedContext subject context walkConfig inspectionConfig observations predicates
 
 private meta def isWitnessTerm (context : InspectionContext) (expression : Expr) : Bool :=
   context.witnesses.any fun witness => witness.equal expression

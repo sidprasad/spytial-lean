@@ -31,12 +31,33 @@ public meta def withInspectionScope (proofs : Array Expr) (action : MetaM α) : 
     return !(← isProp (← inferType localInstance.fvar)) || proofs.any (· == localInstance.fvar)
   withLCtx scope instances action
 
+/-- When two refinements identify the same local with closed values, give Lean the
+    resulting equality as well. For example, `x = 3` and `4 = x` yield `3 = 4`.
+    An equality alone never establishes a conflict: contradiction checks the proof. -/
+private meta def closedRefinementEqualities (proofs : Array Expr) : MetaM (Array Expr) := do
+  let mut first : Std.HashMap FVarId (Expr × Expr) := {}
+  let mut equalities := #[]
+  for proof in proofs do
+    let some (_, lhs, rhs) := (← whnf (← inferType proof)).eq? | continue
+    let (id, value, oriented) ← match lhs, rhs with
+      | .fvar id, value => pure (id, value, proof)
+      | value, .fvar id => pure (id, value, ← mkEqSymm proof)
+      | _, _ => continue
+    if value.hasFVar then continue
+    if let some (previous, evidence) := first[id]? then
+      if previous != value then
+        equalities := equalities.push (← mkEqTrans (← mkEqSymm evidence) oriented)
+    else
+      first := first.insert id (value, oriented)
+  return equalities
+
 /-- Lean's contradiction tactic decides when the retained premises forbid an ordinary diagram.
 Excluded ambient hypotheses remain available for typing, but cannot be searched as premises. -/
 public meta def inspectionContradiction? (proofs : Array Expr) : MetaM (Option Expr) :=
   withoutModifyingState <| withNewMCtxDepth <| withInspectionScope proofs do
     let target ← mkFreshExprSyntheticOpaqueMVar (mkConst ``False)
-    let hypotheses : Array Hypothesis ← proofs.mapM fun proof => do
+    let evidence := proofs ++ (← closedRefinementEqualities proofs)
+    let hypotheses : Array Hypothesis ← evidence.mapM fun proof => do
       return {
         userName := ← mkFreshUserName `spytial_premise
         type := ← inferType proof, value := proof
