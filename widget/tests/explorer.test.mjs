@@ -27,14 +27,12 @@ test('facts stay in declaration order with one row per fact, including multi-sou
 test('fact comparisons use proposition identity even when different locals print alike', () => {
   const left = { inspection: { facts: ['P x', 'Q x'] }, factIds: [0, 1] };
   const right = { inspection: { facts: ['Q y', 'P x'] }, factIds: [1, 2] };
-  assert.deepEqual(compareFacts(left, right), {
-    leftOnly: ['P x'], rightOnly: ['P x'], shared: ['Q x'],
-  });
-  assert.deepEqual(compareFacts(left, left), { leftOnly: [], rightOnly: [], shared: left.inspection.facts });
-  assert.deepEqual(compareFacts({}, right), { leftOnly: [], rightOnly: right.inspection.facts, shared: [] });
-  assert.deepEqual(compareFacts({ inspection: left.inspection }, { inspection: right.inspection }), {
-    leftOnly: ['Q x'], rightOnly: ['Q y'], shared: ['P x'],
-  });
+  assert.deepEqual(compareFacts(left, right), [new Set([0]), new Set([1])]);
+  assert.deepEqual(compareFacts(left, left), [new Set(), new Set()]);
+  assert.deepEqual(compareFacts({}, right), [new Set(), new Set([0, 1])]);
+  assert.deepEqual(compareFacts({ inspection: left.inspection }, right), [new Set([1]), new Set([0])]);
+  const repeated = { inspection: { facts: ['P x', 'P x', 'P x'] }, factIds: [0, 2, 0] };
+  assert.deepEqual(compareFacts(repeated, right), [new Set([0, 2]), new Set([0])]);
 });
 
 test('inspection numbers qualify generated names and their symbolic references', () => {

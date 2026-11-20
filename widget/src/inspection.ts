@@ -63,18 +63,21 @@ export function factsInContext(point: InspectionPoint) {
   return { locals, other };
 }
 
+/** Row indices of retained facts that occur only at one of the two points. */
 export function compareFacts(left: InspectionPoint, right: InspectionPoint) {
-  // Older widgets persisted only the displayed propositions.
-  const useIds = left.factIds !== undefined && right.factIds !== undefined;
-  const entries = (point: InspectionPoint) => new Map(
-    (point.inspection?.facts ?? []).map((text, i) => [useIds ? point.factIds![i] : text, text]));
-  const a = entries(left);
-  const b = entries(right);
-  return {
-    leftOnly: [...a].filter(([id]) => !b.has(id)).map(([, text]) => text),
-    rightOnly: [...b].filter(([id]) => !a.has(id)).map(([, text]) => text),
-    shared: [...a].filter(([id]) => b.has(id)).map(([, text]) => text),
-  };
+  const leftFacts = left.inspection?.facts ?? [];
+  const rightFacts = right.inspection?.facts ?? [];
+  // Compare printed propositions only when either point predates proposition IDs.
+  const useIds = left.factIds?.length === leftFacts.length && right.factIds?.length === rightFacts.length;
+  const leftKeys = useIds ? left.factIds! : leftFacts;
+  const rightKeys = useIds ? right.factIds! : rightFacts;
+  function onlyHere(keys: readonly (number | string)[], other: readonly (number | string)[]) {
+    const otherKeys = new Set(other);
+    const rows = new Set<number>();
+    keys.forEach((key, i) => { if (!otherKeys.has(key)) rows.add(i); });
+    return rows;
+  }
+  return [onlyHere(leftKeys, rightKeys), onlyHere(rightKeys, leftKeys)] as const;
 }
 
 /** Give each inspection its own placeholder names, including references in
