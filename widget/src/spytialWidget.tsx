@@ -48,13 +48,9 @@ function injectCss() {
       border-inline-start: 2px solid var(--vscode-editorWarning-foreground, #b48b26);
       background: var(--vscode-textCodeBlock-background, #8881);
     }
-    .spytial-replay-choices { margin: .8em 0; padding: 0; border: 0; min-width: 0; }
-    .spytial-replay-choices legend { padding: 0; font-weight: 600; }
-    .spytial-replay-group { display: flex; flex-wrap: wrap; align-items: baseline; gap: .4em .8em; margin-top: .4em; }
-    .spytial-replay-group label { display: inline-flex; align-items: baseline; gap: .35em; cursor: pointer; }
-    .spytial-replay-group input { margin: 0; accent-color: var(--vscode-focusBorder, #087aba); }
-    .spytial-replay-group small { color: var(--vscode-descriptionForeground); }
-    .spytial-replay-group code, .spytial-replay-command { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .spytial-replay-choices { display: flex; flex-wrap: wrap; align-items: center; gap: .4em .7em; }
+    .spytial-replay-choices select { max-width: 100%; min-width: 0; }
+    .spytial-replay-command { white-space: pre-wrap; overflow-wrap: anywhere; }
     .spytial-explorer { margin: 8px 0; }
     .spytial-explorer-summary { cursor: pointer; margin: 6px 0; }
     .spytial-toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }

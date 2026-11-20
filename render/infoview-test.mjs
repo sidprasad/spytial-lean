@@ -286,26 +286,27 @@ async function main() {
       { exact: true }).waitFor();
     assert.equal(await singlePanel.page.locator('.spytial-conflict-proof pre code').textContent(),
       conflict.diagnosis.conflicts[0].join('\n'));
-    assert.equal(await singlePanel.page.getByRole('radio').count(), 0);
-    assert.equal(await singlePanel.page.locator('strong .spytial-replay-command').textContent(), replay.command);
+    assert.equal(await singlePanel.page.getByRole('combobox').count(), 0);
+    await singlePanel.page.getByText('Here’s what the diagram of x shows with r set aside.', { exact: true }).waitFor();
+    assert.equal(await singlePanel.page.locator('.spytial-replay-command').textContent(), replay.command);
     await settled(singlePanel.page, 1);
     assert.deepEqual(singlePanel.errors, []);
     await singlePanel.page.close();
 
     const panel = await browserPage(browser, multiple);
-    await panel.page.getByRole('group', { name: 'Choose hypotheses to omit' }).waitFor();
+    const chooser = panel.page.getByRole('combobox', { name: 'Hypotheses to omit', exact: true });
+    await chooser.waitFor();
     assert.deepEqual(await panel.page.locator('.spytial-conflict-proof pre code').allTextContents(),
       multiple.diagnosis.conflicts.map(group => group.join('\n')));
-    const choices = panel.page.locator('.spytial-replay-group');
+    const choices = chooser.locator('optgroup');
     assert.equal(await choices.count(), 2, 'the four commands produce two distinct row diagrams');
     for (const choice of await choices.all()) {
-      assert.equal(await choice.getByRole('radio').count(), 2);
+      assert.equal(await choice.locator('option').count(), 2);
     }
     for (const preview of multiple.diagnosis.previews) {
-      const radio = panel.page.getByRole('radio', { name: `Omit ${preview.omitted.join(', ')}`, exact: true });
-      await radio.check();
-      await panel.page.locator('strong .spytial-replay-command').filter({ hasText: preview.command }).waitFor();
-      assert.ok(await radio.isChecked());
+      await chooser.selectOption({ label: preview.omitted.join(', ') });
+      await panel.page.locator('.spytial-replay-command').filter({ hasText: preview.command }).waitFor();
+      assert.equal(await chooser.inputValue(), preview.command);
       await settled(panel.page, 1);
       assert.equal(await panel.page.locator('.spytial-context-decl').filter({ hasText: 'omitted from this inspection' }).count(), 2);
       for (const name of preview.omitted) {

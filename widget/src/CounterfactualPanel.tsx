@@ -28,7 +28,7 @@ function diagramCaption(group: CounterfactualPreview[]) {
   if (!('view' in preview)) return;
   const { atoms, relations } = preview.view.dataInstance;
   if (atoms.length === 1 && relations.every(r => r.tuples.length === 0)) {
-    return <>Shows <code>{atoms[0].label}</code></>;
+    return `Shows ${atoms[0].label}`;
   }
   if (group.length > 1) return 'Same diagram';
 }
@@ -36,7 +36,6 @@ function diagramCaption(group: CounterfactualPreview[]) {
 export function CounterfactualPanel({ diagnosis, renderDiagram }: ConflictPoint & {
   renderDiagram: (view: InspectionPoint) => React.ReactNode;
 }) {
-  const radioName = React.useId();
   const [command, setCommand] = React.useState<string>();
   const groups = React.useMemo(() => groupByDiagram(diagnosis.previews), [diagnosis.previews]);
   const preview = diagnosis.previews.find(p => p.command === command) ??
@@ -49,20 +48,27 @@ export function CounterfactualPanel({ diagnosis, renderDiagram }: ConflictPoint 
         <pre><code>{sources.join('\n')}</code></pre>
       </> : <p>Lean derived <code>False</code> without a named local hypothesis.</p>}
     </div>)}
-    {diagnosis.previews.length > 1 && <fieldset className="spytial-replay-choices">
-      <legend>Choose hypotheses to omit</legend>
-      {groups.map(group => <div key={group[0].command} className="spytial-replay-group">
-        {group.map(p => <label key={p.command}>
-          <input type="radio" name={radioName} checked={p === preview}
-            aria-label={p.omitted ? `Omit ${p.omitted.join(', ')}` : p.command}
-            onChange={() => setCommand(p.command)} />
-          <code>{p.omitted?.join(', ') ?? p.command}</code>
-        </label>)}
-        <small>{diagramCaption(group)}</small>
-      </div>)}
-    </fieldset>}
+    {diagnosis.previews.length > 1 && <>
+      <p><strong>What would the diagram of <code>{diagnosis.term}</code> show if we set aside some hypotheses?</strong></p>
+      <label className="spytial-replay-choices">
+        Hypotheses to omit
+        <select value={preview.command} onChange={event => setCommand(event.target.value)}>
+          {groups.map(group => {
+            const options = group.map(p =>
+              <option key={p.command} value={p.command}>{p.omitted?.join(', ') || p.command}</option>);
+            const caption = diagramCaption(group);
+            return caption ? <optgroup key={group[0].command} label={caption}>{options}</optgroup> : options;
+          })}
+        </select>
+      </label>
+    </>}
     {preview && 'view' in preview ? <>
-      <p><strong>This is what you might see if you ran <code className="spytial-replay-command">{preview.command}</code>.</strong></p>
+      {diagnosis.previews.length === 1 && <p><strong>
+        {preview.omitted?.length
+          ? <>Here’s what the diagram of <code>{diagnosis.term}</code> shows with <code>{preview.omitted.join(', ')}</code> set aside.</>
+          : <>Here’s the counterfactual diagram of <code>{diagnosis.term}</code>.</>}
+      </strong></p>}
+      <p>Showing <code className="spytial-replay-command">{preview.command}</code></p>
       {preview.truncated && <p>Context preparation reached a limit. This diagram may be incomplete.</p>}
       <React.Fragment key={preview.command}>{renderDiagram(preview.view)}</React.Fragment>
     </> : preview ? <div>
