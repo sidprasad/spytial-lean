@@ -128,6 +128,9 @@ reification retain their existing proof obligations where applicable.
 - `SpytialLean/Context.lean`: structural preparation, scope, admission, and budgets.
 - `SpytialLean/Context/Forward.lean`: Aesop normalization invocation, budget
   checkpoints, and original-scope proof export.
+- [CounterfactualContext.lean](../SpytialLean/CounterfactualContext.lean) collects proof
+  sources and replays named omissions. Its [hitting-set search](../SpytialLean/CounterfactualContext/HittingSets.lean)
+  computes minimal candidates as each conflict arrives.
 - `SpytialLean/Evidence.lean`: premise isolation, proof checking, and calls to Lean's
   contradiction and arithmetic tactics.
 - `SpytialLean/InContext.lean`: relevance, contextual refinement, and relation decoding.

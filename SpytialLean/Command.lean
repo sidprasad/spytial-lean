@@ -13,7 +13,7 @@ public meta import SpytialLean.Selector
 public meta import SpytialLean.SelectorElab
 public meta import SpytialLean.Relationalizer
 public meta import SpytialLean.Reify
-public meta import SpytialLean.Counterfactual
+public meta import SpytialLean.CounterfactualContext
 public meta import SpytialLean.InContext
 public meta import SpytialLean.LeanSelector
 public meta import SpytialLean.LocalSpec
@@ -1055,20 +1055,18 @@ private meta def omissionCommand (stx : Syntax) (omitted : Array FVarId) : TermE
   let site := stx.setArg 3 (mkNullNode (stx[3].getArgs.push clause.raw))
   return (← PrettyPrinter.ppCategory `tactic (mkNode `SpytialLean.spytialTactic #[site])).pretty
 
-private meta def contradictionPayload (subject : Expr) (stx : Syntax) (config : InspectionConfig)
-    (proof : Expr) (observations predicates : Array Expr) : TermElabM InspectionPayload := do
-  let report ← inspectCounterfactuals subject config proof
+private meta def contradictionPayload (subject : Expr) (stx : Syntax) (report : ContradictionReport)
+    (observations predicates : Array Expr) : TermElabM InspectionPayload := do
   let conflicts ← report.conflicts.mapM fun ids => ids.mapM fun id => do
     return s!"{← ppExpr (mkFVar id)} : {← ppExpr (← id.getType)}"
   let mut previews := #[]
   for preview in report.previews do
-    let replay := { config with excludedHypotheses := config.excludedHypotheses ++ preview.omitted }
     let command ← omissionCommand stx preview.omitted
     -- A layout may refer to a relation that disappears when its evidence is omitted.
     -- Keep a failed replay local to that command; other previews may still render.
     let entry ← try
       let (some payload, status) ← preparedContextProps? subject preview.context
-        (optionalOps stx[4]) {} replay observations predicates | unreachable!
+        (optionalOps stx[4]) {} preview.config observations predicates | unreachable!
       pure <| Json.mkObj [("command", toJson command), ("view", payload.props),
         ("truncated", toJson status.truncated)]
     catch ex =>
@@ -1085,7 +1083,8 @@ private meta def inspectionPointProps (subject : Expr) (stx : Syntax) :
   let config ← resolveContextConfig stx[3]
   let prepared ← prepareInspectionContext subject config
   if let some proof := prepared.contradiction? then
-    let payload ← contradictionPayload subject stx config proof observers.functions observers.predicates
+    let report ← inspectCounterfactuals subject config proof
+    let payload ← contradictionPayload subject stx report observers.functions observers.predicates
     logWarning "spytial: inconsistent context; see the inspection for conflicts and counterfactuals"
     return some payload
   let (props?, status) ← preparedContextProps? subject prepared (optionalOps stx[4]) {}
