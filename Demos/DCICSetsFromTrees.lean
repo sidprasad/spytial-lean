@@ -45,19 +45,19 @@ def Balanced : Tree → Prop
   | leaf => True
   | node l _ r => Balanced l ∧ Balanced r ∧ height l ≤ height r + 1 ∧ height r ≤ height l + 1
 
-/-- Every key in the subtree is strictly below the bound. -/
-def below : Tree → Nat → Prop
+/-- Every key in the subtree is strictly less than the bound. -/
+def keysLt : Tree → Nat → Prop
   | leaf, _ => True
-  | node l x r, b => below l b ∧ x < b ∧ below r b
+  | node l x r, b => keysLt l b ∧ x < b ∧ keysLt r b
 
-/-- Every key in the subtree is strictly above the bound. -/
-def above : Tree → Nat → Prop
+/-- Every key in the subtree is strictly greater than the bound. -/
+def keysGt : Tree → Nat → Prop
   | leaf, _ => True
-  | node l x r, b => above l b ∧ b < x ∧ above r b
+  | node l x r, b => keysGt l b ∧ b < x ∧ keysGt r b
 
 def BST : Tree → Prop
   | leaf => True
-  | node l x r => BST l ∧ BST r ∧ below l x ∧ above r x
+  | node l x r => BST l ∧ BST r ∧ keysLt l x ∧ keysGt r x
 
 private def hasHeightGap : Tree → Prop
   | leaf => False
@@ -85,8 +85,8 @@ spytial_spec Tree [
   -- Make a node's label purple when Lean can establish BST for the subtree rooted there.
   atomStyle lean (BST) (textStyle "#6d28d9"),
   -- Use key bounds to explain where unopened subtrees can move during a rotation.
-  tag {t : Tree | no t.key && @:t != leaf} "Every key >" lean (above),
-  tag {t : Tree | no t.key && @:t != leaf} "Every key <" lean (below)
+  tag {t : Tree | no t.key && @:t != leaf} "Every key >" lean (keysGt),
+  tag {t : Tree | no t.key && @:t != leaf} "Every key <" lean (keysLt)
 ]
 
 /-! Why does balance keep searches short? In a balanced tree of height `h ≥ 2`, one child
@@ -117,8 +117,8 @@ theorem gapAtRoot (A B C : Tree) (p q k : Nat)
   simp only [factor, grew, hC]
   omega
 
-/-! DCIC writes `T < a` when every key in subtree `T` is less than `a`. We write `below T a`
-in Lean and “Every key < a” in the schematic. The other direction, `a < T`, is `above T a`.
+/-! DCIC writes `T < a` when every key in subtree `T` is less than `a`. We write `keysLt T a`
+in Lean and “Every key < a” in the schematic. The other direction, `a < T`, is `keysGt T a`.
 So `q < B < p` gives `B` two labels, “Every key > q” and “Every key < p”.
 -/
 
@@ -136,7 +136,7 @@ def rotateRight : Tree → Tree
   | node (node A q B) p C => node A q (node B p C)
   | t => t
 
-private theorem above_weaken {t : Tree} {a b : Nat} (ab : a < b) (h : above t b) : above t a := by
+private theorem keysGt_weaken {t : Tree} {a b : Nat} (ab : a < b) (h : keysGt t b) : keysGt t a := by
   induction t with
   | leaf => trivial
   | node l x r il ir => exact ⟨il h.1, Nat.lt_trans ab h.2.1, ir h.2.2⟩
@@ -145,7 +145,7 @@ private theorem above_weaken {t : Tree} {a b : Nat} (ab : a < b) (h : above t b)
 theorem ordered_right {A B C : Tree} {p q : Nat}
     (ok : BST (node (node A q B) p C)) : BST (rotateRight (node (node A q B) p C)) := by
   obtain ⟨⟨a, b, aq, qb⟩, c, ⟨_, qp, bp⟩, pc⟩ := ok
-  exact ⟨a, ⟨b, c, bp, pc⟩, aq, qb, qp, above_weaken qp pc⟩
+  exact ⟨a, ⟨b, c, bp, pc⟩, aq, qb, qp, keysGt_weaken qp pc⟩
 
 theorem leftLeft (A B C : Tree) (p q k : Nat) (ordered : BST (node (node A q B) p C))
     (leftOK : Balanced (node A q B)) (rightOK : Balanced C)
@@ -175,7 +175,7 @@ theorem leftLeft (A B C : Tree) (p q k : Nat) (ordered : BST (node (node A q B) 
        taller child has height k. Both A₁ and A₂ stay attached to r in the rotation. -/
     spytial t
 
-    /- Promote q. The keys in B must stay above q and below p, so B becomes p’s left child.
+    /- Promote q. The keys in B must stay greater than q and less than p, so B becomes p’s left child.
 
                  q
                /   \
@@ -195,8 +195,8 @@ theorem leftLeft (A B C : Tree) (p q k : Nat) (ordered : BST (node (node A q B) 
       rw [taller, hp, Nat.max_self]
     -- Check both children of q at height k + 1. Since q < p < C, C also exceeds the new root.
     have qp : q < p := ordered.2.2.1.2.1
-    have pc : above C p := ordered.2.2.2
-    spytial (rotateRight t) fyi [above_weaken (t := C) qp]
+    have pc : keysGt C p := ordered.2.2.2
+    spytial (rotateRight t) fyi [keysGt_weaken (t := C) qp]
     exact ⟨ordered_right ordered, aOK, pOK, by omega, by omega⟩
 
 /-! ## 18.2.3.2 · Left-Right Case
@@ -217,7 +217,7 @@ def rotateLeftChild : Tree → Tree
 
 def doubleRotate (t : Tree) : Tree := rotateRight (rotateLeftChild t)
 
-private theorem below_weaken {t : Tree} {a b : Nat} (ab : a < b) (h : below t a) : below t b := by
+private theorem keysLt_weaken {t : Tree} {a b : Nat} (ab : a < b) (h : keysLt t a) : keysLt t b := by
   induction t with
   | leaf => trivial
   | node l x r il ir => exact ⟨il h.1, Nat.lt_trans h.2.1 ab, ir h.2.2⟩
@@ -225,7 +225,7 @@ private theorem below_weaken {t : Tree} {a b : Nat} (ab : a < b) (h : below t a)
 private theorem ordered_left {A B C : Tree} {p q : Nat}
     (ok : BST (node A p (node B q C))) : BST (rotateLeft (node A p (node B q C))) := by
   obtain ⟨a, ⟨b, c, bq, qc⟩, ap, ⟨pb, pq, _⟩⟩ := ok
-  exact ⟨⟨a, b, ap, pb⟩, c, ⟨below_weaken pq ap, pq, bq⟩, qc⟩
+  exact ⟨⟨a, b, ap, pb⟩, c, ⟨keysLt_weaken pq ap, pq, bq⟩, qc⟩
 
 theorem leftRight (A B C : Tree) (p q k : Nat) (ordered : BST (node (node A q B) p C))
     (leftOK : Balanced (node A q B)) (rightOK : Balanced C)
