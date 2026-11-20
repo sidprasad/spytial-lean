@@ -13,6 +13,29 @@ example (x : Nat) (hx : x = 3) : True := by
   spytial x
   trivial
 
+/-! ## Two ways to inspect the same list
+
+Lean has two conflicts about `xs`. The claim `empty` contradicts both
+`singleton` and `nonempty`. Omitting `empty` gives the singleton list
+`[7]`. To see the empty list, keep `empty` and omit both of the others. -/
+
+example (xs : List Nat) (empty : xs = []) (singleton : xs = [7])
+    (nonempty : xs ≠ []) : True := by
+  spytial xs
+  trivial
+
+/-! ## Four omission sets, two row diagrams
+
+One pair of hypotheses disagrees about the row and another about the column.
+Inspect just `row`. Each minimal hitting set still contains one row hypothesis
+and one column hypothesis. The four ways to do that give two row diagrams,
+`2` and `5`. Changing only the omitted column hypothesis gives the same picture. -/
+
+example (row col : Nat) (rowTwo : row = 2) (rowFive : row = 5)
+    (colThree : col = 3) (colEight : col = 8) : True := by
+  spytial row
+  trivial
+
 /-! ## A false hypothesis
 
 The conflict uses `h`. The preview omits it and shows `3` from `hx`. -/
@@ -28,16 +51,6 @@ Here simplification detects a contradiction in `r` alone. Omitting `r` retains `
 
 example (x : Nat) (hx : x = 3) (r : ∀ n, n = 3 → n = 4) : True := by
   spytial x fyi [r]
-  trivial
-
-/-! ## Overlapping and independent conflicts
-
-Both `hn` and `other` contradict `hx`. The independent `bad` must also be
-omitted. Compare keeping `hx` (the diagram shows `3`) with keeping the two
-disequalities (the value of `x` is still symbolic). -/
-
-example (x : Nat) (hx : x = 3) (hn other : x ≠ 3) (bad : False) : True := by
-  spytial x
   trivial
 
 /-! ## Leaving the contradiction out

@@ -9,6 +9,7 @@ import {
   type InspectionPoint, type InspectionEntry, type ConflictPoint, type LayoutState,
 } from './inspection';
 import { ContextPane } from './ContextPane';
+import { CounterfactualPanel } from './CounterfactualPanel';
 import { renderedFactHighlights, type FactGraph, type FactHighlight } from './factHighlights';
 
 const { JSONDataInstance, LayoutInstance, parseLayoutSpec, SGraphQueryEvaluator } = spytialcore;
@@ -40,6 +41,20 @@ function injectCss() {
       color: var(--vscode-errorForeground);
     }
     .spytial-inspection-note { font-size: 12px; margin: 6px 0; }
+    .spytial-counterfactual { min-width: 0; }
+    .spytial-counterfactual p { margin: .6em 0; }
+    .spytial-conflict-proof pre {
+      margin: .3em 0 .7em; padding: .5em .8em; white-space: pre-wrap; overflow-wrap: anywhere;
+      border-inline-start: 2px solid var(--vscode-editorWarning-foreground, #b48b26);
+      background: var(--vscode-textCodeBlock-background, #8881);
+    }
+    .spytial-replay-choices { margin: .8em 0; padding: 0; border: 0; min-width: 0; }
+    .spytial-replay-choices legend { padding: 0; font-weight: 600; }
+    .spytial-replay-group { display: flex; flex-wrap: wrap; align-items: baseline; gap: .4em .8em; margin-top: .4em; }
+    .spytial-replay-group label { display: inline-flex; align-items: baseline; gap: .35em; cursor: pointer; }
+    .spytial-replay-group input { margin: 0; accent-color: var(--vscode-focusBorder, #087aba); }
+    .spytial-replay-group small { color: var(--vscode-descriptionForeground); }
+    .spytial-replay-group code, .spytial-replay-command { white-space: pre-wrap; overflow-wrap: anywhere; }
     .spytial-explorer { margin: 8px 0; }
     .spytial-explorer-summary { cursor: pointer; margin: 6px 0; }
     .spytial-toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
@@ -271,39 +286,15 @@ const MIN_HEIGHT = 200;
 const DEFAULT_HEIGHT = 500;
 
 export default function SpytialWidget(props: SpytialWidgetProps) {
+  React.useEffect(injectCss, []);
   if (props.explorer) return <InspectionExplorer key={props.explorer.name} {...props.explorer} />;
-  if (props.diagnosis) return <ContradictionPanel diagnosis={props.diagnosis} />;
+  if (props.diagnosis) return <CounterfactualPanel diagnosis={props.diagnosis} renderDiagram={renderPreviewDiagram} />;
   if (!props.dataInstance) return <div>No inspection data.</div>;
   return <DiagramWidget {...props as InspectionPoint} />;
 }
 
-function ContradictionPanel({ diagnosis }: ConflictPoint) {
-  const [index, setIndex] = React.useState(0);
-  React.useEffect(() => { setIndex(0); }, [diagnosis]);
-  const previews = diagnosis.previews;
-  const preview = previews[index] ?? previews[0];
-  return <section aria-label={`Contradictory evidence for ${diagnosis.term}`}>
-    <strong>Contradictory evidence for <code>{diagnosis.term}</code></strong>
-    {diagnosis.conflicts.map((sources, i) => <div key={i}>
-      {sources.length ? <>Lean derived <code>False</code> using
-        <ul>{sources.map((source, j) => <li key={j}><code>{source}</code></li>)}</ul></>
-        : <>Lean derived <code>False</code> without a named local hypothesis.</>}
-    </div>)}
-    {previews.length > 1 && <label>Counterfactual inspection{' '}
-      <select value={index < previews.length ? index : 0}
-        onChange={event => setIndex(Number(event.target.value))}>
-        {previews.map((p, i) => <option key={p.command} value={i}>{p.command}</option>)}
-      </select>
-    </label>}
-    {preview ? <div>
-      <p>Result of <code>{preview.command}</code></p>
-      {'view' in preview ? <>
-        {preview.truncated && <p>Context preparation reached a limit. This diagram may be incomplete.</p>}
-        <DiagramWidget key={preview.command} {...preview.view} />
-      </> : <p role="status">{preview.error}</p>}
-    </div> : <p>No counterfactual preview found.</p>}
-    {diagnosis.limited && <p>Counterfactual search reached its limit. Other omissions may be possible.</p>}
-  </section>;
+function renderPreviewDiagram(view: InspectionPoint) {
+  return <DiagramWidget {...view} />;
 }
 
 interface SettledInspection { point: InspectionPoint; state?: LayoutState }
@@ -317,7 +308,6 @@ function InspectionExplorer({ name, points }: { name: string; points: Inspection
   const [anchor, setAnchor] = React.useState<SettledInspection>();
   const [stepPrior, setStepPrior] = React.useState<SettledInspection>();
   const history = React.useRef<SettledInspection>();
-  React.useEffect(() => { injectCss(); }, []);
   // A refreshed Lean payload invalidates every settled position and selection.
   React.useEffect(() => {
     setLeft(0); setRight(points.length - 1); setStep(0);
@@ -406,7 +396,7 @@ function InspectionExplorer({ name, points }: { name: string; points: Inspection
             <span>Line {point.point?.line ?? '?'}</span>
           </div>
           {point.point?.branch && <p className="spytial-inspection-note">Case {point.point.branch}</p>}
-          {!diagram ? <ContradictionPanel diagnosis={point.diagnosis} /> : !waiting ? <DiagramWidget {...point} pointNumber={multiple ? index + 1 : undefined}
+          {!diagram ? <CounterfactualPanel diagnosis={point.diagnosis} renderDiagram={renderPreviewDiagram} /> : !waiting ? <DiagramWidget {...point} pointNumber={multiple ? index + 1 : undefined}
             onlyHere={onlyHere?.[slot]}
             prior={prior?.point !== point ? prior : undefined}
             onSettled={slot === 0 ? state => {
@@ -447,7 +437,6 @@ function DiagramWidget(props: InspectionPoint & {
   const priorRef = React.useRef(props.prior);
   priorRef.current = props.prior;
 
-  React.useEffect(() => { injectCss(); }, []);
 
   // Switching between one, two, and all panes resizes retained graphs. Wait
   // for core's own resize handling before fitting the new pane dimensions.

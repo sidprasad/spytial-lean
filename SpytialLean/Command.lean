@@ -1062,6 +1062,7 @@ private meta def contradictionPayload (subject : Expr) (stx : Syntax) (report : 
   let mut previews := #[]
   for preview in report.previews do
     let command ← omissionCommand stx preview.omitted
+    let omitted ← preview.omitted.mapM fun id => return (← id.getUserName).toString
     -- A layout may refer to a relation that disappears when its evidence is omitted.
     -- Keep a failed replay local to that command; other previews may still render.
     let entry ← try
@@ -1072,7 +1073,7 @@ private meta def contradictionPayload (subject : Expr) (stx : Syntax) (report : 
     catch ex =>
       let .error _ message := ex | throw ex
       pure <| Json.mkObj [("command", toJson command), ("error", toJson (← message.toString))]
-    previews := previews.push entry
+    previews := previews.push (entry.setObjVal! "omitted" (toJson omitted))
   let diagnosis := Json.mkObj [("term", toJson (← ppExpr subject).pretty),
     ("conflicts", toJson conflicts), ("previews", Json.arr previews), ("limited", toJson report.limited)]
   return { props := Json.mkObj [("diagnosis", diagnosis)], propositions := #[] }

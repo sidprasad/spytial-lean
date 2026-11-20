@@ -41,12 +41,15 @@ export interface ConflictPoint {
   diagnosis: {
     term: string;
     conflicts: string[][];
-    previews: Array<{ command: string } & (
-      { view: InspectionPoint; truncated: boolean } | { error: string }
-    )>;
+    previews: CounterfactualPreview[];
     limited: boolean;
   };
 }
+
+/** Additional nvm names; older payloads carry only the full command. */
+export type CounterfactualPreview = { command: string; omitted?: string[] } & (
+  { view: InspectionPoint; truncated: boolean } | { error: string }
+);
 
 export type InspectionEntry = InspectionPoint | ConflictPoint;
 

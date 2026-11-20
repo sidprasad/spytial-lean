@@ -91,7 +91,10 @@ transitive equality to the same check. The contradiction is checked before
 root projection. At a tactic or expression inspection, Spytial lists the local
 hypotheses used by the checked proofs of `False` it found. For each
 counterfactual it shows the inspection command with extra `nvm` omissions
-and the diagram computed with those omissions. The original proof state is
+and the diagram computed with those omissions. Each proof has its own block of
+source hypotheses. Omission sets that yield identical diagram data, root and
+layout appear together. Selecting one shows its command and its local context.
+The original proof state is
 unchanged. A successful preview means the rerun found no contradiction.
 
 The search starts with one proof and tries inclusion-minimal sets of nameable
