@@ -33,10 +33,14 @@ Click the fact or press Enter to pin the highlight while
 inspecting the diagram. **Clear pin** releases it. A proposition can remain
 readable even when the layout hides all its targets.
 
-In **Side by side**, the fact comparison sits just below the selectors.
-Each column shows the facts unique to its point. Expand **In both points**
-to see the shared facts. The comparison uses Lean propositions, so two
-branches can each display `P x` as unique when their `x`s are different locals.
+In **Side by side**, each diagram has its own scrollable local context.
+A tinted row with a vertical bar marks a fact retained only at that point.
+The left and right panes use the VS Code theme’s removed and inserted diff
+colors respectively, even when you swap the selected points.
+Shared facts keep their usual appearance. Hypotheses with unique derived facts
+start expanded. Hover or focus a linked fact to highlight its own diagram.
+The comparison uses Lean propositions, so two branches can each mark `P x`
+as unique when their `x`s are different locals.
 
 Titles default to the inspected binder name or the displayed Lean expression.
 Add an optional `titled` clause at the end of a tactic for an authored caption:

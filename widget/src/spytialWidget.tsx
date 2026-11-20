@@ -55,12 +55,6 @@ function injectCss() {
     .spytial-point-select { max-width: 100%; min-width: 0; }
     .spytial-pair-selectors { display: flex; flex-wrap: wrap; gap: 6px 12px; margin: 8px 0; }
     .spytial-pair-selectors label { flex: 1 1 12em; min-width: 0; display: grid; gap: 2px; }
-    .spytial-context { font-size: 12px; margin-top: 8px; }
-    .spytial-context code { white-space: pre-wrap; overflow-wrap: anywhere; }
-    .spytial-facts { margin: 8px 0; font-size: 12px; }
-    .spytial-facts code { white-space: pre-wrap; overflow-wrap: anywhere; }
-    .spytial-facts summary { cursor: pointer; }
-    .spytial-facts ul { margin: 4px 0; padding-inline-start: 20px; }
     .spytial-split { height: min(72vh, 680px); display: grid; min-width: 0; }
     .spytial-divider {
       position: relative; cursor: row-resize; touch-action: none; outline-offset: -2px;
@@ -95,12 +89,26 @@ function injectCss() {
     .spytial-context-pane :focus-visible, .spytial-divider:focus-visible {
       outline: 1px solid var(--vscode-focusBorder, #087aba); outline-offset: -1px;
     }
-    .spytial-fact-diff { border-top: 1px solid var(--vscode-panel-border, #888); padding-top: 8px; }
-    .spytial-fact-diff .spytial-panes { margin: 6px 0; }
-    .spytial-fact-diff ul { max-height: 10rem; overflow-y: auto; }
-    .spytial-only-left, .spytial-only-right { padding: 4px 8px; min-width: 0; }
-    .spytial-only-left { border-inline-start: 3px solid var(--vscode-charts-orange, #bb793c); }
-    .spytial-only-right { border-inline-start: 3px solid var(--vscode-charts-blue, #4285bd); }
+    [data-spytial-compare-side=left] {
+      --spytial-difference: var(--vscode-editorGutter-deletedBackground, #c74e39);
+      --spytial-difference-line: var(--vscode-diffEditor-removedLineBackground);
+      --spytial-difference-active: var(--vscode-diffEditor-removedTextBackground);
+    }
+    [data-spytial-compare-side=right] {
+      --spytial-difference: var(--vscode-editorGutter-addedBackground, #43854a);
+      --spytial-difference-line: var(--vscode-diffEditor-insertedLineBackground);
+      --spytial-difference-active: var(--vscode-diffEditor-insertedTextBackground);
+    }
+    .spytial-only-here {
+      border-inline-start: 3px solid var(--spytial-difference);
+      background-color: var(--spytial-difference-line, color-mix(in srgb, var(--spytial-difference) 14%, transparent));
+    }
+    .spytial-context-fact.spytial-only-here[data-active=true] {
+      border-inline-start-color: var(--spytial-difference);
+      background-color: var(--spytial-difference-active, color-mix(in srgb, var(--spytial-difference) 27%, transparent));
+    }
+    .spytial-context-pane header .spytial-only-here { padding-inline: 4px; color: inherit; }
+    .spytial-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
     .spytial-container {
       position: relative;
       overflow: hidden;
@@ -269,31 +277,6 @@ export default function SpytialWidget(props: SpytialWidgetProps) {
 
 interface SettledInspection { point: InspectionPoint; state?: LayoutState }
 
-function FactList({ facts }: { facts: string[] }) {
-  return <ul>{facts.map((fact, i) => <li key={i}><code>{fact}</code></li>)}</ul>;
-}
-
-function FactComparison({ left, right, leftNumber, rightNumber }: {
-  left: InspectionPoint; right: InspectionPoint; leftNumber: number; rightNumber: number;
-}) {
-  const { leftOnly, rightOnly, shared } = compareFacts(left, right);
-  const differences = leftOnly.length + rightOnly.length;
-  if (!differences && !shared.length) return <p className="spytial-facts">Neither point has retained facts.</p>;
-  return <details open className="spytial-facts spytial-fact-diff" aria-label="Context fact comparison">
-    <summary>Context facts · {differences ? `${differences} ${differences === 1 ? 'difference' : 'differences'}` : 'No differences'}</summary>
-    {differences > 0 && <div className="spytial-panes">
-      {([['left', leftNumber, leftOnly], ['right', rightNumber, rightOnly]] as const).map(([side, n, facts]) =>
-        <div key={side} className={`spytial-only-${side}`}>
-          <strong>Only at point {n} ({facts.length})</strong>
-          {facts.length > 0 && <FactList facts={facts} />}
-        </div>)}
-    </div>}
-    {shared.length > 0 && <details><summary>In both points ({shared.length})</summary>
-      <FactList facts={shared} />
-    </details>}
-  </details>;
-}
-
 function InspectionExplorer({ name, points }: { name: string; points: InspectionPoint[] }) {
   const [expanded, setExpanded] = React.useState(false);
   const [mode, setMode] = React.useState('compare');
@@ -309,6 +292,9 @@ function InspectionExplorer({ name, points }: { name: string; points: Inspection
     setLeft(0); setRight(points.length - 1); setStep(0);
     setAnchor(undefined); setStepPrior(undefined); history.current = undefined;
   }, [points]);
+  const onlyHere = React.useMemo(() =>
+    expanded && mode === 'compare' && points.length > 1 && points[left] && points[right]
+      ? compareFacts(points[left], points[right]) : undefined, [expanded, mode, points, left, right]);
   if (!points.length) return <div>No proof inspections.</div>;
   const multiple = points.length > 1;
   const selected = !multiple ? [0] : mode === 'compare' ? [left, right] :
@@ -363,8 +349,6 @@ function InspectionExplorer({ name, points }: { name: string; points: Inspection
         <button type="button" disabled={Math.max(left, right) === points.length - 1}
           onClick={() => shiftPair(1)}>Next pair</button>
       </div>}
-      <FactComparison left={points[left]} right={points[right]}
-        leftNumber={left + 1} rightNumber={right + 1} />
     </>}
     {multiple && mode === 'step' && <div className="spytial-toolbar">
       <button type="button" disabled={step === 0} onClick={() => choose(step - 1, 0)}>Previous</button>
@@ -380,7 +364,8 @@ function InspectionExplorer({ name, points }: { name: string; points: Inspection
         // Followers wait for settled anchor positions, as in Cope and Drag's
         // temporal panes, rather than copying a pre-solve layout.
         const waiting = mode !== 'step' && slot > 0 && !anchorReady;
-        return <section key={slot} aria-label={pointTitle(point)}>
+        return <section key={slot} aria-label={pointTitle(point)}
+          data-spytial-compare-side={comparing ? (slot === 0 ? 'left' : 'right') : undefined}>
           <div className="spytial-point-header">
             {multiple && mode === 'step' ? pointSelect(index, slot, 'Inspection point') :
               <strong>{multiple && `${index + 1}. `}<span>{pointTitle(point)}</span></strong>}
@@ -388,7 +373,7 @@ function InspectionExplorer({ name, points }: { name: string; points: Inspection
           </div>
           {point.point?.branch && <p className="spytial-inspection-note">Case {point.point.branch}</p>}
           {!waiting ? <DiagramWidget {...point} pointNumber={multiple ? index + 1 : undefined}
-            showPointFacts={!comparing}
+            onlyHere={onlyHere?.[slot]}
             prior={prior?.point !== point ? prior : undefined}
             onSettled={slot === 0 ? state => {
               const settled = { point, state };
@@ -407,7 +392,7 @@ function InspectionExplorer({ name, points }: { name: string; points: Inspection
 }
 
 function DiagramWidget(props: InspectionPoint & {
-  showPointFacts?: boolean;
+  onlyHere?: ReadonlySet<number>;
   pointNumber?: number; prior?: SettledInspection; onSettled?: (state?: LayoutState) => void;
 }) {
   const containerRef = React.useRef<HTMLDivElement>(null);
@@ -418,7 +403,7 @@ function DiagramWidget(props: InspectionPoint & {
   const [height, setHeight] = React.useState(DEFAULT_HEIGHT);
   const [share, setShare] = React.useState(62);
   const [factHighlights, setFactHighlights] = React.useState<FactHighlight[]>();
-  const split = props.showPointFacts !== false && !!(props.localContext?.length || props.inspection?.facts.length);
+  const split = !!(props.onlyHere || props.localContext?.length || props.inspection?.facts.length);
   const errorMountedRef = React.useRef(false);
   const data = props.dataInstance;
   const onSettledRef = React.useRef(props.onSettled);
@@ -591,17 +576,12 @@ function DiagramWidget(props: InspectionPoint & {
                 if (next === undefined) return;
                 e.preventDefault(); setShare(Math.max(25, Math.min(80, next)));
               }} />
-            <ContextPane key={props.pointNumber ?? props.point?.line} point={props} highlights={factHighlights} />
+            <ContextPane key={props.pointNumber ?? props.point?.line} point={props}
+              highlights={factHighlights} onlyHere={props.onlyHere} />
           </>}
         </div>
         {!!props.observations?.length && <p className="spytial-inspection-note">
           Observing: <code>{props.observations.join(', ')}</code></p>}
-        {!split && !!props.localContext?.length && <details className="spytial-context">
-          <summary>Local context ({props.localContext.length})</summary>
-          <ul>{props.localContext.map((local, i) => <li key={i}><code>
-            {local.name} : {local.type}{local.value != null ? ` := ${local.value}` : ''}
-          </code>{local.excluded && ' (omitted from this inspection)'}</li>)}</ul>
-        </details>}
       </div>
     </details>
   );
