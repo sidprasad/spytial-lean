@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { getSequencePolicy, parseLayoutSpec } from 'spytial-core';
 import { compareFacts, correspondingAtoms, continuityOptions, factsInContext,
   inspectionDisplayData, pointTitle } from '../dist/inspection.js';
 
@@ -72,26 +73,25 @@ test('ambiguous aliases and incompatible atom types do not imply correspondence'
   assert.deepEqual(correspondingAtoms(point(), b), [{ previous: 'atom_1', current: 'atom_1' }]);
 });
 
-test('only evidenced positions reach core stability; stale ID memory is masked', () => {
+test('only positions backed by Lean identity survive the core stability policy', () => {
   const previous = point(['atom_0', 'atom_5']);
   const current = point(['atom_8', 'atom_2']);
-  let calls = 0;
-  const core = { JSONDataInstance: class { constructor(data) { this.data = data; } },
-    getSequencePolicy: name => ({ name, apply: context => {
-      calls++;
-      return { effectivePriorState: { ...context.priorState, positions: [
-        ...context.priorState.positions, { id: 'unrelated', x: 99, y: 99 },
-      ] }, useReducedIterations: true };
-    } }) };
   const state = { positions: [{ id: 'atom_5', x: 12, y: 34 }, { id: 'unmatched', x: 1, y: 2 }],
     transform: { k: 1, x: 0, y: 0 } };
-  const options = continuityOptions(core, previous, current, state);
-  assert.deepEqual(options.priorPositions.positions, [{ id: 'atom_2', x: 12, y: 34 }]);
-  assert.deepEqual(options.policy.apply({ priorState: options.priorPositions })
-    .effectivePriorState.positions, [{ id: 'atom_2', x: 12, y: 34 }]);
-  assert.equal(calls, 1);
+  const options = continuityOptions(previous, current, state);
+  const context = { prevInstance: options.prevInstance, currInstance: options.currInstance,
+    spec: parseLayoutSpec(''), priorState: options.priorPositions };
+  const matched = { id: 'atom_2', x: 12, y: 34 };
+  assert.deepEqual(context.priorState.positions, [matched]);
+
+  // A previous render remembered atom_8, but this point has no evidence for its position.
+  const stability = getSequencePolicy('stability');
+  const stale = { id: 'atom_8', x: 99, y: 99 };
+  stability.apply({ ...context, priorState: { ...state, positions: [stale] } });
+  assert.ok(stability.apply(context).effectivePriorState.positions.some(p => p.id === stale.id),
+    'the core policy would reuse the stale position without the Lean identity filter');
+  assert.deepEqual(options.policy.apply(context).effectivePriorState.positions, [matched]);
   assert.equal(options.transitionMode, 'replace');
-  assert.equal(continuityOptions(core, previous, point(undefined, 'other'), state), undefined);
-  assert.equal(continuityOptions({}, previous, current, state), undefined);
+  assert.equal(continuityOptions(previous, point(undefined, 'other'), state), undefined);
   assert.equal(state.positions[0].id, 'atom_5');
 });

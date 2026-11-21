@@ -4,6 +4,8 @@
     "jsx": "react-jsx",
     "module": "esnext",
     "moduleResolution": "bundler",
+    // The infoview provides React 18. Use its JSX types for core's React components too.
+    "paths": { "react": ["./node_modules/@types/react"] },
     "outDir": "./dist/",
     "declaration": true,
     "allowSyntheticDefaultImports": true,
