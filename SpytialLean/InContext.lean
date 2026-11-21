@@ -727,7 +727,6 @@ private meta partial def functionGraphScopeEntries (context : InspectionContext)
 public meta def scopeForContext (context : InspectionContext) (base : SelScope)
     (observations : Array Expr := #[]) : MetaM SelScope := do
   let cfg : WalkConfig := { functionGraphs := true, observations }
-  let mut scope : SelScope := base
   let mut heads := #[]
   let mut relations := #[]
   let (rootRelations, rootHeads) ← functionGraphScopeEntries context cfg context.root
@@ -746,16 +745,7 @@ public meta def scopeForContext (context : InspectionContext) (base : SelScope)
         let (argumentRelations, argumentHeads) ← functionGraphScopeEntries context cfg argument
         relations := relations ++ argumentRelations
         heads := heads ++ argumentHeads
-  for head in heads.filterMap id do
-    scope := scope.merge (← SelScope.ofType head)
-  for (name, arity) in relations do
-    scope := { scope with rels :=
-      match scope.rels.get? name with
-      | some (owner, some previous) =>
-          if previous == arity then scope.rels else scope.rels.insert name (owner, none)
-      | some (_, none) => scope.rels
-      | none => scope.rels.insert name (scope.root, some arity) }
-  return { scope with lenient := scope.lenient || heads.contains none }
+  base.withEvidence heads relations
 
 end
 

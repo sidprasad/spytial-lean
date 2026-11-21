@@ -74,10 +74,6 @@ input_file widgetRollupConfig where
   path := widgetDir / "rollup.config.js"
   text := true
 
-input_file widgetRollupVirtual where
-  path := widgetDir / "rollup.virtual.mjs"
-  text := true
-
 input_file widgetTsconfig where
   path := widgetDir / "tsconfig.json"
   text := true
@@ -86,7 +82,6 @@ target widgetJsAll pkg : Unit := do
   let inputs := (← fetchPnpmWorkspaceFiles)
     |>.mix (← widgetJsSrcs.fetch)
     |>.mix (← widgetRollupConfig.fetch)
-    |>.mix (← widgetRollupVirtual.fetch)
     |>.mix (← widgetTsconfig.fetch)
   pkg.afterBuildCacheAsync do
   inputs.mapM fun _ => do
@@ -115,14 +110,12 @@ input_file renderRollupConfig where
   path := renderDir / "rollup.config.mjs"
   text := true
 
-/-- Browser bundle for snapshot renders: widget component + react + the
-    spytial-core virtual modules, into `render/dist/harness.js`. -/
+/-- Browser bundle for snapshot renders, including React and the same widget as the infoview. -/
 target renderHarnessJs pkg : Unit := do
   let inputs := (← widgetJsAll.fetch)
     |>.mix (← fetchPnpmWorkspaceFiles)
     |>.mix (← renderEntry.fetch)
     |>.mix (← renderRollupConfig.fetch)
-    |>.mix (← widgetRollupVirtual.fetch)
   inputs.mapM fun _ => do
     -- widgetJsAll traces the rollup output; entry.mjs imports the tsc one, so
     -- only this trace rebuilds the harness when the component changes.

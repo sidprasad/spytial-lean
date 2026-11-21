@@ -8,7 +8,6 @@ import { fileURLToPath } from 'url';
 import { nodeResolve } from '@rollup/plugin-node-resolve';
 import commonjs from '@rollup/plugin-commonjs';
 import replace from '@rollup/plugin-replace';
-import { cssNoop, spytialCoreVirtualModules } from '../widget/rollup.virtual.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -18,12 +17,11 @@ export default {
   output: {
     file: path.join(here, 'dist', 'harness.js'),
     format: 'iife',
+    inlineDynamicImports: true,
     intro: 'const global = window;',
     sourcemap: false,
   },
   plugins: [
-    cssNoop(),
-    spytialCoreVirtualModules(),
     nodeResolve({ browser: true }),
     replace({
       'process.env.NODE_ENV': JSON.stringify('production'),

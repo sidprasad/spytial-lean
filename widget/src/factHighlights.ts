@@ -1,14 +1,8 @@
-import type { DiagramLabelTarget, LayoutInstance } from 'spytial-core';
+import type { DiagramLabelTarget, LayoutInstance, Translators } from 'spytial-core';
 import type { FactTargets, RelationalData } from './inspection';
 
 interface SourceGraph {
   edge(source: string, target: string, edgeId: string): string | undefined;
-}
-
-export interface FactGraph extends HTMLElement {
-  highlightNodes(ids: string[]): boolean;
-  hasLabel(target: DiagramLabelTarget): boolean;
-  highlightLabels(targets: readonly DiagramLabelTarget[]): () => void;
 }
 
 export type FactHighlight = (() => () => void) | undefined;
@@ -16,7 +10,8 @@ const tupleKey = (relation: string, atoms: string[]) => JSON.stringify([relation
 
 /** Highlight only direct correspondences. Atoms identify nodes and tuples identify
  * edge captions or attribute lines. Tags are computed by selectors. */
-export function renderedFactHighlights(graph: FactGraph, data: RelationalData, facts: FactTargets[],
+export function renderedFactHighlights(graph: Translators.WebColaCnDGraph,
+  data: RelationalData, facts: FactTargets[],
   sourceGraph: SourceGraph, layout: Pick<LayoutInstance, 'isAttributeField'>): FactHighlight[] {
   const nodes = new Map<string, Element>();
   type NodeGroup = SVGGElement & { __data__?: { id: string } };

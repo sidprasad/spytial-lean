@@ -1,3 +1,5 @@
+import { getSequencePolicy, JSONDataInstance, type LayoutState, type WebColaLayoutOptions } from 'spytial-core';
+
 export interface RelationalData {
   atoms: Array<{ id: string; type: string; label: string }>;
   relations: Array<{
@@ -52,11 +54,6 @@ export type CounterfactualPreview = { command: string; omitted?: string[] } & (
 );
 
 export type InspectionEntry = InspectionPoint | ConflictPoint;
-
-export interface LayoutState {
-  positions: Array<{ id: string; x: number; y: number }>;
-  transform: { k: number; x: number; y: number };
-}
 
 export function pointTitle(point: InspectionEntry): string {
   return point.point?.title ?? ('diagnosis' in point ? point.diagnosis.term : point.inspection?.term) ?? 'Inspection';
@@ -143,32 +140,30 @@ export function correspondingAtoms(previous: InspectionPoint, current: Inspectio
 /** Reuse core's policy gateway, passing only remapped, evidenced position hints.
  * The mask also excludes core's short-lived ID memory: its traversal-local IDs
  * may refer to completely different Lean terms in another inspection. */
-export function continuityOptions(core: any, previous: InspectionPoint,
-  current: InspectionPoint, state: LayoutState) {
+export function continuityOptions(previous: InspectionPoint, current: InspectionPoint,
+  state: LayoutState): WebColaLayoutOptions | undefined {
   const matches = correspondingAtoms(previous, current);
   const ids = new Map(matches.map(m => [m.previous, m.current]));
   const positions = state.positions.flatMap(p => {
     const id = ids.get(p.id);
     return id === undefined ? [] : [{ ...p, id }];
   });
-  if (!positions.length || typeof core.getSequencePolicy !== 'function') return undefined;
-  const stability = core.getSequencePolicy('stability');
-  if (!stability || stability.name !== 'stability') return undefined;
+  if (!positions.length) return undefined;
+  const stability = getSequencePolicy('stability');
   const allowed = new Set(positions.map(p => p.id));
   return {
     policy: {
       name: 'lean-identity-stability',
-      apply(context: any) {
+      apply(context) {
         const result = stability.apply(context);
         return { ...result, effectivePriorState: result.effectivePriorState && {
           ...result.effectivePriorState,
-          positions: result.effectivePriorState.positions.filter((p: { id: string }) =>
-            allowed.has(p.id)),
+          positions: result.effectivePriorState.positions.filter(p => allowed.has(p.id)),
         } };
       },
     },
-    prevInstance: new core.JSONDataInstance(withLeanScalarTypes(previous.dataInstance)),
-    currInstance: new core.JSONDataInstance(withLeanScalarTypes(current.dataInstance)),
+    prevInstance: new JSONDataInstance(withLeanScalarTypes(previous.dataInstance)),
+    currInstance: new JSONDataInstance(withLeanScalarTypes(current.dataInstance)),
     priorPositions: { ...state, positions },
     // Local IDs are not animation identities. Each pane renders its own graph.
     transitionMode: 'replace',

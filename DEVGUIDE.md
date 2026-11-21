@@ -105,6 +105,11 @@ word and symbolic connectives, quantifiers and `let`, the integer layer, box
 join, and the negated comparisons. It also pins one diagnostic per checker
 error class.
 
+After building the tests, `node render/infoview-test.mjs --rpc-only` checks the
+widget payloads served by Lean, including proof edits and tactic backtracking.
+Build `renderHarnessJs` and run the same script without the flag to exercise
+the interactions in Playwright Chromium as well.
+
 ### Demos
 
 Elaborate every demo — each `#spytial` site typechecks and its spec elaborates —
@@ -145,22 +150,15 @@ after each core rebuild.
 
 ### How spytial-core is bundled
 
-The widget can't load external scripts (VS Code webview CSP blocks CDN), and
-spytial-core ships as IIFE bundles. `widget/rollup.virtual.mjs` wraps the two
-pre-built bundles from `node_modules/spytial-core/dist/` in virtual modules,
-which `rollup.config.js` pulls in via `cssNoop()` / `spytialCoreVirtualModules()`:
+`widget/src/spytialWidget.tsx` selects the inspection and arranges the explorer
+panes. `diagramLayout.ts` evaluates the Lean payload with `spytial-core`. Each
+`DiagramWidget.tsx` owns one graph element and renders its diagnostics with
+`ErrorMessageModal` from `spytial-core/react`.
 
-- `spytial-core` — the layout engine (`spytial-core-complete.global.js`), with
-  `customElements.define` guarded against duplicate registration
-- `spytial-core-components` — the error modal / error-state manager
-  (`react-component-integration.global.js`)
-
-so `spytialWidget.tsx` imports them like ordinary modules. CSS imports from
-spytial-core are handled by a `css-noop` plugin (the import becomes a no-op);
-equivalent styles are injected at runtime by the widget itself.
-
-The engine bundle includes all of spytial-core's dependencies (d3, webcola,
-dagre, etc.) — this is why the final widget JS is ~3MB.
+Rollup bundles these ES modules and inlines their dynamic imports so Lean can
+serve the widget as one file. The infoview supplies React. The standalone
+render harness bundles React as well. Both use the VS Code theme rules in
+`widget/src/widgetStyles.ts`.
 
 ### Build output
 
@@ -178,8 +176,8 @@ the Lean `@[widget_module]`.
 There is nothing to add here. The op surface is derived from spytial-core's
 `docs/spytial-language.json` while `SpytialLean/SpecLang.lean` elaborates, and
 the selector grammar from simple-graph-query's `docs/sgq-language.json` in
-`SpytialLean/Sgq.lean`; the elaborator, the serializer and the usage strings
-read those tables. A new item or field lands by bumping the dependency and
+`SpytialLean/Sgq.lean`; the op elaborator in `SpytialLean/OpElab.lean`, the serializer and the usage
+strings read those tables. A new item or field lands by bumping the dependency and
 rebuilding, and a shape the tables cannot represent fails that build naming
 the item. What stays hand-written — the Lean-side spelling choices and the
 facts the manifest does not carry yet — is listed in
