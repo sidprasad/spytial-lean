@@ -157,6 +157,13 @@ async function checkLayoutErrorIsolation(browser, props) {
   await page.getByLabel('Right inspection point').selectOption('0');
   await settled(page, 2);
   assert.ok(await conflictIn('right').isVisible());
+  const fact = pane('right').getByRole('button', { name: 'h : P a', exact: true });
+  const markedNodes = pane('right').locator('webcola-cnd-graph g.highlighted .main-label-tspan');
+  await fact.click();
+  assert.deepEqual(await markedNodes.allTextContents(), ['a']);
+  await pane('right').locator('.constraint-item').first().hover();
+  await conflictIn('right').hover();
+  assert.deepEqual(await markedNodes.allTextContents(), ['a'], 'leaving a diagnostic preserves a pinned fact');
   await pane('right').getByRole('button', { name: 'Hide details' }).click();
   assert.ok(await pane('left').getByRole('button', { name: 'Hide details' }).isVisible());
   await page.getByLabel('Left inspection point').selectOption('1');
@@ -165,6 +172,8 @@ async function checkLayoutErrorIsolation(browser, props) {
   assert.ok(await conflictIn('right').isVisible(), 'changing a neighbor preserves the error');
   assert.ok(await pane('right').getByRole('button', { name: 'Show details' }).isVisible(),
     'changing the other point preserves the reader’s collapsed details');
+  assert.equal(await fact.getAttribute('aria-pressed'), 'true');
+  assert.deepEqual(await markedNodes.allTextContents(), ['a']);
   assert.deepEqual(errors, []);
   await page.close();
 }
@@ -322,7 +331,7 @@ async function main() {
       { exact: true }).waitFor();
     assert.equal(await singlePanel.page.locator('.spytial-conflict-proof pre code').textContent(),
       conflict.diagnosis.conflicts[0].join('\n'));
-    assert.equal(await singlePanel.page.getByRole('combobox').count(), 0);
+    assert.equal(await singlePanel.page.getByRole('combobox', { name: 'Hypotheses to omit', exact: true }).count(), 0);
     await singlePanel.page.getByText('Here’s what the diagram of x shows with r set aside.', { exact: true }).waitFor();
     assert.equal(await singlePanel.page.locator('.spytial-replay-command').textContent(), replay.command);
     await settled(singlePanel.page, 1);

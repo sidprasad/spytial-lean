@@ -31,6 +31,7 @@ export function DiagramWidget({ point, onlyHere, pointNumber, prior, waitingForA
   const [height, setHeight] = React.useState(500);
   const [share, setShare] = React.useState(62);
   const [factHighlights, setFactHighlights] = React.useState<FactHighlight[]>();
+  const [pinnedFact, setPinnedFact] = React.useState<number>();
   const split = !!(onlyHere || point.localContext?.length || point.inspection?.facts.length);
 
   // Core resizes its viewport first, then we fit the settled graph to the new pane.
@@ -108,7 +109,8 @@ export function DiagramWidget({ point, onlyHere, pointNumber, prior, waitingForA
         </div>}
         {error && <div className="spytial-error">Error: {error}</div>}
         {layoutError && <div className="spytial-layout-error">
-          <ErrorMessageModal systemError={layoutError} graphElementId={graphId} />
+          {/* Core clears graph highlights when a constraint hover ends. A pin owns that highlight. */}
+          <ErrorMessageModal systemError={layoutError} graphElementId={pinnedFact === undefined ? graphId : undefined} />
         </div>}
         <div className={split ? 'spytial-split' : undefined} style={split ? {
           gridTemplateRows: `minmax(0, ${share}fr) 12px minmax(0, ${100 - share}fr)`,
@@ -142,7 +144,7 @@ export function DiagramWidget({ point, onlyHere, pointNumber, prior, waitingForA
                 e.preventDefault(); setShare(Math.max(25, Math.min(80, next)));
               }} />
             <ContextPane key={pointNumber ?? point.point?.line} point={point}
-              highlights={factHighlights} onlyHere={onlyHere} />
+              highlights={factHighlights} onlyHere={onlyHere} pin={pinnedFact} setPin={setPinnedFact} />
           </>}
         </div>
         {!!point.observations?.length && <p className="spytial-inspection-note">

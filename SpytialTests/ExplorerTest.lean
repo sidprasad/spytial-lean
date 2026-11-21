@@ -154,7 +154,7 @@ theorem explorerIndependentConflicts (x y : Nat) (hx3 : x = 3) (hx4 : 4 = x)
   spytial x
   trivial
 
-theorem explorerLayoutError (a b : Nat) : True := by
+theorem explorerLayoutError (a b : Nat) (P : Nat → Prop) (h : P a) : True := by
   spytial (a, b) with [orientation fst left, hideAtom Nat] titled "Hidden endpoint"
   spytial (a, b) with [orientation fst left] titled "Visible endpoint"
   trivial

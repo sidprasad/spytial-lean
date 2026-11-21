@@ -2,12 +2,12 @@ import * as React from 'react';
 import { factsInContext, type InspectionPoint } from './inspection';
 import type { FactHighlight } from './factHighlights';
 
-export function ContextPane({ point, highlights, onlyHere }: {
+export function ContextPane({ point, highlights, onlyHere, pin, setPin }: {
   point: InspectionPoint; highlights?: FactHighlight[]; onlyHere?: ReadonlySet<number>;
+  pin?: number; setPin: (fact?: number) => void;
 }) {
   const [hover, setHover] = React.useState<number>();
   const [focus, setFocus] = React.useState<number>();
-  const [pin, setPin] = React.useState<number>();
   const active = pin ?? hover ?? focus;
   const facts = point.inspection?.facts ?? [];
   const context = point.localContext ?? [];
