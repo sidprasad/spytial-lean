@@ -7,6 +7,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { chromium } from '@playwright/test';
+import { prepareDiagram } from '../widget/dist/diagramLayout.js';
 
 export async function leanDocument(file, text = fs.readFileSync(file, 'utf8')) {
   const root = process.cwd();
@@ -145,6 +146,29 @@ async function markedLines(graph) {
   }).sort());
 }
 
+async function checkLayoutErrorIsolation(browser, props) {
+  const { page, errors } = await browserPage(browser, props);
+  await expandExplorer(page, 2);
+  await settled(page, 2);
+  const pane = side => page.locator(`[data-spytial-compare-side=${side}]`);
+  const conflictIn = side => pane(side).getByRole('heading', { name: 'Hidden Node Conflict' });
+  assert.ok(await conflictIn('left').isVisible(), 'the first diagram retains its error');
+  assert.equal(await conflictIn('right').count(), 0, 'the second diagram has its own layout');
+  await page.getByLabel('Right inspection point').selectOption('0');
+  await settled(page, 2);
+  assert.ok(await conflictIn('right').isVisible());
+  await pane('right').getByRole('button', { name: 'Hide details' }).click();
+  assert.ok(await pane('left').getByRole('button', { name: 'Hide details' }).isVisible());
+  await page.getByLabel('Left inspection point').selectOption('1');
+  await settled(page, 2);
+  assert.equal(await conflictIn('left').count(), 0);
+  assert.ok(await conflictIn('right').isVisible(), 'changing a neighbor preserves the error');
+  assert.ok(await pane('right').getByRole('button', { name: 'Show details' }).isVisible(),
+    'changing the other point preserves the reader’s collapsed details');
+  assert.deepEqual(errors, []);
+  await page.close();
+}
+
 async function main() {
   const file = 'SpytialTests/ExplorerTest.lean';
   const text = fs.readFileSync(file, 'utf8');
@@ -161,7 +185,8 @@ async function main() {
     assert.equal(points.length, 3);
     assert.deepEqual(points.map(p => p.inspection.term), ['input', 'rotated', 'repaired']);
     assert.deepEqual(points.map(p => p.point.title), [null, 'After rotation', 'After repaint']);
-    assert.deepEqual(points.map(p => p.point.line), [9, 10, 11]);
+    assert.deepEqual(points.map(p => p.point.line),
+      ['spytial input', 'spytial rotated', 'spytial repaired'].map(site => lineOf(site) + 1));
     assert.equal(new Set(points.map(p => p.point.scope)).size, 1);
     assert.ok(points.every(p => p.localContext.some(d => d.name === 'h') &&
       p.observations.some(o => o.endsWith('List.length')) && p.inspection.facts.length));
@@ -280,7 +305,18 @@ async function main() {
       'spytial x nvm [hx3, hy0]', 'spytial x nvm [hx3, hy1]',
       'spytial x nvm [hx4, hy0]', 'spytial x nvm [hx4, hy1]',
     ]);
+    const [layoutError] = await doc.widgets(lineOf('theorem explorerLayoutError'));
+    assert.deepEqual(layoutError.props.explorer.points.map(p => prepareDiagram(p).diagnostic?.type),
+      ['hidden-node-conflict', undefined]);
+    doc.change(text.replace('After repaint', 'Repainted caption'));
+    const [updated] = await doc.widgets(headerLine);
+    assert.equal(updated.props.explorer.points.length, 3, 'edits do not accumulate stale points');
+    assert.equal(updated.props.explorer.points[2].point.title, 'Repainted caption');
+    assert.deepEqual(doc.diagnostics.flatMap(d => d.diagnostics).filter(d => d.severity === 1), []);
+    console.log('Lean infoview RPC checks passed.');
+    if (process.argv.includes('--rpc-only')) return;
     browser = await chromium.launch({ headless: true });
+    await checkLayoutErrorIsolation(browser, layoutError.props);
     const singlePanel = await browserPage(browser, conflict);
     await singlePanel.page.getByText('Could not draw a diagram because the context exposed contradictory facts.',
       { exact: true }).waitFor();
@@ -489,12 +525,6 @@ async function main() {
     assert.deepEqual(fn.errors, []);
     await fn.page.close();
 
-    doc.change(text.replace('After repaint', 'Repainted caption'));
-    const [updated] = await doc.widgets(headerLine);
-    assert.equal(updated.props.explorer.points.length, 3, 'edits do not accumulate stale points');
-    assert.equal(updated.props.explorer.points[2].point.title, 'Repainted caption');
-    assert.deepEqual(doc.diagnostics.flatMap(d => d.diagnostics).filter(d => d.severity === 1), []);
-    fs.writeFileSync('.lake/explorer-props.json', JSON.stringify(header.props, null, 2));
     console.log('Infoview RPC + Chromium passed: point selection, fact comparisons, context scrolling, keyboard and pinned highlights, native node highlights, edge captions and attribute markers, branch isolation, rollback and edits.');
   } finally { await browser?.close(); doc.close(); }
 }

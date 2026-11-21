@@ -1,5 +1,6 @@
 import * as React from 'react';
-import type { ConflictPoint, CounterfactualPreview, InspectionPoint } from './inspection';
+import { DiagramWidget } from './DiagramWidget';
+import type { ConflictPoint, CounterfactualPreview } from './inspection';
 
 /** Group only identical diagram inputs. Each command keeps its own context, facts and warnings. */
 function groupByDiagram(previews: CounterfactualPreview[]) {
@@ -33,9 +34,7 @@ function diagramCaption(group: CounterfactualPreview[]) {
   if (group.length > 1) return 'Same diagram';
 }
 
-export function CounterfactualPanel({ diagnosis, renderDiagram }: ConflictPoint & {
-  renderDiagram: (view: InspectionPoint) => React.ReactNode;
-}) {
+export function CounterfactualPanel({ diagnosis }: ConflictPoint) {
   const [command, setCommand] = React.useState<string>();
   const groups = React.useMemo(() => groupByDiagram(diagnosis.previews), [diagnosis.previews]);
   const preview = diagnosis.previews.find(p => p.command === command) ??
@@ -70,7 +69,7 @@ export function CounterfactualPanel({ diagnosis, renderDiagram }: ConflictPoint 
       </strong></p>}
       <p>Showing <code className="spytial-replay-command">{preview.command}</code></p>
       {preview.truncated && <p>Context preparation reached a limit. This diagram may be incomplete.</p>}
-      <React.Fragment key={preview.command}>{renderDiagram(preview.view)}</React.Fragment>
+      <DiagramWidget key={preview.command} point={preview.view} />
     </> : preview ? <div>
       <p>Could not draw the preview for <code className="spytial-replay-command">{preview.command}</code>.</p>
       <p role="status">{preview.error}</p>

@@ -7,7 +7,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { chromium } from '@playwright/test';
 import { leanDocument, browserPage, expandExplorer, settled } from './infoview-test.mjs';
-import { correspondingAtoms, continuityOptions } from '../widget/dist/inspection.js';
+import { correspondingAtoms } from '../widget/dist/inspection.js';
 
 const downstream = path.resolve(process.argv[2]);
 const sourcePath = path.join(downstream,
