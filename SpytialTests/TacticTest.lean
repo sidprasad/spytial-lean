@@ -10,6 +10,32 @@ subject to identifier lexing — see `spytialProofKw`. These tests elaborate
 every tactic surface headlessly; a parse or elaboration failure fails the
 build. -/
 
+open Lean Elab Tactic in
+/-- Show tuples by label, along with empty relations and isolated atoms. These
+    fixtures use distinct labels and a single column signature per relation. -/
+local elab "show_datum_rows " site:tactic : tactic => do
+  let (_, messages) ← withCapturedMessages (evalTactic site)
+  let [message] := messages | throwErrorAt site "expected one datum, got {messages.map (·.data)}"
+  unless message.severity == .information do throwErrorAt site message.data
+  let json ← ofExcept (Json.parse (← message.data.toString))
+  let data : JsonDataInstance ← ofExcept (fromJson? json)
+  let mut rows := []
+  let mut referenced : Std.HashSet String := {}
+  for relation in data.relations do
+    if relation.tuples.isEmpty then rows := s!"{relation.name} (empty)" :: rows
+    for tuple in relation.tuples do
+      let atoms ← tuple.atoms.mapM fun id => do
+        let some atom := data.atoms.find? (·.id == id) | throwErrorAt site "missing atom {id}"
+        return atom
+      unless tuple.types == relation.types && tuple.types == atoms.map (·.type) do
+        throwErrorAt site "wrong types in {relation.name}"
+      for id in tuple.atoms do referenced := referenced.insert id
+      let args := ", ".intercalate (atoms.map (·.label)).toList
+      rows := s!"{relation.name}({args})" :: rows
+  for atom in data.atoms do
+    unless referenced.contains atom.id do rows := s!"{atom.label} : {atom.type} (isolated)" :: rows
+  logInfo ("\n".intercalate rows.mergeSort)
+
 inductive TEven : Nat → Prop where
   | zero : TEven 0
   | add_two : TEven n → TEven (n + 2)
@@ -156,19 +182,10 @@ example (xs : List Nat) (h : ∃ y, xs = [y, y]) : True := by
 
 -- observations apply named data functions over the represented active domain
 set_option linter.unusedVariables false in
-/--
-info: {"relations":
- [{"types": ["Nat", "Nat"],
-   "tuples": [{"types": ["Nat", "Nat"], "atoms": ["atom_0", "atom_1"]}],
-   "name": "measure",
-   "id": "lean:head:[\"fvar\",\"1\",\"measure\",\"Nat\",\"Nat\"]"}],
- "atoms":
- [{"type": "Nat", "label": "x", "id": "atom_0"},
-  {"type": "Nat", "label": "¿x?", "id": "atom_1"}]}
--/
+/-- info: measure(x, ¿x?) -/
 #guard_msgs in
 example (measure : Nat → Nat) (x : Nat) : True := by
-  spytial.datum x observing [measure]
+  show_datum_rows spytial.datum x observing [measure]
   trivial
 
 def twice (x : Nat) : Nat := x * 2
@@ -261,19 +278,10 @@ example (n : Nat) : observedNext (observedNext n) = n + 2 := by
   ]
   exact htwice
 
-/--
-info: {"relations":
- [{"types": ["Nat", "Nat"],
-   "tuples": [{"types": ["Nat", "Nat"], "atoms": ["atom_0", "atom_1"]}],
-   "name": "twice",
-   "id": "lean:head:[\"const\",\"twice\",\"Nat\",\"Nat\"]"}],
- "atoms":
- [{"type": "Nat", "label": "3", "id": "atom_0"},
-  {"type": "Nat", "label": "6", "id": "atom_1"}]}
--/
+/-- info: twice(3, 6) -/
 #guard_msgs in
 example : True := by
-  spytial.datum 3 observing [twice]
+  show_datum_rows spytial.datum 3 observing [twice]
   trivial
 
 -- observation relations are available to the ordinary use-site specification
@@ -404,28 +412,14 @@ example (xs : List Nat) (h : ∃ y, xs = [y, y]) : True := by
 -- witness binders remain meaningful while anonymous results use neutral labels
 set_option linter.unusedVariables false in
 /--
-info: {"relations":
- [{"types": ["α", "α"],
-   "tuples": [{"types": ["α", "α"], "atoms": ["atom_1", "atom_2"]}],
-   "name": "next",
-   "id": "lean:head:[\"fvar\",\"4\",\"next\",\"α\",\"α\"]"},
-  {"types": ["α", "α"],
-   "tuples": [{"types": ["α", "α"], "atoms": ["atom_1", "atom_0"]}],
-   "name": "edge",
-   "id": "lean:head:[\"fvar\",\"2\",\"edge\",\"α\",\"α\"]"},
-  {"types": ["α"],
-   "tuples": [{"types": ["α"], "atoms": ["atom_2"]}],
-   "name": "Reach",
-   "id": "lean:head:[\"fvar\",\"3\",\"Reach\",\"α\"]"}],
- "atoms":
- [{"type": "α", "label": "¿u?", "id": "atom_0"},
-  {"type": "α", "label": "s", "id": "atom_1"},
-  {"type": "α", "label": "¿x?", "id": "atom_2"}]}
+info: Reach(¿x?)
+edge(s, ¿u?)
+next(s, ¿x?)
 -/
 #guard_msgs in
 example {α : Type} (edge : α → α → Prop) (Reach : α → Prop) (next : α → α) (s : α)
     (route : ∃ u, edge s u) (h : Reach (next s)) : True := by
-  spytial.datum s
+  show_datum_rows spytial.datum s
   trivial
 
 structure ArgumentGraph (V : Type u) where
@@ -445,47 +439,22 @@ inductive ArgumentWalk.IsPath {V : Type u} {G : ArgumentGraph V} {u v : V} :
    not separate columns of either the function graph or its result predicate. -/
 set_option linter.unusedVariables false in
 /--
-info: {"relations":
- [{"types": ["ArgumentWalk"],
-   "tuples": [{"types": ["ArgumentWalk"], "atoms": ["atom_1"]}],
-   "name": "IsPath",
-   "id": "lean:head:[\"const\",\"ArgumentWalk.IsPath\",\"ArgumentWalk\"]"},
-  {"types": ["ArgumentWalk", "ArgumentWalk"],
-   "tuples":
-   [{"types": ["ArgumentWalk", "ArgumentWalk"], "atoms": ["atom_0", "atom_1"]}],
-   "name": "bypass",
-   "id":
-   "lean:head:[\"const\",\"ArgumentWalk.bypass\",\"ArgumentWalk\",\"ArgumentWalk\"]"}],
- "atoms":
- [{"type": "ArgumentWalk", "label": "p", "id": "atom_0"},
-  {"type": "ArgumentWalk", "label": "¿x?", "id": "atom_1"}]}
+info: IsPath(¿x?)
+bypass(p, ¿x?)
 -/
 #guard_msgs in
 example {V : Type u} {G : ArgumentGraph V} {u v : V} (p : ArgumentWalk G u v)
     (h : (ArgumentWalk.bypass p).IsPath) : True := by
-  spytial.datum p
+  show_datum_rows spytial.datum p
   trivial
 
 /- A projection's structure argument is semantic ownership, not elaboration
    plumbing: dropping `G` would merge edges belonging to distinct graphs. -/
 set_option linter.unusedVariables false in
-/--
-info: {"relations":
- [{"types": ["ArgumentGraph", "V", "V"],
-   "tuples":
-   [{"types": ["ArgumentGraph", "V", "V"],
-     "atoms": ["atom_1", "atom_0", "atom_2"]}],
-   "name": "Adj",
-   "id":
-   "lean:head:[\"const\",\"ArgumentGraph.Adj\",\"ArgumentGraph\",\"V\",\"V\"]"}],
- "atoms":
- [{"type": "V", "label": "u", "id": "atom_0"},
-  {"type": "ArgumentGraph", "label": "G", "id": "atom_1"},
-  {"type": "V", "label": "v", "id": "atom_2"}]}
--/
+/-- info: Adj(G, u, v) -/
 #guard_msgs in
 example {V : Type u} (G : ArgumentGraph V) (u v : V) (h : G.Adj u v) : True := by
-  spytial.datum u
+  show_datum_rows spytial.datum u
   trivial
 
 inductive ImplicitTagged {tag : Nat} : Nat → Prop where
@@ -494,19 +463,10 @@ inductive ImplicitTagged {tag : Nat} : Nat → Prop where
 /- An independent implicit value still distinguishes applications and remains
    a column. -/
 set_option linter.unusedVariables false in
-/--
-info: {"relations":
- [{"types": ["Nat", "Nat"],
-   "tuples": [{"types": ["Nat", "Nat"], "atoms": ["atom_1", "atom_0"]}],
-   "name": "ImplicitTagged",
-   "id": "lean:head:[\"const\",\"ImplicitTagged\",\"Nat\",\"Nat\"]"}],
- "atoms":
- [{"type": "Nat", "label": "value", "id": "atom_0"},
-  {"type": "Nat", "label": "tag", "id": "atom_1"}]}
--/
+/-- info: ImplicitTagged(tag, value) -/
 #guard_msgs in
 example (tag value : Nat) (h : ImplicitTagged (tag := tag) value) : True := by
-  spytial.datum value
+  show_datum_rows spytial.datum value
   trivial
 
 inductive FamilyTagged {α : Type u} (β : α → Type v) : Nat → Prop where
@@ -514,17 +474,10 @@ inductive FamilyTagged {α : Type u} (β : α → Type v) : Nat → Prop where
 
 /- Type families are elaboration-level arguments even when explicitly bound. -/
 set_option linter.unusedVariables false in
-/--
-info: {"relations":
- [{"types": ["Nat"],
-   "tuples": [{"types": ["Nat"], "atoms": ["atom_0"]}],
-   "name": "FamilyTagged",
-   "id": "lean:head:[\"const\",\"FamilyTagged\",\"Nat\"]"}],
- "atoms": [{"type": "Nat", "label": "value", "id": "atom_0"}]}
--/
+/-- info: FamilyTagged(value) -/
 #guard_msgs in
 example {α : Type u} (β : α → Type v) (value : Nat) (h : FamilyTagged β value) : True := by
-  spytial.datum value
+  show_datum_rows spytial.datum value
   trivial
 
 -- Two predicates sharing a short name retain their separate identities and all tuples.
@@ -607,26 +560,13 @@ info: {"relations":
 
 set_option linter.unusedVariables false in
 /--
-info: {"relations":
- [{"types": ["TabStep", "TabQ", "TabQ"],
-   "tuples":
-   [{"types": ["TabStep", "TabQ", "TabQ"],
-     "atoms": ["atom_0", "atom_1", "atom_2"]},
-    {"types": ["TabStep", "TabQ", "TabQ"],
-     "atoms": ["atom_0", "atom_2", "atom_3"]},
-    {"types": ["TabStep", "TabQ", "TabQ"],
-     "atoms": ["atom_0", "atom_3", "atom_1"]}],
-   "name": "step",
-   "id": "lean:field:TabStep:step"}],
- "atoms":
- [{"type": "TabStep", "label": "mk", "id": "atom_0"},
-  {"type": "TabQ", "label": "q0", "id": "atom_1"},
-  {"type": "TabQ", "label": "q1", "id": "atom_2"},
-  {"type": "TabQ", "label": "q2", "id": "atom_3"}]}
+info: step(mk, q0, q1)
+step(mk, q1, q2)
+step(mk, q2, q0)
 -/
 #guard_msgs in
 example : True := by
-  spytial.datum tabStepVal
+  show_datum_rows spytial.datum tabStepVal
   trivial
 
 /-! ## Raw Lean selectors in tactic position

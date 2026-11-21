@@ -640,6 +640,18 @@ public structure SDA where
 
 public def sDA : SDA := { tr := fun q _ => q }
 
+structure ScalarTransition where
+  tr : Nat
+
+structure MixedTransitions where
+  table : SDA
+  scalar : ScalarTransition
+
+-- The join selects the scalar field. The other owner's four-column table
+-- shares its name, so the checker cannot assign a single width to `tr`.
+#guard_msgs in
+spytial_spec MixedTransitions [hideAtom ScalarTransition.tr]
+
 public structure SLTS where
   step : SQ → SQ → Prop
 

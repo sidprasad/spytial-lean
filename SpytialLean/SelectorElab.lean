@@ -70,6 +70,14 @@ meta structure SelScope where
 private meta def scalarTypes : List Name :=
   [``Nat, ``String, ``Float]
 
+/-- A selector denotes every relation with this name. Keep a known arity only
+    when all contributors agree. The first owner supplies hover information. -/
+meta def SelScope.addRelation (scope : SelScope) (name : String) (owner : Name)
+    (arity : Option Nat) : SelScope :=
+  { scope with rels := scope.rels.alter name fun
+      | none => some (owner, arity)
+      | some (first, known) => some (first, if known == arity then known else none) }
+
 /-- `seeds` are extra types the value is known to contain — a container's type
     arguments, which the head constant alone cannot predict: `DA.FinAcc Seen2
     Letter` emits `Seen2`'s fields, but `DA.FinAcc`'s `tr` is a function over
@@ -78,7 +86,7 @@ meta def SelScope.ofType (root : Name) (seeds : Array Name := #[]) : MetaM SelSc
   let env ← getEnv
   let mut scope : SelScope := { root }
   -- stuck matches appear in any open value; the walker emits one ternary
-  scope := { scope with rels := scope.rels.insert "scrutinee" (root, some 3) }
+  scope := scope.addRelation "scrutinee" root (some 3)
   let mut queue : Array Name := #[root] ++ seeds
   let mut seen : NameSet := {}
   while !queue.isEmpty do
@@ -101,7 +109,7 @@ meta def SelScope.ofType (root : Name) (seeds : Array Name := #[]) : MetaM SelSc
         scope := { scope with ctorLabels := scope.ctorLabels.insert c.ctorShort c.ctorName }
         for f in c.fields do
           unless f.isProofLike do
-            scope := { scope with rels := scope.rels.insert f.relName (t, f.arity?) }
+            scope := scope.addRelation f.relName t f.arity?
             match f.table, f.typeHead with
             | some tbl, _ => queue := queue ++ tbl.columnHeads
             | none, some ft => queue := queue.push ft
@@ -116,17 +124,28 @@ meta def SelScope.introduce (scope : SelScope) (name : String) (i : Introduced) 
     types. Lenient if either side is; a relation name claimed at two
     different arities keeps the name with its width unchecked. -/
 meta def SelScope.merge (a b : SelScope) : SelScope := Id.run do
-  let mut rels := a.rels
+  let mut scope := a
   for (n, owner, arity?) in b.rels do
-    rels := match rels.get? n with
-      | some (o, a?) => if a? == arity? then rels else rels.insert n (o, none)
-      | none => rels.insert n (owner, arity?)
-  return { root := a.root
-           types := b.types.fold (init := a.types) fun m k v => m.insert k v
-           rels
-           ctorLabels := b.ctorLabels.fold (init := a.ctorLabels) fun m k v => m.insert k v
-           introduced := b.introduced.fold (init := a.introduced) fun m k v => m.insert k v
-           lenient := a.lenient || b.lenient }
+    scope := scope.addRelation n owner arity?
+  return { scope with
+    types := b.types.fold (init := a.types) fun m k v => m.insert k v
+    ctorLabels := b.ctorLabels.fold (init := a.ctorLabels) fun m k v => m.insert k v
+    introduced := b.introduced.fold (init := a.introduced) fun m k v => m.insert k v
+    lenient := a.lenient || b.lenient }
+
+/-- Add the types and relation widths discovered in observations and local facts. -/
+meta def SelScope.withEvidence (base : SelScope) (heads : Array (Option Name))
+    (relations : Array (String × Nat)) : MetaM SelScope := do
+  let mut scope := base
+  let mut seen : NameSet := {}
+  for head? in heads do
+    let some head := head? | scope := { scope with lenient := true }; continue
+    unless seen.contains head do
+      seen := seen.insert head
+      scope := scope.merge (← SelScope.ofType head)
+  for (name, arity) in relations do
+    scope := scope.addRelation name base.root (some arity)
+  return scope
 
 /-! ## Diagnostics -/
 
