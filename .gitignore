@@ -9,3 +9,13 @@ render/out/
 render/dist/
 .DS_Store
 output/
+# Package manager stores, caches, and logs
+.pnpm-store/
+.npm/
+.yarn/cache/
+.corepack/
+*.tsbuildinfo
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
