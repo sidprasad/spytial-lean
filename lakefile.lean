@@ -2,7 +2,7 @@ import Lake
 open Lake DSL System
 
 package spytialLean where
-  version := v!"0.2.1"
+  version := v!"0.2.2"
   preferReleaseBuild := true
   buildArchive? := "SpytialLean.tar.gz"
   releaseRepo := "https://github.com/sidprasad/spytial-lean"
