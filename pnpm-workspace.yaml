@@ -22,5 +22,6 @@ catalog:
 minimumReleaseAgeExclude:
   - spytial-core@6.0.0
   - spytial-core@6.8.0
+  - spytial-core@6.8.1
   - simple-graph-query@3.1.0
   - simple-graph-query@3.2.0
