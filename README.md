@@ -13,7 +13,7 @@ require spytialLean from git "https://github.com/sidprasad/spytial-lean" @ "main
 ```
 
 Run `lake update spytialLean`, then `lake build SpytialLean`.
-For the tagged release, follow the [v0.2.1 installation instructions](https://github.com/sidprasad/spytial-lean/blob/v0.2.1/README.md).
+To pin the tagged release, use `@ "v0.2.3"` on the `require` line.
 
 ## Inspect a value
 
