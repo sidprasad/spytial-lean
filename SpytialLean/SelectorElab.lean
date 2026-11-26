@@ -2,6 +2,7 @@ module
 
 public import Lean
 public meta import Lean.Data.EditDistance
+public meta import SpytialLean.Editor
 public meta import SpytialLean.Selector
 public meta import SpytialLean.TypeShape
 public meta import SpytialLean.Relationalizer
@@ -688,6 +689,7 @@ private meta def addRelInfo (stx : Syntax) (owner : Name) (relName : String) :
 /-- The constructor label a bare ident denotes, with hover info. -/
 private meta def resolveCtorLit? (scope : SelScope) (stx : Syntax) : TermElabM (Option Sel) := do
   if let some ctorName := scope.ctorLabels.get? (stx.getId.toString (escape := false)) then
+    Editor.highlight stx .enumMember
     if let some e ← try pure (some (← mkConstWithLevelParams ctorName)) catch _ => pure none then
       discard <| Term.addTermInfo stx e
     return some (.ctorLit ctorName)
@@ -748,6 +750,7 @@ private meta def coerceVal (scope : SelScope) (stx : Syntax) (wantBool : Bool) :
     if !scope.types.contains ci.induct && !scope.lenient then
       throwErrorAt x m!"constructor '{constName}' belongs to '{ci.induct}', \
         which cannot occur in values of '{scope.root}'"
+    Editor.highlight x .enumMember
     return { sel := .ctorLit constName, kind := .«string» }
   | _ =>
     throwErrorAt x m!"'{constName}' is not a constructor; label comparisons \
@@ -802,12 +805,17 @@ private meta partial def elabExpr (scope : SelScope) (env : LEnv) (stx : Syntax)
   else if k == selNumKind then
     return { sel := .num (Int.ofNat (stx[0].isNatLit?.getD 0)), kind := .number }
   else if k == selNegNumKind then
+    Editor.highlight stx[0] .operator
     return { sel := .num (-(Int.ofNat (stx[1].isNatLit?.getD 0))), kind := .number }
   else if k == selAtomLitKind then
     match stx[0].isNameLit? with
     | some n => return { sel := .atomLit n.toString, kind := .relation, arity := some 1 }
     | none => throwErrorAt stx "malformed atom literal"
   else if k == selLeanKind then
+    -- Mark both ends of the escape. The host term supplies its own Lean tokens.
+    Editor.highlight stx[0] .macro
+    Editor.highlight stx[1] .macro
+    Editor.highlight stx[3] .macro
     elabLeanRel scope ⟨stx[2]⟩
   else if k == nodeKind .«let» then
     elabLet scope env stx
@@ -870,7 +878,9 @@ private meta partial def elabNode (scope : SelScope) (env : LEnv) (stx : Syntax)
       binders := binders + bs.size
       env := env'
     | .name _ => args := args.push (.name stx[i].getId.toString)
-    | .part _ opt =>
+    | .part role opt =>
+      if role == .«negation» && stx[i].isAtom && !stx[i].getAtomVal.front?.any isIdFirst then
+        Editor.highlight stx[i] .operator
       if opt then
         let s := stx[i].getAtomVal
         args := args.push (.atom (if s.isEmpty then none else some s))
@@ -884,7 +894,9 @@ private meta partial def elabNode (scope : SelScope) (env : LEnv) (stx : Syntax)
             args := args.push (.expr e.sel)
             slots := slots.push e.arity
             opKinds := opKinds.push e.kind
-    | .operator | .constant => pure ()
+    | .operator =>
+      if !stx[i].getAtomVal.front?.any isIdFirst then Editor.highlight stx[i] .operator
+    | .constant => pure ()
   -- Slots that accept either side have to agree with each other: the engine
   -- compares like with like, so `#a = b` is a mistake rather than a coercion.
   if kinds.operands.any (· == Option.some .any) then
@@ -930,12 +942,14 @@ private meta partial def elabBuiltinCall? (scope : SelScope) (env : LEnv) (stx :
   let name := raw.toString
   let args := stx[li].getSepArgs
   if let some n := builtinArity? name then
+    Editor.highlight callee .function
     unless args.size == n do
       throwErrorAt stx m!"'{name}' takes {n} integer argument(s), got {args.size}"
     let es ← args.mapM fun a => elabAt scope env a (some .number)
     return some { sel := .node c none #[.expr (.builtin name), .exprs (es.map (·.sel))],
                   kind := .number }
   if Sgq.setBuiltins.contains name then
+    Editor.highlight callee .function
     unless args.size == 1 do
       throwErrorAt stx m!"'{name}[e]' takes one relational argument, got {args.size}"
     let e ← elabAt scope env args[0]! (some .relation)
@@ -974,11 +988,13 @@ private meta partial def elabBinders (scope : SelScope) (env : LEnv) (typed : Bo
         unless a == 1 do
           throwErrorAt group[2] m!"a {what} binder domain must have arity 1, got {a}"
       for x in group[0].getSepArgs do
+        Editor.highlight x .variable
         binders := binders.push (x.getId, dom.sel)
         env := (x.getId, .binder) :: env
     else
       -- a `let` binding is substituted at use, so it never becomes a binder
       let e ← elabExpr scope env group[2]
+      Editor.highlight group[0] .variable
       env := (group[0].getId, .letE e) :: env
       binders := binders.push (group[0].getId, e.sel)
   if binders.isEmpty then throwError s!"a {what} needs at least one binder"
@@ -1002,11 +1018,13 @@ private meta partial def resolveIdent (scope : SelScope) (env : LEnv)
       for o in (Sgq.Construct.of c).operators do
         let od := Sgq.Op.of o
         if od.spellings.contains raw.toString then
+          Editor.highlight stx .keyword
           let width ← applyArity stx od.text od.arity #[] #[] 0
           return { sel := .node c (some o) #[], kind := od.kinds.yields.getD .relation,
                    arity := width }
   let name := stx.getId
   if let some bind := env.lookup name then
+    Editor.highlight stx .variable
     match bind with
     | .binder => return { sel := .var name, kind := .relation, arity := some 1 }
     | .letE e =>
@@ -1023,14 +1041,17 @@ private meta partial def resolveIdent (scope : SelScope) (env : LEnv)
       return e
   if let .ident _ raw _ _ := stx.raw then
     if raw.toString == "inspectedRoot" then
+      Editor.highlight stx .keyword
       return { sel := .inspectedRoot, kind := .relation, arity := some 1 }
   if let some v ← resolveCtorLit? scope stx then
     return { sel := v, kind := .«string» }
   let s := name.toString (escape := false)
   if let some (owner, arity?) := scope.rels.get? s then
+    Editor.highlight stx .property
     addRelInfo stx owner s
     return { sel := .rel s, kind := .relation, arity := arity? }
   if let some i := scope.introduced.get? s then
+    Editor.highlight stx .property
     warnGraphSideName stx s
     return { sel := .rel s, kind := .relation, arity := some i.arity }
   if let some e ← resolveTypeRef? then return e
@@ -1039,12 +1060,14 @@ where
   resolveTypeRef? : TermElabM (Option EExpr) := do
     if let some decl := (← getLCtx).findFromUserName? stx.getId then
       if (← whnf decl.type).isSort then
+        Editor.highlight stx .typeParameter
         Term.addTermInfo' stx decl.toExpr
         return some { sel := .localType decl.fvarId, kind := .relation, arity := some 1 }
     let some constName ← resolveGlobal? stx | return none
     match (← getEnv).find? constName with
     | some (.inductInfo _) =>
       if scope.types.contains constName || scope.lenient then
+        Editor.highlight stx .type
         return some { sel := .sig constName (shortName constName), kind := .relation,
                       arity := some 1 }
       else
@@ -1133,13 +1156,17 @@ meta def elabFieldName (scope : SelScope) (position : String) (stx : TSyntax `id
     TermElabM String := do
   let s := stx.getId.toString (escape := false)
   if scope.rels.contains s then
+    Editor.highlight stx .property
     return s
   if let some i := scope.introduced.get? s then
+    Editor.highlight stx .property
     unless i.referencedBy.contains position do
       warnUnresolvedName stx position s
     return s
   if position == "attribute.field" then
-    if let some field ← functionAttribute? scope stx then return field
+    if let some field ← functionAttribute? scope stx then
+      Editor.highlight stx .property
+      return field
   unknownName scope stx s!"relation '{s}'" s
 
 end

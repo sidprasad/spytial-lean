@@ -90,6 +90,26 @@ call's `with [...]` to extend the active default for that inspection. [Union-fin
 Style blocks accept arguments in any order. Strings specify colors or paths,
 names specify patterns or placement, and numbers specify widths or weights.
 
+With `import SpytialLean`, the Lean VS Code extension highlights selector
+binders, types, fields, constructor labels, and operators. In a selector such as
+`lean (fun n : BDD => n matches .fls) + BDD`, the `lean` introducer and its
+two parentheses share the `macro` semantic token. The body uses ordinary Lean
+highlighting and the `+` resumes selector highlighting. For a bolder boundary,
+add this rule to your VS Code settings.
+
+```json
+{
+  "editor.semanticTokenColorCustomizations": {
+    "rules": { "macro:lean4": { "bold": true } }
+  }
+}
+```
+
+A hex literal in a color field, such as `(fillStyle "#ffe082")`, gets a swatch when VS Code’s
+`editor.colorDecorators` setting is enabled. All four CSS hex lengths work,
+including alpha. If a freshly opened file has no swatches, an edit after Lean
+finishes loading the import refreshes them.
+
 - `(borderStyle <css-color> [<width>])` and `(fillStyle <css-color>)` — node
   border and interior
 - `(iconStyle <path> [full\|badge])` — node icon. `full` fills the box,

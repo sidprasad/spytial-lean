@@ -7,6 +7,7 @@ build:
 # headless unit tests
 test:
     lake build SpytialTests
+    lake env lean --run SpytialTests/EditorTest.lean
     pnpm -C widget test
 
 # elaborate every demo
