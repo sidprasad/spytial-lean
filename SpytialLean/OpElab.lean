@@ -214,6 +214,7 @@ private meta def elabScalar (what : String) (f : FieldSpec) (v : ArgView)
   | .color | .iconPath | .str =>
     let some s := v.str?
       | throwErrorAt v.ref m!"{what} expects a string{usageSuffix usage?}"
+    if f.type matches .color then Editor.colorLiteral v.ref s
     return .str s
   | .number .. =>
     let some n := v.num?
@@ -248,11 +249,11 @@ private meta def elabBlock (usage : String) (b : BlockSpec) (stx : Syntax) :
     if set.any (·.1 == f) then
       throwErrorAt ref m!"duplicate {fieldName f} in ({blockName b.id} …)"
   for inner in blockArgs stx do
-    if let some s := inner.isStrLit? then
+    if inner.isOfKind strLitKind then
       let some f := b.fields.find? (·.type.isStringy)
         | throwErrorAt inner m!"({blockName b.id} …) takes no string; usage: {usage}"
       dup inner f.id set
-      set := set.push (f.id, .str s)
+      set := set.push (f.id, ← elabScalar (fieldName f.id) f (.ofToken inner))
     else if let some n := jsonNumOf? inner then
       let some f := b.fields.find? (·.type.isNumeric)
         | throwErrorAt inner m!"({blockName b.id} …) takes no number; usage: {usage}"
@@ -397,6 +398,7 @@ meta def elabSpytialOp (scope : SelScope) (op : TSyntax `spytial_op) :
       | throwErrorAt head m!"unknown Spytial op '{name}'; known ops: \
           {", ".intercalate ((allItems.map itemName).mergeSort (· < ·))}"
     let item := ItemSpec.of itemId
+    Editor.highlight head .keyword
     let usage := itemUsage item
     -- A form can make a width conditional on a sibling field, which may be
     -- written after the selector, so the keywords are read off the argument
